@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -905,10 +907,16 @@ class InstrumentSpec:
         return 1.0 / self.pip_factor
 
 
-DEFAULT_SPECS: dict[str, InstrumentSpec] = {
-    pair: InstrumentSpec(pair, instrument_pip_factor(pair), NORMAL_SPREAD_PIPS[pair])
-    for pair in DEFAULT_TRADER_PAIRS
-}
+DEFAULT_SPECS: Mapping[str, InstrumentSpec] = MappingProxyType(
+    {
+        pair: InstrumentSpec(
+            pair,
+            instrument_pip_factor(pair),
+            NORMAL_SPREAD_PIPS[pair],
+        )
+        for pair in DEFAULT_TRADER_PAIRS
+    }
+)
 
 # C-4 margin-aware basket tolerance. This is engineering headroom for
 # intra-cycle broker-margin drift, not a market edge threshold.
@@ -2182,7 +2190,7 @@ class RiskEngine:
         self,
         *,
         policy: RiskPolicy | None = None,
-        specs: dict[str, InstrumentSpec] | None = None,
+        specs: Mapping[str, InstrumentSpec] | None = None,
         live_enabled: bool = False,
         validation_time_utc: datetime | None = None,
         guardian_receipt_watchdog_path: Path | None = None,
@@ -2191,7 +2199,11 @@ class RiskEngine:
         guardian_receipt_broker_snapshot_path: Path | None = None,
     ) -> None:
         self.policy = policy or RiskPolicy()
-        self.specs = specs or DEFAULT_SPECS
+        self.specs = (
+            DEFAULT_SPECS
+            if specs is None
+            else MappingProxyType(dict(specs))
+        )
         self.live_enabled = live_enabled
         self.guardian_receipt_watchdog_path = guardian_receipt_watchdog_path
         self.guardian_receipt_consumption_path = guardian_receipt_consumption_path

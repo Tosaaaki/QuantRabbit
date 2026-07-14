@@ -1631,8 +1631,14 @@ class PositionManagerTest(unittest.TestCase):
                     report_path=root / "pm.md",
                 ).run(snapshot)
 
-                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
-                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                # A now-valid, fresh pair-chart timestamp may additionally
+                # tighten an SL-free winner to break-even. The invariant under
+                # test is that the reachable broker TP is not replaced by a
+                # spread-paid market close.
+                self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
+                self.assertIsNotNone(result.positions[0].recommended_stop_loss)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
                 report = (root / "pm.md").read_text()
                 self.assertIn("broker TP is reachable within", report)
                 self.assertIn("keep broker TP", report)
@@ -2739,6 +2745,7 @@ def _structural_reversal_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -2942,6 +2949,7 @@ def _usd_jpy_tp_progress_pair_charts(root: Path, *, atr_pips: float) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "USD_JPY",
@@ -2980,6 +2988,7 @@ def _tp_progress_extend_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -3264,6 +3273,7 @@ def _entry_invalidation_technical_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",

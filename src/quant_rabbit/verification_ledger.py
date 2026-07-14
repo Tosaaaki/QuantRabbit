@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_ledger import gateway_receipt_sent_count
 from quant_rabbit.ledger_schema import (
     SQLITE_SCHEMA_INIT_RETRY_DELAYS_SECONDS,
     ensure_profitability_acceptance_indexes,
@@ -1116,6 +1117,23 @@ def _gateway_observations(
     if payload is None:
         return []
     status = str(payload.get("status") or "UNKNOWN")
+    sent_integrity_error: str | None = None
+    sent_count: int | None = None
+    try:
+        sent_count = gateway_receipt_sent_count(kind=source, payload=payload)
+    except ValueError as exc:
+        sent_integrity_error = str(exc)
+    gateway_blocked = (
+        sent_integrity_error is not None
+        or "GAP" in status
+        or status == "BLOCKED"
+    )
+    sent_evidence: dict[str, Any] = {
+        "sent": sent_count > 0 if sent_count is not None else None,
+        "sent_count": sent_count,
+    }
+    if sent_integrity_error is not None:
+        sent_evidence["sent_integrity_error"] = sent_integrity_error
     observations = [
         _observation(
             run_id=run_id,
@@ -1124,9 +1142,13 @@ def _gateway_observations(
             subject_type=source,
             subject_id=status,
             check_name="gateway_status",
-            status="BLOCK" if "GAP" in status or status == "BLOCKED" else "PASS",
-            severity="BLOCK" if "GAP" in status else "INFO",
-            evidence={"sent": bool(payload.get("sent"))},
+            status="BLOCK" if gateway_blocked else "PASS",
+            severity=(
+                "BLOCK"
+                if sent_integrity_error is not None or "GAP" in status
+                else "INFO"
+            ),
+            evidence=sent_evidence,
         )
     ]
     if source == "live_order":

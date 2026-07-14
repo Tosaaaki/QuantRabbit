@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 import sqlite3
@@ -17,8 +18,26 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
+from quant_rabbit.forecast_precision import (
+    bidask_replay_precision_rule_digest,
+    canonical_bidask_replay_precision_rule,
+)
+from quant_rabbit.models import (
+    MarketContext,
+    OrderIntent,
+    OrderType,
+    Owner,
+    Side,
+    TradeMethod,
+)
 from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context,
+)
+from quant_rabbit.strategy.intent_generator import (
+    SIZING_ACTUAL_ANCHOR_VERSION,
+    SIZING_ACTUAL_RECEIPT_DIRECTORY,
+    sizing_actual_anchor_receipt,
+    sizing_conversion_snapshot_receipt_from_payload,
 )
 from quant_rabbit.self_improvement_audit import (
     PROFITABILITY_DISCIPLINE_CODES,
@@ -54,6 +73,336 @@ from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_SELF_IMPROVE
 
 
 _REPLAY_NOW = datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc)
+_NEGATIVE_TP_ROTATION_BLOCKER = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+_TP_SIZING_RECEIPT_TEMP = tempfile.TemporaryDirectory()
+_TP_SIZING_RECEIPT_ROOT = (
+    Path(_TP_SIZING_RECEIPT_TEMP.name) / SIZING_ACTUAL_RECEIPT_DIRECTORY
+)
+_TP_SIZING_RECEIPT_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _tp_acquisition_broker_snapshot() -> dict[str, object]:
+    timestamp = _REPLAY_NOW.isoformat().replace("+00:00", "Z")
+    return {
+        "fetched_at_utc": timestamp,
+        "quotes": {
+            "EUR_USD": {
+                "bid": 1.0999,
+                "ask": 1.1001,
+                "timestamp_utc": timestamp,
+            },
+            "USD_CAD": {
+                "bid": 1.3499,
+                "ask": 1.3501,
+                "timestamp_utc": timestamp,
+            },
+        },
+        "home_conversions": {"USD": 100.0, "CAD": 100.0},
+    }
+
+
+def _tp_acquisition_intents(results: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "generated_at_utc": _REPLAY_NOW.isoformat().replace("+00:00", "Z"),
+        "results": results,
+    }
+
+
+def _tp_acquisition_route_result(
+    *,
+    lane_id: str,
+    metadata: dict[str, object] | None = None,
+    blocker_codes: list[str] | None = None,
+    authoritative_codes: list[str] | None = None,
+    include_authoritative_codes: bool = True,
+    estimated_margin_jpy_override: float | None = None,
+) -> dict[str, object]:
+    codes = blocker_codes or [_NEGATIVE_TP_ROTATION_BLOCKER]
+    payload_metadata = dict(metadata or {})
+    payload_metadata.setdefault("desk", "failure_trader")
+    predictive_scout = (
+        payload_metadata.get("positive_rotation_mode")
+        == "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+    )
+    pair = "USD_CAD" if predictive_scout else "EUR_USD"
+    side = "LONG" if predictive_scout else "SHORT"
+    order_type = "LIMIT" if predictive_scout else "STOP-ENTRY"
+    entry = 1.3500 if predictive_scout else 1.1000
+    take_profit = 1.3510 if predictive_scout else 1.0990
+    stop_loss = 1.3493 if predictive_scout else 1.1010
+    pip_factor = 10_000.0
+    loss_pips = abs(stop_loss - entry) * pip_factor
+    reward_pips = abs(take_profit - entry) * pip_factor
+    jpy_per_pip = 10.0
+    quote_to_jpy = jpy_per_pip * pip_factor / 1000.0
+    margin_rate = 0.04
+    risk_jpy = loss_pips * jpy_per_pip
+    reward_jpy = reward_pips * jpy_per_pip
+    estimated_margin_jpy = 1000.0 * entry * quote_to_jpy * margin_rate
+    if estimated_margin_jpy_override is not None:
+        estimated_margin_jpy = estimated_margin_jpy_override
+    effective_cap = float(
+        payload_metadata.setdefault(
+            "loss_asymmetry_guard_effective_max_loss_jpy",
+            500.0,
+        )
+    )
+    payload_metadata.setdefault("loss_asymmetry_guard_loss_cap_jpy", 500.0)
+    payload_metadata.setdefault("loss_asymmetry_guard_base_max_loss_jpy", 500.0)
+    payload_metadata.setdefault("max_loss_jpy", 500.0)
+    payload_metadata.update(
+        {
+            "sizing_actual_risk_jpy": round(risk_jpy, 4),
+            "sizing_actual_reward_jpy": round(reward_jpy, 4),
+            "sizing_actual_loss_pips": round(loss_pips, 4),
+            "sizing_actual_reward_pips": round(reward_pips, 4),
+            "sizing_actual_units": 1000,
+            "sizing_actual_jpy_per_pip": round(jpy_per_pip, 8),
+            "sizing_actual_quote_to_jpy": round(quote_to_jpy, 8),
+            "sizing_actual_margin_rate": round(margin_rate, 8),
+            "sizing_actual_estimated_margin_jpy": round(
+                estimated_margin_jpy,
+                4,
+            ),
+            "sizing_actual_risk_basis": "RISK_ENGINE_VALIDATED_ORDER",
+            "sizing_actual_risk_cap_jpy": round(effective_cap, 4),
+            "sizing_actual_risk_cap_utilization": round(
+                risk_jpy / effective_cap,
+                6,
+            ),
+        }
+    )
+    conversion_receipt = sizing_conversion_snapshot_receipt_from_payload(
+        pair,
+        _tp_acquisition_broker_snapshot(),
+    )
+    if conversion_receipt is None:
+        raise AssertionError("test broker snapshot must produce conversion receipt")
+    payload_metadata["sizing_actual_conversion_receipt"] = conversion_receipt
+    result: dict[str, object] = {
+        "lane_id": lane_id,
+        "status": "DRY_RUN_BLOCKED",
+        "intent": {
+            "pair": pair,
+            "side": side,
+            "order_type": order_type,
+            "owner": "trader",
+            "units": 1000,
+            "entry": entry,
+            "tp": take_profit,
+            "sl": stop_loss,
+            "market_context": {"method": "BREAKOUT_FAILURE"},
+            "metadata": payload_metadata,
+        },
+        "risk_metrics": {
+            "entry_price": entry,
+            "loss_pips": loss_pips,
+            "reward_pips": reward_pips,
+            "risk_jpy": risk_jpy,
+            "reward_jpy": reward_jpy,
+            "reward_risk": reward_pips / loss_pips,
+            "jpy_per_pip": jpy_per_pip,
+            "estimated_margin_jpy": estimated_margin_jpy,
+        },
+        "risk_issues": [
+            {
+                "code": code,
+                "message": f"blocking issue {code}",
+                "severity": "BLOCK",
+            }
+            for code in codes
+        ],
+        "live_strategy_issues": [],
+        "live_blockers": [],
+    }
+    if include_authoritative_codes:
+        result["live_blocker_codes"] = list(
+            authoritative_codes if authoritative_codes is not None else codes
+        )
+    typed_intent = OrderIntent(
+        pair=pair,
+        side=Side.parse(side),
+        order_type=OrderType.parse(order_type),
+        units=1000,
+        entry=entry,
+        tp=take_profit,
+        sl=stop_loss,
+        thesis="test sizing anchor",
+        owner=Owner.TRADER,
+        market_context=MarketContext(
+            regime="",
+            narrative="",
+            chart_story="",
+            method=TradeMethod.BREAKOUT_FAILURE,
+            invalidation="",
+        ),
+        metadata=payload_metadata,
+    )
+    sizing_anchor = sizing_actual_anchor_receipt(
+        lane_id=lane_id,
+        intent=typed_intent,
+        risk_metrics=result["risk_metrics"],
+        sizing_metadata=payload_metadata,
+    )
+    if sizing_anchor is not None:
+        digest = sizing_anchor["receipt_sha256"]
+        payload_metadata.update(
+            {
+                "sizing_actual_anchor_contract": SIZING_ACTUAL_ANCHOR_VERSION,
+                "sizing_actual_anchor_sha256": digest,
+            }
+        )
+        path = _TP_SIZING_RECEIPT_ROOT / f"{digest}.json"
+        path.write_text(
+            json.dumps(
+                sizing_anchor,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return result
+
+
+def _valid_tp_collection_metadata() -> dict[str, object]:
+    return {
+        "desk": "failure_trader",
+        "loss_asymmetry_guard_active": True,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "loss_asymmetry_guard_mode": "CAP_AVG_WIN",
+        "loss_asymmetry_guard_relaxed": False,
+        "loss_asymmetry_guard_loss_cap_jpy": 500.0,
+        "loss_asymmetry_guard_base_max_loss_jpy": 500.0,
+        "loss_asymmetry_guard_effective_max_loss_jpy": 500.0,
+        "max_loss_jpy": 500.0,
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": (
+            "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
+        ),
+        "capture_take_profit_vehicle": "STOP",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+        "positive_rotation_proof_collection_ready": True,
+        "positive_rotation_proof_collection_mode": "TP_PROOF_COLLECTION_HARVEST",
+        "positive_rotation_proof_collection_min_trades": 5,
+        "positive_rotation_proof_collection_target_trades": 20,
+        "positive_rotation_proof_collection_gap_trades": 13,
+        "capture_take_profit_trades": 7,
+        "capture_take_profit_wins": 7,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_expectancy_jpy": 918.2276,
+        "capture_take_profit_net_jpy": 6427.5931,
+        "capture_take_profit_avg_win_jpy": 918.2276,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "capture_avg_win_jpy": 500.0,
+        "capture_avg_loss_jpy": 1042.0,
+        "capture_market_close_expectancy_jpy": -756.6,
+        "positive_rotation_confidence_method": (
+            "WILSON_LOWER_BOUND_STRESS_EXPECTANCY"
+        ),
+        "positive_rotation_confidence_z": 1.96,
+        "positive_rotation_tp_wins": 7,
+        "positive_rotation_tp_trades": 7,
+        "positive_rotation_tp_win_rate_lower": 0.645661,
+        "positive_rotation_loss_proxy_jpy": 1042.0,
+        "positive_rotation_pessimistic_expectancy_jpy": 223.6428,
+    }
+
+
+def _valid_predictive_scout_metadata() -> dict[str, object]:
+    rule_name = (
+        "USD_CAD_DOWN_H31_60m_C0p50_0p65_FADE_TO_UP_S5_"
+        "BIDASK_CONTRARIAN_HARVEST_TP10_SL7"
+    )
+    rule = canonical_bidask_replay_precision_rule(rule_name)
+    if rule is None:
+        raise AssertionError("canonical predictive-SCOUT rule is missing")
+    return {
+        "loss_asymmetry_guard_active": True,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "broker_stop_loss_mode": "INTENT_SL",
+        "desk": "failure_trader",
+        "campaign_role": "BIDASK_REPLAY_CONTRARIAN_SCOUT",
+        "forecast_direction": "DOWN",
+        "forecast_confidence": 0.60,
+        "forecast_horizon_min": 45,
+        "forecast_cycle_id": "test-usdcad-down-c050-065-h31-60",
+        "predictive_scout": True,
+        "predictive_scout_source": "BIDASK_REPLAY_PRECISION",
+        "predictive_scout_rule_name": rule_name,
+        "predictive_scout_rule_digest": bidask_replay_precision_rule_digest(rule),
+        "predictive_scout_rule_is_vehicle_proof": False,
+        "predictive_scout_vehicle_proof_status": "UNPROVEN_PASSIVE_LIMIT",
+        "predictive_scout_hypothesis": (
+            "REPRODUCIBLE_FORECAST_FAILURE_CONTRARIAN"
+        ),
+        "predictive_scout_promotion_allowed": False,
+        "bidask_replay_precision_seed_rule": rule,
+        "positive_rotation_mode": "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "positive_rotation_live_ready": False,
+        "bidask_replay_precision_seed": True,
+    }
+
+
+def _valid_tp_proven_metadata() -> dict[str, object]:
+    return {
+        "desk": "failure_trader",
+        "loss_asymmetry_guard_active": True,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+        "loss_asymmetry_guard_relaxed": True,
+        "loss_asymmetry_guard_loss_cap_jpy": 100.0,
+        "loss_asymmetry_guard_base_max_loss_jpy": 500.0,
+        "loss_asymmetry_guard_effective_max_loss_jpy": 500.0,
+        "max_loss_jpy": 500.0,
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": (
+            "EUR_USD|SHORT|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
+        ),
+        "capture_take_profit_vehicle": "STOP",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "positive_rotation_mode": "TP_PROVEN_HARVEST",
+        "positive_rotation_live_ready": True,
+        "capture_take_profit_trades": 20,
+        "capture_take_profit_wins": 20,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_expectancy_jpy": 500.0,
+        "capture_take_profit_net_jpy": 10000.0,
+        "capture_take_profit_avg_win_jpy": 500.0,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "capture_avg_win_jpy": 100.0,
+        "capture_avg_loss_jpy": 100.0,
+        "capture_market_close_expectancy_jpy": -100.0,
+        "positive_rotation_confidence_method": (
+            "WILSON_LOWER_BOUND_STRESS_EXPECTANCY"
+        ),
+        "positive_rotation_confidence_z": 1.96,
+        "positive_rotation_tp_wins": 20,
+        "positive_rotation_tp_trades": 20,
+        "positive_rotation_tp_win_rate_lower": 0.83887,
+        "positive_rotation_loss_proxy_jpy": 100.0,
+        "positive_rotation_pessimistic_expectancy_jpy": 403.3219,
+    }
 
 
 def _replay_window(now: datetime) -> dict[str, object]:
@@ -1505,24 +1854,40 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(all_families["execution_liquidity"]["lane_count"], 1)
         self.assertNotIn("risk_geometry", dry_run_families)
         self.assertEqual(dry_run_families["strategy_profile"]["lane_count"], 2)
+        dry_candidates = breakdown["nearest_live_ready_candidates"]
+        contradictory = next(
+            item
+            for item in dry_candidates
+            if item["lane_id"]
+            == "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET"
+        )
+        self.assertFalse(contradictory["candidate_contract_valid"])
         self.assertEqual(
-            breakdown["nearest_all_non_live_ready_candidates"][0]["lane_id"],
-            "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+            contradictory["candidate_integrity_status"],
+            "DUPLICATE_CONTRADICTION",
+        )
+        self.assertEqual(contradictory["duplicate_lane_row_count"], 2)
+        nearest_unique = dry_candidates[0]
+        self.assertEqual(
+            nearest_unique["lane_id"],
+            "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT",
         )
         self.assertEqual(
-            breakdown["nearest_live_ready_candidates"][0]["lane_id"],
-            "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+            nearest_unique["blocker_families"],
+            ["forecast", "market_structure", "strategy_profile"],
+        )
+        self.assertEqual(nearest_unique["reward_risk"], 1.4)
+        blocker_evidence = next(
+            blocker["strategy_profile_evidence"]
+            for blocker in nearest_unique["blockers"]
+            if blocker.get("code") == "STRATEGY_NOT_ELIGIBLE"
         )
         self.assertEqual(
-            breakdown["nearest_live_ready_candidates"][0]["blocker_families"],
-            ["strategy_profile"],
-        )
-        self.assertEqual(breakdown["nearest_live_ready_candidates"][0]["reward_risk"], 2.85)
-        blocker_evidence = breakdown["nearest_live_ready_candidates"][0]["blockers"][0][
-            "strategy_profile_evidence"
-        ]
-        self.assertEqual(
-            breakdown["nearest_live_ready_candidates"][0]["blockers"][0]["code"],
+            next(
+                blocker["code"]
+                for blocker in nearest_unique["blockers"]
+                if blocker.get("code") == "STRATEGY_NOT_ELIGIBLE"
+            ),
             "STRATEGY_NOT_ELIGIBLE",
         )
         self.assertEqual(blocker_evidence["profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
@@ -1530,7 +1895,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         candidate_lane_ids = [item["lane_id"] for item in breakdown["nearest_live_ready_candidates"]]
         self.assertEqual(len(candidate_lane_ids), len(set(candidate_lane_ids)))
 
-    def test_no_live_ready_next_action_names_one_lane_and_its_exact_blocker(self) -> None:
+    def test_no_live_ready_next_action_reports_unreachable_tp_proof_route(self) -> None:
         intents = {
             "generated_at_utc": _NOW.isoformat(),
             "results": [
@@ -1566,7 +1931,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
                     ],
                 }
-            ]
+            ],
         }
 
         findings = _intent_findings(
@@ -1594,15 +1959,948 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             if item["code"] == "TARGET_OPEN_NO_LIVE_READY_LANES"
         )
         self.assertIn(
-            "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
             finding["next_action"],
+        )
+        self.assertNotIn("Narrow the next repair", finding["next_action"])
+        self.assertIn("OANDA campaign firepower is audit-only", finding["next_action"])
+        self.assertIn("Do not wait for receipts", finding["next_action"])
+
+    def test_no_live_ready_next_action_names_reachable_tp_collection_lane(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents(
+                [
+                    _tp_acquisition_route_result(
+                        lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                        metadata=_valid_tp_collection_metadata(),
+                    )
+                ]
+            ),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertTrue(candidate["tp_proof_acquisition_required"])
+        self.assertTrue(candidate["tp_proof_acquisition_route_reachable"])
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
         )
         self.assertIn(
-            "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
-            finding["next_action"],
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            action,
         )
-        self.assertNotIn("CHART_DIRECTION_CONFLICT", finding["next_action"])
-        self.assertIn("do not repeat a broad market refresh", finding["next_action"].lower())
+        self.assertIn(_NEGATIVE_TP_ROTATION_BLOCKER, action)
+        self.assertIn("do not repeat a broad market refresh", action.lower())
+
+    def test_reachable_tp_route_sorts_ahead_of_smaller_dead_end(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents(
+                [
+                    _tp_acquisition_route_result(lane_id="one-blocker-dead-end"),
+                    _tp_acquisition_route_result(
+                        lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                        metadata=_valid_tp_collection_metadata(),
+                        blocker_codes=[
+                            _NEGATIVE_TP_ROTATION_BLOCKER,
+                            "REWARD_RISK_TOO_LOW",
+                        ],
+                    ),
+                ]
+            ),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidates = breakdown["nearest_all_non_live_ready_candidates"]
+        self.assertEqual(
+            candidates[0]["lane_id"],
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        )
+        self.assertTrue(candidates[0]["tp_proof_acquisition_route_reachable"])
+        self.assertFalse(candidates[1]["tp_proof_acquisition_route_reachable"])
+
+    def test_candidate_limit_does_not_truncate_the_only_reachable_tp_route(
+        self,
+    ) -> None:
+        results = [
+            _tp_acquisition_route_result(lane_id=f"dead-end-{index}")
+            for index in range(9)
+        ]
+        results.append(
+            _tp_acquisition_route_result(
+                lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                metadata=_valid_tp_collection_metadata(),
+                blocker_codes=[
+                    _NEGATIVE_TP_ROTATION_BLOCKER,
+                    "REWARD_RISK_TOO_LOW",
+                ],
+            )
+        )
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents(results),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidates = breakdown["nearest_all_non_live_ready_candidates"]
+        self.assertEqual(len(candidates), 8)
+        self.assertEqual(
+            candidates[0]["lane_id"],
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        )
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE", action)
+        self.assertNotIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", action)
+
+    def test_all_approved_tp_acquisition_modes_require_self_consistent_types(
+        self,
+    ) -> None:
+        modes = (
+            _valid_tp_collection_metadata(),
+            _valid_predictive_scout_metadata(),
+            _valid_tp_proven_metadata(),
+        )
+        for metadata in modes:
+            with self.subTest(mode=metadata["positive_rotation_mode"]):
+                lane_id = (
+                    "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:LIMIT"
+                    if metadata["positive_rotation_mode"]
+                    == "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+                    else "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+                )
+                breakdown = _intent_live_readiness_family_breakdown(
+                    _tp_acquisition_intents(
+                        [
+                            _tp_acquisition_route_result(
+                                lane_id=lane_id,
+                                metadata=metadata,
+                            )
+                        ]
+                    ),
+                    broker_snapshot=_tp_acquisition_broker_snapshot(),
+                    sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertTrue(candidate["tp_proof_acquisition_route_reachable"])
+                self.assertEqual(
+                    candidate["tp_proof_acquisition_route_status"],
+                    "TP_PROOF_ACQUISITION_ROUTE_REACHABLE",
+                )
+
+    def test_zero_incremental_margin_hedge_receipt_remains_reachable(self) -> None:
+        snapshot = _tp_acquisition_broker_snapshot()
+        snapshot["account"] = {"hedging_enabled": True}
+        snapshot["positions"] = [
+            {
+                "trade_id": "existing-long",
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "units": 1000,
+                "entry_price": 1.1000,
+                "owner": "trader",
+            }
+        ]
+        result = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+            estimated_margin_jpy_override=0.0,
+        )
+
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([result]),
+            broker_snapshot=snapshot,
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertTrue(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertEqual(
+            candidate["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_REACHABLE",
+        )
+
+    def test_tp_collection_route_rejects_coercible_or_non_finite_proof_fields(
+        self,
+    ) -> None:
+        variants = (
+            ("positive_rotation_mode", 1),
+            ("positive_rotation_mode", "tp_proof_collection_harvest"),
+            ("positive_rotation_proof_collection_ready", 1),
+            ("positive_rotation_proof_collection_min_trades", "5"),
+            ("positive_rotation_proof_collection_target_trades", 20.0),
+            ("capture_take_profit_trades", "7"),
+            ("capture_take_profit_trades", 7.0),
+            ("capture_take_profit_losses", False),
+            ("capture_take_profit_expectancy_jpy", "918.2276"),
+            ("capture_take_profit_expectancy_jpy", float("inf")),
+            ("positive_rotation_pessimistic_expectancy_jpy", "223.6428"),
+            ("positive_rotation_pessimistic_expectancy_jpy", float("nan")),
+            ("positive_rotation_live_ready", "false"),
+        )
+        for field, malformed in variants:
+            with self.subTest(field=field, malformed=malformed):
+                metadata = _valid_tp_collection_metadata()
+                metadata[field] = malformed
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {
+                        "results": [
+                            _tp_acquisition_route_result(
+                                lane_id=f"malformed-{field}",
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+                self.assertEqual(
+                    candidate["tp_proof_acquisition_route_status"],
+                    "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE",
+                )
+
+    def test_predictive_scout_requires_exact_seed_and_exact_false_live_ready(
+        self,
+    ) -> None:
+        variants = (
+            ("bidask_replay_precision_seed", "true"),
+            ("bidask_replay_precision_seed", 1),
+            ("positive_rotation_live_ready", "false"),
+            ("positive_rotation_live_ready", 0),
+            ("positive_rotation_live_ready", None),
+        )
+        for field, malformed in variants:
+            with self.subTest(field=field, malformed=malformed):
+                metadata = _valid_predictive_scout_metadata()
+                metadata[field] = malformed
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {
+                        "results": [
+                            _tp_acquisition_route_result(
+                                lane_id=f"malformed-scout-{field}",
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+
+    def test_oanda_firepower_remains_audit_only_despite_positive_metrics(self) -> None:
+        metadata = _valid_tp_proven_metadata()
+        metadata["positive_rotation_mode"] = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    _tp_acquisition_route_result(
+                        lane_id="oanda-audit-only",
+                        metadata=metadata,
+                    )
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "audit-only",
+            candidate["tp_proof_acquisition_route_reason"],
+        )
+
+    def test_oanda_actual_audit_only_blocker_requires_unreachable_route(self) -> None:
+        code = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    _tp_acquisition_route_result(
+                        lane_id="oanda-actual-producer-shape",
+                        metadata={
+                            "positive_rotation_mode": (
+                                "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+                            ),
+                            "positive_rotation_live_ready": False,
+                            "positive_rotation_oanda_campaign_audit_only": True,
+                            "positive_rotation_oanda_campaign_live_permission": False,
+                            "positive_rotation_oanda_campaign_local_tp_proof_required": True,
+                        },
+                        blocker_codes=[code],
+                        authoritative_codes=[code],
+                    )
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertTrue(candidate["tp_proof_acquisition_required"])
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn("audit-only", candidate["tp_proof_acquisition_route_reason"])
+
+    def test_predictive_scout_route_rejects_market_or_unsigned_rule(self) -> None:
+        valid = _valid_predictive_scout_metadata()
+        unsigned = dict(valid)
+        unsigned.pop("predictive_scout_rule_digest")
+        rows = [
+            _tp_acquisition_route_result(
+                lane_id="unsigned-scout",
+                metadata=unsigned,
+            ),
+            _tp_acquisition_route_result(
+                lane_id="market-scout",
+                metadata=valid,
+            ),
+        ]
+        market_intent = rows[1]["intent"]
+        assert isinstance(market_intent, dict)
+        market_intent["order_type"] = "MARKET"
+        breakdown = _intent_live_readiness_family_breakdown({"results": rows})
+
+        candidates = {
+            item["lane_id"]: item
+            for item in breakdown["nearest_all_non_live_ready_candidates"]
+        }
+        self.assertFalse(
+            candidates["unsigned-scout"]["tp_proof_acquisition_route_reachable"]
+        )
+        self.assertFalse(
+            candidates["market-scout"]["tp_proof_acquisition_route_reachable"]
+        )
+
+    def test_tp_collection_route_revalidates_shape_scope_guard_and_wilson(self) -> None:
+        variants = (
+            ("attach_take_profit_on_fill", False),
+            ("capture_take_profit_scope_key", "EUR_USD|SHORT|WRONG"),
+            ("loss_asymmetry_guard_relaxed", True),
+            ("capture_take_profit_avg_win_jpy", 0.0),
+            ("capture_market_close_expectancy_jpy", 1.0),
+            ("positive_rotation_pessimistic_expectancy_jpy", 224.0),
+        )
+        for field, value in variants:
+            with self.subTest(field=field):
+                metadata = _valid_tp_collection_metadata()
+                metadata[field] = value
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {
+                        "results": [
+                            _tp_acquisition_route_result(
+                                lane_id=f"tampered-{field}",
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(
+                    candidate["tp_proof_acquisition_route_reachable"]
+                )
+
+    def test_tp_routes_reject_impossible_arithmetic_and_non_exact_receipts(
+        self,
+    ) -> None:
+        for valid_metadata in (
+            _valid_tp_collection_metadata(),
+            _valid_tp_proven_metadata(),
+        ):
+            trades = int(valid_metadata["capture_take_profit_trades"])
+            variants = (
+                ("wins-exceed-trades", {"capture_take_profit_wins": trades + 1}),
+                ("counts-do-not-sum", {"capture_take_profit_wins": trades - 1}),
+                ("expectancy-not-net", {"capture_take_profit_expectancy_jpy": 1.0}),
+                ("net-not-outcomes", {"capture_take_profit_net_jpy": 1.0}),
+                ("negative-average-loss", {"capture_take_profit_avg_loss_jpy": -1.0}),
+                (
+                    "broad-scope",
+                    {
+                        "capture_take_profit_exact_vehicle_required": False,
+                        "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                        "capture_take_profit_scope_key": (
+                            "EUR_USD|SHORT|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+                        ),
+                    },
+                ),
+                ("wrong-vehicle", {"capture_take_profit_vehicle": "LIMIT"}),
+                (
+                    "wrong-source",
+                    {"capture_take_profit_metrics_source": "data/capture_economics.json"},
+                ),
+                ("wrong-scope-key", {"capture_take_profit_scope_key": "garbage"}),
+            )
+            for label, changes in variants:
+                with self.subTest(
+                    mode=valid_metadata["positive_rotation_mode"],
+                    variant=label,
+                ):
+                    metadata = dict(valid_metadata)
+                    metadata.update(changes)
+                    breakdown = _intent_live_readiness_family_breakdown(
+                        {
+                            "results": [
+                                _tp_acquisition_route_result(
+                                    lane_id=f"invalid-{label}",
+                                    metadata=metadata,
+                                )
+                            ]
+                        }
+                    )
+                    candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                    self.assertFalse(
+                        candidate["tp_proof_acquisition_route_reachable"]
+                    )
+
+    def test_contradictory_duplicate_lane_cannot_hide_tp_dead_end(self) -> None:
+        lane_id = "duplicate-lane"
+        dead_end = _tp_acquisition_route_result(lane_id=lane_id)
+        forecast_only = _tp_acquisition_route_result(
+            lane_id=lane_id,
+            blocker_codes=["FORECAST_WATCH_ONLY"],
+            authoritative_codes=["FORECAST_WATCH_ONLY"],
+        )
+        breakdown = _intent_live_readiness_family_breakdown(
+            {"results": [dead_end, forecast_only]}
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["candidate_contract_valid"])
+        self.assertEqual(
+            candidate["candidate_integrity_status"],
+            "DUPLICATE_CONTRADICTION",
+        )
+        self.assertTrue(candidate["tp_proof_acquisition_required"])
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("INTENT_CANDIDATE_CONTRACT_UNTRUSTED", action)
+
+    def test_identical_duplicate_lane_collapses_without_changing_contract(self) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        duplicate = json.loads(json.dumps(row))
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([row, duplicate]),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertTrue(candidate["candidate_contract_valid"])
+        self.assertEqual(
+            candidate["candidate_integrity_status"],
+            "IDENTICAL_DUPLICATE_COLLAPSED",
+        )
+        self.assertTrue(candidate["tp_proof_acquisition_route_reachable"])
+
+    def test_tp_route_requires_exact_producer_identity_guard_sizing_and_lane(
+        self,
+    ) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        variants: list[tuple[str, dict[str, object]]] = []
+
+        def mutated(label: str) -> dict[str, object]:
+            duplicate = json.loads(json.dumps(row))
+            variants.append((label, duplicate))
+            return duplicate
+
+        for owner in ("operator_manual", None):
+            duplicate = mutated(f"owner-{owner}")
+            intent = duplicate["intent"]
+            assert isinstance(intent, dict)
+            if owner is None:
+                intent.pop("owner")
+            else:
+                intent["owner"] = owner
+
+        for field, value in (
+            ("pair", " eur_usd "),
+            ("order_type", "STOP"),
+            ("order_type", " STOP-ENTRY "),
+        ):
+            duplicate = mutated(f"{field}-{value}")
+            intent = duplicate["intent"]
+            assert isinstance(intent, dict)
+            intent[field] = value
+
+        duplicate = mutated("method-alias")
+        market_context = duplicate["intent"]["market_context"]  # type: ignore[index]
+        assert isinstance(market_context, dict)
+        market_context["method"] = "breakout-failure"
+
+        for lane_id in (
+            "failure_trader:GBP_USD:LONG:RANGE_ROTATION",
+            "garbage",
+            123,
+        ):
+            duplicate = mutated(f"lane-{lane_id}")
+            duplicate["lane_id"] = lane_id
+
+        for field, value in (
+            ("loss_asymmetry_guard_loss_cap_jpy", None),
+            ("loss_asymmetry_guard_base_max_loss_jpy", "500"),
+            ("loss_asymmetry_guard_effective_max_loss_jpy", -1.0),
+        ):
+            duplicate = mutated(f"guard-{field}")
+            metadata = duplicate["intent"]["metadata"]  # type: ignore[index]
+            assert isinstance(metadata, dict)
+            if value is None:
+                metadata.pop(field)
+            else:
+                metadata[field] = value
+
+        for units in (1, 1001, 10**12, 2**63 - 1, 10**30):
+            duplicate = mutated(f"units-{units}")
+            intent = duplicate["intent"]
+            assert isinstance(intent, dict)
+            intent["units"] = units
+            metadata = intent["metadata"]
+            assert isinstance(metadata, dict)
+            metadata["sizing_actual_units"] = units
+
+        duplicate = mutated("guard-cap-not-capture-average-winner")
+        intent = duplicate["intent"]
+        assert isinstance(intent, dict)
+        metadata = intent["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["loss_asymmetry_guard_loss_cap_jpy"] = 600.0
+        metadata["loss_asymmetry_guard_effective_max_loss_jpy"] = 600.0
+        metadata["max_loss_jpy"] = 600.0
+        metadata["sizing_actual_risk_cap_jpy"] = 600.0
+        risk_jpy = float(metadata["sizing_actual_risk_jpy"])
+        metadata["sizing_actual_risk_cap_utilization"] = round(
+            risk_jpy / 600.0,
+            6,
+        )
+
+        duplicate = mutated("risk-receipt-mismatch")
+        risk_metrics = duplicate["risk_metrics"]
+        assert isinstance(risk_metrics, dict)
+        risk_metrics["risk_jpy"] = 1.0
+
+        for label, duplicate in variants:
+            with self.subTest(variant=label):
+                breakdown = _intent_live_readiness_family_breakdown(
+                    _tp_acquisition_intents([duplicate]),
+                    broker_snapshot=_tp_acquisition_broker_snapshot(),
+                    sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(
+                    candidate["tp_proof_acquisition_route_reachable"]
+                )
+
+    def test_tp_route_rejects_joint_units_and_conversion_self_consistency_tamper(
+        self,
+    ) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        intent = row["intent"]
+        assert isinstance(intent, dict)
+        metadata = intent["metadata"]
+        assert isinstance(metadata, dict)
+
+        # Keep JPY-per-pip and margin numerically unchanged by scaling units up
+        # and quote conversion down.  This passed the former circular check.
+        intent["units"] = 1_000_000
+        metadata["sizing_actual_units"] = 1_000_000
+        metadata["sizing_actual_quote_to_jpy"] = 0.1
+
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([row]),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "independent broker snapshot",
+            candidate["tp_proof_acquisition_route_reason"],
+        )
+
+        producer_choice_tamper = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        tampered_intent = producer_choice_tamper["intent"]
+        assert isinstance(tampered_intent, dict)
+        tampered_metadata = tampered_intent["metadata"]
+        assert isinstance(tampered_metadata, dict)
+        tampered_metrics = producer_choice_tamper["risk_metrics"]
+        assert isinstance(tampered_metrics, dict)
+        tampered_intent["units"] = 2000
+        tampered_metrics.update(
+            {
+                "risk_jpy": 200.0,
+                "reward_jpy": 200.0,
+                "jpy_per_pip": 20.0,
+                "estimated_margin_jpy": 8800.0,
+            }
+        )
+        tampered_metadata.update(
+            {
+                "sizing_actual_units": 2000,
+                "sizing_actual_risk_jpy": 200.0,
+                "sizing_actual_reward_jpy": 200.0,
+                "sizing_actual_jpy_per_pip": 20.0,
+                "sizing_actual_estimated_margin_jpy": 8800.0,
+                "sizing_actual_risk_cap_utilization": 0.4,
+            }
+        )
+        producer_choice_breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([producer_choice_tamper]),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+        producer_choice_candidate = producer_choice_breakdown[
+            "nearest_all_non_live_ready_candidates"
+        ][0]
+        self.assertFalse(
+            producer_choice_candidate["tp_proof_acquisition_route_reachable"]
+        )
+        self.assertIn(
+            "current sizing does not match independent producer receipt",
+            producer_choice_candidate["tp_proof_acquisition_route_reason"],
+        )
+
+    def test_tp_route_rejects_rehashed_metadata_receipt_and_stale_snapshot(
+        self,
+    ) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        intent = row["intent"]
+        assert isinstance(intent, dict)
+        metadata = intent["metadata"]
+        assert isinstance(metadata, dict)
+        receipt = metadata["sizing_actual_conversion_receipt"]
+        assert isinstance(receipt, dict)
+        source = receipt["conversion_source"]
+        assert isinstance(source, dict)
+        source["home_conversion"] = 0.1
+        source["selected_quote_to_jpy"] = 0.1
+        unsigned = {
+            key: value
+            for key, value in receipt.items()
+            if key != "snapshot_conversion_sha256"
+        }
+        receipt["snapshot_conversion_sha256"] = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([row]),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "does not match independent broker snapshot",
+            candidate["tp_proof_acquisition_route_reason"],
+        )
+
+        fresh_row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        stale_intents = _tp_acquisition_intents([fresh_row])
+        stale_intents["generated_at_utc"] = (
+            _REPLAY_NOW + timedelta(seconds=21)
+        ).isoformat().replace("+00:00", "Z")
+        stale_breakdown = _intent_live_readiness_family_breakdown(
+            stale_intents,
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+        stale_candidate = stale_breakdown[
+            "nearest_all_non_live_ready_candidates"
+        ][0]
+        self.assertFalse(stale_candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "was not fresh at intent generation",
+            stale_candidate["tp_proof_acquisition_route_reason"],
+        )
+
+    def test_unique_noncanonical_raw_contract_is_not_actionable(self) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        row["future_unprojected_field"] = float("nan")
+        breakdown = _intent_live_readiness_family_breakdown({"results": [row]})
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["candidate_contract_valid"])
+        self.assertEqual(
+            candidate["candidate_integrity_status"],
+            "RAW_CONTRACT_INVALID",
+        )
+        self.assertIsNone(
+            breakdown["nearest_all_non_live_ready_actionable_candidate"]
+        )
+
+    def test_duplicate_lane_requires_identical_raw_execution_contract(self) -> None:
+        row = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+        )
+        variants: list[tuple[str, dict[str, object]]] = []
+        for field, value in (
+            ("pair", "GBP_USD"),
+            ("side", "LONG"),
+            ("order_type", "LIMIT"),
+            ("units", 2000),
+            ("entry", 1.1001),
+            ("tp", 1.0989),
+            ("sl", 1.1011),
+        ):
+            duplicate = json.loads(json.dumps(row))
+            intent = duplicate["intent"]
+            assert isinstance(intent, dict)
+            intent[field] = value
+            variants.append((field, duplicate))
+
+        method_duplicate = json.loads(json.dumps(row))
+        method_intent = method_duplicate["intent"]
+        assert isinstance(method_intent, dict)
+        market_context = method_intent["market_context"]
+        assert isinstance(market_context, dict)
+        market_context["method"] = "RANGE_ROTATION"
+        variants.append(("market_context.method", method_duplicate))
+
+        evidence_duplicate = json.loads(json.dumps(row))
+        evidence_issues = evidence_duplicate["risk_issues"]
+        assert isinstance(evidence_issues, list)
+        assert isinstance(evidence_issues[0], dict)
+        evidence_issues[0]["authoritative_evidence"] = {"source": "different"}
+        variants.append(("authoritative_evidence", evidence_duplicate))
+
+        receipt_duplicate = json.loads(json.dumps(row))
+        receipt_intent = receipt_duplicate["intent"]
+        assert isinstance(receipt_intent, dict)
+        receipt_metadata = receipt_intent["metadata"]
+        assert isinstance(receipt_metadata, dict)
+        receipt_metadata["capture_take_profit_net_jpy"] = 6427.6031
+        variants.append(("acquisition_receipt", receipt_duplicate))
+
+        risk_allowed_duplicate = json.loads(json.dumps(row))
+        risk_allowed_duplicate["risk_allowed"] = False
+        variants.append(("risk_allowed", risk_allowed_duplicate))
+
+        note_duplicate = json.loads(json.dumps(row))
+        note_duplicate["note"] = "different execution-source contract"
+        variants.append(("note", note_duplicate))
+
+        for label, duplicate in variants:
+            with self.subTest(field=label):
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {"results": [row, duplicate]}
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertFalse(candidate["candidate_contract_valid"])
+                self.assertEqual(
+                    candidate["candidate_integrity_status"],
+                    "DUPLICATE_CONTRADICTION",
+                )
+                self.assertFalse(
+                    candidate["tp_proof_acquisition_route_reachable"]
+                )
+
+    def test_next_action_skips_incomplete_candidate_for_later_complete_one(self) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_live_ready_candidates": [
+                    {
+                        "lane_id": "incomplete-first",
+                        "candidate_contract_valid": True,
+                        "authoritative_live_blocker_codes": ["FORECAST_WATCH_ONLY"],
+                        "authoritative_live_blocker_codes_complete": False,
+                    }
+                ],
+                "nearest_all_non_live_ready_candidates": [
+                    {
+                        "lane_id": "complete-second",
+                        "candidate_contract_valid": True,
+                        "authoritative_live_blocker_codes": ["REWARD_RISK_TOO_LOW"],
+                        "authoritative_live_blocker_codes_complete": True,
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("complete-second", action)
+        self.assertNotIn("without a named gate", action)
+
+    def test_actionable_candidate_is_computed_before_top_eight_slice(self) -> None:
+        rows = [
+            _tp_acquisition_route_result(
+                lane_id=f"incomplete-{index}",
+                blocker_codes=["FORECAST_WATCH_ONLY"],
+                authoritative_codes=["DIFFERENT_CODE"],
+            )
+            for index in range(9)
+        ]
+        rows.append(
+            _tp_acquisition_route_result(
+                lane_id="complete-after-cutoff",
+                blocker_codes=["FORECAST_WATCH_ONLY", "REWARD_RISK_TOO_LOW"],
+                authoritative_codes=[
+                    "FORECAST_WATCH_ONLY",
+                    "REWARD_RISK_TOO_LOW",
+                ],
+            )
+        )
+        breakdown = _intent_live_readiness_family_breakdown({"results": rows})
+
+        visible_ids = {
+            item["lane_id"]
+            for item in breakdown["nearest_all_non_live_ready_candidates"]
+        }
+        self.assertNotIn("complete-after-cutoff", visible_ids)
+        self.assertEqual(
+            breakdown["nearest_all_non_live_ready_actionable_candidate"]["lane_id"],
+            "complete-after-cutoff",
+        )
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("complete-after-cutoff", action)
+
+    def test_tp_route_not_required_ignores_malformed_acquisition_metadata(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    _tp_acquisition_route_result(
+                        lane_id="forecast-only",
+                        metadata={
+                            "positive_rotation_mode": 1,
+                            "capture_take_profit_trades": "7",
+                            "bidask_replay_precision_seed": "true",
+                        },
+                        blocker_codes=["FORECAST_WATCH_ONLY"],
+                    )
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_required"])
+        self.assertIsNone(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertEqual(
+            candidate["tp_proof_acquisition_route_status"],
+            "TP_PROOF_ACQUISITION_ROUTE_NOT_REQUIRED",
+        )
+
+    def test_structured_negative_blocker_requires_route_without_authoritative_codes(
+        self,
+    ) -> None:
+        variants = (
+            {"include_authoritative_codes": False},
+            {
+                "include_authoritative_codes": True,
+                "authoritative_codes": ["UNRELATED_BLOCKER"],
+            },
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                breakdown = _intent_live_readiness_family_breakdown(
+                    {
+                        "results": [
+                            _tp_acquisition_route_result(
+                                lane_id="structured-negative",
+                                **variant,
+                            )
+                        ]
+                    }
+                )
+                candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+                self.assertTrue(candidate["tp_proof_acquisition_required"])
+                self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+
+    def test_authoritative_negative_code_requires_route_when_structured_code_differs(
+        self,
+    ) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    _tp_acquisition_route_result(
+                        lane_id="authoritative-negative",
+                        blocker_codes=["REWARD_RISK_TOO_LOW"],
+                        authoritative_codes=[_NEGATIVE_TP_ROTATION_BLOCKER],
+                    )
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["authoritative_live_blocker_codes_complete"])
+        self.assertTrue(candidate["tp_proof_acquisition_required"])
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+
+    def test_next_action_rejects_legacy_negative_candidate_without_route_fields(
+        self,
+    ) -> None:
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown={
+                "nearest_live_ready_candidates": [
+                    {
+                        "lane_id": "legacy-dead-end",
+                        "blockers": [{"code": _NEGATIVE_TP_ROTATION_BLOCKER}],
+                        "authoritative_live_blocker_codes": [
+                            _NEGATIVE_TP_ROTATION_BLOCKER
+                        ],
+                        "authoritative_live_blocker_codes_complete": True,
+                    }
+                ],
+                "nearest_all_non_live_ready_candidates": [],
+            },
+        )
+
+        self.assertIn("TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE", action)
+        self.assertNotIn("legacy-dead-end", action)
+
+    def test_tp_proven_mode_rejects_non_boolean_live_ready_claim(self) -> None:
+        metadata = _valid_tp_proven_metadata()
+        metadata["positive_rotation_live_ready"] = 1
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    _tp_acquisition_route_result(
+                        lane_id="malformed-tp-proven",
+                        metadata=metadata,
+                    )
+                ]
+            }
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
 
     def test_no_live_ready_next_action_prefers_dry_run_passed_candidate_like_report(
         self,

@@ -69,6 +69,29 @@ class OandaClientTest(unittest.TestCase):
 
         self.assertEqual(urlopen.call_args.kwargs["timeout"], DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS)
 
+    def test_get_json_rejects_duplicate_object_keys(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"instrument":"EUR_USD","instrument":"GBP_USD"}'
+
+        client = OandaReadOnlyClient(
+            token="qr-token",
+            account_id="qr-account",
+            base_url="https://example.invalid",
+        )
+
+        with patch(
+            "quant_rabbit.broker.oanda.urllib.request.urlopen",
+            return_value=FakeResponse(),
+        ), self.assertRaisesRegex(ValueError, "duplicate JSON object key: instrument"):
+            client.get_json("/v3/test")
+
     def test_falls_back_to_project_env_local_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env.local"

@@ -20,6 +20,10 @@ from quant_rabbit.ledger_schema import (
 )
 from quant_rabbit.models import AccountSummary
 from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_EXECUTION_LEDGER_REPORT
+from quant_rabbit.position_execution_contract import (
+    POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS,
+    POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS,
+)
 
 
 GATEWAY_TRADE_CLOSE_RECONCILED = "GATEWAY_TRADE_CLOSE_RECONCILED"
@@ -45,6 +49,10 @@ LEGACY_EVENT_BACKFILL_MIGRATION_KEY = (
     "migration:execution_ledger:legacy_event_backfills"
 )
 LEGACY_EVENT_BACKFILL_MIGRATION_VERSION = "1"
+GATEWAY_SENT_INTEGRITY_MIGRATION_KEY = (
+    "migration:execution_ledger:gateway_sent_integrity"
+)
+GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION = "1"
 GATEWAY_INPUT_PACKET_ARCHIVE_SCHEMA = "gateway_input_packet_archive_v1"
 # Earliest UTC instant from which every later OANDA transaction is expected to
 # have been imported.  A cold-start baseline begins coverage *at* baseline
@@ -211,6 +219,7 @@ class ExecutionLedger:
         """Durably index a gateway payload without requiring a prior file write."""
 
         self._init_db()
+        sent_count = gateway_receipt_sent_count(kind=kind, payload=payload)
         now = _now()
         ledger_payload = _gateway_payload_for_storage(
             payload,
@@ -223,6 +232,7 @@ class ExecutionLedger:
                 kind=kind,
                 path=receipt_path,
                 payload=ledger_payload,
+                sent=sent_count > 0,
                 now=now,
             )
             inserted_events = 0
@@ -279,6 +289,7 @@ class ExecutionLedger:
 
         if not signal_id or not experiment_id or not vehicle_id:
             raise ValueError("predictive SCOUT reservation identity is incomplete")
+        sent_count = gateway_receipt_sent_count(kind=kind, payload=payload)
         if max_daily <= 0 or max_concurrent <= 0:
             raise ValueError("predictive SCOUT reservation caps must be positive")
         candidate_risk_jpy = float(candidate_risk_jpy)
@@ -512,6 +523,7 @@ class ExecutionLedger:
                 kind=kind,
                 path=receipt_path,
                 payload=ledger_payload,
+                sent=sent_count > 0,
                 now=now,
             )
             inserted_events = 0
@@ -694,6 +706,7 @@ class ExecutionLedger:
             conn.commit()
             ensure_profitability_acceptance_indexes(conn)
             self._run_legacy_event_backfill_migration(conn)
+            self._run_gateway_sent_integrity_migration(conn)
 
     @staticmethod
     def _run_legacy_event_backfill_migration(conn: sqlite3.Connection) -> None:
@@ -728,6 +741,38 @@ class ExecutionLedger:
             conn.rollback()
             raise
 
+    @staticmethod
+    def _run_gateway_sent_integrity_migration(conn: sqlite3.Connection) -> None:
+        if (
+            _get_state(conn, GATEWAY_SENT_INTEGRITY_MIGRATION_KEY)
+            == GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION
+        ):
+            return
+
+        # Older writers derived ``gateway_receipts.sent`` only from the
+        # optional top-level boolean. Position partial-close receipts instead
+        # publish an exact sent_count plus duplicated action/result evidence.
+        # Recompute the durable index from those source bytes once, under the
+        # same transaction as the marker, so a malformed or contradictory
+        # legacy receipt cannot leave a partially repaired history.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if (
+                _get_state(conn, GATEWAY_SENT_INTEGRITY_MIGRATION_KEY)
+                != GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION
+            ):
+                _backfill_gateway_receipt_sent_integrity(conn)
+                _set_state(
+                    conn,
+                    GATEWAY_SENT_INTEGRITY_MIGRATION_KEY,
+                    GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION,
+                    _now(),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
     def _write_report(self, summary: ExecutionLedgerSummary) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         lines = [
@@ -754,7 +799,6 @@ class ExecutionLedger:
 
 
 def _events_from_transaction(transaction: dict[str, Any], inserted_at_utc: str) -> list[dict[str, Any]]:
-    transaction_id = str(transaction.get("id") or "")
     transaction_type = str(transaction.get("type") or "UNKNOWN")
     ts = str(transaction.get("time") or inserted_at_utc)
     events: list[dict[str, Any]] = []
@@ -858,6 +902,900 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
     return events
 
 
+def gateway_receipt_sent_count(*, kind: str, payload: dict[str, Any]) -> int:
+    """Return the exact broker-mutation count declared by a gateway receipt.
+
+    Receipt producers have evolved from one top-level ``sent`` boolean to
+    batch ``sent_count`` fields and, for position partial closes, parallel
+    ``actions`` and ``results`` collections. Every representation that is
+    present must be exactly typed and agree. The collections are duplicate
+    views of the same mutations, so their counts are compared rather than
+    added.
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("gateway receipt payload must be an object")
+
+    top_level_sent: bool | None = None
+    if "sent" in payload:
+        raw_sent = payload["sent"]
+        if not isinstance(raw_sent, bool):
+            raise ValueError("gateway receipt sent must be an exact boolean")
+        top_level_sent = raw_sent
+
+    count_evidence: list[tuple[str, int]] = []
+    if "sent_count" in payload:
+        raw_count = payload["sent_count"]
+        if (
+            not isinstance(raw_count, int)
+            or isinstance(raw_count, bool)
+            or raw_count < 0
+        ):
+            raise ValueError(
+                "gateway receipt sent_count must be an exact non-negative integer"
+            )
+        count_evidence.append(("sent_count", raw_count))
+
+    collection_names = {
+        "live_order": ("orders",),
+        "position_execution": ("actions", "results"),
+    }.get(kind, ())
+    for collection_name in collection_names:
+        if collection_name not in payload:
+            continue
+        collection = payload[collection_name]
+        if not isinstance(collection, list):
+            raise ValueError(
+                f"gateway receipt {collection_name} must be an array"
+            )
+        collection_sent_count = 0
+        for index, item in enumerate(collection):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"gateway receipt {collection_name}[{index}] must be an object"
+                )
+            if "sent" not in item:
+                raise ValueError(
+                    f"gateway receipt {collection_name}[{index}].sent is required"
+                )
+            item_sent = item["sent"]
+            if not isinstance(item_sent, bool):
+                raise ValueError(
+                    f"gateway receipt {collection_name}[{index}].sent must be an exact boolean"
+                )
+            collection_sent_count += int(item_sent)
+        count_evidence.append((collection_name, collection_sent_count))
+
+    distinct_counts = {count for _, count in count_evidence}
+    if len(distinct_counts) > 1:
+        details = ", ".join(
+            f"{source}={count}" for source, count in count_evidence
+        )
+        raise ValueError(f"gateway receipt sent counts contradict: {details}")
+
+    sent_count = (
+        count_evidence[0][1]
+        if count_evidence
+        else (1 if top_level_sent is True else 0)
+    )
+    if top_level_sent is not None and top_level_sent != (sent_count > 0):
+        raise ValueError(
+            "gateway receipt top-level sent contradicts sent_count/actions/results"
+        )
+    return sent_count
+
+
+_CURRENT_MUTATION_RECEIPT_STATUSES = {
+    "NO_ACTION",
+    "STAGED",
+    "BLOCKED",
+    "SENT",
+    "PARTIAL_SENT_WITH_BLOCKS",
+}
+_CURRENT_MUTATION_SENT_STATUSES = {"SENT", "PARTIAL_SENT_WITH_BLOCKS"}
+
+
+def validated_gateway_receipt_sent_mutations(
+    *,
+    schema: str,
+    payload: dict[str, Any],
+    broker_snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Validate and normalize current-cycle position mutation evidence.
+
+    ``gateway_receipt_sent_count`` intentionally remains compatible with old
+    ledger rows whose schemas only carried aggregate booleans.  A current
+    cycle digest has a stronger contract: it must not attribute a mutation to
+    a trade, owner, request, or broker transaction unless the current producer
+    schema proves those identities.  Batch producers also publish ``actions``
+    and ``results`` as duplicate views; their sent rows must agree field for
+    field, not merely have the same count.
+    """
+
+    if schema not in {
+        "position-execution",
+        "profit-partial-close",
+        "tp-rebalance",
+    }:
+        raise ValueError(f"unsupported current mutation receipt schema: {schema}")
+    if not isinstance(payload, dict):
+        raise ValueError("gateway receipt payload must be an object")
+
+    sent_count = gateway_receipt_sent_count(
+        kind="position_execution",
+        payload=payload,
+    )
+    send_requested = payload.get("send_requested")
+    if not isinstance(send_requested, bool):
+        raise ValueError("current gateway receipt send_requested must be an exact boolean")
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in _CURRENT_MUTATION_RECEIPT_STATUSES:
+        raise ValueError("current gateway receipt status is missing or unsupported")
+    if sent_count > 0:
+        if send_requested is not True:
+            raise ValueError("sent gateway receipt contradicts send_requested=false")
+        if status not in _CURRENT_MUTATION_SENT_STATUSES:
+            raise ValueError("sent gateway receipt contradicts non-sent status")
+    elif status in _CURRENT_MUTATION_SENT_STATUSES:
+        raise ValueError("non-sent gateway receipt contradicts sent status")
+    if status == "STAGED" and send_requested is not False:
+        raise ValueError("staged gateway receipt contradicts send_requested=true")
+
+    actions = payload.get("actions")
+    if not isinstance(actions, list):
+        raise ValueError("current gateway receipt actions must be an array")
+    _validate_current_mutation_attempt_rows(actions, context="actions")
+    sent_actions = [item for item in actions if item.get("sent") is True]
+    if len(sent_actions) != sent_count:
+        raise ValueError(
+            "current gateway receipt sent_count contradicts sent action rows"
+        )
+
+    allowed_request_types = {
+        "profit-partial-close": {"CLOSE"},
+        "tp-rebalance": {"DEPENDENT_ORDER_REPLACE"},
+        "position-execution": {"CLOSE", "DEPENDENT_ORDER_REPLACE"},
+    }[schema]
+    receipt_generated_at_utc: datetime | None = None
+    if schema == "position-execution" and sent_count > 0:
+        generated_at = _required_receipt_text(
+            payload.get("generated_at_utc"),
+            "generated_at_utc",
+        )
+        receipt_generated_at_utc = _strict_aware_utc(generated_at)
+        if receipt_generated_at_utc is None:
+            raise ValueError(
+                "current position-execution receipt generated_at_utc must be "
+                "timezone-aware"
+            )
+    normalized_actions = [
+        _validated_gateway_mutation_row(
+            item,
+            context=f"actions[{index}]",
+            schema=schema,
+            allowed_request_types=allowed_request_types,
+            receipt_generated_at_utc=receipt_generated_at_utc,
+        )
+        for index, item in enumerate(actions)
+        if item.get("sent") is True
+    ]
+    _validate_mutations_against_broker_snapshot(
+        mutations=normalized_actions,
+        broker_snapshot=broker_snapshot,
+    )
+
+    if schema == "position-execution":
+        if payload.get("sent") is not (sent_count > 0):
+            raise ValueError(
+                "position-execution top-level sent must exactly match sent actions"
+            )
+        return normalized_actions
+
+    raw_count = payload.get("sent_count")
+    if (
+        not isinstance(raw_count, int)
+        or isinstance(raw_count, bool)
+        or raw_count != sent_count
+    ):
+        raise ValueError(
+            f"{schema} sent_count must exactly match sent actions/results"
+        )
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise ValueError(f"{schema} results must be an array")
+    _validate_current_mutation_attempt_rows(results, context="results")
+    normalized_results = [
+        _validated_gateway_mutation_row(
+            item,
+            context=f"results[{index}]",
+            schema=schema,
+            allowed_request_types=allowed_request_types,
+            receipt_generated_at_utc=receipt_generated_at_utc,
+        )
+        for index, item in enumerate(results)
+        if item.get("sent") is True
+    ]
+    _validate_duplicate_mutation_views(
+        schema=schema,
+        actions=normalized_actions,
+        results=normalized_results,
+    )
+    return normalized_actions
+
+
+def _validate_mutations_against_broker_snapshot(
+    *,
+    mutations: list[dict[str, Any]],
+    broker_snapshot: dict[str, Any] | None,
+) -> None:
+    """Bind receipt claims to a separately loaded pre-send broker snapshot."""
+
+    if not mutations:
+        return
+    if not isinstance(broker_snapshot, dict):
+        raise ValueError(
+            "current sent gateway receipt requires an authoritative broker snapshot"
+        )
+    raw_positions = broker_snapshot.get("positions")
+    if not isinstance(raw_positions, list):
+        raise ValueError(
+            "current sent gateway receipt broker snapshot positions must be an array"
+        )
+    positions: dict[str, tuple[str, str]] = {}
+    for index, item in enumerate(raw_positions):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"current sent gateway receipt broker snapshot positions[{index}] "
+                "must be an object"
+            )
+        trade_id = _required_receipt_text(
+            item.get("trade_id"),
+            f"broker_snapshot.positions[{index}].trade_id",
+        )
+        pair = _required_receipt_text(
+            item.get("pair"),
+            f"broker_snapshot.positions[{index}].pair",
+        )
+        owner = _required_receipt_text(
+            item.get("owner"),
+            f"broker_snapshot.positions[{index}].owner",
+        )
+        if owner not in {
+            "trader",
+            "manual",
+            "operator_manual",
+            "external",
+            "unknown",
+        }:
+            raise ValueError(
+                f"current sent gateway receipt broker snapshot positions[{index}] "
+                "owner is not canonical"
+            )
+        if trade_id in positions:
+            raise ValueError(
+                "current sent gateway receipt broker snapshot has duplicate "
+                f"trade_id={trade_id}"
+            )
+        positions[trade_id] = (pair, owner)
+
+    for mutation in mutations:
+        trade_id = str(mutation["trade_id"])
+        broker_identity = positions.get(trade_id)
+        if broker_identity is None:
+            raise ValueError(
+                "current sent gateway receipt trade is absent from the authoritative "
+                f"broker snapshot: trade_id={trade_id}"
+            )
+        if broker_identity != (mutation["pair"], mutation["owner"]):
+            raise ValueError(
+                "current sent gateway receipt pair/owner contradicts the authoritative "
+                f"broker snapshot for trade_id={trade_id}"
+            )
+        receipt_identity = mutation.get("broker_position_identity")
+        if receipt_identity is not None:
+            snapshot_fetched_at = _required_receipt_text(
+                broker_snapshot.get("fetched_at_utc"),
+                "broker_snapshot.fetched_at_utc",
+            )
+            snapshot_fetched_at_utc = _strict_aware_utc(snapshot_fetched_at)
+            identity_fetched_at_utc = _strict_aware_utc(
+                receipt_identity.get("snapshot_fetched_at_utc")
+            )
+            if (
+                snapshot_fetched_at_utc is None
+                or identity_fetched_at_utc is None
+                or snapshot_fetched_at_utc != identity_fetched_at_utc
+            ):
+                raise ValueError(
+                    "current sent gateway receipt snapshot identity timestamp "
+                    "contradicts the authoritative broker snapshot"
+                )
+
+
+def _validated_gateway_mutation_row(
+    item: Any,
+    *,
+    context: str,
+    schema: str,
+    allowed_request_types: set[str],
+    receipt_generated_at_utc: datetime | None,
+) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError(f"current gateway receipt {context} must be an object")
+    if item.get("broker_post_attempted") is not True:
+        raise ValueError(
+            f"current gateway receipt {context}.broker_post_attempted must be true "
+            "for a sent mutation"
+        )
+    trade_id = _required_receipt_text(item.get("trade_id"), f"{context}.trade_id")
+    pair = _required_receipt_text(item.get("pair"), f"{context}.pair")
+    owner = _required_receipt_text(item.get("owner"), f"{context}.owner")
+    if owner not in {"trader", "manual", "operator_manual", "external", "unknown"}:
+        raise ValueError(
+            f"current gateway receipt {context}.owner is not canonical"
+        )
+    broker_position_identity: dict[str, str] | None = None
+    send_boundary_checked_at_utc: str | None = None
+    if schema == "position-execution":
+        send_boundary_checked_at_utc = _required_receipt_text(
+            item.get("send_boundary_checked_at_utc"),
+            f"{context}.send_boundary_checked_at_utc",
+        )
+        send_boundary_checked_at = _strict_aware_utc(
+            send_boundary_checked_at_utc
+        )
+        if send_boundary_checked_at is None:
+            raise ValueError(
+                f"current gateway receipt {context}.send_boundary_checked_at_utc "
+                "must be timezone-aware"
+            )
+        if receipt_generated_at_utc is None:
+            raise ValueError(
+                f"current gateway receipt {context}.send_boundary_checked_at_utc "
+                "requires receipt generated_at_utc"
+            )
+        if (
+            send_boundary_checked_at - receipt_generated_at_utc
+        ).total_seconds() < -POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS:
+            raise ValueError(
+                f"current gateway receipt {context}.send_boundary_checked_at_utc "
+                "precedes receipt generation beyond allowed clock skew"
+            )
+        broker_position_identity = _validated_broker_position_identity(
+            item.get("broker_position_identity"),
+            context=context,
+            trade_id=trade_id,
+            pair=pair,
+            owner=owner,
+            receipt_generated_at_utc=receipt_generated_at_utc,
+            send_boundary_checked_at_utc=send_boundary_checked_at,
+        )
+    management_action = _required_receipt_text(
+        item.get("management_action"),
+        f"{context}.management_action",
+    )
+    request = item.get("request")
+    if not isinstance(request, dict):
+        raise ValueError(f"current gateway receipt {context}.request must be an object")
+    request_type = _required_receipt_text(
+        request.get("type"),
+        f"{context}.request.type",
+    )
+    if request_type not in allowed_request_types:
+        raise ValueError(
+            f"current gateway receipt {context}.request.type is unsupported for schema"
+        )
+    request_trade_id = _required_receipt_text(
+        request.get("trade_id"),
+        f"{context}.request.trade_id",
+    )
+    if request_trade_id != trade_id:
+        raise ValueError(
+            f"current gateway receipt {context} trade_id contradicts request.trade_id"
+        )
+    units: str | None = None
+    if request_type == "CLOSE":
+        units = _required_receipt_text(
+            request.get("units"),
+            f"{context}.request.units",
+        )
+    else:
+        order_request = request.get("order_request")
+        if not isinstance(order_request, dict) or not order_request:
+            raise ValueError(
+                f"current gateway receipt {context}.request.order_request must be a non-empty object"
+            )
+
+    response = item.get("response")
+    if not isinstance(response, dict) or not response:
+        raise ValueError(
+            f"current gateway receipt {context}.response must be a non-empty object"
+        )
+    response_identity = _gateway_response_identity(response)
+    if (
+        response_identity["rejection_transaction_keys"]
+        or "errorCode" in response
+        or "errorMessage" in response
+    ):
+        raise ValueError(
+            f"current gateway receipt {context}.response contains broker reject "
+            "transaction evidence alongside a claimed sent mutation"
+        )
+    if not response_identity["transaction_ids"]:
+        raise ValueError(
+            f"current gateway receipt {context}.response has no broker transaction identity"
+        )
+    response_trade_ids = set(response_identity["trade_ids"])
+    if response_trade_ids != {trade_id}:
+        raise ValueError(
+            f"current gateway receipt {context}.response trade identity is missing "
+            "or contradicts trade_id"
+        )
+    response_instruments = set(response_identity["instruments"])
+    if response_instruments and response_instruments != {pair}:
+        raise ValueError(
+            f"current gateway receipt {context}.response instrument identity "
+            "contradicts pair"
+        )
+    response_owners = set(response_identity["owners"])
+    if response_owners and response_owners != {owner}:
+        raise ValueError(
+            f"current gateway receipt {context}.response owner tag contradicts owner"
+        )
+    order_id = response_identity["order_id"]
+    order_ids = response_identity["order_ids"]
+    fill_transaction_id = response_identity["fill_transaction_id"]
+    if request_type == "CLOSE":
+        if owner != "trader":
+            raise ValueError(
+                f"current gateway receipt {context} CLOSE mutation requires "
+                "exact owner=trader"
+            )
+        order_create_transaction_id = response_identity[
+            "order_create_transaction_id"
+        ]
+        if (
+            len(order_ids) != 1
+            or not order_id
+            or order_id != order_create_transaction_id
+            or not fill_transaction_id
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response lacks exact "
+                "orderCreateTransaction/fill identity for close"
+            )
+        order_create_transaction = response.get("orderCreateTransaction")
+        order_fill_transaction = response.get("orderFillTransaction")
+        trade_close = (
+            order_create_transaction.get("tradeClose")
+            if isinstance(order_create_transaction, dict)
+            else None
+        )
+        if (
+            not isinstance(order_create_transaction, dict)
+            or order_create_transaction.get("type") != "MARKET_ORDER"
+            or order_create_transaction.get("reason") != "TRADE_CLOSE"
+            or order_create_transaction.get("positionFill") != "REDUCE_ONLY"
+            or not isinstance(trade_close, dict)
+            or str(trade_close.get("units") or "") != units
+            or not isinstance(order_fill_transaction, dict)
+            or order_fill_transaction.get("type") != "ORDER_FILL"
+            or order_fill_transaction.get("reason")
+            != "MARKET_ORDER_TRADE_CLOSE"
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response lacks exact OANDA "
+                "trade-close transaction semantics"
+            )
+        transaction_instruments = response_identity["transaction_instruments"]
+        if (
+            transaction_instruments.get("orderCreateTransaction") != pair
+            or transaction_instruments.get("orderFillTransaction") != pair
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response close transactions "
+                "must each carry the exact broker instrument"
+            )
+        transaction_trade_ids = response_identity["transaction_trade_ids"]
+        if (
+            set(transaction_trade_ids.get("orderCreateTransaction", ()))
+            != {trade_id}
+            or set(transaction_trade_ids.get("orderFillTransaction", ()))
+            != {trade_id}
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.response close transactions "
+                "must each carry the exact broker trade identity"
+            )
+    elif not order_id:
+        raise ValueError(
+            f"current gateway receipt {context}.response lacks replacement order identity"
+        )
+    else:
+        transaction_trade_ids = response_identity["transaction_trade_ids"]
+        for transaction_key in response_identity["order_transaction_keys"]:
+            if set(transaction_trade_ids.get(transaction_key, ())) != {trade_id}:
+                raise ValueError(
+                    f"current gateway receipt {context}.response replacement order "
+                    "must carry the exact broker trade identity"
+                )
+
+    return {
+        "trade_id": trade_id,
+        "pair": pair,
+        "owner": owner,
+        "management_action": management_action,
+        "request_type": request_type,
+        "units": units,
+        "request": request,
+        "response": response,
+        "broker_position_identity": broker_position_identity,
+        "send_boundary_checked_at_utc": send_boundary_checked_at_utc,
+        "order_id": order_id,
+        "order_ids": order_ids,
+        "fill_transaction_id": fill_transaction_id,
+        "response_transaction_ids": response_identity["transaction_ids"],
+    }
+
+
+def _validate_current_mutation_attempt_rows(
+    rows: list[Any],
+    *,
+    context: str,
+) -> None:
+    """Reject uncertain POST outcomes before claiming a zero-mutation cycle.
+
+    A transport exception can happen after OANDA accepted a request. Therefore
+    ``sent=false`` is not proof of no mutation once the producer crossed the
+    network boundary. Non-attempted rows may retain a local error object, but
+    they may not carry broker transaction-shaped evidence.
+    """
+
+    for index, item in enumerate(rows):
+        row_context = f"{context}[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"current gateway receipt {row_context} must be an object")
+        attempted = item.get("broker_post_attempted")
+        if not isinstance(attempted, bool):
+            raise ValueError(
+                f"current gateway receipt {row_context}.broker_post_attempted "
+                "must be an exact boolean"
+            )
+        sent = item.get("sent")
+        if sent is True and attempted is not True:
+            raise ValueError(
+                f"current gateway receipt {row_context} sent without a broker POST attempt"
+            )
+        if sent is False and attempted is True:
+            raise ValueError(
+                f"current gateway receipt {row_context} has an uncertain broker POST outcome"
+            )
+        if sent is not False:
+            continue
+        response = item.get("response")
+        if response is None:
+            continue
+        if not isinstance(response, dict):
+            raise ValueError(
+                f"current gateway receipt {row_context}.response must be null or an object"
+            )
+        broker_keys = {
+            key
+            for key in response
+            if key in {"relatedTransactionIDs", "lastTransactionID"}
+            or key.endswith("Transaction")
+        }
+        if broker_keys:
+            raise ValueError(
+                f"current gateway receipt {row_context} non-sent row carries broker "
+                "transaction evidence"
+            )
+
+
+def _required_receipt_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"current gateway receipt {field} must be a non-empty string")
+    return value.strip()
+
+
+def _validated_broker_position_identity(
+    value: Any,
+    *,
+    context: str,
+    trade_id: str,
+    pair: str,
+    owner: str,
+    receipt_generated_at_utc: datetime | None,
+    send_boundary_checked_at_utc: datetime,
+) -> dict[str, str]:
+    """Bind a position-execution action to its broker-snapshot position row."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "snapshot_fetched_at_utc",
+        "trade_id",
+        "pair",
+        "owner",
+    }:
+        raise ValueError(
+            f"current gateway receipt {context}.broker_position_identity "
+            "must be the exact broker snapshot identity object"
+        )
+    snapshot_fetched_at = _required_receipt_text(
+        value.get("snapshot_fetched_at_utc"),
+        f"{context}.broker_position_identity.snapshot_fetched_at_utc",
+    )
+    snapshot_fetched_at_utc = _strict_aware_utc(snapshot_fetched_at)
+    if snapshot_fetched_at_utc is None:
+        raise ValueError(
+            f"current gateway receipt {context}.broker_position_identity "
+            "snapshot timestamp must be timezone-aware"
+        )
+    if receipt_generated_at_utc is None:
+        raise ValueError(
+            f"current gateway receipt {context}.broker_position_identity "
+            "requires receipt generated_at_utc"
+        )
+    for freshness_reference in (
+        receipt_generated_at_utc,
+        send_boundary_checked_at_utc,
+    ):
+        snapshot_age_seconds = (
+            freshness_reference - snapshot_fetched_at_utc
+        ).total_seconds()
+        if (
+            snapshot_age_seconds
+            < -POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS
+            or snapshot_age_seconds > POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS
+        ):
+            raise ValueError(
+                f"current gateway receipt {context}.broker_position_identity "
+                "snapshot timestamp is outside the execution freshness window"
+            )
+    expected = {
+        "snapshot_fetched_at_utc": snapshot_fetched_at,
+        "trade_id": trade_id,
+        "pair": pair,
+        "owner": owner,
+    }
+    if value != expected:
+        raise ValueError(
+            f"current gateway receipt {context}.broker_position_identity "
+            "contradicts action trade_id/pair/owner"
+        )
+    return expected
+
+
+def _gateway_response_identity(response: dict[str, Any]) -> dict[str, Any]:
+    raw_related = response.get("relatedTransactionIDs")
+    related_transaction_ids: list[str] = []
+    if isinstance(raw_related, list):
+        for index, item in enumerate(raw_related):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    "current gateway receipt response.relatedTransactionIDs"
+                    f"[{index}] must be a non-empty string"
+                )
+            related_transaction_ids.append(item.strip())
+    else:
+        raise ValueError(
+            "current gateway receipt response.relatedTransactionIDs must be an array"
+        )
+    if not related_transaction_ids or len(related_transaction_ids) != len(
+        set(related_transaction_ids)
+    ):
+        raise ValueError(
+            "current gateway receipt response.relatedTransactionIDs must be "
+            "non-empty and unique"
+        )
+    last_transaction_id = response.get("lastTransactionID")
+    if not isinstance(last_transaction_id, str) or not last_transaction_id.strip():
+        raise ValueError(
+            "current gateway receipt response.lastTransactionID must be a "
+            "non-empty string"
+        )
+    last_transaction_id = last_transaction_id.strip()
+
+    transaction_object_ids: list[str] = []
+    trade_ids: list[str] = []
+    order_ids: list[str] = []
+    instruments: list[str] = []
+    owners: list[str] = []
+    fill_transaction_id: str | None = None
+    fill_order_id: str | None = None
+    order_create_transaction_id: str | None = None
+    order_transaction_keys: list[str] = []
+    transaction_instruments: dict[str, str | None] = {}
+    transaction_trade_ids: dict[str, list[str]] = {}
+    rejection_transaction_keys: list[str] = []
+
+    for key, value in response.items():
+        if key in {"relatedTransactionIDs", "lastTransactionID"}:
+            continue
+        if not key.endswith("Transaction"):
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"current gateway receipt response.{key} must be an object"
+            )
+        transaction_id = _required_receipt_text(
+            value.get("id"),
+            f"response.{key}.id",
+        )
+        transaction_object_ids.append(transaction_id)
+        if "RejectTransaction" in key:
+            rejection_transaction_keys.append(key)
+        if key == "orderFillTransaction":
+            fill_transaction_id = transaction_id
+        if key == "orderCreateTransaction":
+            order_create_transaction_id = transaction_id
+        is_order_transaction = key == "orderCreateTransaction" or (
+            key.endswith("OrderTransaction")
+            and not any(token in key for token in ("Cancel", "Reject", "Fill"))
+        )
+        if is_order_transaction:
+            order_ids.append(transaction_id)
+            order_transaction_keys.append(key)
+
+        transaction_instrument: str | None = None
+        if "instrument" in value:
+            transaction_instrument = _required_receipt_text(
+                value.get("instrument"),
+                f"response.{key}.instrument",
+            )
+            instruments.append(transaction_instrument)
+        transaction_instruments[key] = transaction_instrument
+        for extension_key in ("clientExtensions", "tradeClientExtensions"):
+            if extension_key not in value:
+                continue
+            extensions = value.get(extension_key)
+            if not isinstance(extensions, dict):
+                raise ValueError(
+                    f"current gateway receipt response.{key}.{extension_key} "
+                    "must be an object"
+                )
+            tag_value = extensions.get("tag")
+            if "tag" not in extensions or tag_value is None or tag_value == "":
+                continue
+            tag = _required_receipt_text(
+                tag_value,
+                f"response.{key}.{extension_key}.tag",
+            ).lower()
+            owners.append(
+                tag if tag in {"trader", "manual"} else "external"
+            )
+
+        row_trade_ids: list[str] = []
+        if "tradeID" in value:
+            row_trade_ids.append(
+                _required_receipt_text(value.get("tradeID"), f"response.{key}.tradeID")
+            )
+        for nested_key in ("tradeClose", "tradeReduced", "tradeOpened"):
+            if nested_key not in value:
+                continue
+            nested = value.get(nested_key)
+            if not isinstance(nested, dict):
+                raise ValueError(
+                    f"current gateway receipt response.{key}.{nested_key} "
+                    "must be an object"
+                )
+            row_trade_ids.append(
+                _required_receipt_text(
+                    nested.get("tradeID"),
+                    f"response.{key}.{nested_key}.tradeID",
+                )
+            )
+        if "tradesClosed" in value:
+            closed = value.get("tradesClosed")
+            if not isinstance(closed, list) or not closed:
+                raise ValueError(
+                    f"current gateway receipt response.{key}.tradesClosed "
+                    "must be a non-empty array"
+                )
+            for index, item in enumerate(closed):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"current gateway receipt response.{key}.tradesClosed"
+                        f"[{index}] must be an object"
+                    )
+                row_trade_ids.append(
+                    _required_receipt_text(
+                        item.get("tradeID"),
+                        f"response.{key}.tradesClosed[{index}].tradeID",
+                    )
+                )
+        transaction_trade_ids[key] = list(dict.fromkeys(row_trade_ids))
+        trade_ids.extend(row_trade_ids)
+        if key == "orderFillTransaction":
+            raw_order_id = value.get("orderID")
+            fill_order_id = _required_receipt_text(
+                raw_order_id,
+                "response.orderFillTransaction.orderID",
+            )
+
+    order_id = order_ids[0] if order_ids else fill_order_id
+    if len(transaction_object_ids) != len(set(transaction_object_ids)):
+        raise ValueError(
+            "current gateway receipt response transaction object IDs are duplicated"
+        )
+    if not set(transaction_object_ids).issubset(set(related_transaction_ids)):
+        raise ValueError(
+            "current gateway receipt response transaction object IDs are not all "
+            "present in relatedTransactionIDs"
+        )
+    if last_transaction_id != related_transaction_ids[-1]:
+        raise ValueError(
+            "current gateway receipt response lastTransactionID contradicts "
+            "relatedTransactionIDs tail"
+        )
+    if order_ids and fill_order_id and fill_order_id not in order_ids:
+        raise ValueError(
+            "current gateway receipt response fill.orderID contradicts order transaction id"
+        )
+    return {
+        "transaction_ids": related_transaction_ids,
+        "transaction_object_ids": transaction_object_ids,
+        "trade_ids": list(dict.fromkeys(trade_ids)),
+        "instruments": list(dict.fromkeys(instruments)),
+        "owners": list(dict.fromkeys(owners)),
+        "order_id": order_id,
+        "order_ids": list(dict.fromkeys(order_ids)),
+        "order_transaction_keys": order_transaction_keys,
+        "order_create_transaction_id": order_create_transaction_id,
+        "fill_transaction_id": fill_transaction_id,
+        "transaction_instruments": transaction_instruments,
+        "transaction_trade_ids": transaction_trade_ids,
+        "rejection_transaction_keys": rejection_transaction_keys,
+    }
+
+
+def _validate_duplicate_mutation_views(
+    *,
+    schema: str,
+    actions: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+) -> None:
+    if len(actions) != len(results):
+        raise ValueError(f"{schema} sent actions/results row counts contradict")
+
+    def keyed(rows: list[dict[str, Any]], source: str) -> dict[str, dict[str, Any]]:
+        keyed_rows: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            trade_id = str(row["trade_id"])
+            if trade_id in keyed_rows:
+                raise ValueError(f"{schema} duplicate sent {source} trade_id={trade_id}")
+            keyed_rows[trade_id] = row
+        return keyed_rows
+
+    action_rows = keyed(actions, "action")
+    result_rows = keyed(results, "result")
+    if set(action_rows) != set(result_rows):
+        raise ValueError(f"{schema} sent actions/results trade identities contradict")
+    compared_fields = (
+        "trade_id",
+        "pair",
+        "owner",
+        "management_action",
+        "request_type",
+        "units",
+        "request",
+        "response",
+        "broker_post_attempted",
+        "broker_position_identity",
+        "send_boundary_checked_at_utc",
+        "order_id",
+        "order_ids",
+        "fill_transaction_id",
+        "response_transaction_ids",
+    )
+    for trade_id, action in action_rows.items():
+        result = result_rows[trade_id]
+        for field in compared_fields:
+            if action.get(field) != result.get(field):
+                raise ValueError(
+                    f"{schema} sent actions/results {field} contradict for trade_id={trade_id}"
+                )
+
+
 def _events_from_gateway_receipt(kind: str, payload: dict[str, Any], now: str) -> list[dict[str, Any]]:
     if kind == "live_order":
         orders = payload.get("orders")
@@ -917,7 +1855,7 @@ def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) 
     response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
     status = str(payload.get("status") or "").upper()
     event_type = "GATEWAY_ORDER_STAGED"
-    if payload.get("sent"):
+    if payload.get("sent") is True:
         event_type = "GATEWAY_ORDER_SENT"
     elif status == "BLOCKED":
         event_type = "GATEWAY_ORDER_BLOCKED"
@@ -958,9 +1896,9 @@ def _gateway_position_event(action: dict[str, Any], *, payload: dict[str, Any], 
     request = action.get("request") if isinstance(action.get("request"), dict) else {}
     response = action.get("response") if isinstance(action.get("response"), dict) else {}
     request_type = str(request.get("type") or "none")
-    if action.get("sent") and request_type == "CLOSE":
+    if action.get("sent") is True and request_type == "CLOSE":
         event_type = "GATEWAY_TRADE_CLOSE_SENT"
-    elif action.get("sent") and request_type == "DEPENDENT_ORDER_REPLACE":
+    elif action.get("sent") is True and request_type == "DEPENDENT_ORDER_REPLACE":
         event_type = "GATEWAY_PROTECTION_REPLACE_SENT"
     elif request and payload.get("send_requested") and action.get("issues"):
         event_type = "GATEWAY_POSITION_ACTION_BLOCKED"
@@ -1328,6 +2266,7 @@ def _insert_gateway_receipt(
     kind: str,
     path: Path,
     payload: dict[str, Any],
+    sent: bool,
     now: str,
 ) -> bool:
     lane_ids = payload.get("lane_ids")
@@ -1346,7 +2285,7 @@ def _insert_gateway_receipt(
             str(payload.get("generated_at_utc") or now),
             kind,
             _text(payload.get("status")),
-            1 if payload.get("sent") else 0,
+            int(sent),
             _text(payload.get("lane_id")),
             json.dumps(lane_ids, ensure_ascii=False, sort_keys=True),
             str(path),
@@ -1896,6 +2835,47 @@ def _backfill_gateway_position_order_ids(conn: sqlite3.Connection) -> int:
     return updated
 
 
+def _backfill_gateway_receipt_sent_integrity(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT receipt_uid, kind, sent, payload_json
+        FROM gateway_receipts
+        ORDER BY rowid ASC
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        receipt_uid = str(row["receipt_uid"] or "")
+        try:
+            payload = json.loads(str(row["payload_json"] or ""))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"gateway receipt {receipt_uid} payload_json is unreadable"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"gateway receipt {receipt_uid} payload_json must be an object"
+            )
+        try:
+            sent_count = gateway_receipt_sent_count(
+                kind=str(row["kind"] or ""),
+                payload=payload,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"gateway receipt {receipt_uid} sent integrity is invalid: {exc}"
+            ) from exc
+        expected_sent = int(sent_count > 0)
+        if row["sent"] == expected_sent:
+            continue
+        cur = conn.execute(
+            "UPDATE gateway_receipts SET sent = ? WHERE receipt_uid = ?",
+            (expected_sent, receipt_uid),
+        )
+        updated += cur.rowcount
+    return updated
+
+
 def _get_state(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
     return str(row["value"]) if row else None
@@ -2121,7 +3101,16 @@ def _trade_close_trade_id(transaction: dict[str, Any]) -> str | None:
 
 
 def _response_order_id(response: dict[str, Any]) -> str | None:
-    for key in ("orderCreateTransaction", "orderFillTransaction", "orderCancelTransaction", "orderRejectTransaction"):
+    for key in (
+        "orderCreateTransaction",
+        "takeProfitOrderTransaction",
+        "stopLossOrderTransaction",
+        "trailingStopLossOrderTransaction",
+        "guaranteedStopLossOrderTransaction",
+        "orderFillTransaction",
+        "orderCancelTransaction",
+        "orderRejectTransaction",
+    ):
         payload = response.get(key)
         if isinstance(payload, dict):
             value = payload.get("orderID") or payload.get("id")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import sys
@@ -8,6 +9,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 
 def _load_script(name: str):
@@ -22,6 +24,21 @@ def _load_script(name: str):
 
 replay = _load_script("oanda_history_replay_validate")
 range_replay = _load_script("oanda_range_scout_replay_validate")
+fetch = sys.modules["oanda_range_scout_truth_fetch"]
+
+
+class _PayloadResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
 
 
 def _dt(value: str) -> datetime:
@@ -62,7 +79,149 @@ def _candle(
     )
 
 
+def _write_sparse_receipted_history(
+    root: Path,
+    *,
+    empty: bool = False,
+) -> tuple[Path, datetime, datetime]:
+    start = _dt("2026-07-01T00:00:00Z")
+    end = _dt("2026-07-01T00:01:00Z")
+    rows = []
+    for timestamp, bid_c, ask_c in (
+        ("2026-07-01T00:00:00Z", 1.1001, 1.1003),
+        ("2026-07-01T00:00:15Z", 1.1002, 1.1004),
+        ("2026-07-01T00:00:55Z", 1.1003, 1.1005),
+    ):
+        rows.append(
+            {
+                "time": timestamp,
+                "complete": True,
+                "volume": 1,
+                "bid": {
+                    "o": str(bid_c),
+                    "h": str(bid_c + 0.0002),
+                    "l": str(bid_c - 0.0004),
+                    "c": str(bid_c),
+                },
+                "ask": {
+                    "o": str(ask_c),
+                    "h": str(ask_c + 0.0002),
+                    "l": str(ask_c - 0.0003),
+                    "c": str(ask_c),
+                },
+            }
+        )
+
+    root = root.resolve()
+    run_dir = root / "run"
+    task = fetch.FetchTask(
+        pair="EUR_USD",
+        granularity="S5",
+        start=start,
+        end=end,
+        price="BA",
+    )
+    client = fetch.OandaReadOnlyClient(
+        token="test-token",
+        account_id="test-account",
+        base_url=fetch.PRODUCTION_OANDA_BASE_URL,
+        env_file=Path("/definitely/missing/qr-test-env"),
+    )
+    payload = {
+        "instrument": "EUR_USD",
+        "granularity": "S5",
+        "candles": [] if empty else rows,
+    }
+    with mock.patch.object(
+        fetch.oanda_module.urllib.request,
+        "urlopen",
+        return_value=_PayloadResponse(payload),
+    ):
+        task_summary = fetch._fetch_task(
+            client,
+            task,
+            run_dir=run_dir,
+            receipt_root=root,
+            max_candles_per_request=4500,
+            sleep_seconds=0.0,
+            retries=1,
+            compress=False,
+            dry_run=False,
+        )
+    summary = {
+        "schema_version": fetch.RANGE_FETCH_SUMMARY_SCHEMA,
+        "generated_at_utc": fetch.base_fetch._iso(datetime.now(timezone.utc)),
+        "window": {
+            "from": fetch.base_fetch._iso(start),
+            "to": fetch.base_fetch._iso(end),
+        },
+        "pairs": ["EUR_USD"],
+        "granularities": ["S5"],
+        "price": "BA",
+        "max_candles_per_request": 4500,
+        "output_root": str(root),
+        "output_dir": str(run_dir),
+        "tasks": [task_summary],
+        "errors": [],
+        "total_rows": task_summary["rows"],
+        "total_requests": task_summary["requests"],
+        "dry_run": False,
+        "include_incomplete": False,
+    }
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return run_dir, start, end
+
+
+def _resign_single_receipt(run_dir: Path, mutate) -> None:
+    root = run_dir.parent
+    receipt_path = root / fetch.RANGE_TRUTH_RECEIPT_FILE
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    summary_path = run_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    mutate(receipt)
+    receipt["task_manifest_sha256"] = fetch.task_manifest_sha256(
+        summary["tasks"][0]
+    )
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = fetch._content_sha256(body)
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    summary["tasks"][0]["range_truth_acquisition_receipt_sha256"] = receipt[
+        "receipt_sha256"
+    ]
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+
 class OandaRangeScoutReplayValidateTest(unittest.TestCase):
+    def test_default_history_selection_uses_latest_successful_run_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            earlier = root / "20260701T000000000000Z"
+            latest = root / "20260702T000000000000Z"
+            failed = root / "20260703T000000000000Z"
+            for run_dir in (earlier, latest, failed):
+                run_dir.mkdir()
+                (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+            (failed / "EUR_USD.partial").write_text("", encoding="utf-8")
+            (root / "latest_summary.json").write_text(
+                json.dumps({"output_dir": str(latest)}),
+                encoding="utf-8",
+            )
+
+            selected = range_replay._range_history_dirs(
+                None,
+                granularity="S5",
+                auto_min_days=30.0,
+                default_root=root,
+            )
+
+            self.assertEqual(selected, [latest])
+
     def test_loader_dedupes_cycle_and_overlapping_persistence(self) -> None:
         rows = [
             {
@@ -291,6 +450,59 @@ class OandaRangeScoutReplayValidateTest(unittest.TestCase):
         self.assertEqual(results[0]["exit_reason"], "TTL_CLOSE")
         self.assertAlmostEqual(results[0]["realized_pips"], 3.0)
 
+    def test_microsecond_forecast_uses_explicit_non_lookahead_s5_clock(self) -> None:
+        row = replace(
+            _row(current=1.103),
+            timestamp_utc=_dt("2026-07-01T00:00:02.123456Z"),
+        )
+        pre_ttl = [
+            _candle(
+                timestamp=f"2026-07-01T00:00:{second:02d}Z",
+                bid_o=1.1000,
+                bid_h=1.1004,
+                bid_l=1.0998,
+                bid_c=1.1003,
+                ask_o=1.1002,
+                ask_h=1.1006,
+                ask_l=1.1000,
+                ask_c=1.1005,
+            )
+            for second in range(5, 60, 5)
+        ]
+        post_ttl_target = _candle(
+            timestamp="2026-07-01T00:01:00Z",
+            bid_o=1.1003,
+            bid_h=1.1012,
+            bid_l=1.1002,
+            bid_c=1.1011,
+            ask_o=1.1005,
+            ask_h=1.1014,
+            ask_l=1.1004,
+            ask_c=1.1013,
+        )
+
+        results, stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": [*pre_ttl, post_ttl_target]},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(10.0,),
+            candle_interval=timedelta(seconds=5),
+        )
+
+        self.assertEqual(
+            range_replay.range_order_activation_at(row),
+            _dt("2026-07-01T00:00:05Z"),
+        )
+        self.assertEqual(
+            range_replay.truth_end(row, ttl_minutes=1),
+            _dt("2026-07-01T00:01:00Z"),
+        )
+        self.assertEqual(stats["complete_truth_windows"], 1)
+        self.assertEqual(results[0]["exit_reason"], "TTL_CLOSE")
+        self.assertEqual(results[0]["exit_at_utc"], "2026-07-01T00:01:00Z")
+        self.assertAlmostEqual(results[0]["realized_pips"], 3.0)
+
     def test_incomplete_truth_tail_is_not_scored_as_ttl_close(self) -> None:
         row = _row(current=1.103)
         lone_fill = _candle(
@@ -336,6 +548,353 @@ class OandaRangeScoutReplayValidateTest(unittest.TestCase):
                 candle_interval=timedelta(seconds=5),
             )
         )
+
+    def test_receipted_full_coverage_accepts_sparse_s5_as_natural_no_tick(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, start, end = _write_sparse_receipted_history(Path(tmp))
+            verified = range_replay.validate_sparse_s5_truth_provenance(
+                [run_dir],
+                required_windows_by_pair={"EUR_USD": [(start, end)]},
+                granularity="S5",
+            )
+            candles, candle_stats = replay._load_candles(
+                [run_dir],
+                granularity="S5",
+                windows_by_pair={"EUR_USD": [(start, end)]},
+            )
+            range_replay._require_lossless_verified_candle_load(candle_stats, verified)
+            results, sparse_stats = range_replay.score_range_forecasts(
+                [_row(current=1.103)],
+                candles,
+                ttl_minutes=1,
+                tp_grid=(10.0,),
+                sl_grid=(10.0,),
+                candle_interval=timedelta(seconds=5),
+                verified_sparse_s5_coverage_by_pair=verified.coverage_by_pair,
+            )
+            strict_results, strict_stats = range_replay.score_range_forecasts(
+                [_row(current=1.103)],
+                candles,
+                ttl_minutes=1,
+                tp_grid=(10.0,),
+                sl_grid=(10.0,),
+                candle_interval=timedelta(seconds=5),
+            )
+
+            self.assertEqual(verified.file_count, 1)
+            self.assertEqual(verified.row_count, 3)
+            self.assertEqual(sparse_stats["complete_truth_windows"], 1)
+            self.assertEqual(results[0]["exit_reason"], "TTL_CLOSE")
+            self.assertEqual(results[0]["exit_at_utc"], "2026-07-01T00:01:00Z")
+            self.assertEqual(strict_results, [])
+            self.assertEqual(strict_stats["skipped_incomplete_truth_window"], 1)
+
+    def test_receipted_sparse_tail_without_ttl_boundary_bar_is_unscorable(self) -> None:
+        row = _row(current=1.103)
+        candles = [
+            _candle(
+                timestamp=timestamp,
+                bid_o=1.1000,
+                bid_h=1.1004,
+                bid_l=1.0998,
+                bid_c=1.1003,
+                ask_o=1.1002,
+                ask_h=1.1006,
+                ask_l=1.1000,
+                ask_c=1.1005,
+            )
+            for timestamp in (
+                "2026-07-01T00:00:00Z",
+                "2026-07-01T00:00:15Z",
+            )
+        ]
+
+        results, stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": candles},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(10.0,),
+            candle_interval=timedelta(seconds=5),
+            verified_sparse_s5_coverage_by_pair={
+                "EUR_USD": [
+                    (
+                        _dt("2026-07-01T00:00:00Z"),
+                        _dt("2026-07-01T00:01:00Z"),
+                    )
+                ]
+            },
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(stats["skipped_incomplete_truth_window"], 1)
+
+    def test_receipted_leading_no_tick_gap_keeps_later_loss_evidence(self) -> None:
+        row = _row(current=1.103)
+        candles = [
+            _candle(
+                timestamp="2026-07-01T00:00:15Z",
+                bid_o=1.1000,
+                bid_h=1.1003,
+                bid_l=1.0998,
+                bid_c=1.1001,
+                ask_o=1.1002,
+                ask_h=1.1005,
+                ask_l=1.0999,
+                ask_c=1.1003,
+            ),
+            _candle(
+                timestamp="2026-07-01T00:00:55Z",
+                bid_o=1.1001,
+                bid_h=1.1002,
+                bid_l=1.0994,
+                bid_c=1.0995,
+                ask_o=1.1003,
+                ask_h=1.1004,
+                ask_l=1.0996,
+                ask_c=1.0997,
+            ),
+        ]
+
+        results, stats = range_replay.score_range_forecasts(
+            [row],
+            {"EUR_USD": candles},
+            ttl_minutes=1,
+            tp_grid=(10.0,),
+            sl_grid=(5.0,),
+            candle_interval=timedelta(seconds=5),
+            verified_sparse_s5_coverage_by_pair={
+                "EUR_USD": [
+                    (
+                        _dt("2026-07-01T00:00:00Z"),
+                        _dt("2026-07-01T00:01:00Z"),
+                    )
+                ]
+            },
+        )
+
+        self.assertEqual(stats["complete_truth_windows"], 1)
+        self.assertEqual(stats["filled_signals"], 1)
+        self.assertEqual(results[0]["exit_reason"], "STOP_LOSS")
+        self.assertEqual(results[0]["realized_pips"], -5.0)
+
+    def test_receipted_leading_no_tick_gap_fills_first_quote_that_crossed_limit(self) -> None:
+        cases = (
+            (
+                "LONG",
+                _row(current=1.101),
+                _candle(
+                    timestamp="2026-07-01T00:00:15Z",
+                    bid_o=1.0996,
+                    bid_h=1.0998,
+                    bid_l=1.0994,
+                    bid_c=1.0995,
+                    ask_o=1.0998,
+                    ask_h=1.1000,
+                    ask_l=1.0996,
+                    ask_c=1.0997,
+                ),
+            ),
+            (
+                "SHORT",
+                _row(current=1.109),
+                _candle(
+                    timestamp="2026-07-01T00:00:15Z",
+                    bid_o=1.1102,
+                    bid_h=1.1104,
+                    bid_l=1.1100,
+                    bid_c=1.1103,
+                    ask_o=1.1104,
+                    ask_h=1.1106,
+                    ask_l=1.1102,
+                    ask_c=1.1105,
+                ),
+            ),
+        )
+        ttl_boundary = _candle(
+            timestamp="2026-07-01T00:00:55Z",
+            bid_o=1.1000,
+            bid_h=1.1002,
+            bid_l=1.0998,
+            bid_c=1.1001,
+            ask_o=1.1002,
+            ask_h=1.1004,
+            ask_l=1.1000,
+            ask_c=1.1003,
+        )
+
+        for side, row, crossed_first_quote in cases:
+            with self.subTest(side=side):
+                results, stats = range_replay.score_range_forecasts(
+                    [row],
+                    {"EUR_USD": [crossed_first_quote, ttl_boundary]},
+                    ttl_minutes=1,
+                    tp_grid=(10.0,),
+                    sl_grid=(5.0,),
+                    candle_interval=timedelta(seconds=5),
+                    verified_sparse_s5_coverage_by_pair={
+                        "EUR_USD": [
+                            (
+                                _dt("2026-07-01T00:00:00Z"),
+                                _dt("2026-07-01T00:01:00Z"),
+                            )
+                        ]
+                    },
+                )
+
+                self.assertEqual(stats["complete_truth_windows"], 1)
+                self.assertEqual(stats["skipped_not_passive"], 0)
+                self.assertEqual(stats["filled_signals"], 1)
+                self.assertEqual(results[0]["side"], side)
+                self.assertEqual(results[0]["fill_at_utc"], "2026-07-01T00:00:15Z")
+                self.assertEqual(results[0]["exit_reason"], "STOP_LOSS")
+                self.assertEqual(results[0]["realized_pips"], -5.0)
+
+    def test_sparse_s5_provenance_rejects_legacy_hash_and_coverage_gaps(self) -> None:
+        cases = ("missing_receipt", "file_hash_drift", "receipt_chain_tamper", "coverage_outside")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                run_dir, start, end = _write_sparse_receipted_history(Path(tmp))
+                required = {"EUR_USD": [(start, end)]}
+                if case == "missing_receipt":
+                    (run_dir.parent / fetch.RANGE_TRUTH_RECEIPT_FILE).unlink()
+                elif case == "file_hash_drift":
+                    candle_path = Path(
+                        json.loads((run_dir / "summary.json").read_text())["tasks"][0]["path"]
+                    )
+                    candle_path.write_bytes(candle_path.read_bytes() + b"\n")
+                elif case == "receipt_chain_tamper":
+                    receipt_path = run_dir.parent / fetch.RANGE_TRUTH_RECEIPT_FILE
+                    receipt = json.loads(receipt_path.read_text())
+                    receipt["rows"] += 1
+                    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+                else:
+                    required = {"EUR_USD": [(start - timedelta(seconds=5), end)]}
+
+                with self.assertRaises(ValueError):
+                    range_replay.validate_sparse_s5_truth_provenance(
+                        [run_dir],
+                        required_windows_by_pair=required,
+                        granularity="S5",
+                    )
+
+    def test_overlapping_empty_receipted_windows_do_not_merge_into_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first, start, end = _write_sparse_receipted_history(
+                root / "first",
+                empty=True,
+            )
+            second, _, _ = _write_sparse_receipted_history(
+                root / "second",
+                empty=True,
+            )
+
+            with self.assertRaises(ValueError):
+                range_replay.validate_sparse_s5_truth_provenance(
+                    [first, second],
+                    required_windows_by_pair={"EUR_USD": [(start, end)]},
+                    granularity="S5",
+                )
+
+    def test_sparse_s5_provenance_rejects_summary_contract_tampering(self) -> None:
+        mutations = {
+            "published": lambda value, _root: value["tasks"][0].__setitem__("published", False),
+            "dry_run": lambda value, _root: value["tasks"][0].__setitem__("dry_run", True),
+            "partial": lambda value, _root: value["tasks"][0].__setitem__("partial_path", "/tmp/x"),
+            "errors": lambda value, _root: value["tasks"][0].__setitem__("errors", [{"error": "x"}]),
+            "requests": lambda value, _root: value["tasks"][0].__setitem__("requests", 0),
+            "windows": lambda value, _root: value["tasks"][0].__setitem__("windows", 0),
+            "max_request": lambda value, _root: value.__setitem__(
+                "max_candles_per_request", fetch.OANDA_MAX_CANDLES_PER_REQUEST + 1
+            ),
+            "rows": lambda value, _root: value["tasks"][0].__setitem__(
+                "rows", value["tasks"][0]["rows"] + 1
+            ),
+            "pair": lambda value, _root: value["tasks"][0].__setitem__("pair", "GBP_USD"),
+            "granularity": lambda value, _root: value["tasks"][0].__setitem__(
+                "granularity", "M1"
+            ),
+            "price": lambda value, _root: value["tasks"][0].__setitem__("price", "M"),
+            "path_containment": lambda value, root: value["tasks"][0].__setitem__(
+                "path", str(root / "outside.jsonl")
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                run_dir, start, end = _write_sparse_receipted_history(Path(tmp))
+                summary_path = run_dir / "summary.json"
+                summary = copy.deepcopy(json.loads(summary_path.read_text(encoding="utf-8")))
+                if label == "path_containment":
+                    source = Path(summary["tasks"][0]["path"])
+                    (run_dir.parent / "outside.jsonl").write_bytes(source.read_bytes())
+                mutate(summary, run_dir.parent)
+                summary_path.write_text(
+                    json.dumps(summary, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+
+                with self.assertRaises(ValueError):
+                    range_replay.validate_sparse_s5_truth_provenance(
+                        [run_dir],
+                        required_windows_by_pair={"EUR_USD": [(start, end)]},
+                        granularity="S5",
+                    )
+
+    def test_sparse_s5_provenance_rejects_resigned_immature_and_unparseable_truth(self) -> None:
+        for case in (
+            "recorded_before_maturity",
+            "dependency_hash_drift",
+            "parser_skip",
+            "duplicate",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                run_dir, start, end = _write_sparse_receipted_history(Path(tmp))
+                summary_path = run_dir / "summary.json"
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                candle_path = Path(summary["tasks"][0]["path"])
+                if case == "recorded_before_maturity":
+                    _resign_single_receipt(
+                        run_dir,
+                        lambda receipt: receipt.__setitem__(
+                            "recorded_at_utc", "2026-06-30T23:59:59Z"
+                        ),
+                    )
+                elif case == "dependency_hash_drift":
+                    _resign_single_receipt(
+                        run_dir,
+                        lambda receipt: receipt["dependencies"][0].__setitem__(
+                            "sha256", "0" * 64
+                        ),
+                    )
+                else:
+                    lines = candle_path.read_text(encoding="utf-8").splitlines()
+                    if case == "parser_skip":
+                        malformed = json.loads(lines[1])
+                        malformed.pop("ask")
+                        lines[1] = json.dumps(malformed, sort_keys=True)
+                    else:
+                        lines.append(lines[-1])
+                        summary["tasks"][0]["rows"] += 1
+                        summary["total_rows"] += 1
+                        summary_path.write_text(
+                            json.dumps(summary, indent=2, sort_keys=True),
+                            encoding="utf-8",
+                        )
+                    candle_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                    def resign_file(receipt):
+                        receipt["candle_sha256"] = fetch._sha256_bytes(candle_path.read_bytes())
+                        receipt["rows"] = len(lines)
+
+                    _resign_single_receipt(run_dir, resign_file)
+
+                with self.assertRaises(ValueError):
+                    range_replay.validate_sparse_s5_truth_provenance(
+                        [run_dir],
+                        required_windows_by_pair={"EUR_USD": [(start, end)]},
+                        granularity="S5",
+                    )
 
     def test_friday_no_market_classification_uses_ttl_not_forecast_horizon(self) -> None:
         friday_16_ny = replace(

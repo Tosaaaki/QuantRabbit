@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,6 +55,7 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
 from quant_rabbit.capture_economics import (
+    evaluate_exact_vehicle_net_edge,
     read_exact_vehicle_net_metrics,
     read_exact_vehicle_take_profit_metrics,
 )
@@ -1431,17 +1434,26 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
         payload = json.loads(charts_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    generated_at_raw = payload.get("generated_at_utc") if isinstance(payload, dict) else None
+    if _strict_payload_utc_datetime(generated_at_raw) is None:
+        return None
     raw_charts = payload.get("charts")
     if not isinstance(raw_charts, list):
         return None
     indexed: dict[str, dict[str, Any]] = {}
+    seen_pairs: set[str] = set()
     for chart in raw_charts:
+        if not isinstance(chart, dict):
+            return None
         pair = chart.get("pair")
-        if not isinstance(pair, str):
-            continue
+        if pair.__class__ is not str or pair not in DEFAULT_TRADER_PAIRS or pair in seen_pairs:
+            return None
+        seen_pairs.add(pair)
+        raw_chart = dict(chart)
+        raw_chart["generated_at_utc"] = generated_at_raw
         per_tf: dict[str, Any] = {
-            "__raw_chart": chart,
-            "generated_at_utc": payload.get("generated_at_utc"),
+            "__raw_chart": raw_chart,
+            "generated_at_utc": generated_at_raw,
             "dominant_regime": chart.get("dominant_regime"),
             "long_score": chart.get("long_score"),
             "short_score": chart.get("short_score"),
@@ -1460,7 +1472,12 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             # see the same statistic without re-deriving anything.
             "confluence": chart.get("confluence") if isinstance(chart.get("confluence"), dict) else {},
         }
-        for view in chart.get("views", []) or []:
+        views = chart.get("views")
+        if not isinstance(views, list):
+            return None
+        for view in views:
+            if not isinstance(view, dict):
+                return None
             granularity = view.get("granularity")
             if isinstance(granularity, str):
                 per_tf[f"{granularity}__regime"] = view.get("regime")
@@ -3631,7 +3648,7 @@ def _forecast_seed_for_pair(
     if not isinstance(raw_chart, dict) or quote is None:
         return None
     raw_chart = dict(raw_chart)
-    raw_chart.setdefault("generated_at_utc", per_tf.get("generated_at_utc"))
+    raw_chart["generated_at_utc"] = per_tf.get("generated_at_utc")
     if not _forecast_seed_has_rich_chart_context(raw_chart):
         return None
     try:
@@ -3728,6 +3745,7 @@ def _forecast_seed_for_pair(
             calendar_path=artifact_root / "economic_calendar.json",
             strategy_profile_path=artifact_root / "strategy_profile.json",
             now_utc=getattr(snapshot, "fetched_at_utc", None),
+            require_technical_candle_integrity=True,
         )
     except Exception:
         return None
@@ -5759,7 +5777,15 @@ class IntentGenerator:
             for_live_send=False,
         )
         if risk.metrics is not None:
-            intent.metadata.update(_actual_sizing_risk_metadata(intent, risk.metrics))
+            intent.metadata.update(
+                _actual_sizing_risk_metadata(
+                    intent,
+                    risk.metrics,
+                    snapshot=snapshot,
+                    lane_id=lane_id,
+                    data_root=data_root,
+                )
+            )
         strategy_profile_evidence = strategy_profile.issue_evidence(intent) if strategy_profile else None
         strategy_issues = tuple(
             issues_to_dicts(
@@ -6683,6 +6709,9 @@ LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 # Wilson stress check and zero-TP-loss requirement below still decide whether a
 # thin sample is usable.
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
+EXACT_VEHICLE_TP_METRICS_SOURCE = (
+    "data/execution_ledger.db:exact_vehicle_take_profit"
+)
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
@@ -6896,9 +6925,7 @@ def _loss_asymmetry_sizing_plan(
     if exact_vehicle_required:
         metadata["capture_take_profit_exact_vehicle_required"] = True
         metadata["capture_take_profit_vehicle"] = vehicle
-        metadata["capture_take_profit_metrics_source"] = (
-            "data/execution_ledger.db:exact_vehicle_take_profit"
-        )
+        metadata["capture_take_profit_metrics_source"] = EXACT_VEHICLE_TP_METRICS_SOURCE
         metadata["broad_capture_take_profit_scope"] = broad_scope_name
         metadata["broad_capture_take_profit_scope_key"] = broad_scope_key
         metadata["broad_capture_take_profit_trades"] = broad_metrics.get("trades")
@@ -7076,6 +7103,15 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     if str(metadata.get("position_intent") or "").upper() == "HEDGE":
         return False
     method = intent.market_context.method if intent.market_context is not None else None
+    if _positive_rotation_source_integrity_failures(
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+        order_type=intent.order_type,
+        metadata=metadata,
+        mode="TP_PROVEN_HARVEST",
+    ):
+        return False
     direction_bias = _method_direction_bias(metadata, method)
     direction_bias_conflict = (
         direction_bias in {Side.LONG.value, Side.SHORT.value}
@@ -7263,6 +7299,15 @@ def _tp_proof_collection_evidence(
     if order_type == OrderType.MARKET:
         return None
     if str(position_metadata.get("position_intent") or metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None
+    if _positive_rotation_source_integrity_failures(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        metadata=metadata,
+        mode="TP_PROOF_COLLECTION_HARVEST",
+    ):
         return None
     direction_bias = _method_direction_bias(metadata, method)
     direction_bias_conflict = (
@@ -8346,11 +8391,239 @@ def _annotate_oanda_campaign_current_risk_firepower(
     return metrics
 
 
-def _actual_sizing_risk_metadata(intent: OrderIntent, metrics: Any) -> dict[str, Any]:
+_SIZING_CONVERSION_RECEIPT_VERSION = "BROKER_SNAPSHOT_CONVERSION_V1"
+SIZING_ACTUAL_ANCHOR_VERSION = "ACTUAL_SIZING_ANCHOR_V1"
+SIZING_ACTUAL_RECEIPT_DIRECTORY = "sizing_actual_receipts"
+
+
+def _strict_utc_iso(value: object) -> str | None:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _strict_positive_float(value: object) -> float | None:
+    if value.__class__ not in {int, float}:
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+    return number
+
+
+def sizing_conversion_snapshot_receipt(
+    pair: str,
+    snapshot: BrokerSnapshot,
+) -> dict[str, Any] | None:
+    """Canonical broker-snapshot anchor for the conversion used by sizing.
+
+    The receipt deliberately starts from broker snapshot fields, never from
+    units, JPY-per-pip, risk, reward, or margin.  Consumers must resolve it
+    against the separately loaded current broker snapshot before trusting it.
+    """
+
+    if pair.__class__ is not str or pair not in DEFAULT_SPECS:
+        return None
+    pair_quote = snapshot.quotes.get(pair)
+    snapshot_fetched_at = _strict_utc_iso(snapshot.fetched_at_utc)
+    if pair_quote is None or snapshot_fetched_at is None or pair_quote.pair != pair:
+        return None
+    pair_bid = _strict_positive_float(pair_quote.bid)
+    pair_ask = _strict_positive_float(pair_quote.ask)
+    pair_timestamp = _strict_utc_iso(pair_quote.timestamp_utc)
+    if (
+        pair_bid is None
+        or pair_ask is None
+        or pair_ask < pair_bid
+        or pair_timestamp is None
+    ):
+        return None
+
+    quote_currency = pair.split("_", 1)[1]
+    source: dict[str, Any] = {
+        "kind": None,
+        "source_currency": quote_currency,
+        "instrument": None,
+        "orientation": None,
+        "bid": None,
+        "ask": None,
+        "home_conversion": None,
+        "timestamp_utc": None,
+        "selected_price_rule": None,
+        "selected_quote_to_jpy": None,
+    }
+    if quote_currency == "JPY":
+        source.update(
+            {
+                "kind": "QUOTE_CURRENCY_IS_JPY",
+                "orientation": "IDENTITY_JPY_TO_JPY",
+                "selected_price_rule": "IDENTITY_ONE",
+                "selected_quote_to_jpy": 1.0,
+            }
+        )
+    else:
+        home_conversion = _strict_positive_float(
+            snapshot.home_conversions.get(quote_currency)
+        )
+        if home_conversion is not None:
+            source.update(
+                {
+                    "kind": "OANDA_HOME_CONVERSION",
+                    "orientation": "QUOTE_CURRENCY_TO_ACCOUNT_HOME_JPY",
+                    "home_conversion": home_conversion,
+                    "selected_price_rule": "BROKER_HOME_CONVERSION",
+                    "selected_quote_to_jpy": home_conversion,
+                }
+            )
+        else:
+            conversion_pair = f"{quote_currency}_JPY"
+            conversion_quote = snapshot.quotes.get(conversion_pair)
+            if conversion_quote is None or conversion_quote.pair != conversion_pair:
+                return None
+            conversion_bid = _strict_positive_float(conversion_quote.bid)
+            conversion_ask = _strict_positive_float(conversion_quote.ask)
+            conversion_timestamp = _strict_utc_iso(conversion_quote.timestamp_utc)
+            if (
+                conversion_bid is None
+                or conversion_ask is None
+                or conversion_ask < conversion_bid
+                or conversion_timestamp is None
+            ):
+                return None
+            source.update(
+                {
+                    "kind": "BROKER_CONVERSION_QUOTE",
+                    "instrument": conversion_pair,
+                    "orientation": "QUOTE_CURRENCY_TO_JPY",
+                    "bid": conversion_bid,
+                    "ask": conversion_ask,
+                    "timestamp_utc": conversion_timestamp,
+                    "selected_price_rule": "MAX_BID_ASK",
+                    "selected_quote_to_jpy": max(conversion_bid, conversion_ask),
+                }
+            )
+
+    payload = {
+        "contract_version": _SIZING_CONVERSION_RECEIPT_VERSION,
+        "pair": pair,
+        "quote_currency": quote_currency,
+        "snapshot_fetched_at_utc": snapshot_fetched_at,
+        "pair_quote": {
+            "instrument": pair,
+            "bid": pair_bid,
+            "ask": pair_ask,
+            "timestamp_utc": pair_timestamp,
+        },
+        "conversion_source": source,
+    }
+    try:
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return {
+        **payload,
+        "snapshot_conversion_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+
+
+def sizing_conversion_snapshot_receipt_from_payload(
+    pair: str,
+    payload: object,
+) -> dict[str, Any] | None:
+    """Build the sizing anchor from an independently loaded snapshot payload."""
+
+    if payload.__class__ is not dict or pair.__class__ is not str:
+        return None
+    fetched_at = _strict_payload_utc_datetime(payload.get("fetched_at_utc"))
+    quotes_payload = payload.get("quotes")
+    if fetched_at is None or quotes_payload.__class__ is not dict:
+        return None
+    pair_quote = _strict_payload_quote(pair, quotes_payload.get(pair))
+    if pair_quote is None:
+        return None
+
+    quote_currency = pair.split("_", 1)[1] if "_" in pair else ""
+    quotes = {pair: pair_quote}
+    home_conversions: dict[str, float] = {}
+    if quote_currency != "JPY":
+        home_payload = payload.get("home_conversions")
+        if home_payload is not None and home_payload.__class__ is not dict:
+            return None
+        raw_home_conversion = (
+            home_payload.get(quote_currency)
+            if isinstance(home_payload, dict)
+            else None
+        )
+        home_conversion = _strict_positive_float(raw_home_conversion)
+        if raw_home_conversion is not None and home_conversion is None:
+            return None
+        if home_conversion is not None:
+            home_conversions[quote_currency] = home_conversion
+        else:
+            conversion_pair = f"{quote_currency}_JPY"
+            conversion_quote = _strict_payload_quote(
+                conversion_pair,
+                quotes_payload.get(conversion_pair),
+            )
+            if conversion_quote is None:
+                return None
+            quotes[conversion_pair] = conversion_quote
+
+    snapshot = BrokerSnapshot(
+        fetched_at_utc=fetched_at,
+        quotes=quotes,
+        home_conversions=home_conversions,
+    )
+    return sizing_conversion_snapshot_receipt(pair, snapshot)
+
+
+def _strict_payload_utc_datetime(value: object) -> datetime | None:
+    if value.__class__ is not str or not value or value != value.strip() or "T" not in value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _strict_payload_quote(pair: str, value: object) -> Quote | None:
+    if value.__class__ is not dict:
+        return None
+    bid = _strict_positive_float(value.get("bid"))
+    ask = _strict_positive_float(value.get("ask"))
+    timestamp = _strict_payload_utc_datetime(value.get("timestamp_utc"))
+    if bid is None or ask is None or ask < bid or timestamp is None:
+        return None
+    raw_pair = value.get("pair")
+    if raw_pair is not None and raw_pair != pair:
+        return None
+    return Quote(pair=pair, bid=bid, ask=ask, timestamp_utc=timestamp)
+
+
+def _actual_sizing_risk_metadata(
+    intent: OrderIntent,
+    metrics: Any,
+    *,
+    snapshot: BrokerSnapshot,
+    lane_id: str,
+    data_root: Path | None,
+) -> dict[str, Any]:
     """Record executable order risk separately from the configured cap."""
 
     metadata = intent.metadata or {}
     max_loss_jpy = _optional_float(metadata.get("max_loss_jpy"))
+    spec = DEFAULT_SPECS[intent.pair]
+    conversion_receipt = sizing_conversion_snapshot_receipt(intent.pair, snapshot)
     risk_jpy = max(0.0, float(metrics.risk_jpy))
     reward_jpy = max(0.0, float(metrics.reward_jpy))
     out: dict[str, Any] = {
@@ -8359,12 +8632,208 @@ def _actual_sizing_risk_metadata(intent: OrderIntent, metrics: Any) -> dict[str,
         "sizing_actual_loss_pips": round(max(0.0, float(metrics.loss_pips)), 4),
         "sizing_actual_reward_pips": round(max(0.0, float(metrics.reward_pips)), 4),
         "sizing_actual_units": int(intent.units),
+        "sizing_actual_jpy_per_pip": round(float(metrics.jpy_per_pip), 8),
+        "sizing_actual_margin_rate": round(float(spec.margin_rate), 8),
+        "sizing_actual_estimated_margin_jpy": round(
+            max(0.0, float(metrics.estimated_margin_jpy)),
+            4,
+        ),
         "sizing_actual_risk_basis": "RISK_ENGINE_VALIDATED_ORDER",
     }
+    if conversion_receipt is not None:
+        quote_to_jpy = conversion_receipt["conversion_source"][
+            "selected_quote_to_jpy"
+        ]
+        out.update(
+            {
+                "sizing_actual_quote_to_jpy": round(float(quote_to_jpy), 8),
+                "sizing_actual_conversion_receipt": conversion_receipt,
+            }
+        )
     if max_loss_jpy is not None and max_loss_jpy > 0:
         out["sizing_actual_risk_cap_jpy"] = round(max_loss_jpy, 4)
         out["sizing_actual_risk_cap_utilization"] = round(risk_jpy / max_loss_jpy, 6)
+    anchor_receipt = sizing_actual_anchor_receipt(
+        lane_id=lane_id,
+        intent=intent,
+        risk_metrics=asdict(metrics),
+        sizing_metadata={**metadata, **out},
+    )
+    if anchor_receipt is not None and data_root is not None:
+        _persist_sizing_actual_anchor(data_root, anchor_receipt)
+        out.update(
+            {
+                "sizing_actual_anchor_contract": SIZING_ACTUAL_ANCHOR_VERSION,
+                "sizing_actual_anchor_sha256": anchor_receipt["receipt_sha256"],
+            }
+        )
     return out
+
+
+def sizing_actual_anchor_receipt(
+    *,
+    lane_id: object,
+    intent: OrderIntent,
+    risk_metrics: object,
+    sizing_metadata: object,
+) -> dict[str, Any] | None:
+    """Canonical receipt for the exact producer-selected sizing result."""
+
+    if lane_id.__class__ is not str or not lane_id or risk_metrics.__class__ is not dict:
+        return None
+    if sizing_metadata.__class__ is not dict:
+        return None
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method is None or intent.pair not in DEFAULT_SPECS:
+        return None
+    numeric_metric_keys = (
+        "entry_price",
+        "loss_pips",
+        "reward_pips",
+        "risk_jpy",
+        "reward_jpy",
+        "reward_risk",
+        "jpy_per_pip",
+        "estimated_margin_jpy",
+    )
+    anchored_metrics: dict[str, float] = {}
+    for key in numeric_metric_keys:
+        value = risk_metrics.get(key)
+        if value.__class__ not in {int, float} or not math.isfinite(float(value)):
+            return None
+        anchored_metrics[key] = float(value)
+
+    sizing_keys = (
+        "sizing_actual_risk_jpy",
+        "sizing_actual_reward_jpy",
+        "sizing_actual_loss_pips",
+        "sizing_actual_reward_pips",
+        "sizing_actual_units",
+        "sizing_actual_jpy_per_pip",
+        "sizing_actual_quote_to_jpy",
+        "sizing_actual_margin_rate",
+        "sizing_actual_estimated_margin_jpy",
+        "sizing_actual_risk_basis",
+        "sizing_actual_risk_cap_jpy",
+        "sizing_actual_risk_cap_utilization",
+    )
+    anchored_sizing = {key: sizing_metadata.get(key) for key in sizing_keys}
+    if anchored_sizing["sizing_actual_units"].__class__ is not int:
+        return None
+    if anchored_sizing["sizing_actual_risk_basis"] != "RISK_ENGINE_VALIDATED_ORDER":
+        return None
+    for key in sizing_keys:
+        if key in {"sizing_actual_units", "sizing_actual_risk_basis"}:
+            continue
+        value = anchored_sizing[key]
+        if value.__class__ not in {int, float} or not math.isfinite(float(value)):
+            return None
+
+    constraint_keys = (
+        "max_loss_jpy",
+        "loss_asymmetry_guard_base_max_loss_jpy",
+        "loss_asymmetry_guard_loss_cap_jpy",
+        "loss_asymmetry_guard_effective_max_loss_jpy",
+    )
+    constraints: dict[str, float] = {}
+    for key in constraint_keys:
+        value = sizing_metadata.get(key)
+        if value.__class__ not in {int, float} or not math.isfinite(float(value)):
+            return None
+        constraints[key] = float(value)
+
+    conversion_receipt = sizing_metadata.get("sizing_actual_conversion_receipt")
+    if conversion_receipt.__class__ is not dict:
+        return None
+    conversion_sha = conversion_receipt.get("snapshot_conversion_sha256")
+    if (
+        conversion_sha.__class__ is not str
+        or len(conversion_sha) != 64
+        or any(char not in "0123456789abcdef" for char in conversion_sha)
+    ):
+        return None
+
+    spec = DEFAULT_SPECS[intent.pair]
+    payload = {
+        "contract_version": SIZING_ACTUAL_ANCHOR_VERSION,
+        "lane_id": lane_id,
+        "intent": {
+            "pair": intent.pair,
+            "side": intent.side.value,
+            "order_type": intent.order_type.value,
+            "owner": intent.owner.value,
+            "method": method.value,
+            "units": intent.units,
+            "entry": float(intent.entry or 0.0),
+            "tp": float(intent.tp),
+            "sl": float(intent.sl),
+        },
+        "risk_metrics": anchored_metrics,
+        "sizing_metadata": anchored_sizing,
+        "constraints": constraints,
+        "instrument_spec": {
+            "pip_factor": int(spec.pip_factor),
+            "margin_rate": float(spec.margin_rate),
+            "minimum_production_lot_units": int(MIN_PRODUCTION_LOT_UNITS),
+        },
+        "snapshot_conversion_sha256": conversion_sha,
+    }
+    try:
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return {
+        **payload,
+        "receipt_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+
+
+def _persist_sizing_actual_anchor(
+    data_root: Path,
+    receipt: dict[str, Any],
+) -> Path:
+    digest = receipt.get("receipt_sha256")
+    if digest.__class__ is not str or len(digest) != 64:
+        raise RuntimeError("sizing actual anchor has no canonical digest")
+    directory = data_root / SIZING_ACTUAL_RECEIPT_DIRECTORY
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{digest}.json"
+    serialized = json.dumps(
+        receipt,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        allow_nan=False,
+    ) + "\n"
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=directory,
+            prefix=f".{digest}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        try:
+            os.link(temporary_path, path)
+        except FileExistsError:
+            if path.read_text(encoding="utf-8") != serialized:
+                raise RuntimeError("immutable sizing actual anchor digest collision")
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return path
 
 
 def _oanda_campaign_firepower_harvest_rotation_allowed(
@@ -8782,6 +9251,488 @@ def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
         return False
     method = intent.market_context.method if intent.market_context is not None else None
     return bool(_bidask_replay_precision_support_for_intent(intent, metadata, method))
+
+
+def positive_rotation_proof_acquisition_contract(
+    intent: OrderIntent,
+) -> dict[str, Any]:
+    """Revalidate a declared positive-rotation evidence route without side effects.
+
+    The intent generator owns the contracts that mint the three acquisition
+    modes.  Read-only auditors must call this boundary instead of inferring a
+    reachable route from a mode label or a few copied metrics.  The probe uses
+    a shallow metadata copy because the existing producer validators annotate
+    their calculated confidence fields on success.
+    """
+
+    original = intent.metadata if isinstance(intent.metadata, dict) else {}
+    raw_mode = original.get("positive_rotation_mode")
+    mode = raw_mode if raw_mode.__class__ is str else None
+    probe = replace(intent, metadata=dict(original))
+    failed_checks: list[str] = []
+
+    if mode == POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE:
+        return {
+            "positive_rotation_mode": mode,
+            "reachable": False,
+            "failed_checks": [
+                "OANDA campaign firepower is audit-only and cannot create "
+                "local pair/side/method TP proof"
+            ],
+        }
+    if mode not in {
+        "TP_PROOF_COLLECTION_HARVEST",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "TP_PROVEN_HARVEST",
+    }:
+        return {
+            "positive_rotation_mode": mode,
+            "reachable": False,
+            "failed_checks": [
+                "positive_rotation_mode is not an approved acquisition mode"
+            ],
+        }
+
+    if original.get("loss_asymmetry_guard_active") is not True:
+        failed_checks.append("loss_asymmetry_guard_active is not exact true")
+    if (
+        str(original.get("capture_economics_status") or "").upper()
+        != "NEGATIVE_EXPECTANCY"
+    ):
+        failed_checks.append("capture_economics_status is not NEGATIVE_EXPECTANCY")
+
+    if mode == "TP_PROOF_COLLECTION_HARVEST":
+        if not _tp_proof_collection_harvest_rotation_allowed(probe):
+            failed_checks.append(
+                "intent does not satisfy the producer TP-proof collection shape"
+            )
+        expected_annotations = {
+            key: probe.metadata.get(key)
+            for key in (
+                "positive_rotation_confidence_method",
+                "positive_rotation_confidence_z",
+                "positive_rotation_tp_wins",
+                "positive_rotation_tp_trades",
+                "positive_rotation_tp_win_rate_lower",
+                "positive_rotation_loss_proxy_jpy",
+                "positive_rotation_pessimistic_expectancy_jpy",
+                "positive_rotation_proof_collection_ready",
+                "positive_rotation_proof_collection_mode",
+                "positive_rotation_proof_collection_min_trades",
+                "positive_rotation_proof_collection_target_trades",
+                "positive_rotation_proof_collection_gap_trades",
+            )
+        }
+        failed_checks.extend(
+            _positive_rotation_annotation_mismatches(
+                original,
+                expected_annotations,
+            )
+        )
+        live_ready = original.get("positive_rotation_live_ready")
+        if "positive_rotation_live_ready" in original and live_ready is not False:
+            failed_checks.append(
+                "proof collection must omit live-ready or declare exact false"
+            )
+    elif mode == "TP_PROVEN_HARVEST":
+        if not _tp_proven_harvest_rotation_allowed(probe):
+            failed_checks.append(
+                "intent does not satisfy the producer TP-proven HARVEST shape"
+            )
+        expected_annotations = {
+            key: probe.metadata.get(key)
+            for key in (
+                "positive_rotation_confidence_method",
+                "positive_rotation_confidence_z",
+                "positive_rotation_tp_wins",
+                "positive_rotation_tp_trades",
+                "positive_rotation_tp_win_rate_lower",
+                "positive_rotation_loss_proxy_jpy",
+                "positive_rotation_pessimistic_expectancy_jpy",
+            )
+        }
+        failed_checks.extend(
+            _positive_rotation_annotation_mismatches(
+                original,
+                expected_annotations,
+            )
+        )
+        if original.get("positive_rotation_live_ready") is not True:
+            failed_checks.append("TP-proven live-ready is not exact true")
+    else:
+        if not _predictive_scout_forward_evidence_allowed(probe):
+            failed_checks.append(
+                "intent does not satisfy the canonical predictive-SCOUT producer shape"
+            )
+        method = (
+            probe.market_context.method
+            if probe.market_context is not None
+            else None
+        )
+        if method != TradeMethod.BREAKOUT_FAILURE:
+            failed_checks.append("predictive SCOUT method is not BREAKOUT_FAILURE")
+        if str(original.get("desk") or "").lower() != "failure_trader":
+            failed_checks.append("predictive SCOUT desk is not failure_trader")
+        if (
+            str(original.get("campaign_role") or "").upper()
+            != "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+        ):
+            failed_checks.append(
+                "predictive SCOUT campaign role is not the canonical contrarian role"
+            )
+        if str(original.get("broker_stop_loss_mode") or "").upper() != "INTENT_SL":
+            failed_checks.append("predictive SCOUT broker stop-loss mode is not INTENT_SL")
+        if original.get("predictive_scout_promotion_allowed") is not False:
+            failed_checks.append("predictive SCOUT auto-promotion is not exact false")
+        if original.get("bidask_replay_precision_seed") is not True:
+            failed_checks.append("bidask_replay_precision_seed is not exact true")
+        if original.get("positive_rotation_live_ready") is not False:
+            failed_checks.append("predictive SCOUT live-ready is not exact false")
+
+    failed_checks.extend(_positive_rotation_source_type_failures(original, mode=mode))
+    failed_checks.extend(
+        _positive_rotation_source_integrity_failures(
+            pair=probe.pair,
+            side=probe.side,
+            method=(
+                probe.market_context.method
+                if probe.market_context is not None
+                else None
+            ),
+            order_type=probe.order_type,
+            metadata=original,
+            mode=mode,
+        )
+    )
+    return {
+        "positive_rotation_mode": mode,
+        "reachable": not failed_checks,
+        "failed_checks": list(dict.fromkeys(failed_checks)),
+    }
+
+
+def _positive_rotation_annotation_mismatches(
+    original: dict[str, Any],
+    expected: dict[str, Any],
+) -> list[str]:
+    mismatches: list[str] = []
+    for key, expected_value in expected.items():
+        actual_value = original.get(key)
+        if (
+            expected_value is None
+            or actual_value.__class__ is not expected_value.__class__
+            or actual_value != expected_value
+        ):
+            mismatches.append(f"{key} does not match the producer calculation")
+    return mismatches
+
+
+def _positive_rotation_source_type_failures(
+    metadata: dict[str, Any],
+    *,
+    mode: str,
+) -> list[str]:
+    failures: list[str] = []
+    if mode in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}:
+        for key in (
+            "capture_take_profit_trades",
+            "capture_take_profit_wins",
+            "capture_take_profit_losses",
+        ):
+            value = metadata.get(key)
+            if value.__class__ is not int or value < 0:
+                failures.append(f"{key} is not an exact non-negative integer")
+        for key in (
+            "capture_take_profit_expectancy_jpy",
+            "capture_take_profit_net_jpy",
+            "capture_take_profit_avg_win_jpy",
+            "capture_take_profit_avg_loss_jpy",
+            "capture_avg_win_jpy",
+            "capture_avg_loss_jpy",
+            "capture_market_close_expectancy_jpy",
+            "loss_asymmetry_guard_loss_cap_jpy",
+            "loss_asymmetry_guard_base_max_loss_jpy",
+            "loss_asymmetry_guard_effective_max_loss_jpy",
+        ):
+            value = metadata.get(key)
+            if (
+                value.__class__ not in {int, float}
+                or not math.isfinite(float(value))
+            ):
+                failures.append(f"{key} is not an exact finite number")
+        exact_vehicle_required = metadata.get(
+            "capture_take_profit_exact_vehicle_required"
+        )
+        if (
+            "capture_take_profit_exact_vehicle_required" in metadata
+            and exact_vehicle_required.__class__ is not bool
+        ):
+            failures.append(
+                "capture_take_profit_exact_vehicle_required is not an exact boolean"
+            )
+    return failures
+
+
+def _positive_rotation_source_integrity_failures(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    order_type: OrderType,
+    metadata: dict[str, Any],
+    mode: str,
+) -> list[str]:
+    """Reject internally impossible or non-authoritative TP proof receipts."""
+
+    if mode not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}:
+        return []
+
+    failures = _positive_rotation_source_type_failures(metadata, mode=mode)
+    count_keys = (
+        "capture_take_profit_trades",
+        "capture_take_profit_wins",
+        "capture_take_profit_losses",
+    )
+    counts = {key: metadata.get(key) for key in count_keys}
+    if all(value.__class__ is int and value >= 0 for value in counts.values()):
+        trades = counts["capture_take_profit_trades"]
+        wins = counts["capture_take_profit_wins"]
+        losses = counts["capture_take_profit_losses"]
+        if wins > trades:
+            failures.append("capture_take_profit_wins exceeds trades")
+        if losses > trades:
+            failures.append("capture_take_profit_losses exceeds trades")
+        if wins + losses != trades:
+            failures.append("capture_take_profit_wins plus losses does not equal trades")
+    else:
+        trades = wins = losses = None
+
+    if metadata.get("capture_take_profit_exact_vehicle_required") is not True:
+        failures.append("exact-vehicle TP proof is not required by the source")
+    scope = metadata.get("capture_take_profit_scope")
+    if scope.__class__ is not str or scope != "PAIR_SIDE_METHOD_VEHICLE":
+        failures.append("TP proof scope is not exact pair/side/method/vehicle")
+
+    vehicle = _vehicle_for_order_type(order_type)
+    method_value = str(getattr(method, "value", method) or "")
+    expected_scope_key = (
+        f"{pair}|{side.value}|{method_value}|{vehicle}|TAKE_PROFIT_ORDER"
+    )
+    source_vehicle = metadata.get("capture_take_profit_vehicle")
+    if (
+        vehicle == "UNKNOWN"
+        or source_vehicle.__class__ is not str
+        or source_vehicle != vehicle
+    ):
+        failures.append("capture_take_profit_vehicle does not match the order type")
+    scope_key = metadata.get("capture_take_profit_scope_key")
+    if scope_key.__class__ is not str or scope_key != expected_scope_key:
+        failures.append("capture_take_profit_scope_key does not match the exact vehicle")
+    if not _capture_take_profit_scope_matches_values(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        metadata=metadata,
+    ):
+        failures.append("TP proof scope does not match the intent identity")
+    metrics_source = metadata.get("capture_take_profit_metrics_source")
+    if (
+        metrics_source.__class__ is not str
+        or metrics_source != EXACT_VEHICLE_TP_METRICS_SOURCE
+    ):
+        failures.append("TP proof metrics source is not the exact-vehicle execution ledger")
+    if metadata.get("loss_asymmetry_guard_active") is not True:
+        failures.append("loss_asymmetry_guard_active is not exact true")
+    capture_status = metadata.get("capture_economics_status")
+    if capture_status.__class__ is not str or capture_status != "NEGATIVE_EXPECTANCY":
+        failures.append("capture_economics_status is not exact NEGATIVE_EXPECTANCY")
+
+    expected_guard_mode: str | set[str]
+    if mode == "TP_PROVEN_HARVEST":
+        expected_guard_mode = "TP_PROVEN_RELAXED"
+        if metadata.get("loss_asymmetry_guard_relaxed") is not True:
+            failures.append("TP-proven guard relaxation is not exact true")
+    else:
+        expected_guard_mode = {
+            "CAP_AVG_WIN",
+            LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE,
+        }
+        if metadata.get("loss_asymmetry_guard_relaxed") is not False:
+            failures.append("TP-proof collection guard relaxation is not exact false")
+    guard_mode = metadata.get("loss_asymmetry_guard_mode")
+    if (
+        guard_mode.__class__ is not str
+        or (
+            guard_mode != expected_guard_mode
+            if isinstance(expected_guard_mode, str)
+            else guard_mode not in expected_guard_mode
+        )
+    ):
+        failures.append("loss_asymmetry_guard_mode is not the producer mode")
+
+    guard_values = {
+        key: metadata.get(key)
+        for key in (
+            "loss_asymmetry_guard_loss_cap_jpy",
+            "loss_asymmetry_guard_base_max_loss_jpy",
+            "loss_asymmetry_guard_effective_max_loss_jpy",
+        )
+    }
+    guard_values_valid = all(
+        value.__class__ in {int, float}
+        and math.isfinite(float(value))
+        and float(value) > 0.0
+        for value in guard_values.values()
+    )
+    if not guard_values_valid:
+        failures.append("loss-asymmetry guard caps are not positive finite numbers")
+    else:
+        loss_cap = float(guard_values["loss_asymmetry_guard_loss_cap_jpy"])
+        base_cap = float(guard_values["loss_asymmetry_guard_base_max_loss_jpy"])
+        effective_cap = float(
+            guard_values["loss_asymmetry_guard_effective_max_loss_jpy"]
+        )
+        capture_avg_win = metadata.get("capture_avg_win_jpy")
+        if (
+            capture_avg_win.__class__ not in {int, float}
+            or not math.isfinite(float(capture_avg_win))
+            or float(capture_avg_win) <= 0.0
+            or not math.isclose(
+                loss_cap,
+                float(capture_avg_win),
+                rel_tol=0.0,
+                abs_tol=0.0001,
+            )
+        ):
+            failures.append(
+                "loss-asymmetry loss cap is not the observed capture average winner"
+            )
+        max_loss_jpy = metadata.get("max_loss_jpy")
+        if (
+            max_loss_jpy.__class__ not in {int, float}
+            or not math.isfinite(float(max_loss_jpy))
+            or not math.isclose(
+                float(max_loss_jpy),
+                effective_cap,
+                rel_tol=0.0,
+                abs_tol=0.0001,
+            )
+        ):
+            failures.append("intent max_loss_jpy is not the effective guard cap")
+        if mode == "TP_PROVEN_HARVEST":
+            if not math.isclose(
+                effective_cap,
+                base_cap,
+                rel_tol=0.0,
+                abs_tol=0.0001,
+            ):
+                failures.append("TP-proven effective guard cap is not the base cap")
+        elif guard_mode == "CAP_AVG_WIN":
+            expected_cap = min(base_cap, loss_cap)
+            if not math.isclose(
+                effective_cap,
+                expected_cap,
+                rel_tol=0.0,
+                abs_tol=0.0001,
+            ):
+                failures.append("proof-collection effective guard cap is inconsistent")
+        elif guard_mode == LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE:
+            min_lot_fields = {
+                key: metadata.get(key)
+                for key in (
+                    "positive_rotation_proof_collection_min_lot_loss_jpy",
+                    "positive_rotation_proof_collection_original_cap_jpy",
+                    "positive_rotation_proof_collection_normal_cap_jpy",
+                )
+            }
+            if not all(
+                value.__class__ in {int, float}
+                and math.isfinite(float(value))
+                and float(value) > 0.0
+                for value in min_lot_fields.values()
+            ):
+                failures.append("proof-collection minimum-lot caps are malformed")
+            else:
+                min_lot_loss = float(
+                    min_lot_fields[
+                        "positive_rotation_proof_collection_min_lot_loss_jpy"
+                    ]
+                )
+                original_cap = float(
+                    min_lot_fields[
+                        "positive_rotation_proof_collection_original_cap_jpy"
+                    ]
+                )
+                normal_cap = float(
+                    min_lot_fields[
+                        "positive_rotation_proof_collection_normal_cap_jpy"
+                    ]
+                )
+                if not (
+                    metadata.get("positive_rotation_proof_collection_min_lot_sizing")
+                    is True
+                    and metadata.get(
+                        "positive_rotation_proof_collection_min_lot_units"
+                    )
+                    == MIN_PRODUCTION_LOT_UNITS
+                    and math.isclose(
+                        effective_cap,
+                        min_lot_loss,
+                        rel_tol=0.0,
+                        abs_tol=0.0001,
+                    )
+                    and math.isclose(
+                        loss_cap,
+                        original_cap,
+                        rel_tol=0.0,
+                        abs_tol=0.0001,
+                    )
+                    and math.isclose(
+                        base_cap,
+                        normal_cap,
+                        rel_tol=0.0,
+                        abs_tol=0.0001,
+                    )
+                    and original_cap < effective_cap <= normal_cap
+                ):
+                    failures.append(
+                        "proof-collection minimum-lot guard cap contract is inconsistent"
+                    )
+
+    tp_arithmetic = evaluate_exact_vehicle_net_edge(
+        {
+            "trades": metadata.get("capture_take_profit_trades"),
+            "wins": metadata.get("capture_take_profit_wins"),
+            "losses": metadata.get("capture_take_profit_losses"),
+            "net_jpy": metadata.get("capture_take_profit_net_jpy"),
+            "expectancy_jpy_per_trade": metadata.get(
+                "capture_take_profit_expectancy_jpy"
+            ),
+            "avg_win_jpy": metadata.get("capture_take_profit_avg_win_jpy"),
+            "avg_loss_jpy": metadata.get("capture_take_profit_avg_loss_jpy"),
+        }
+    )
+    if not tp_arithmetic["arithmetic_consistent"]:
+        failures.append("exact-vehicle TP proof arithmetic is inconsistent")
+    if not tp_arithmetic["positive_consistent"]:
+        failures.append("exact-vehicle TP proof is not consistently positive")
+
+    loss_proxy = metadata.get("capture_avg_loss_jpy")
+    if (
+        loss_proxy.__class__ not in {int, float}
+        or not math.isfinite(float(loss_proxy))
+        or float(loss_proxy) <= 0.0
+    ):
+        failures.append("capture_avg_loss_jpy is not a positive finite loss proxy")
+    market_close_expectancy = metadata.get("capture_market_close_expectancy_jpy")
+    if (
+        market_close_expectancy.__class__ not in {int, float}
+        or not math.isfinite(float(market_close_expectancy))
+        or float(market_close_expectancy) >= 0.0
+    ):
+        failures.append("market-close expectancy is not a negative finite number")
+    return failures
 
 
 def _intent_from_lane(

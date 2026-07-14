@@ -20,7 +20,9 @@ from quant_rabbit.cli import (
     _SL_FREE_RUNTIME_DEFAULTS,
     _auto_refresh_market_evidence_if_required,
     _direct_autotrade_audit_sidecar_steps,
+    _fresh_partial_close_forbidden_trade_reasons,
     _post_autotrade_failure_sidecar_steps,
+    _partial_close_receipt_actions,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
     _resolve_audit_execution_ledger_db,
@@ -49,6 +51,70 @@ _EQUITY_DERIVED_RISK_ARGS = (
     "--risk-equity-jpy",
     "200000",
 )
+
+
+class PartialCloseOwnershipBoundaryTest(unittest.TestCase):
+    def test_partial_close_receipt_preserves_non_trader_owner(self) -> None:
+        actions = _partial_close_receipt_actions(
+            [
+                {
+                    "trade_id": "manual-472987",
+                    "pair": "EUR_USD",
+                    "owner": "operator_manual",
+                    "close_units": 7500,
+                    "sent": False,
+                    "error": "NON_TRADER_PROFIT_PARTIAL_CLOSE_FORBIDDEN",
+                }
+            ],
+            management_action="PROFIT_PARTIAL_CLOSE",
+        )
+
+        self.assertEqual(actions[0]["owner"], "operator_manual")
+
+    def test_partial_close_receipt_missing_owner_fails_closed_to_unknown(self) -> None:
+        actions = _partial_close_receipt_actions(
+            [
+                {
+                    "trade_id": "owner-missing",
+                    "pair": "EUR_USD",
+                    "close_units": 1000,
+                    "sent": False,
+                    "error": "FRESH_BROKER_POSITION_TRUTH_REQUIRED",
+                }
+            ],
+            management_action="PROFIT_PARTIAL_CLOSE",
+        )
+
+        self.assertEqual(actions[0]["owner"], "unknown")
+
+    def test_fresh_non_trader_position_blocks_partial_close_send(self) -> None:
+        now = datetime.now(timezone.utc)
+        position = BrokerPosition(
+            trade_id="manual-472987",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=22500,
+            entry_price=1.14048,
+            owner=Owner.OPERATOR_MANUAL,
+        )
+
+        class Client:
+            @staticmethod
+            def snapshot(pairs):
+                self.assertEqual(pairs, ("EUR_USD",))
+                return BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(position,),
+                )
+
+        reasons = _fresh_partial_close_forbidden_trade_reasons(
+            broker_client=Client(),
+            actions=[SimpleNamespace(trade_id="manual-472987", pair="EUR_USD")],
+            local_positions=[position],
+        )
+
+        self.assertIn("manual-472987", reasons)
+        self.assertIn("NON_TRADER_PARTIAL_CLOSE_FORBIDDEN", reasons["manual-472987"])
 
 
 class RuntimeLedgerSelectionTest(unittest.TestCase):
@@ -3508,6 +3574,127 @@ class CliHelpTest(unittest.TestCase):
             saved = json.loads(output.read_text())
             self.assertEqual(saved["positions"][0]["trade_id"], "t-position")
 
+    def test_tp_rebalance_writes_strict_durable_sent_receipt(self) -> None:
+        from quant_rabbit.execution_ledger import (
+            validated_gateway_receipt_sent_mutations,
+        )
+        from quant_rabbit.strategy.tp_rebalancer import TPAdjustment
+
+        class ReplaceClient:
+            def replace_trade_dependent_orders(
+                self,
+                trade_id: str,
+                order_request: dict,
+            ) -> dict:
+                self.trade_id = trade_id
+                self.order_request = order_request
+                return {
+                    "takeProfitOrderTransaction": {
+                        "id": "tp-order-1",
+                        "tradeID": trade_id,
+                    },
+                    "relatedTransactionIDs": ["tp-order-1"],
+                    "lastTransactionID": "tp-order-1",
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            pair_charts = root / "pair_charts.json"
+            output = root / "tp_rebalance.json"
+            ledger = root / "execution_ledger.db"
+            ledger_report = root / "execution_ledger.md"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "trade_id": "T-TP-1",
+                                "pair": "USD_JPY",
+                                "side": "SHORT",
+                                "units": 1000,
+                                "entry_price": 160.0,
+                                "take_profit": 159.7,
+                                "stop_loss": None,
+                                "unrealized_pl_jpy": 500.0,
+                                "owner": "trader",
+                            }
+                        ],
+                        "quotes": {},
+                    }
+                )
+            )
+            pair_charts.write_text(json.dumps({"charts": []}))
+            adjustment = TPAdjustment(
+                trade_id="T-TP-1",
+                pair="USD_JPY",
+                side="SHORT",
+                entry_price=160.0,
+                current_tp=159.7,
+                new_tp=159.5,
+                distance_pips_old=30,
+                distance_pips_new=50,
+                rationale="strict receipt regression",
+            )
+            client = ReplaceClient()
+            stdout = io.StringIO()
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"QR_CYCLE_STEP_RUN_ID": "tp-producer-run"},
+                    clear=False,
+                ),
+                mock.patch(
+                    "quant_rabbit.strategy.tp_rebalancer.compute_all_tp_adjustments",
+                    return_value=[adjustment],
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.OandaExecutionClient",
+                    return_value=client,
+                ),
+                redirect_stdout(stdout),
+            ):
+                code = main(
+                    [
+                        "tp-rebalance",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(pair_charts),
+                        "--output",
+                        str(output),
+                        "--execution-ledger-db",
+                        str(ledger),
+                        "--execution-ledger-report",
+                        str(ledger_report),
+                    ]
+                )
+
+            payload = json.loads(output.read_text())
+            mutations = validated_gateway_receipt_sent_mutations(
+                schema="tp-rebalance",
+                payload=payload,
+                broker_snapshot=json.loads(snapshot.read_text()),
+            )
+            with sqlite3.connect(ledger) as conn:
+                event = conn.execute(
+                    "SELECT event_type, trade_id, order_id FROM execution_events"
+                ).fetchone()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "SENT")
+        self.assertEqual(payload["cycle_step_run_id"], "tp-producer-run")
+        self.assertEqual(payload["sent_count"], 1)
+        self.assertEqual(payload["execution_ledger"]["status"], "RECORDED")
+        self.assertEqual(payload["actions"][0]["owner"], "trader")
+        self.assertEqual(mutations[0]["trade_id"], "T-TP-1")
+        self.assertEqual(mutations[0]["order_id"], "tp-order-1")
+        self.assertEqual(
+            event,
+            ("GATEWAY_PROTECTION_REPLACE_SENT", "T-TP-1", "tp-order-1"),
+        )
+
     def test_position_execution_command_stages_position_management_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3517,7 +3704,7 @@ class CliHelpTest(unittest.TestCase):
             report = root / "position_execution.md"
             ledger = root / "execution_ledger.db"
             ledger_report = root / "execution_ledger.md"
-            fetched_at = datetime(2026, 6, 12, 13, 45, tzinfo=timezone.utc)
+            fetched_at = datetime.now(timezone.utc)
             snapshot.write_text(json.dumps({
                 "fetched_at_utc": fetched_at.isoformat(),
                 "positions": [
@@ -3544,7 +3731,7 @@ class CliHelpTest(unittest.TestCase):
                 "home_conversions": {"USD": 160.0, "JPY": 1.0},
             }))
             management.write_text(json.dumps({
-                "generated_at_utc": "2026-06-12T13:45:00+00:00",
+                "generated_at_utc": fetched_at.isoformat(),
                 "snapshot_fetched_at_utc": fetched_at.isoformat(),
                 "action": "TAKE_PROFIT_MARKET",
                 "positions": [
@@ -3658,10 +3845,18 @@ class CliHelpTest(unittest.TestCase):
                 return {
                     "orderCreateTransaction": {
                         "id": "101",
+                        "instrument": "EUR_USD",
                         "reason": "TRADE_CLOSE",
                         "tradeClose": {"tradeID": trade_id, "units": units},
                     },
-                    "relatedTransactionIDs": ["101"],
+                    "orderFillTransaction": {
+                        "id": "102",
+                        "instrument": "EUR_USD",
+                        "orderID": "101",
+                        "tradesClosed": [{"tradeID": trade_id}],
+                    },
+                    "relatedTransactionIDs": ["101", "102"],
+                    "lastTransactionID": "102",
                 }
 
             def replace_trade_dependent_orders(self, trade_id: str, order_request: dict) -> dict:
@@ -3672,7 +3867,7 @@ class CliHelpTest(unittest.TestCase):
             snapshot = root / "snapshot.json"
             management = root / "position_management.json"
             output = root / "position_execution.json"
-            fetched_at = datetime(2026, 6, 12, 13, 45, tzinfo=timezone.utc)
+            fetched_at = datetime.now(timezone.utc)
             snapshot.write_text(json.dumps({
                 "fetched_at_utc": fetched_at.isoformat(),
                 "positions": [
@@ -3699,7 +3894,7 @@ class CliHelpTest(unittest.TestCase):
                 "home_conversions": {"USD": 160.0, "JPY": 1.0},
             }))
             management.write_text(json.dumps({
-                "generated_at_utc": "2026-06-12T13:45:00+00:00",
+                "generated_at_utc": fetched_at.isoformat(),
                 "snapshot_fetched_at_utc": fetched_at.isoformat(),
                 "action": "TAKE_PROFIT_MARKET",
                 "positions": [
@@ -7228,6 +7423,618 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertEqual(digest["slowest_steps"][0]["step"], "generate-intents")
         self.assertAlmostEqual(digest["total_step_seconds"], 11.0)
+
+    def test_cycle_digest_surfaces_current_profit_partial_broker_mutation(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tp_receipt = root / "tp_rebalance.json"
+            profit_receipt = root / "profit_partial_close.json"
+            position_receipt = root / "position_execution.json"
+            broker_snapshot = root / "broker_snapshot.json"
+            broker_snapshot.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "trade_id": "472987",
+                                "pair": "EUR_USD",
+                                "owner": "trader",
+                            }
+                        ]
+                    }
+                )
+            )
+            action = {
+                "trade_id": "472987",
+                "pair": "EUR_USD",
+                "owner": "trader",
+                "management_action": "PROFIT_PARTIAL_CLOSE",
+                "sent": True,
+                "broker_post_attempted": True,
+                "request": {
+                    "type": "CLOSE",
+                    "trade_id": "472987",
+                    "units": "7500",
+                },
+                "response": {
+                    "orderCreateTransaction": {
+                        "id": "473028",
+                        "instrument": "EUR_USD",
+                        "type": "MARKET_ORDER",
+                        "reason": "TRADE_CLOSE",
+                        "positionFill": "REDUCE_ONLY",
+                        "tradeClose": {"tradeID": "472987", "units": "7500"},
+                    },
+                    "orderFillTransaction": {
+                        "id": "473029",
+                        "orderID": "473028",
+                        "instrument": "EUR_USD",
+                        "type": "ORDER_FILL",
+                        "reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "tradeReduced": {"tradeID": "472987"},
+                    },
+                    "relatedTransactionIDs": ["473028", "473029"],
+                    "lastTransactionID": "473029",
+                },
+            }
+            tp_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:00+00:00",
+                        "cycle_step_run_id": "tp-run",
+                        "status": "NO_ACTION",
+                        "send_requested": True,
+                        "sent": False,
+                        "sent_count": 0,
+                        "actions": [],
+                        "results": [],
+                    }
+                )
+            )
+            profit_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                        "cycle_step_run_id": "profit-run",
+                        "status": "SENT",
+                        "send_requested": True,
+                        "sent_count": 1,
+                        "actions": [action],
+                        "results": [action],
+                    }
+                )
+            )
+            position_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:25:00+00:00",
+                        "cycle_step_run_id": "position-run",
+                        "status": "NO_ACTION",
+                        "send_requested": True,
+                        "sent": False,
+                        "sent_count": 0,
+                        "actions": [],
+                        "results": [],
+                    }
+                )
+            )
+            step_results = [
+                {
+                    "step": "tp-rebalance",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:23:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                    "cycle_step_run_id": "tp-run",
+                },
+                {
+                    "step": "profit-partial-close --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:24:27+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:29+00:00",
+                    "cycle_step_run_id": "profit-run",
+                },
+                {
+                    "step": "position-execution --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:24:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:25:01+00:00",
+                    "cycle_step_run_id": "position-run",
+                },
+            ]
+
+            with (
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_TP_REBALANCE",
+                    tp_receipt,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_PROFIT_PARTIAL_CLOSE",
+                    profit_receipt,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_POSITION_EXECUTION",
+                    position_receipt,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_BROKER_SNAPSHOT",
+                    broker_snapshot,
+                ),
+            ):
+                digest = _cycle_gateway_mutation_digest(step_results)
+
+        self.assertEqual(digest["status"], "BROKER_MUTATION_SENT")
+        self.assertEqual(digest["current_cycle_sent_count"], 1)
+        profit_summary = next(
+            row
+            for row in digest["receipts"]
+            if row["command"] == "profit-partial-close"
+        )
+        mutation = profit_summary["sent_mutations"][0]
+        self.assertEqual(mutation["trade_id"], "472987")
+        self.assertEqual(mutation["owner"], "trader")
+        self.assertEqual(mutation["order_id"], "473028")
+        self.assertEqual(mutation["fill_transaction_id"], "473029")
+
+    def test_cycle_digest_does_not_attribute_stale_or_contradictory_receipts(
+        self,
+    ) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tp_receipt = root / "tp_rebalance.json"
+            profit_receipt = root / "profit_partial_close.json"
+            position_receipt = root / "position_execution.json"
+            tp_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:00+00:00",
+                        "cycle_step_run_id": "tp-run",
+                        "status": "NO_ACTION",
+                        "send_requested": True,
+                        "sent": False,
+                        "sent_count": 0,
+                        "actions": [],
+                        "results": [],
+                    }
+                )
+            )
+            profit_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T19:00:00+00:00",
+                        "cycle_step_run_id": "profit-run",
+                        "status": "SENT",
+                        "sent_count": 1,
+                        "actions": [{"sent": True}],
+                        "results": [{"sent": True}],
+                    }
+                )
+            )
+            position_receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:25:00+00:00",
+                        "cycle_step_run_id": "position-run",
+                        "status": "SENT",
+                        "sent": False,
+                        "sent_count": 1,
+                        "actions": [{"sent": True}],
+                        "results": [{"sent": True}],
+                    }
+                )
+            )
+            step_results = [
+                {
+                    "step": "tp-rebalance",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:23:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                    "cycle_step_run_id": "tp-run",
+                },
+                {
+                    "step": "profit-partial-close --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:24:27+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:29+00:00",
+                    "cycle_step_run_id": "profit-run",
+                },
+                {
+                    "step": "position-execution --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:24:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:25:01+00:00",
+                    "cycle_step_run_id": "position-run",
+                },
+            ]
+
+            with (
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_TP_REBALANCE",
+                    tp_receipt,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_PROFIT_PARTIAL_CLOSE",
+                    profit_receipt,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_POSITION_EXECUTION",
+                    position_receipt,
+                ),
+            ):
+                digest = _cycle_gateway_mutation_digest(step_results)
+
+        self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+        self.assertEqual(digest["current_cycle_sent_count"], 0)
+        by_command = {row["command"]: row for row in digest["receipts"]}
+        self.assertEqual(
+            by_command["profit-partial-close"]["integrity_status"],
+            "CURRENT_CYCLE_RECEIPT_NOT_PROVEN",
+        )
+        self.assertEqual(
+            by_command["position-execution"]["integrity_status"],
+            "SENT_EVIDENCE_INVALID",
+        )
+
+    def test_cycle_digest_surfaces_current_tp_rebalance_broker_mutation(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt_path = root / "tp_rebalance.json"
+            broker_snapshot = root / "broker_snapshot.json"
+            broker_snapshot.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "trade_id": "T-901",
+                                "pair": "USD_JPY",
+                                "owner": "trader",
+                            }
+                        ]
+                    }
+                )
+            )
+            response = {
+                "takeProfitOrderTransaction": {
+                    "id": "tp-order-901",
+                    "tradeID": "T-901",
+                },
+                "relatedTransactionIDs": ["tp-order-901"],
+                "lastTransactionID": "tp-order-901",
+            }
+            mutation = {
+                "trade_id": "T-901",
+                "pair": "USD_JPY",
+                "owner": "trader",
+                "management_action": "TP_REBALANCE",
+                "sent": True,
+                "broker_post_attempted": True,
+                "request": {
+                    "type": "DEPENDENT_ORDER_REPLACE",
+                    "trade_id": "T-901",
+                    "order_request": {
+                        "takeProfit": {"price": "158.500", "timeInForce": "GTC"}
+                    },
+                },
+                "response": response,
+            }
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:00+00:00",
+                        "cycle_step_run_id": "tp-run",
+                        "status": "SENT",
+                        "send_requested": True,
+                        "sent": True,
+                        "sent_count": 1,
+                        "actions": [mutation],
+                        "results": [mutation],
+                    }
+                )
+            )
+            steps = [
+                {
+                    "step": "tp-rebalance",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:23:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                    "cycle_step_run_id": "tp-run",
+                }
+            ]
+
+            with (
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_TP_REBALANCE",
+                    receipt_path,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_BROKER_SNAPSHOT",
+                    broker_snapshot,
+                ),
+            ):
+                digest = _cycle_gateway_mutation_digest(steps)
+
+        self.assertEqual(digest["status"], "BROKER_MUTATION_SENT")
+        self.assertEqual(digest["current_cycle_sent_count"], 1)
+        mutation_summary = digest["receipts"][0]["sent_mutations"][0]
+        self.assertEqual(mutation_summary["trade_id"], "T-901")
+        self.assertEqual(mutation_summary["order_id"], "tp-order-901")
+        self.assertIsNone(mutation_summary["fill_transaction_id"])
+
+    def test_cycle_digest_blocks_when_tp_rebalance_receipt_is_missing(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing_tp_rebalance.json"
+            with mock.patch("quant_rabbit.cli.DEFAULT_TP_REBALANCE", missing):
+                digest = _cycle_gateway_mutation_digest(
+                    [
+                        {
+                            "step": "tp-rebalance",
+                            "status": "OK",
+                            "started_at_utc": "2026-07-13T20:23:59+00:00",
+                            "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                            "cycle_step_run_id": "tp-run",
+                        }
+                    ]
+                )
+
+        self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+        self.assertNotEqual(digest["status"], "VERIFIED_NO_BROKER_MUTATION")
+        self.assertEqual(
+            digest["receipts"][0]["integrity_status"],
+            "RECEIPT_MISSING_OR_INVALID_JSON",
+        )
+
+    def test_cycle_digest_rejects_sent_action_result_identity_mismatch(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt_path = root / "profit_partial_close.json"
+            broker_snapshot = root / "broker_snapshot.json"
+            broker_snapshot.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "trade_id": "T-1",
+                                "pair": "EUR_USD",
+                                "owner": "trader",
+                            }
+                        ]
+                    }
+                )
+            )
+            response = {
+                "orderCreateTransaction": {
+                    "id": "create-1",
+                    "instrument": "EUR_USD",
+                    "type": "MARKET_ORDER",
+                    "reason": "TRADE_CLOSE",
+                    "positionFill": "REDUCE_ONLY",
+                    "tradeClose": {"tradeID": "T-1", "units": "1000"},
+                },
+                "orderFillTransaction": {
+                    "id": "fill-1",
+                    "orderID": "create-1",
+                    "instrument": "EUR_USD",
+                    "type": "ORDER_FILL",
+                    "reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "tradeReduced": {"tradeID": "T-1"},
+                },
+                "relatedTransactionIDs": ["create-1", "fill-1"],
+                "lastTransactionID": "fill-1",
+            }
+            action = {
+                "trade_id": "T-1",
+                "pair": "EUR_USD",
+                "owner": "trader",
+                "management_action": "PROFIT_PARTIAL_CLOSE",
+                "sent": True,
+                "broker_post_attempted": True,
+                "request": {"type": "CLOSE", "trade_id": "T-1", "units": "1000"},
+                "response": response,
+            }
+            result = {**action, "pair": "USD_JPY"}
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:00+00:00",
+                        "cycle_step_run_id": "profit-run",
+                        "status": "SENT",
+                        "send_requested": True,
+                        "sent_count": 1,
+                        "actions": [action],
+                        "results": [result],
+                    }
+                )
+            )
+            with (
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_PROFIT_PARTIAL_CLOSE",
+                    receipt_path,
+                ),
+                mock.patch(
+                    "quant_rabbit.cli.DEFAULT_BROKER_SNAPSHOT",
+                    broker_snapshot,
+                ),
+            ):
+                digest = _cycle_gateway_mutation_digest(
+                    [
+                        {
+                            "step": "profit-partial-close --send --confirm-live",
+                            "status": "OK",
+                            "started_at_utc": "2026-07-13T20:23:59+00:00",
+                            "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                            "cycle_step_run_id": "profit-run",
+                        }
+                    ]
+                )
+
+        self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+        self.assertEqual(
+            digest["receipts"][0]["integrity_status"],
+            "SENT_EVIDENCE_INVALID",
+        )
+        self.assertIn(
+            "instrument identity contradicts pair",
+            digest["receipts"][0]["integrity_error"],
+        )
+
+    def test_cycle_digest_rejects_sent_when_send_was_not_requested(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt_path = Path(tmp) / "profit_partial_close.json"
+            response = {
+                "orderCreateTransaction": {"id": "create-1"},
+                "orderFillTransaction": {
+                    "id": "fill-1",
+                    "orderID": "create-1",
+                    "tradeReduced": {"tradeID": "T-1"},
+                },
+            }
+            mutation = {
+                "trade_id": "T-1",
+                "pair": "EUR_USD",
+                "owner": "trader",
+                "management_action": "PROFIT_PARTIAL_CLOSE",
+                "sent": True,
+                "broker_post_attempted": True,
+                "request": {"type": "CLOSE", "trade_id": "T-1", "units": "1000"},
+                "response": response,
+            }
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:00+00:00",
+                        "cycle_step_run_id": "profit-run",
+                        "status": "SENT",
+                        "send_requested": False,
+                        "sent_count": 1,
+                        "actions": [mutation],
+                        "results": [mutation],
+                    }
+                )
+            )
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_PROFIT_PARTIAL_CLOSE",
+                receipt_path,
+            ):
+                digest = _cycle_gateway_mutation_digest(
+                    [
+                        {
+                            "step": "profit-partial-close --send --confirm-live",
+                            "status": "OK",
+                            "started_at_utc": "2026-07-13T20:23:59+00:00",
+                            "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                            "cycle_step_run_id": "profit-run",
+                        }
+                    ]
+                )
+
+        self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+        self.assertIn(
+            "send_requested=false",
+            digest["receipts"][0]["integrity_error"],
+        )
+
+    def test_cycle_digest_requires_matching_nonce_and_explicit_utc(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        for name, generated_at, receipt_run_id in (
+            ("nonce", "2026-07-13T20:24:00+00:00", "other-run"),
+            ("naive_time", "2026-07-13T20:24:00", "tp-run"),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                receipt_path = Path(tmp) / "tp_rebalance.json"
+                receipt_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": generated_at,
+                            "cycle_step_run_id": receipt_run_id,
+                            "status": "NO_ACTION",
+                            "send_requested": True,
+                            "sent": False,
+                            "sent_count": 0,
+                            "actions": [],
+                            "results": [],
+                        }
+                    )
+                )
+                with mock.patch(
+                    "quant_rabbit.cli.DEFAULT_TP_REBALANCE",
+                    receipt_path,
+                ):
+                    digest = _cycle_gateway_mutation_digest(
+                        [
+                            {
+                                "step": "tp-rebalance",
+                                "status": "OK",
+                                "started_at_utc": "2026-07-13T20:23:59+00:00",
+                                "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                                "cycle_step_run_id": "tp-run",
+                            }
+                        ]
+                    )
+
+                self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+                self.assertEqual(
+                    digest["receipts"][0]["integrity_status"],
+                    "CURRENT_CYCLE_RECEIPT_NOT_PROVEN",
+                )
+
+    def test_cycle_digest_rejects_duplicate_mutation_command_steps(self) -> None:
+        from quant_rabbit.cli import _cycle_gateway_mutation_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt_path = Path(tmp) / "position_execution.json"
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:25:00+00:00",
+                        "cycle_step_run_id": "second-run",
+                        "status": "NO_ACTION",
+                        "send_requested": True,
+                        "sent": False,
+                        "actions": [],
+                    }
+                )
+            )
+            steps = [
+                {
+                    "step": "position-execution --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:23:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:24:01+00:00",
+                    "cycle_step_run_id": "first-run",
+                },
+                {
+                    "step": "position-execution --send --confirm-live",
+                    "status": "OK",
+                    "started_at_utc": "2026-07-13T20:24:59+00:00",
+                    "finished_at_utc": "2026-07-13T20:25:01+00:00",
+                    "cycle_step_run_id": "second-run",
+                },
+            ]
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_POSITION_EXECUTION",
+                receipt_path,
+            ):
+                digest = _cycle_gateway_mutation_digest(steps)
+
+        self.assertEqual(digest["status"], "RECEIPT_INTEGRITY_BLOCKED")
+        self.assertEqual(digest["current_cycle_sent_count"], 0)
+        self.assertEqual(digest["receipts"][0]["matching_step_count"], 2)
+        self.assertEqual(
+            digest["receipts"][0]["integrity_status"],
+            "DUPLICATE_MUTATION_STEPS",
+        )
 
     def test_cycle_digest_surfaces_predictive_scout_operator_review_eligibility(self) -> None:
         from quant_rabbit.cli import _cycle_digest

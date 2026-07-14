@@ -724,7 +724,7 @@ def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
         return "LOW"
     return "NEUTRAL"
 
-from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.models import BrokerSnapshot, OrderType, Owner, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 
@@ -941,14 +941,24 @@ def _load_full_pair_charts_for_brain(pair_charts_path: Path = DEFAULT_PAIR_CHART
         payload = json.loads(pair_charts_path.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
+    generated_at_raw = payload.get("generated_at_utc") if isinstance(payload, dict) else None
+    if _parse_iso_utc(generated_at_raw) is None:
+        return {}
     out: dict[str, dict[str, Any]] = {}
-    generated_at_utc = payload.get("generated_at_utc")
+    seen_pairs: set[str] = set()
     for chart in payload.get("charts", []) or []:
+        if not isinstance(chart, dict):
+            return {}
         pair = chart.get("pair")
-        if isinstance(pair, str):
-            chart_copy = dict(chart)
-            chart_copy.setdefault("generated_at_utc", generated_at_utc)
-            out[pair] = chart_copy
+        if pair.__class__ is not str or pair not in DEFAULT_TRADER_PAIRS or pair in seen_pairs:
+            return {}
+        seen_pairs.add(pair)
+        chart_copy = dict(chart)
+        # The artifact envelope is the trusted production boundary. A row
+        # cannot downgrade itself to injected evidence with an empty or
+        # stale self-declared timestamp.
+        chart_copy["generated_at_utc"] = generated_at_raw
+        out[pair] = chart_copy
     return out
 
 
@@ -1134,6 +1144,7 @@ def _pair_forecast(
             effective_data_root, DEFAULT_STRATEGY_PROFILE
         ),
         now_utc=getattr(snapshot, "fetched_at_utc", None),
+        require_technical_candle_integrity=True,
     )
     if (
         forecast.direction == "UNCLEAR"
@@ -3475,12 +3486,16 @@ def _normalized_regret_order_type(order_type: object) -> str:
 
 
 def _parse_iso_utc(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
+    if value.__class__ is not str or not value or value != value.strip() or "T" not in value:
         return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _pending_recovery_hedge_still_has_live_thesis(

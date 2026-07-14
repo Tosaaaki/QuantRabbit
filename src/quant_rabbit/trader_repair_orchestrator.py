@@ -144,6 +144,7 @@ PROOF_CANDIDATE_BLOCKERS = {
     "S5_POSITIVE_DAY_RATE_LOW",
 }
 GATEWAY_LIVE_READY_STATUSES = {"ACCEPTED", "STAGED", "SENT", "LIVE_READY"}
+EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT = "evidence_action_progress_v1"
 # The proof/support artifacts are rebuilt sequentially in one cycle. Five
 # minutes is the operational drift window used here to distinguish same-packet
 # evidence from an older cycle without tying the rule to market risk.
@@ -272,6 +273,8 @@ class TraderRepairOrchestrator:
             if isinstance(previous_payload.get("codex_work_order"), dict)
             else {}
         )
+        previous_evidence_actions = _previous_evidence_actions(previous_payload)
+        previous_current_state = _previous_orchestrator_current_state(previous_payload)
         support = _read_json(self.support_bot_path)
         proof_queue = _read_optional_json(self.proof_queue_path)
         as_board = _read_optional_json(self.as_lane_board_path)
@@ -323,6 +326,8 @@ class TraderRepairOrchestrator:
             portfolio_planner=portfolio_planner,
             live_order_request=live_order_request,
             broker_snapshot=broker_snapshot,
+            previous_evidence_actions=previous_evidence_actions,
+            previous_current_state=previous_current_state,
         )
         payload = {
             "contract_version": CONTRACT_VERSION,
@@ -391,6 +396,11 @@ class TraderRepairOrchestrator:
             payload["proof_queue_empty_reason"] = proof_empty_reason
         if next_evidence_actions:
             payload["next_evidence_actions"] = next_evidence_actions
+        evidence_action_progress = loop_prompt.get("current_state", {}).get(
+            "evidence_action_progress"
+        )
+        if evidence_action_progress:
+            payload["evidence_action_progress"] = evidence_action_progress
         return payload
 
 
@@ -422,6 +432,35 @@ def _read_previous_orchestrator_output(path: Path) -> tuple[dict[str, Any], str]
         # self-artifact must not permanently brick this read-only command; the
         # next atomic publish establishes a new valid baseline.
         return {}, "CORRUPT_PREVIOUS_OUTPUT_IGNORED"
+
+
+def _previous_evidence_actions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    actions = payload.get("next_evidence_actions")
+    if not isinstance(actions, list):
+        loop_prompt = (
+            payload.get("loop_engineering_prompt")
+            if isinstance(payload.get("loop_engineering_prompt"), dict)
+            else {}
+        )
+        current_state = (
+            loop_prompt.get("current_state")
+            if isinstance(loop_prompt.get("current_state"), dict)
+            else {}
+        )
+        actions = current_state.get("next_evidence_actions")
+    if not isinstance(actions, list):
+        return []
+    return [item for item in actions if isinstance(item, dict)]
+
+
+def _previous_orchestrator_current_state(payload: dict[str, Any]) -> dict[str, Any]:
+    loop_prompt = (
+        payload.get("loop_engineering_prompt")
+        if isinstance(payload.get("loop_engineering_prompt"), dict)
+        else {}
+    )
+    current_state = loop_prompt.get("current_state")
+    return current_state if isinstance(current_state, dict) else {}
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -559,6 +598,8 @@ def _loop_engineering_prompt(
     portfolio_planner: dict[str, Any],
     live_order_request: dict[str, Any],
     broker_snapshot: dict[str, Any],
+    previous_evidence_actions: list[dict[str, Any]],
+    previous_current_state: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the continuously updated prompt for the 5% campaign repair loop."""
 
@@ -673,10 +714,30 @@ def _loop_engineering_prompt(
     proof_queue_empty_reason = _proof_queue_empty_reason(current_state)
     if proof_queue_empty_reason:
         current_state["proof_queue_empty_reason"] = proof_queue_empty_reason
-        current_state["next_evidence_actions"] = _next_evidence_actions_for_empty_proof_queue(
+        fresh_evidence_actions = _next_evidence_actions_for_empty_proof_queue(
             proof_queue_empty_reason,
             current_state=current_state,
         )
+        (
+            current_state["next_evidence_actions"],
+            evidence_action_progress,
+        ) = _reconcile_evidence_action_progress(
+            fresh_evidence_actions,
+            previous_evidence_actions=previous_evidence_actions,
+            previous_current_state=previous_current_state,
+            current_state=current_state,
+        )
+        if evidence_action_progress:
+            current_state["evidence_action_progress"] = evidence_action_progress
+    elif previous_evidence_actions:
+        _, evidence_action_progress = _reconcile_evidence_action_progress(
+            [],
+            previous_evidence_actions=previous_evidence_actions,
+            previous_current_state=previous_current_state,
+            current_state=current_state,
+        )
+        if evidence_action_progress:
+            current_state["evidence_action_progress"] = evidence_action_progress
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
     current_state["artifact_contradiction_codes"] = [
@@ -2480,13 +2541,29 @@ def _next_evidence_actions_for_empty_proof_queue(
                     "success_condition": _success_condition(
                         "any",
                         [
-                            _condition_check("proof_queue_count", "gt", 0),
-                            _condition_check("proof_ready_count", "gt", 0),
-                            _condition_check("can_create_live_permission_count", "gt", 0),
+                            _condition_check(
+                                "proof_queue_count",
+                                "gt",
+                                _count_watermark(current_state.get("proof_queue_count")),
+                            ),
+                            _condition_check(
+                                "proof_ready_count",
+                                "gt",
+                                _count_watermark(current_state.get("proof_ready_count")),
+                            ),
+                            _condition_check(
+                                "can_create_live_permission_count",
+                                "gt",
+                                _count_watermark(
+                                    current_state.get("can_create_live_permission_count")
+                                ),
+                            ),
                             _condition_check(
                                 "rejected_proof_candidate_count",
                                 "lt",
-                                current_state.get("rejected_proof_candidate_count"),
+                                _count_watermark(
+                                    current_state.get("rejected_proof_candidate_count")
+                                ),
                             ),
                         ],
                         description=(
@@ -2520,8 +2597,14 @@ def _next_evidence_actions_for_empty_proof_queue(
                         "all",
                         [
                             _condition_check("proof_normal_routing_status", "neq", "BLOCKED"),
-                            _condition_check("proof_routing_allowed", "eq", True),
-                            _condition_check("can_create_live_permission_count", "gt", 0),
+                            _condition_check("proof_routing_allowed", "is_true"),
+                            _condition_check(
+                                "can_create_live_permission_count",
+                                "gt",
+                                _count_watermark(
+                                    current_state.get("can_create_live_permission_count")
+                                ),
+                            ),
                         ],
                         description=(
                             "Lane-board normal routing reopened and at least one current row can "
@@ -2544,20 +2627,27 @@ def _next_evidence_actions_for_empty_proof_queue(
                         "PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path",
                     ],
                     "success_condition_text": (
-                        "portfolio_status leaves NO_LIVE_READY_PORTFOLIO or "
-                        "summary.proof_ready_candidates becomes positive."
+                        "portfolio_status becomes LIVE_READY_PORTFOLIO, an exact boolean live "
+                        "capability flag becomes true, or proof-ready candidates advance."
                     ),
                     "success_condition": _success_condition(
                         "any",
                         [
                             _condition_check(
                                 "portfolio_status",
-                                "neq",
-                                "NO_LIVE_READY_PORTFOLIO",
+                                "eq",
+                                "LIVE_READY_PORTFOLIO",
                             ),
-                            _condition_check("portfolio_can_create_live_permission", "eq", True),
-                            _condition_check("portfolio_can_reach_4x_now", "eq", True),
-                            _condition_check("proof_ready_count", "gt", 0),
+                            _condition_check(
+                                "portfolio_can_create_live_permission",
+                                "is_true",
+                            ),
+                            _condition_check("portfolio_can_reach_4x_now", "is_true"),
+                            _condition_check(
+                                "proof_ready_count",
+                                "gt",
+                                _count_watermark(current_state.get("proof_ready_count")),
+                            ),
                         ],
                         description=(
                             "The planner finds a live-permission-capable path, reaches the 4x path "
@@ -2591,7 +2681,13 @@ def _next_evidence_actions_for_empty_proof_queue(
                                 "in",
                                 sorted(GATEWAY_LIVE_READY_STATUSES),
                             ),
-                            _condition_check("can_create_live_permission_count", "gt", 0),
+                            _condition_check(
+                                "can_create_live_permission_count",
+                                "gt",
+                                _count_watermark(
+                                    current_state.get("can_create_live_permission_count")
+                                ),
+                            ),
                         ],
                         description=(
                             "Gateway evidence now reports an authorized live-ready/staged/sent "
@@ -2607,13 +2703,309 @@ def _next_evidence_actions_for_empty_proof_queue(
 
 
 def _evidence_action(current_state: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    action["progress_watermark_contract"] = (
+        EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT
+    )
     condition = action.get("success_condition")
     if isinstance(condition, dict):
         action["success_condition_evaluation"] = _evaluate_success_condition(
             condition,
             current_state,
         )
+        action["progress_watermark_origin"] = _evidence_action_watermark_origin(
+            action,
+            current_state=current_state,
+        )
     return action
+
+
+def _evidence_action_watermark_origin(
+    action: dict[str, Any],
+    *,
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    condition = action.get("success_condition")
+    checks = condition.get("checks") if isinstance(condition, dict) else []
+    fields = [
+        str(check.get("field") or "")
+        for check in checks
+        if isinstance(check, dict) and str(check.get("field") or "")
+    ]
+    condition_state = {
+        field: current_state.get(field)
+        for field in dict.fromkeys(fields)
+    }
+    return {
+        "contract": EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT,
+        "action_id": str(action.get("action_id") or ""),
+        "category": str(action.get("category") or ""),
+        "condition_sha256": _canonical_sha256(condition),
+        "condition_state": condition_state,
+        "condition_state_sha256": _canonical_sha256(condition_state),
+    }
+
+
+def _reconcile_evidence_action_progress(
+    fresh_actions: list[dict[str, Any]],
+    *,
+    previous_evidence_actions: list[dict[str, Any]],
+    previous_current_state: dict[str, Any],
+    current_state: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Carry an unmet action watermark across one or more verifier refreshes."""
+
+    previous_by_id = _unique_evidence_actions_by_id(previous_evidence_actions)
+
+    progress: list[dict[str, Any]] = []
+    pending_previous: dict[str, dict[str, Any]] = {}
+    for action_id, action in previous_by_id.items():
+        if not _evidence_action_has_pending_valid_watermark(
+            action,
+            previous_current_state=previous_current_state,
+        ):
+            continue
+        condition = action["success_condition"]
+        evaluation = _evaluate_success_condition(condition, current_state)
+        pending_previous[action_id] = action
+        if evaluation.get("status") == "MET" and evaluation.get("passed") is True:
+            progress.append(
+                {
+                    "action_id": action_id,
+                    "category": str(action.get("category") or ""),
+                    "progress_watermark_contract": (
+                        EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT
+                    ),
+                    "progress_watermark_origin": action.get(
+                        "progress_watermark_origin"
+                    ),
+                    "success_condition": condition,
+                    "success_condition_evaluation": evaluation,
+                }
+            )
+
+    reconciled: list[dict[str, Any]] = []
+    for fresh in fresh_actions:
+        action = dict(fresh)
+        action["progress_watermark_source"] = "CURRENT_REFRESH"
+        action_id = str(action.get("action_id") or "").strip()
+        previous = pending_previous.get(action_id)
+        if previous is not None and _evidence_action_watermark_shapes_match(
+            previous,
+            action,
+        ):
+            condition = previous["success_condition"]
+            action["success_condition"] = condition
+            action["progress_watermark_origin"] = previous[
+                "progress_watermark_origin"
+            ]
+            action["success_condition_evaluation"] = _evaluate_success_condition(
+                condition,
+                current_state,
+            )
+            action["progress_watermark_source"] = "PREVIOUS_REFRESH"
+        reconciled.append(action)
+    return reconciled, progress
+
+
+def _unique_evidence_actions_by_id(
+    actions: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    duplicate_ids: set[str] = set()
+    for action in actions:
+        action_id = str(action.get("action_id") or "").strip()
+        if not action_id:
+            continue
+        if action_id in by_id:
+            duplicate_ids.add(action_id)
+            continue
+        by_id[action_id] = action
+    for action_id in duplicate_ids:
+        by_id.pop(action_id, None)
+    return by_id
+
+
+def _evidence_action_has_pending_valid_watermark(
+    action: dict[str, Any],
+    *,
+    previous_current_state: dict[str, Any],
+) -> bool:
+    if (
+        action.get("progress_watermark_contract")
+        != EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT
+    ):
+        return False
+    evaluation = action.get("success_condition_evaluation")
+    if not isinstance(evaluation, dict):
+        return False
+    if evaluation.get("status") != "NOT_MET" or evaluation.get("passed") is not False:
+        return False
+    condition = action.get("success_condition")
+    if not _success_condition_is_carryable(condition):
+        return False
+    if evaluation != _evaluate_success_condition(condition, previous_current_state):
+        return False
+    origin_state = _validated_evidence_action_watermark_origin(action)
+    if origin_state is None:
+        return False
+    canonical_action = _canonical_evidence_action_for_origin(
+        action_id=str(action.get("action_id") or ""),
+        origin_state=origin_state,
+    )
+    return bool(
+        canonical_action is not None
+        and _evidence_action_semantics(action)
+        == _evidence_action_semantics(canonical_action)
+    )
+
+
+def _validated_evidence_action_watermark_origin(
+    action: dict[str, Any],
+) -> dict[str, Any] | None:
+    origin = action.get("progress_watermark_origin")
+    if not isinstance(origin, dict) or set(origin) != {
+        "contract",
+        "action_id",
+        "category",
+        "condition_sha256",
+        "condition_state",
+        "condition_state_sha256",
+    }:
+        return None
+    if origin.get("contract") != EVIDENCE_ACTION_PROGRESS_WATERMARK_CONTRACT:
+        return None
+    if str(origin.get("action_id") or "") != str(action.get("action_id") or ""):
+        return None
+    if str(origin.get("category") or "") != str(action.get("category") or ""):
+        return None
+    condition = action.get("success_condition")
+    if origin.get("condition_sha256") != _canonical_sha256(condition):
+        return None
+    condition_state = origin.get("condition_state")
+    if not isinstance(condition_state, dict):
+        return None
+    if origin.get("condition_state_sha256") != _canonical_sha256(condition_state):
+        return None
+    checks = condition.get("checks") if isinstance(condition, dict) else []
+    expected_fields = {
+        str(check.get("field") or "")
+        for check in checks
+        if isinstance(check, dict) and str(check.get("field") or "")
+    }
+    if set(condition_state) != expected_fields:
+        return None
+    for check in checks:
+        if not isinstance(check, dict):
+            return None
+        field = str(check.get("field") or "")
+        if field not in _STRICT_COUNT_FIELDS:
+            continue
+        watermark = _count_watermark(check.get("value"))
+        if watermark is None or condition_state.get(field) != watermark:
+            return None
+    origin_evaluation = _evaluate_success_condition(condition, condition_state)
+    if origin_evaluation.get("status") != "NOT_MET" or origin_evaluation.get(
+        "passed"
+    ) is not False:
+        return None
+    return condition_state
+
+
+def _canonical_evidence_action_for_origin(
+    *,
+    action_id: str,
+    origin_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    reason = {
+        "categories": [
+            {"category": category}
+            for category in (
+                "rejected_proof_candidates",
+                "lane_board",
+                "portfolio_planner",
+                "gateway_issue",
+            )
+        ]
+    }
+    canonical = _next_evidence_actions_for_empty_proof_queue(
+        reason,
+        current_state=origin_state,
+    )
+    return _unique_evidence_actions_by_id(canonical).get(action_id)
+
+
+def _success_condition_is_carryable(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if value.get("schema_version") != "success_condition_v1":
+        return False
+    if str(value.get("mode") or "").lower() not in {"all", "any"}:
+        return False
+    checks = value.get("checks")
+    if not isinstance(checks, list) or not checks:
+        return False
+    for check in checks:
+        if not isinstance(check, dict):
+            return False
+        field = str(check.get("field") or "")
+        operator = str(check.get("operator") or "")
+        if not field or not operator:
+            return False
+        if field in _STRICT_COUNT_FIELDS and _count_watermark(check.get("value")) is None:
+            return False
+    return True
+
+
+def _evidence_action_watermark_shapes_match(
+    previous: dict[str, Any],
+    fresh: dict[str, Any],
+) -> bool:
+    return _evidence_action_semantics(
+        previous,
+        mask_count_watermarks=True,
+    ) == _evidence_action_semantics(
+        fresh,
+        mask_count_watermarks=True,
+    )
+
+
+def _evidence_action_semantics(
+    action: dict[str, Any],
+    *,
+    mask_count_watermarks: bool = False,
+) -> dict[str, Any]:
+    semantics = {
+        key: value
+        for key, value in action.items()
+        if key
+        not in {
+            "progress_watermark_origin",
+            "progress_watermark_source",
+            "success_condition_evaluation",
+        }
+    }
+    condition = semantics.get("success_condition")
+    if mask_count_watermarks and isinstance(condition, dict):
+        semantics["success_condition"] = _masked_count_watermark_condition(condition)
+    return semantics
+
+
+def _masked_count_watermark_condition(condition: dict[str, Any]) -> dict[str, Any]:
+    masked = dict(condition)
+    checks = condition.get("checks")
+    if not isinstance(checks, list):
+        return masked
+    masked_checks: list[Any] = []
+    for raw in checks:
+        if not isinstance(raw, dict):
+            masked_checks.append(raw)
+            continue
+        check = dict(raw)
+        if str(check.get("field") or "") in _STRICT_COUNT_FIELDS:
+            check["value"] = "__FROZEN_NON_NEGATIVE_INTEGER_WATERMARK__"
+        masked_checks.append(check)
+    masked["checks"] = masked_checks
+    return masked
 
 
 def _success_condition(
@@ -2642,6 +3034,24 @@ def _condition_check(field: str, operator: str, value: Any = None) -> dict[str, 
     if value is not None:
         check["value"] = value
     return check
+
+
+def _count_watermark(value: Any) -> int | None:
+    """Return an exact non-negative count, or no progress baseline for malformed input."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+_STRICT_COUNT_FIELDS = frozenset(
+    {
+        "proof_queue_count",
+        "proof_ready_count",
+        "can_create_live_permission_count",
+        "rejected_proof_candidate_count",
+    }
+)
 
 
 def _evaluate_success_condition(
@@ -2690,7 +3100,16 @@ def _evaluate_condition_check(
     operator = str(check.get("operator") or "")
     expected = check.get("value")
     actual = current_state.get(field)
-    passed = _condition_passes(actual, operator, expected)
+    if field in _STRICT_COUNT_FIELDS:
+        actual_count = _count_watermark(actual)
+        expected_count = _count_watermark(expected)
+        passed = (
+            actual_count is not None
+            and expected_count is not None
+            and _condition_passes(actual_count, operator, expected_count)
+        )
+    else:
+        passed = _condition_passes(actual, operator, expected)
     return {
         "field": field,
         "operator": operator,
@@ -2984,6 +3403,7 @@ def _work_order_proof_state(loop_prompt: dict[str, Any] | None) -> dict[str, Any
         "gateway_issue_codes",
         "proof_queue_empty_reason",
         "next_evidence_actions",
+        "evidence_action_progress",
         "active_lane_evidence_work",
         "active_lane_action_code",
         "active_lane_evidence_material_digest",

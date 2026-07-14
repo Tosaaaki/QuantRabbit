@@ -2,16 +2,39 @@
 
 from __future__ import annotations
 
+import copy
+import json
+import tempfile
 import unittest
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
+from quant_rabbit.analysis.candles import (
+    PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+    TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+)
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.directional_forecaster import (
     FORECAST_D_ANCHOR_HORIZON_MIN,
     FORECAST_EXECUTION_HORIZON_MIN,
     FORECAST_OPERATING_SWING_HORIZON_MIN,
-    synthesize_forecast,
+    TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS,
+    TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS,
+    synthesize_forecast as _synthesize_forecast,
 )
+
+
+def synthesize_forecast(**kwargs):
+    """Hand-built unit charts opt out; production-contract tests opt back in."""
+
+    kwargs.setdefault("require_technical_candle_integrity", False)
+    return _synthesize_forecast(**kwargs)
 
 
 @dataclass
@@ -29,6 +52,101 @@ class _NamedSig:
     bonus_magnitude: float
     confidence: float
     rationale: str = ""
+
+
+def _production_mba_integrity(*, recovered: bool) -> dict[str, object]:
+    normal_spread_pips = NORMAL_SPREAD_PIPS["EUR_USD"]
+    max_spread_multiple = RiskPolicy().max_spread_multiple
+    spread_cap_pips = round(normal_spread_pips * max_spread_multiple, 6)
+    blocking_codes = [] if recovered else [TECHNICAL_CANDLE_SPREAD_CONTAMINATED]
+    latest_complete = "2026-07-14T00:43:00+00:00" if recovered else "2026-07-14T00:44:00+00:00"
+    latest_clean = "2026-07-14T00:43:00+00:00"
+    quarantine_timestamp = "2026-07-14T00:13:00+00:00" if recovered else latest_complete
+    requested_count = 70 if recovered else 41
+    clean_count = 69 if recovered else 40
+    recent_clean_tail_count = (
+        TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT if recovered else 0
+    )
+    item = {
+        "schema": TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": "EUR_USD",
+        "granularity": "M1",
+        "payload_instrument": "EUR_USD",
+        "payload_granularity": "M1",
+        "source": "OANDA_MBA",
+        "requested_price": "MBA",
+        "spread_evaluation_mode": "EXECUTION_ENDPOINT_CAP",
+        "evaluation_status": "DEGRADED" if recovered else "BLOCKED",
+        "policy_source": "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple",
+        "normal_spread_pips": normal_spread_pips,
+        "max_spread_multiple": max_spread_multiple,
+        "spread_cap_pips": spread_cap_pips,
+        "requested_count": requested_count,
+        "raw_entry_count": requested_count,
+        "coverage_complete": True,
+        "complete_entry_count": requested_count,
+        "clean_count": clean_count,
+        "indicator_warmup_min_clean_count": TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+        "recent_clean_tail_count": recent_clean_tail_count,
+        "indicator_warmup_complete": True,
+        "recent_clean_coverage_complete": recovered,
+        "contaminated_count": 1,
+        "malformed_count": 0,
+        "quarantined_count": 1,
+        "recent_tail_state": "CLEAN" if recovered else "SPREAD_CONTAMINATED",
+        "recent_tail_contaminated": not recovered,
+        "recent_tail_invalid": False,
+        "provenance_complete": True,
+        "forecast_blocking": not recovered,
+        "codes": [TECHNICAL_CANDLE_SPREAD_CONTAMINATED],
+        "blocking_codes": blocking_codes,
+        "latest_complete_timestamp_utc": latest_complete,
+        "latest_clean_timestamp_utc": latest_clean,
+        "quarantine_details": [{
+            "timestamp_utc": quarantine_timestamp,
+            "code": TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+            "max_spread_pips": spread_cap_pips + 1.0,
+            "spread_cap_pips": spread_cap_pips,
+        }],
+        "quarantine_details_truncated": 0,
+    }
+    m5_item = copy.deepcopy(item)
+    m5_item.update({
+        "granularity": "M5",
+        "payload_granularity": "M5",
+        "evaluation_status": "PASS",
+        "requested_count": 41,
+        "raw_entry_count": 41,
+        "coverage_complete": True,
+        "complete_entry_count": 41,
+        "clean_count": 41,
+        "indicator_warmup_min_clean_count": TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+        "recent_clean_tail_count": 41,
+        "indicator_warmup_complete": True,
+        "recent_clean_coverage_complete": True,
+        "contaminated_count": 0,
+        "quarantined_count": 0,
+        "recent_tail_state": "CLEAN",
+        "recent_tail_contaminated": False,
+        "forecast_blocking": False,
+        "codes": [],
+        "blocking_codes": [],
+        "latest_complete_timestamp_utc": "2026-07-14T00:40:00+00:00",
+        "latest_clean_timestamp_utc": "2026-07-14T00:40:00+00:00",
+        "quarantine_details": [],
+    })
+    return {
+        "schema": PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": "EUR_USD",
+        "source": "OANDA_MBA",
+        "evaluation_status": "DEGRADED" if recovered else "BLOCKED",
+        "forecast_blocking": not recovered,
+        "codes": [TECHNICAL_CANDLE_SPREAD_CONTAMINATED],
+        "blocking_codes": blocking_codes,
+        "requested_timeframes": ["M1", "M5"],
+        "evaluated_timeframe_count": 2,
+        "timeframes": {"M1": item, "M5": m5_item},
+    }
 
 
 class ForecastGeometryTest(unittest.TestCase):
@@ -1283,3 +1401,739 @@ class ContestedRangePhaseEvidenceTest(unittest.TestCase):
         self.assertIsNotNone(conf)
         # (0.92 + min(1, 20/92)) / 2 ≈ 0.5687
         self.assertAlmostEqual(conf, (0.92 + 20.0 / 92.0) / 2.0, places=3)
+
+
+class TechnicalCandleIntegrityForecastGateTest(unittest.TestCase):
+    @staticmethod
+    def _chart(*, recovered: bool) -> dict[str, object]:
+        integrity = _production_mba_integrity(recovered=recovered)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        m5_item = timeframes["M5"]
+        assert isinstance(item, dict)
+        assert isinstance(m5_item, dict)
+        latest_clean = item["latest_clean_timestamp_utc"]
+        latest_clean_dt = datetime.fromisoformat(str(latest_clean))
+        m5_latest_clean = str(m5_item["latest_clean_timestamp_utc"])
+        m5_latest_clean_dt = datetime.fromisoformat(m5_latest_clean)
+        m1_recent = (
+            [
+                {
+                    "t": (
+                        latest_clean_dt
+                        - timedelta(
+                            minutes=TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT - 1 - index
+                        )
+                    ).isoformat()
+                }
+                for index in range(TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT)
+            ]
+            if recovered
+            else []
+        )
+        m5_recent = [
+            {
+                "t": (
+                    m5_latest_clean_dt
+                    - timedelta(
+                        minutes=5
+                        * (TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT - 1 - index)
+                    )
+                ).isoformat()
+            }
+            for index in range(TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT)
+        ]
+        return {
+            "pair": "EUR_USD",
+            "generated_at_utc": "2026-07-14T00:45:00Z",
+            "technical_candle_integrity": integrity,
+            "views": [
+                {
+                    "granularity": "M1",
+                    "indicators": {
+                        "candles_count": item["recent_clean_tail_count"],
+                        "pip_size": 0.0001,
+                        "atr_pips": 2.0,
+                        "donchian_high": 1.1010,
+                        "donchian_low": 1.0990,
+                    },
+                    "recent_candles": m1_recent,
+                    "candle_integrity": item,
+                },
+                {
+                    "granularity": "M5",
+                    "indicators": {
+                        "candles_count": 41,
+                        "pip_size": 0.0001,
+                        "atr_pips": 4.0,
+                        "donchian_high": 1.1020,
+                        "donchian_low": 1.0980,
+                    },
+                    "recent_candles": m5_recent,
+                    "candle_integrity": m5_item,
+                },
+            ],
+        }
+
+    @staticmethod
+    def _production_forecast(
+        chart: dict[str, object],
+        *,
+        pair: str = "EUR_USD",
+        now_utc: object = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc),
+    ):
+        return synthesize_forecast(
+            pair=pair,
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+            now_utc=now_utc,
+            require_technical_candle_integrity=True,
+        )
+
+    def test_recent_rollover_contamination_forces_unclear_zero_confidence(self) -> None:
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=self._chart(recovered=False),
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertEqual(forecast.raw_confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_SPREAD_CONTAMINATED, forecast.drivers_against)
+        self.assertIn(TECHNICAL_CANDLE_SPREAD_CONTAMINATED, forecast.rationale_summary)
+
+    def test_clean_tail_reenables_directional_forecast_after_quarantine(self) -> None:
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=self._chart(recovered=True),
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.confidence, 0.0)
+        self.assertNotIn(TECHNICAL_CANDLE_SPREAD_CONTAMINATED, forecast.drivers_against)
+
+    def test_claimed_clean_tail_cannot_bridge_a_quarantine_inside_recent_evidence(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        details = item["quarantine_details"]
+        assert isinstance(details, list) and isinstance(details[-1], dict)
+        # Keep all receipt counts/booleans self-consistent, but move the last
+        # known quarantine inside the published 30-clean-candle claim.
+        details[-1]["timestamp_utc"] = "2026-07-14T00:42:00+00:00"
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_count_and_recent_cadence_tampering_fail_closed(self) -> None:
+        count_tamper = self._chart(recovered=True)
+        count_integrity = count_tamper["technical_candle_integrity"]
+        assert isinstance(count_integrity, dict)
+        count_timeframes = count_integrity["timeframes"]
+        assert isinstance(count_timeframes, dict)
+        count_item = count_timeframes["M1"]
+        assert isinstance(count_item, dict)
+        count_item["requested_count"] = int(count_item["raw_entry_count"]) + 1
+        count_item["coverage_complete"] = False
+
+        cadence_tamper = self._chart(recovered=True)
+        cadence_views = cadence_tamper["views"]
+        assert isinstance(cadence_views, list)
+        cadence_recent = cadence_views[0]["recent_candles"]
+        assert isinstance(cadence_recent, list)
+        tail = datetime.fromisoformat(str(cadence_recent[-1]["t"]))
+        cadence_recent[0]["t"] = (tail - timedelta(seconds=1)).isoformat()
+
+        for chart in (count_tamper, cadence_tamper):
+            with self.subTest(chart=chart):
+                forecast = self._production_forecast(chart)
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(
+                    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+                    forecast.drivers_against,
+                )
+
+    def test_persisted_chart_without_mba_integrity_fails_closed(self) -> None:
+        chart = self._chart(recovered=True)
+        chart.pop("technical_candle_integrity")
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_contradictory_aggregate_cannot_hide_blocking_tail(self) -> None:
+        chart = self._chart(recovered=False)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        integrity["forecast_blocking"] = False
+        integrity["blocking_codes"] = []
+        integrity["evaluation_status"] = "DEGRADED"
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_self_consistent_noncanonical_spread_policy_tamper_fails_closed(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        tampered_normal = float(item["normal_spread_pips"]) + 0.1
+        tampered_multiple = float(item["max_spread_multiple"]) + 0.1
+        item["normal_spread_pips"] = tampered_normal
+        item["max_spread_multiple"] = tampered_multiple
+        item["spread_cap_pips"] = round(tampered_normal * tampered_multiple, 6)
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_spread_policy_receipt_rejects_string_and_bool_numbers(self) -> None:
+        for field in (
+            "normal_spread_pips",
+            "max_spread_multiple",
+            "spread_cap_pips",
+        ):
+            with self.subTest(field=field):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                item[field] = True if field == "max_spread_multiple" else str(item[field])
+
+                forecast = synthesize_forecast(
+                    pair="EUR_USD",
+                    pair_chart=chart,
+                    current_price=1.1000,
+                    pattern_signals=[],
+                    projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+                    correlation_signals=[],
+                    paths=[],
+                )
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_execution_timeframe_cannot_claim_provenance_only_spread_mode(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        item["spread_evaluation_mode"] = "PROVENANCE_ONLY_HIGHER_TIMEFRAME"
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_payload_identity_receipt_must_match_pair_and_timeframe(self) -> None:
+        for field, value in (
+            ("payload_instrument", "GBP_USD"),
+            ("payload_granularity", "H1"),
+        ):
+            with self.subTest(field=field):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes["M1"]
+                assert isinstance(item, dict)
+                item[field] = value
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_explicit_production_contract_blocks_when_timestamp_and_receipt_are_both_removed(self) -> None:
+        chart = self._chart(recovered=True)
+        chart.pop("generated_at_utc")
+        chart.pop("technical_candle_integrity")
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_default_forecast_contract_fails_closed_without_integrity(self) -> None:
+        chart = self._chart(recovered=True)
+        chart.pop("generated_at_utc")
+        chart.pop("technical_candle_integrity")
+
+        forecast = _synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.confidence, 0.0)
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_production_generated_at_requires_exact_timezone_aware_iso_string(self) -> None:
+        for value in (None, True, 1720917900, "garbage", "2026-07-14T00:45:00"):
+            with self.subTest(value=value):
+                chart = self._chart(recovered=True)
+                if value is None:
+                    chart.pop("generated_at_utc")
+                else:
+                    chart["generated_at_utc"] = value
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_production_forecast_requires_aware_now_datetime(self) -> None:
+        for value in (
+            None,
+            True,
+            1720917900,
+            "2026-07-14T00:45:00Z",
+            datetime(2026, 7, 14, 0, 45),
+        ):
+            with self.subTest(value=value):
+                forecast = self._production_forecast(
+                    self._chart(recovered=True),
+                    now_utc=value,
+                )
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_production_chart_freshness_blocks_stale_and_future_artifacts(self) -> None:
+        generated = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+        stale = self._production_forecast(
+            self._chart(recovered=True),
+            now_utc=generated + timedelta(
+                seconds=TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS + 1
+            ),
+        )
+        future = self._production_forecast(
+            self._chart(recovered=True),
+            now_utc=generated - timedelta(
+                seconds=TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS + 1
+            ),
+        )
+
+        for forecast in (stale, future):
+            self.assertEqual(forecast.direction, "UNCLEAR")
+            self.assertEqual(forecast.confidence, 0.0)
+            self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_production_fast_freshness_boundary_remains_reachable(self) -> None:
+        generated = datetime(2026, 7, 14, 0, 45, tzinfo=timezone.utc)
+        forecast = self._production_forecast(
+            self._chart(recovered=True),
+            # M1 latest complete is 00:43, exactly three minutes old here.
+            now_utc=generated + timedelta(minutes=1),
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.confidence, 0.0)
+
+    def test_production_fast_candle_freshness_blocks_stale_m1_or_m5(self) -> None:
+        for timeframe, stale_tail, quarantine_tail in (
+            ("M1", "2026-07-14T00:41:59+00:00", "2026-07-14T00:41:00+00:00"),
+            ("M5", "2026-07-14T00:34:59+00:00", None),
+        ):
+            with self.subTest(timeframe=timeframe):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                views = chart["views"]
+                assert isinstance(integrity, dict) and isinstance(views, list)
+                timeframes = integrity["timeframes"]
+                assert isinstance(timeframes, dict)
+                item = timeframes[timeframe]
+                assert isinstance(item, dict)
+                item["latest_complete_timestamp_utc"] = stale_tail
+                item["latest_clean_timestamp_utc"] = stale_tail
+                if quarantine_tail is not None:
+                    details = item["quarantine_details"]
+                    assert isinstance(details, list) and isinstance(details[-1], dict)
+                    details[-1]["timestamp_utc"] = quarantine_tail
+                view = next(
+                    candidate
+                    for candidate in views
+                    if isinstance(candidate, dict)
+                    and candidate.get("granularity") == timeframe
+                )
+                recent = view["recent_candles"]
+                assert isinstance(recent, list) and isinstance(recent[-1], dict)
+                recent[-1]["t"] = stale_tail
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_production_requires_both_m1_and_m5_receipts(self) -> None:
+        for removed in (("M1",), ("M5",), ("M1", "M5")):
+            with self.subTest(removed=removed):
+                chart = self._chart(recovered=True)
+                integrity = chart["technical_candle_integrity"]
+                views = chart["views"]
+                assert isinstance(integrity, dict) and isinstance(views, list)
+                timeframes = integrity["timeframes"]
+                requested = integrity["requested_timeframes"]
+                assert isinstance(timeframes, dict) and isinstance(requested, list)
+                for timeframe in removed:
+                    timeframes.pop(timeframe)
+                    requested.remove(timeframe)
+                chart["views"] = [
+                    view
+                    for view in views
+                    if isinstance(view, dict)
+                    and view.get("granularity") not in removed
+                ]
+                remaining = list(timeframes.values())
+                integrity["evaluated_timeframe_count"] = len(remaining)
+                integrity["codes"] = list(dict.fromkeys(
+                    code
+                    for item in remaining
+                    if isinstance(item, dict)
+                    for code in item.get("codes", [])
+                ))
+                integrity["blocking_codes"] = list(dict.fromkeys(
+                    code
+                    for item in remaining
+                    if isinstance(item, dict)
+                    for code in item.get("blocking_codes", [])
+                ))
+                integrity["forecast_blocking"] = bool(integrity["blocking_codes"])
+                integrity["evaluation_status"] = (
+                    "BLOCKED"
+                    if integrity["blocking_codes"]
+                    else "DEGRADED"
+                    if integrity["codes"]
+                    else "PASS"
+                )
+
+                forecast = self._production_forecast(chart)
+
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_view_and_top_level_timeframe_receipts_must_match_one_to_one(self) -> None:
+        variants: list[tuple[str, dict[str, object]]] = []
+
+        missing_view = copy.deepcopy(self._chart(recovered=True))
+        missing_view["views"] = []
+        variants.append(("missing_view", missing_view))
+
+        duplicate_view = copy.deepcopy(self._chart(recovered=True))
+        views = duplicate_view["views"]
+        assert isinstance(views, list)
+        views.append(copy.deepcopy(views[0]))
+        variants.append(("duplicate_view", duplicate_view))
+
+        mismatched_receipt = copy.deepcopy(self._chart(recovered=True))
+        views = mismatched_receipt["views"]
+        assert isinstance(views, list) and isinstance(views[0], dict)
+        view_receipt = views[0]["candle_integrity"]
+        assert isinstance(view_receipt, dict)
+        view_receipt["clean_count"] = 40
+        variants.append(("mismatched_receipt", mismatched_receipt))
+
+        noncanonical_tf = copy.deepcopy(self._chart(recovered=True))
+        integrity = noncanonical_tf["technical_candle_integrity"]
+        views = noncanonical_tf["views"]
+        assert isinstance(integrity, dict) and isinstance(views, list)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict) and isinstance(views[0], dict)
+        item = timeframes.pop("M1")
+        assert isinstance(item, dict)
+        item["granularity"] = "m1"
+        timeframes["m1"] = item
+        integrity["requested_timeframes"] = ["m1"]
+        views[0]["granularity"] = "m1"
+        variants.append(("noncanonical_tf", noncanonical_tf))
+
+        for name, chart in variants:
+            with self.subTest(name=name):
+                forecast = self._production_forecast(chart)
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertEqual(forecast.confidence, 0.0)
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_forecast_pair_must_match_chart_aggregate_and_child_pair_exactly(self) -> None:
+        argument_mismatch = self._production_forecast(
+            self._chart(recovered=True),
+            pair="GBP_USD",
+        )
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, argument_mismatch.drivers_against)
+
+        for level in ("chart", "aggregate", "child"):
+            with self.subTest(level=level):
+                chart = copy.deepcopy(self._chart(recovered=True))
+                integrity = chart["technical_candle_integrity"]
+                assert isinstance(integrity, dict)
+                if level == "chart":
+                    chart["pair"] = "GBP_USD"
+                elif level == "aggregate":
+                    integrity["pair"] = "GBP_USD"
+                else:
+                    timeframes = integrity["timeframes"]
+                    assert isinstance(timeframes, dict)
+                    child = timeframes["M1"]
+                    assert isinstance(child, dict)
+                    child["pair"] = "GBP_USD"
+
+                forecast = self._production_forecast(chart)
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+
+class ProductionPairChartLoaderIntegrityTest(unittest.TestCase):
+    @staticmethod
+    def _write_packet(root: Path, generated_at: object = "2026-07-14T00:45:00+00:00") -> Path:
+        path = root / "pair_charts.json"
+        path.write_text(json.dumps({
+            "generated_at_utc": generated_at,
+            "charts": [{
+                "pair": "EUR_USD",
+                "generated_at_utc": "",
+                "views": [],
+            }],
+        }))
+        return path
+
+    def test_loaders_unconditionally_replace_row_timestamp_with_trusted_outer_timestamp(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _load_pair_charts
+        from quant_rabbit.strategy.trader_brain import _load_full_pair_charts_for_brain
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_packet(Path(tmp))
+
+            brain_charts = _load_full_pair_charts_for_brain(path)
+            intent_charts = _load_pair_charts(path)
+
+        self.assertEqual(
+            brain_charts["EUR_USD"]["generated_at_utc"],
+            "2026-07-14T00:45:00+00:00",
+        )
+        assert intent_charts is not None
+        self.assertEqual(
+            intent_charts["EUR_USD"]["__raw_chart"]["generated_at_utc"],
+            "2026-07-14T00:45:00+00:00",
+        )
+
+    def test_loaders_fail_closed_on_missing_or_malformed_outer_timestamp(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _load_pair_charts
+        from quant_rabbit.strategy.trader_brain import _load_full_pair_charts_for_brain
+
+        for value in (None, True, 1720917900, "garbage", "2026-07-14T00:45:00"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                path = self._write_packet(Path(tmp), generated_at=value)
+
+                self.assertEqual(_load_full_pair_charts_for_brain(path), {})
+                self.assertIsNone(_load_pair_charts(path))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_packet(Path(tmp))
+            payload = json.loads(path.read_text())
+            payload.pop("generated_at_utc")
+            path.write_text(json.dumps(payload))
+
+            self.assertEqual(_load_full_pair_charts_for_brain(path), {})
+            self.assertIsNone(_load_pair_charts(path))
+
+    def test_loaders_fail_closed_on_duplicate_pair_rows(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _load_pair_charts
+        from quant_rabbit.strategy.trader_brain import _load_full_pair_charts_for_brain
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_packet(Path(tmp))
+            payload = json.loads(path.read_text())
+            payload["charts"].append(copy.deepcopy(payload["charts"][0]))
+            payload["charts"][1]["generated_at_utc"] = "2099-01-01T00:00:00+00:00"
+            path.write_text(json.dumps(payload))
+
+            self.assertEqual(_load_full_pair_charts_for_brain(path), {})
+            self.assertIsNone(_load_pair_charts(path))
+
+    def test_loaders_fail_closed_on_noncanonical_pair_rows(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _load_pair_charts
+        from quant_rabbit.strategy.trader_brain import _load_full_pair_charts_for_brain
+
+        for pair in (None, True, 123, "", "eur_usd", "EURUSD", "XAU_USD"):
+            with self.subTest(pair=pair), tempfile.TemporaryDirectory() as tmp:
+                path = self._write_packet(Path(tmp))
+                payload = json.loads(path.read_text())
+                payload["charts"][0]["pair"] = pair
+                path.write_text(json.dumps(payload))
+
+                self.assertEqual(_load_full_pair_charts_for_brain(path), {})
+                self.assertIsNone(_load_pair_charts(path))
+
+
+class TechnicalCandleIntegrityReceiptBindingTest(unittest.TestCase):
+    """Tamper tests that bind aggregate receipts to their chart evidence."""
+
+    _chart = staticmethod(TechnicalCandleIntegrityForecastGateTest._chart)
+    _production_forecast = staticmethod(
+        TechnicalCandleIntegrityForecastGateTest._production_forecast
+    )
+
+    def test_self_consistent_clean_state_cannot_hide_latest_contaminated_tail(self) -> None:
+        chart = copy.deepcopy(self._chart(recovered=False))
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        item.update({
+            "recent_tail_state": "CLEAN",
+            "recent_tail_contaminated": False,
+            "forecast_blocking": False,
+            "blocking_codes": [],
+            "evaluation_status": "DEGRADED",
+        })
+        integrity.update({
+            "forecast_blocking": False,
+            "blocking_codes": [],
+            "evaluation_status": "DEGRADED",
+        })
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_impossible_clean_complete_counts_cannot_hide_contamination(self) -> None:
+        chart = copy.deepcopy(self._chart(recovered=False))
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        timeframes = integrity["timeframes"]
+        assert isinstance(timeframes, dict)
+        item = timeframes["M1"]
+        assert isinstance(item, dict)
+        item.update({
+            "contaminated_count": 0,
+            "quarantined_count": 0,
+            "recent_tail_state": "CLEAN",
+            "recent_tail_contaminated": False,
+            "forecast_blocking": False,
+            "codes": [],
+            "blocking_codes": [],
+            "evaluation_status": "PASS",
+            "latest_complete_timestamp_utc": "2026-07-14T00:39:00+00:00",
+            "quarantine_details": [],
+        })
+        integrity.update({
+            "forecast_blocking": False,
+            "codes": [],
+            "blocking_codes": [],
+            "evaluation_status": "PASS",
+        })
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_aggregate_evaluated_timeframe_count_rejects_bool(self) -> None:
+        chart = self._chart(recovered=True)
+        integrity = chart["technical_candle_integrity"]
+        assert isinstance(integrity, dict)
+        integrity["evaluated_timeframe_count"] = True
+
+        forecast = self._production_forecast(chart)
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)
+
+    def test_view_indicator_count_and_recent_tail_must_bind_to_receipt(self) -> None:
+        for field in ("candles_count", "recent_tail"):
+            with self.subTest(field=field):
+                chart = copy.deepcopy(self._chart(recovered=True))
+                views = chart["views"]
+                assert isinstance(views, list) and isinstance(views[0], dict)
+                if field == "candles_count":
+                    indicators = views[0]["indicators"]
+                    assert isinstance(indicators, dict)
+                    indicators["candles_count"] = 40
+                else:
+                    recent = views[0]["recent_candles"]
+                    assert isinstance(recent, list) and isinstance(recent[-1], dict)
+                    recent[-1]["t"] = "2026-07-14T00:40:00+00:00"
+
+                forecast = self._production_forecast(chart)
+                self.assertEqual(forecast.direction, "UNCLEAR")
+                self.assertIn(TECHNICAL_CANDLE_PROVENANCE_INVALID, forecast.drivers_against)

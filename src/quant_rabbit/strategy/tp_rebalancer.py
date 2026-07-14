@@ -1119,25 +1119,44 @@ def apply_tp_adjustments(
     """
     results: list[dict] = []
     for adj in adjustments:
+        order_request = {
+            "takeProfit": {
+                "price": (
+                    f"{adj.new_tp:.5f}".rstrip("0").rstrip(".")
+                    if not adj.pair.endswith("_JPY")
+                    else f"{adj.new_tp:.3f}"
+                ),
+                "timeInForce": "GTC",
+            }
+        }
         entry = {
             "trade_id": adj.trade_id,
             "pair": adj.pair,
             "side": adj.side,
+            "management_action": "TP_REBALANCE",
             "current_tp": adj.current_tp,
             "new_tp": adj.new_tp,
             "distance_pips_old": adj.distance_pips_old,
             "distance_pips_new": adj.distance_pips_new,
             "rationale": adj.rationale,
+            "request": {
+                "type": "DEPENDENT_ORDER_REPLACE",
+                "trade_id": adj.trade_id,
+                "order_request": order_request,
+            },
+            "response": None,
             "sent": False,
+            "broker_post_attempted": False,
             "error": None,
         }
         if dry_run:
             results.append(entry)
             continue
         try:
-            broker_client.replace_trade_dependent_orders(
+            entry["broker_post_attempted"] = True
+            entry["response"] = broker_client.replace_trade_dependent_orders(
                 adj.trade_id,
-                {"takeProfit": {"price": f"{adj.new_tp:.5f}".rstrip("0").rstrip(".") if not adj.pair.endswith("_JPY") else f"{adj.new_tp:.3f}", "timeInForce": "GTC"}},
+                order_request,
             )
             entry["sent"] = True
         except Exception as exc:  # noqa: BLE001 — keep loop running

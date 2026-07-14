@@ -7,6 +7,7 @@ import signal
 import shutil
 import sqlite3
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,7 +51,10 @@ from quant_rabbit.capital_flows import (
 from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
-from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.execution_ledger import (
+    ExecutionLedger,
+    validated_gateway_receipt_sent_mutations,
+)
 from quant_rabbit.execution_timing_audit import (
     DEFAULT_LOOKBACK_HOURS as DEFAULT_EXECUTION_TIMING_LOOKBACK_HOURS,
 )
@@ -157,6 +161,7 @@ from quant_rabbit.paths import (
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
+    DEFAULT_TP_REBALANCE,
     DEFAULT_POSITION_GUARDIAN_EXECUTION,
     DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
     DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
@@ -392,6 +397,26 @@ def _parse_utc_datetime(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_explicit_utc_datetime(value: Any) -> datetime | None:
+    """Parse a receipt boundary timestamp only when UTC is explicit.
+
+    General market artifacts retain the legacy behavior of treating a naive
+    timestamp as UTC.  A broker-mutation attribution boundary cannot make that
+    assumption: missing offset provenance must fail closed.
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    offset = parsed.utcoffset()
+    if parsed.tzinfo is None or offset is None or offset.total_seconds() != 0:
+        return None
     return parsed.astimezone(timezone.utc)
 
 
@@ -1246,16 +1271,51 @@ def _partial_close_receipt_actions(
             {
                 "trade_id": trade_id,
                 "pair": str(result.get("pair") or ""),
-                "owner": "trader",
+                "owner": str(result.get("owner") or "unknown"),
                 "management_action": management_action,
                 "request": request,
                 "issues": issues,
                 "sent": bool(result.get("sent")),
                 "response": result.get("response"),
                 "reasons": [str(result.get("rationale") or management_action)],
+                "broker_post_attempted": result.get("broker_post_attempted"),
             }
         )
     return actions
+
+
+def _receipt_results_with_action_identity(
+    results: Iterable[dict[str, Any]],
+    actions: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Preserve rich result evidence plus the canonical action identity.
+
+    Current batch receipts deliberately duplicate sent evidence in ``actions``
+    and ``results``.  Copy the exact identity/request/response fields into the
+    result view so the consumer can prove the two views describe the same
+    broker mutation rather than merely the same number of mutations.
+    """
+
+    result_rows = list(results)
+    action_rows = list(actions)
+    if len(result_rows) != len(action_rows):
+        raise ValueError("receipt actions/results row counts must match")
+    enriched: list[dict[str, Any]] = []
+    for result, action in zip(result_rows, action_rows, strict=True):
+        row = dict(result)
+        for field in (
+            "trade_id",
+            "pair",
+            "owner",
+            "management_action",
+            "request",
+            "response",
+            "sent",
+            "broker_post_attempted",
+        ):
+            row[field] = action.get(field)
+        enriched.append(row)
+    return enriched
 
 
 def _fresh_partial_close_forbidden_trade_reasons(
@@ -1264,7 +1324,7 @@ def _fresh_partial_close_forbidden_trade_reasons(
     actions: Iterable[Any],
     local_positions: Iterable[Any],
 ) -> dict[str, str]:
-    """Fail closed against stale JSON and broker-visible exact SCOUT vehicles."""
+    """Fail closed against stale JSON, non-trader ownership, and SCOUT vehicles."""
 
     from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 
@@ -1316,11 +1376,19 @@ def _fresh_partial_close_forbidden_trade_reasons(
             reasons[trade_id] = (
                 "FRESH_BROKER_POSITION_NOT_FOUND: partial-close target is no longer open"
             )
-        elif predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
-            reasons[trade_id] = (
-                "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: fresh broker truth identifies an "
-                "exact TP/SL forward vehicle"
-            )
+        else:
+            owner = getattr(position, "owner", None)
+            owner_value = owner.value if hasattr(owner, "value") else str(owner or "")
+            if owner_value.strip().lower() != "trader":
+                reasons[trade_id] = (
+                    "NON_TRADER_PARTIAL_CLOSE_FORBIDDEN: fresh broker truth does not "
+                    "identify the target as trader-owned"
+                )
+            elif predictive_scout_broker_raw_claimed(getattr(position, "raw", None)):
+                reasons[trade_id] = (
+                    "PREDICTIVE_SCOUT_EXIT_GEOMETRY_FROZEN: fresh broker truth identifies an "
+                    "exact TP/SL forward vehicle"
+                )
     return reasons
 
 
@@ -2147,11 +2215,14 @@ def _auto_refresh_market_evidence_if_required(
         _write_json(DEFAULT_BROKER_INSTRUMENTS, broker_instruments)
         _write_broker_instruments_report(broker_instruments, DEFAULT_BROKER_INSTRUMENTS_REPORT)
 
-        generated_at = datetime.now(timezone.utc).isoformat()
         charts = [
             build_pair_chart(pair, client=client, timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES, count=candle_count).to_dict()
             for pair in pairs
         ]
+        # Bind the outer chart clock after the final sequential OANDA fetch.
+        # Stamping before 28 pairs × 7 timeframes could make a later pair's
+        # legitimate completed candle appear to come from the future.
+        generated_at = datetime.now(timezone.utc).isoformat()
         previous_pair_charts = None
         if DEFAULT_PAIR_CHARTS.exists():
             try:
@@ -2871,24 +2942,35 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             results.append({"step": name, "status": "SKIPPED_AFTER_ABORT"})
             continue
         buf = io.StringIO()
+        cycle_step_run_id = uuid.uuid4().hex
+        previous_cycle_step_run_id = os.environ.get("QR_CYCLE_STEP_RUN_ID")
+        os.environ["QR_CYCLE_STEP_RUN_ID"] = cycle_step_run_id
+        started_at_utc = datetime.now(timezone.utc).isoformat()
         started = _time.monotonic()
         rc = 0
         try:
-            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                rc = _run_with_cycle_step_timeout(
-                    _cycle_step_timeout_seconds(spec),
-                    lambda: main(argv),
-                )
-        except _CycleStepTimeout as exc:
-            rc = 124
-            buf.write(f"\n{type(exc).__name__}: {exc}")
-        except SystemExit as exc:  # argparse errors and explicit exits
-            code = exc.code
-            rc = code if isinstance(code, int) else 1
-        except Exception as exc:  # noqa: BLE001 — step isolation is the point
-            rc = 1
-            buf.write(f"\n{type(exc).__name__}: {exc}")
+            try:
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    rc = _run_with_cycle_step_timeout(
+                        _cycle_step_timeout_seconds(spec),
+                        lambda: main(argv),
+                    )
+            except _CycleStepTimeout as exc:
+                rc = 124
+                buf.write(f"\n{type(exc).__name__}: {exc}")
+            except SystemExit as exc:  # argparse errors and explicit exits
+                code = exc.code
+                rc = code if isinstance(code, int) else 1
+            except Exception as exc:  # noqa: BLE001 — step isolation is the point
+                rc = 1
+                buf.write(f"\n{type(exc).__name__}: {exc}")
+        finally:
+            if previous_cycle_step_run_id is None:
+                os.environ.pop("QR_CYCLE_STEP_RUN_ID", None)
+            else:
+                os.environ["QR_CYCLE_STEP_RUN_ID"] = previous_cycle_step_run_id
         elapsed = round(_time.monotonic() - started, 1)
+        finished_at_utc = datetime.now(timezone.utc).isoformat()
         ok_rcs = {int(item) for item in spec.get("ok_rcs", [0])}
         timed_out = rc == 124
         entry: dict[str, Any] = {
@@ -2896,6 +2978,9 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             "status": "OK" if rc in ok_rcs else ("TIMED_OUT" if timed_out else "FAILED"),
             "rc": rc,
             "seconds": elapsed,
+            "started_at_utc": started_at_utc,
+            "finished_at_utc": finished_at_utc,
+            "cycle_step_run_id": cycle_step_run_id,
         }
         if rc not in ok_rcs:
             tail = buf.getvalue().strip()
@@ -3079,6 +3164,149 @@ def _profitability_acceptance_digest_summary(payload: dict[str, Any]) -> dict[st
     }
 
 
+def _cycle_gateway_mutation_digest(
+    step_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose broker mutations proven to belong to this exact sidecar cycle.
+
+    A successful command name alone cannot prove that it sent nothing, and a
+    stale receipt cannot be attributed to the current cycle.  Bind each
+    position gateway artifact to the wall-clock interval recorded around its
+    step, then normalize its duplicated sent evidence with the execution
+    ledger's strict parser.
+    """
+
+    # These are every command in the consolidated cycle step lists that can
+    # call an OANDA position-write method.  A new mutation command must first
+    # gain a durable strict receipt and then be added here; otherwise the cycle
+    # is not allowed to claim VERIFIED_NO_BROKER_MUTATION.
+    receipt_specs = (
+        ("tp-rebalance", DEFAULT_TP_REBALANCE),
+        ("profit-partial-close", DEFAULT_PROFIT_PARTIAL_CLOSE),
+        ("position-execution", DEFAULT_POSITION_EXECUTION),
+    )
+    broker_snapshot = _read_json_quiet(DEFAULT_BROKER_SNAPSHOT)
+    receipts: list[dict[str, Any]] = []
+    current_cycle_sent_count = 0
+    relevant_step_count = 0
+    integrity_blocked = False
+    for command, path in receipt_specs:
+        matching_steps = [
+            item
+            for item in step_results
+            if str(item.get("step") or "").split(" ", 1)[0] == command
+        ]
+        if not matching_steps:
+            continue
+        relevant_step_count += 1
+        step = matching_steps[-1]
+        receipt: dict[str, Any] = {
+            "command": command,
+            "path": str(path),
+            "matching_step_count": len(matching_steps),
+            "step_status": step.get("status"),
+            "generated_at_utc": None,
+            "cycle_step_run_id": None,
+            "status": None,
+            "send_requested": None,
+            "sent_count": None,
+            "current_cycle_proven": False,
+            "integrity_status": "UNVERIFIED",
+            "sent_mutations": [],
+        }
+        if len(matching_steps) != 1:
+            receipt["integrity_status"] = "DUPLICATE_MUTATION_STEPS"
+            integrity_blocked = True
+            receipts.append(receipt)
+            continue
+        payload = _read_json_quiet(path)
+        if not isinstance(payload, dict):
+            receipt["integrity_status"] = "RECEIPT_MISSING_OR_INVALID_JSON"
+            integrity_blocked = True
+            receipts.append(receipt)
+            continue
+        receipt["generated_at_utc"] = payload.get("generated_at_utc")
+        receipt["cycle_step_run_id"] = payload.get("cycle_step_run_id")
+        receipt["status"] = payload.get("status")
+        receipt["send_requested"] = payload.get("send_requested")
+        generated_at = _parse_explicit_utc_datetime(payload.get("generated_at_utc"))
+        step_started = _parse_explicit_utc_datetime(step.get("started_at_utc"))
+        step_finished = _parse_explicit_utc_datetime(step.get("finished_at_utc"))
+        receipt_run_id = payload.get("cycle_step_run_id")
+        step_run_id = step.get("cycle_step_run_id")
+        current_cycle_proven = bool(
+            step.get("status") == "OK"
+            and generated_at is not None
+            and step_started is not None
+            and step_finished is not None
+            and step_started <= generated_at <= step_finished
+            and isinstance(receipt_run_id, str)
+            and bool(receipt_run_id.strip())
+            and receipt_run_id == step_run_id
+        )
+        receipt["current_cycle_proven"] = current_cycle_proven
+        if not current_cycle_proven:
+            receipt["integrity_status"] = "CURRENT_CYCLE_RECEIPT_NOT_PROVEN"
+            integrity_blocked = True
+            receipts.append(receipt)
+            continue
+
+        try:
+            sent_mutations = validated_gateway_receipt_sent_mutations(
+                schema=command,
+                payload=payload,
+                broker_snapshot=(
+                    broker_snapshot if isinstance(broker_snapshot, dict) else None
+                ),
+            )
+        except ValueError as exc:
+            receipt["integrity_status"] = "SENT_EVIDENCE_INVALID"
+            receipt["integrity_error"] = str(exc)
+            integrity_blocked = True
+            receipts.append(receipt)
+            continue
+
+        sent_count = len(sent_mutations)
+        receipt["sent_count"] = sent_count
+        receipt["integrity_status"] = "CURRENT_CYCLE_RECEIPT_VERIFIED"
+        current_cycle_sent_count += sent_count
+        receipt["sent_mutations"] = [
+            {
+                "trade_id": mutation.get("trade_id"),
+                "pair": mutation.get("pair"),
+                "owner": mutation.get("owner"),
+                "management_action": mutation.get("management_action"),
+                "request_type": mutation.get("request_type"),
+                "units": mutation.get("units"),
+                "send_boundary_checked_at_utc": mutation.get(
+                    "send_boundary_checked_at_utc"
+                ),
+                "order_id": mutation.get("order_id"),
+                "fill_transaction_id": mutation.get("fill_transaction_id"),
+                "response_transaction_ids": mutation.get(
+                    "response_transaction_ids"
+                ),
+            }
+            for mutation in sent_mutations[:8]
+        ]
+        receipts.append(receipt)
+
+    if relevant_step_count == 0:
+        status = "NOT_RUN"
+    elif integrity_blocked:
+        status = "RECEIPT_INTEGRITY_BLOCKED"
+    elif current_cycle_sent_count > 0:
+        status = "BROKER_MUTATION_SENT"
+    else:
+        status = "VERIFIED_NO_BROKER_MUTATION"
+    return {
+        "status": status,
+        "current_cycle_sent_count": current_cycle_sent_count,
+        "receipt_count": len(receipts),
+        "receipts": receipts,
+    }
+
+
 def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: bool) -> dict[str, Any]:
     """Compact single-read packet for the scheduled trader.
 
@@ -3119,6 +3347,7 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         "step_timings": step_timings,
         "total_step_seconds": round(sum(float(row["seconds"]) for row in step_timings), 3),
         "slowest_steps": slowest_steps,
+        "broker_mutations": _cycle_gateway_mutation_digest(step_results),
     }
 
     snapshot = _read_json_quiet(DEFAULT_BROKER_SNAPSHOT)
@@ -4817,6 +5046,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_tprebal.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_tprebal.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_tprebal.add_argument("--output", type=Path, default=DEFAULT_TP_REBALANCE)
+    p_tprebal.add_argument(
+        "--execution-ledger-db",
+        type=Path,
+        default=DEFAULT_EXECUTION_LEDGER_DB,
+    )
+    p_tprebal.add_argument(
+        "--execution-ledger-report",
+        type=Path,
+        default=DEFAULT_EXECUTION_LEDGER_REPORT,
+    )
     p_tprebal.add_argument(
         "--dry-run",
         action="store_true",
@@ -4850,7 +5090,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_profitpart = sub.add_parser(
         "profit-partial-close",
-        help="Stage/send profit-side partial closes for trader-owned and manual/tagless positions at ATR milestones.",
+        help="Stage/send profit-side partial closes for trader-owned positions at ATR milestones.",
     )
     p_profitpart.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_profitpart.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -8942,16 +9182,54 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run and adjustments:
             client = OandaExecutionClient()
         results = apply_tp_adjustments(adjustments, client, dry_run=args.dry_run)
-        print(json.dumps(
-            {
-                "status": "OK",
-                "dry_run": args.dry_run,
-                "adjustments_count": len(adjustments),
-                "results": results,
-            },
-            indent=2,
-            ensure_ascii=False,
-        ))
+        owners_by_trade_id = {
+            str(position.trade_id): (
+                position.owner.value
+                if hasattr(position.owner, "value")
+                else str(position.owner or "unknown")
+            )
+            for position in positions
+        }
+        for result in results:
+            result["owner"] = owners_by_trade_id.get(
+                str(result.get("trade_id") or ""),
+                "unknown",
+            )
+        actions = [dict(result) for result in results]
+        receipt_results = _receipt_results_with_action_identity(results, actions)
+        sent_count = sum(1 for result in results if result.get("sent") is True)
+        blocked_count = sum(1 for result in results if result.get("error"))
+        if not results:
+            status = "NO_ACTION"
+        elif sent_count and blocked_count:
+            status = "PARTIAL_SENT_WITH_BLOCKS"
+        elif sent_count:
+            status = "SENT"
+        elif blocked_count:
+            status = "BLOCKED"
+        else:
+            status = "STAGED"
+        payload = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "cycle_step_run_id": os.environ.get("QR_CYCLE_STEP_RUN_ID"),
+            "status": status,
+            "send_requested": not args.dry_run,
+            "dry_run": args.dry_run,
+            "adjustments_count": len(adjustments),
+            "sent": sent_count > 0,
+            "sent_count": sent_count,
+            "blocked_count": blocked_count,
+            "actions": actions,
+            "results": receipt_results,
+        }
+        _write_json(args.output, payload)
+        payload["execution_ledger"] = _record_position_execution_receipt(
+            output_path=args.output,
+            ledger_db_path=args.execution_ledger_db,
+            ledger_report_path=args.execution_ledger_report,
+        )
+        _write_json(args.output, payload)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
     if args.command == "adverse-partial-close":
         from quant_rabbit.strategy.adverse_partial_close import (
@@ -9210,8 +9488,13 @@ def main(argv: list[str] | None = None) -> int:
             status = "BLOCKED"
         else:
             status = "STAGED"
+        receipt_actions = _partial_close_receipt_actions(
+            results,
+            management_action="PROFIT_PARTIAL_CLOSE",
+        )
         payload = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "cycle_step_run_id": os.environ.get("QR_CYCLE_STEP_RUN_ID"),
             "status": status,
             "send_requested": args.send,
             "confirm_live": args.confirm_live,
@@ -9219,11 +9502,11 @@ def main(argv: list[str] | None = None) -> int:
             "actions_count": len(actions),
             "sent_count": sent_count,
             "blocked_count": blocked_count,
-            "results": results,
-            "actions": _partial_close_receipt_actions(
+            "results": _receipt_results_with_action_identity(
                 results,
-                management_action="PROFIT_PARTIAL_CLOSE",
+                receipt_actions,
             ),
+            "actions": receipt_actions,
             "state": state,
             "execution_ledger_pre_sync": ledger_pre_sync,
         }
@@ -9257,8 +9540,8 @@ def main(argv: list[str] | None = None) -> int:
                 "",
                 "## Contract",
                 "",
-                "- Profit partial close only reduces already-profitable trader-owned or manual/tagless exposure.",
-                "- Manual/tagless profit partials never realize an adverse P/L loss and never write stop-loss orders.",
+                "- Profit partial close only reduces already-profitable trader-owned exposure.",
+                "- Manual/tagless/operator-managed positions are monitor-only and fail closed at the fresh-broker send boundary.",
                 "- Same trade milestone is persisted in state after a successful send to avoid repeat closes.",
                 "- Live send requires `--send --confirm-live` and `QR_LIVE_ENABLED=1`.",
             ]

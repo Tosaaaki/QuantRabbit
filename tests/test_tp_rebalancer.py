@@ -1087,6 +1087,7 @@ class ApplyTPAdjustmentsTest(unittest.TestCase):
         results = apply_tp_adjustments([adj], client, dry_run=True)
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0]["sent"])
+        self.assertFalse(results[0]["broker_post_attempted"])
         self.assertEqual(client.calls, [])
 
     def test_apply_calls_broker(self) -> None:
@@ -1105,9 +1106,16 @@ class ApplyTPAdjustmentsTest(unittest.TestCase):
         client = MockClient()
         results = apply_tp_adjustments([adj], client, dry_run=False)
         self.assertTrue(results[0]["sent"])
+        self.assertTrue(results[0]["broker_post_attempted"])
         self.assertIsNone(results[0]["error"])
         self.assertEqual(client.calls[0][0], "t2")
         self.assertIn("takeProfit", client.calls[0][1])
+        self.assertEqual(results[0]["management_action"], "TP_REBALANCE")
+        self.assertEqual(
+            results[0]["request"]["type"],
+            "DEPENDENT_ORDER_REPLACE",
+        )
+        self.assertEqual(results[0]["response"], {"ok": True})
 
     def test_broker_exception_captured_per_adjustment(self) -> None:
         adj = TPAdjustment(
@@ -1123,6 +1131,7 @@ class ApplyTPAdjustmentsTest(unittest.TestCase):
         client = FlakyClient()
         results = apply_tp_adjustments([adj], client, dry_run=False)
         self.assertFalse(results[0]["sent"])
+        self.assertTrue(results[0]["broker_post_attempted"])
         self.assertEqual(results[0]["error"], "broker timeout")
 
 

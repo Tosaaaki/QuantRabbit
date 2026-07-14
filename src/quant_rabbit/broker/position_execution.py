@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
@@ -13,6 +13,10 @@ from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Si
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
 from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
+from quant_rabbit.position_execution_contract import (
+    POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS,
+    POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS,
+)
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
@@ -65,11 +69,13 @@ class PositionProtectionGateway:
         output_path: Path = DEFAULT_POSITION_EXECUTION,
         report_path: Path = DEFAULT_POSITION_EXECUTION_REPORT,
         live_enabled: bool = False,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.client = client
         self.output_path = output_path
         self.report_path = report_path
         self.live_enabled = live_enabled
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def run(
         self,
@@ -78,10 +84,17 @@ class PositionProtectionGateway:
         snapshot: BrokerSnapshot,
         send: bool = False,
     ) -> PositionExecutionSummary:
-        generated_at = datetime.now(timezone.utc).isoformat()
+        generated_at_utc = self.clock().astimezone(timezone.utc)
+        generated_at = generated_at_utc.isoformat()
         positions = {position.trade_id: position for position in snapshot.positions}
         actions = [
-            self._plan_action(managed, positions.get(managed.trade_id), snapshot)
+            self._plan_action(
+                managed,
+                positions.get(managed.trade_id),
+                snapshot,
+                generated_at_utc,
+                decision.snapshot_fetched_at_utc,
+            )
             for managed in decision.positions
         ]
         if send and not self.live_enabled:
@@ -96,12 +109,34 @@ class PositionProtectionGateway:
                     )
 
         responses: list[dict[str, Any] | None] = []
-        for action in actions:
+        for managed, action in zip(decision.positions, actions, strict=True):
             request = action["request"]
             blocked = _has_block(action)
             response = None
             if send and request is not None and not blocked:
+                boundary_now = _aware_utc_datetime(self.clock())
+                if boundary_now is not None:
+                    action["send_boundary_checked_at_utc"] = (
+                        boundary_now.isoformat()
+                    )
+                position = positions.get(managed.trade_id)
+                boundary_issue = _send_boundary_identity_issue(
+                    action=action,
+                    request=request,
+                    managed=managed,
+                    position=position,
+                    snapshot=snapshot,
+                    decision_snapshot_fetched_at_utc=(
+                        decision.snapshot_fetched_at_utc
+                    ),
+                    boundary_now_utc=boundary_now,
+                )
+                if boundary_issue is not None:
+                    action["issues"].append(boundary_issue)
+                    blocked = True
+            if send and request is not None and not blocked:
                 try:
+                    action["broker_post_attempted"] = True
                     if request["type"] == "CLOSE":
                         response = _close_trade_with_supported_provenance(
                             self.client,
@@ -133,6 +168,7 @@ class PositionProtectionGateway:
         status = _status(actionable=actionable, blocked=blocked_count, sent=sent_count, send=send)
         result = {
             "generated_at_utc": generated_at,
+            "cycle_step_run_id": os.environ.get("QR_CYCLE_STEP_RUN_ID"),
             "status": status,
             "send_requested": send,
             "sent": sent_count > 0,
@@ -154,16 +190,21 @@ class PositionProtectionGateway:
         managed: ManagedPosition,
         position: BrokerPosition | None,
         snapshot: BrokerSnapshot,
+        generated_at_utc: datetime,
+        decision_snapshot_fetched_at_utc: str | None,
     ) -> dict[str, Any]:
         action: dict[str, Any] = {
             "trade_id": managed.trade_id,
             "pair": managed.pair,
             "owner": managed.owner,
+            "broker_position_identity": None,
             "management_action": managed.action,
             "reasons": list(managed.reasons),
             "request": None,
             "issues": [],
             "sent": False,
+            "broker_post_attempted": False,
+            "send_boundary_checked_at_utc": None,
             "response": None,
         }
         if position is None:
@@ -175,6 +216,20 @@ class PositionProtectionGateway:
                 }
             )
             return action
+        broker_owner = _position_owner_value(position.owner)
+        broker_pair = str(position.pair or "").strip()
+        broker_trade_id = str(position.trade_id or "").strip()
+        snapshot_fetched_at = _aware_utc_datetime(snapshot.fetched_at_utc)
+        action["trade_id"] = broker_trade_id
+        action["pair"] = broker_pair
+        action["owner"] = broker_owner
+        if snapshot_fetched_at is not None:
+            action["broker_position_identity"] = {
+                "snapshot_fetched_at_utc": snapshot_fetched_at.isoformat(),
+                "trade_id": broker_trade_id,
+                "pair": broker_pair,
+                "owner": broker_owner,
+            }
         manual_tp_owner = is_operator_managed_manual_owner(position.owner)
         if position.owner != Owner.TRADER and not manual_tp_owner:
             action["issues"].append(
@@ -228,6 +283,16 @@ class PositionProtectionGateway:
             if spread_issue:
                 action["issues"].append(spread_issue)
                 return action
+            identity_issue = _broker_position_identity_issue(
+                managed=managed,
+                position=position,
+                snapshot_fetched_at_utc=snapshot_fetched_at,
+                decision_snapshot_fetched_at_utc=decision_snapshot_fetched_at_utc,
+                generated_at_utc=generated_at_utc,
+            )
+            if identity_issue:
+                action["issues"].append(identity_issue)
+                return action
             action["request"] = {
                 "type": "CLOSE",
                 "trade_id": position.trade_id,
@@ -252,6 +317,16 @@ class PositionProtectionGateway:
             spread_issue = _market_close_spread_issue(position, snapshot)
             if spread_issue:
                 action["issues"].append(spread_issue)
+                return action
+            identity_issue = _broker_position_identity_issue(
+                managed=managed,
+                position=position,
+                snapshot_fetched_at_utc=snapshot_fetched_at,
+                decision_snapshot_fetched_at_utc=decision_snapshot_fetched_at_utc,
+                generated_at_utc=generated_at_utc,
+            )
+            if identity_issue:
+                action["issues"].append(identity_issue)
                 return action
             action["request"] = {
                 "type": "CLOSE",
@@ -323,6 +398,16 @@ class PositionProtectionGateway:
                         "price": _price(position.pair, new_tp),
                     }
         if order_request:
+            identity_issue = _broker_position_identity_issue(
+                managed=managed,
+                position=position,
+                snapshot_fetched_at_utc=snapshot_fetched_at,
+                decision_snapshot_fetched_at_utc=decision_snapshot_fetched_at_utc,
+                generated_at_utc=generated_at_utc,
+            )
+            if identity_issue:
+                action["issues"].append(identity_issue)
+                return action
             action["request"] = {
                 "type": "DEPENDENT_ORDER_REPLACE",
                 "trade_id": position.trade_id,
@@ -388,6 +473,151 @@ def _status(*, actionable: int, blocked: int, sent: int, send: bool) -> str:
     if send and blocked:
         return "BLOCKED"
     return "STAGED"
+
+
+def _position_owner_value(owner: Any) -> str:
+    value = getattr(owner, "value", owner)
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {item.value for item in Owner} else Owner.UNKNOWN.value
+
+
+def _aware_utc_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _broker_position_identity_issue(
+    *,
+    managed: ManagedPosition,
+    position: BrokerPosition,
+    snapshot_fetched_at_utc: datetime | None,
+    decision_snapshot_fetched_at_utc: str | None,
+    generated_at_utc: datetime,
+) -> dict[str, str] | None:
+    if (
+        snapshot_fetched_at_utc is None
+        or not str(position.trade_id or "").strip()
+        or not str(position.pair or "").strip()
+    ):
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_SNAPSHOT_TIME_INVALID",
+            "message": "broker position identity and snapshot time must be complete",
+        }
+    decision_snapshot_fetched_at = _aware_utc_datetime(
+        decision_snapshot_fetched_at_utc
+    )
+    if decision_snapshot_fetched_at != snapshot_fetched_at_utc:
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_SNAPSHOT_DECISION_MISMATCH",
+            "message": (
+                "position-management decision is not bound to the exact broker "
+                "snapshot used for execution"
+            ),
+        }
+    snapshot_age_seconds = (
+        generated_at_utc - snapshot_fetched_at_utc
+    ).total_seconds()
+    if (
+        snapshot_age_seconds
+        < -POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS
+        or snapshot_age_seconds > POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS
+    ):
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_SNAPSHOT_STALE",
+            "message": (
+                "broker snapshot is outside the position execution freshness window: "
+                f"age_seconds={snapshot_age_seconds:.3f} "
+                f"max={POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS}"
+            ),
+        }
+    broker_pair = str(position.pair or "").strip()
+    if str(managed.pair or "").strip() != broker_pair:
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_POSITION_PAIR_MISMATCH",
+            "message": (
+                "managed pair contradicts the exact broker-snapshot position "
+                f"identity for trade id={position.trade_id}"
+            ),
+        }
+    return None
+
+
+def _send_boundary_identity_issue(
+    *,
+    action: dict[str, Any],
+    request: dict[str, Any],
+    managed: ManagedPosition,
+    position: BrokerPosition | None,
+    snapshot: BrokerSnapshot,
+    decision_snapshot_fetched_at_utc: str | None,
+    boundary_now_utc: datetime | None,
+) -> dict[str, str] | None:
+    """Re-prove identity and freshness immediately before each broker POST."""
+
+    if boundary_now_utc is None:
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_EXECUTION_CLOCK_INVALID",
+            "message": "position execution clock must be timezone-aware at send boundary",
+        }
+    if position is None:
+        return {
+            "severity": "BLOCK",
+            "code": "POSITION_NOT_FOUND",
+            "message": "managed position is absent at the broker send boundary",
+        }
+    snapshot_fetched_at = _aware_utc_datetime(snapshot.fetched_at_utc)
+    issue = _broker_position_identity_issue(
+        managed=managed,
+        position=position,
+        snapshot_fetched_at_utc=snapshot_fetched_at,
+        decision_snapshot_fetched_at_utc=decision_snapshot_fetched_at_utc,
+        generated_at_utc=boundary_now_utc,
+    )
+    if issue is not None:
+        return issue
+
+    broker_trade_id = str(position.trade_id or "").strip()
+    broker_pair = str(position.pair or "").strip()
+    broker_owner = _position_owner_value(position.owner)
+    expected_identity = {
+        "snapshot_fetched_at_utc": snapshot_fetched_at.isoformat(),
+        "trade_id": broker_trade_id,
+        "pair": broker_pair,
+        "owner": broker_owner,
+    }
+    if (
+        action.get("trade_id") != broker_trade_id
+        or action.get("pair") != broker_pair
+        or action.get("owner") != broker_owner
+        or action.get("broker_position_identity") != expected_identity
+        or str(request.get("trade_id") or "").strip() != broker_trade_id
+    ):
+        return {
+            "severity": "BLOCK",
+            "code": "BROKER_POSITION_IDENTITY_CHANGED",
+            "message": (
+                "planned action/request no longer matches the exact broker-snapshot "
+                "trade, pair, and owner at the send boundary"
+            ),
+        }
+    return None
 
 
 def _send_error_code(request_type: str) -> str:

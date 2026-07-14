@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -25,6 +26,14 @@ from quant_rabbit.forecast_precision import (
     support_signal_clears_live_precision,
 )
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
+from quant_rabbit.models import (
+    MarketContext,
+    OrderIntent,
+    OrderType,
+    Owner,
+    Side,
+    TradeMethod,
+)
 from quant_rabbit.strategy.forecast_technical_context import (
     verify_forecast_technical_context,
 )
@@ -62,7 +71,14 @@ from quant_rabbit.paths import (
     DEFAULT_VERIFICATION_LEDGER,
     ROOT,
 )
-from quant_rabbit.risk import DEFAULT_SPECS
+from quant_rabbit.risk import DEFAULT_SPECS, RiskPolicy
+from quant_rabbit.strategy.intent_generator import (
+    SIZING_ACTUAL_ANCHOR_VERSION,
+    SIZING_ACTUAL_RECEIPT_DIRECTORY,
+    positive_rotation_proof_acquisition_contract,
+    sizing_actual_anchor_receipt,
+    sizing_conversion_snapshot_receipt_from_payload,
+)
 
 
 _SUPPORTED_DIRECTIONAL_CALIBRATION_PAIRS = frozenset(DEFAULT_TRADER_PAIRS)
@@ -671,6 +687,11 @@ class SelfImprovementAuditor:
                     active_positions=active_positions,
                     pending_entry_orders=pending_entry_orders,
                     coverage_optimization=coverage_loaded.payload or {},
+                    broker_snapshot=snapshot,
+                    sizing_receipt_root=(
+                        order_intents_path.parent
+                        / SIZING_ACTUAL_RECEIPT_DIRECTORY
+                    ),
                 )
             )
             findings.extend(
@@ -6397,6 +6418,8 @@ def _intent_findings(
     active_positions: list[dict[str, Any]],
     pending_entry_orders: list[dict[str, Any]],
     coverage_optimization: dict[str, Any],
+    broker_snapshot: dict[str, Any] | None = None,
+    sizing_receipt_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     forecast_arbitration = _forecast_arbitration_diagnostics(intents) if target_open else {}
@@ -6412,7 +6435,11 @@ def _intent_findings(
             coverage_optimization=coverage_optimization,
             intents=intents,
         )
-        live_readiness_breakdown = _intent_live_readiness_family_breakdown(intents)
+        live_readiness_breakdown = _intent_live_readiness_family_breakdown(
+            intents,
+            broker_snapshot=broker_snapshot,
+            sizing_receipt_root=sizing_receipt_root,
+        )
         out.append(
             _finding(
                 run_id=run_id,
@@ -6590,7 +6617,13 @@ def _intent_findings(
                         ),
                         "status_counts": _intent_status_counts(intents),
                         "top_blockers": _top_intent_blockers(intents),
-                        "live_readiness_blocker_families": _intent_live_readiness_family_breakdown(intents),
+                        "live_readiness_blocker_families": (
+                            _intent_live_readiness_family_breakdown(
+                                intents,
+                                broker_snapshot=broker_snapshot,
+                                sizing_receipt_root=sizing_receipt_root,
+                            )
+                        ),
                         "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                     },
                 )
@@ -9016,6 +9049,691 @@ _FORECAST_LIVE_GATE_CODES = {
 
 _FORECAST_ARBITRATION_REPAIR_FAMILY = "forecast"
 
+_NEGATIVE_EXPECTANCY_TP_ROTATION_BLOCKER = (
+    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+)
+_OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = (
+    "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+)
+_OANDA_CAMPAIGN_FIREPOWER_AUDIT_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+_TP_PROOF_ACQUISITION_MODES = frozenset(
+    {
+        "TP_PROOF_COLLECTION_HARVEST",
+        "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+        "TP_PROVEN_HARVEST",
+        _OANDA_CAMPAIGN_FIREPOWER_AUDIT_MODE,
+    }
+)
+
+
+def _tp_proof_acquisition_route(
+    intent: dict[str, Any],
+    *,
+    lane_id: object,
+    risk_metrics: object,
+    authoritative_codes: list[str],
+    issues: list[dict[str, Any]],
+    broker_snapshot: dict[str, Any] | None = None,
+    intent_generated_at_utc: object = None,
+    sizing_receipt_root: Path | None = None,
+) -> dict[str, Any]:
+    """Classify whether a negative-expectancy lane can create its missing proof.
+
+    This is read-only evidence routing. A reachable route does not make a lane
+    LIVE_READY and does not relax any risk, forecast, strategy, or gateway gate.
+    """
+
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    raw_mode = metadata.get("positive_rotation_mode")
+    mode = raw_mode if raw_mode.__class__ is str else None
+    issue_codes = {
+        str(issue.get("code") or "")
+        for issue in issues
+        if isinstance(issue, dict)
+    }
+    required_codes = {
+        _NEGATIVE_EXPECTANCY_TP_ROTATION_BLOCKER,
+        _OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED,
+    }
+    required = bool(
+        required_codes.intersection(authoritative_codes)
+        or required_codes.intersection(issue_codes)
+        or mode in _TP_PROOF_ACQUISITION_MODES
+    )
+    diagnostics = {
+        "tp_proof_acquisition_required": required,
+        "positive_rotation_mode": mode,
+        "positive_rotation_proof_collection_ready": metadata.get(
+            "positive_rotation_proof_collection_ready"
+        ),
+        "positive_rotation_live_ready": metadata.get("positive_rotation_live_ready"),
+        "positive_rotation_proof_collection_min_trades": metadata.get(
+            "positive_rotation_proof_collection_min_trades"
+        ),
+        "positive_rotation_proof_collection_target_trades": metadata.get(
+            "positive_rotation_proof_collection_target_trades"
+        ),
+        "capture_take_profit_trades": metadata.get("capture_take_profit_trades"),
+        "capture_take_profit_losses": metadata.get("capture_take_profit_losses"),
+        "capture_take_profit_expectancy_jpy": metadata.get(
+            "capture_take_profit_expectancy_jpy"
+        ),
+        "positive_rotation_pessimistic_expectancy_jpy": metadata.get(
+            "positive_rotation_pessimistic_expectancy_jpy"
+        ),
+        "bidask_replay_precision_seed": metadata.get("bidask_replay_precision_seed"),
+    }
+    if not required:
+        return {
+            **diagnostics,
+            "tp_proof_acquisition_route_reachable": None,
+            "tp_proof_acquisition_route_status": (
+                "TP_PROOF_ACQUISITION_ROUTE_NOT_REQUIRED"
+            ),
+            "tp_proof_acquisition_route_reason": (
+                "No authoritative or structured negative-expectancy TP-rotation "
+                "blocker requires an acquisition route for this lane."
+            ),
+        }
+
+    if mode == _OANDA_CAMPAIGN_FIREPOWER_AUDIT_MODE:
+        failed_checks = [
+            "OANDA campaign firepower is audit-only and cannot create local "
+            "pair/side/method TP proof"
+        ]
+    else:
+        typed_intent, intent_error = _typed_positive_rotation_intent(intent)
+        if typed_intent is None:
+            failed_checks = [intent_error or "intent shape is malformed"]
+        else:
+            failed_checks = _positive_rotation_lane_contract_failures(
+                lane_id=lane_id,
+                intent=typed_intent,
+            )
+            failed_checks.extend(
+                _positive_rotation_sizing_contract_failures(
+                    raw_intent=intent,
+                    intent=typed_intent,
+                    risk_metrics=risk_metrics,
+                    broker_snapshot=broker_snapshot,
+                    intent_generated_at_utc=intent_generated_at_utc,
+                    lane_id=lane_id,
+                    sizing_receipt_root=sizing_receipt_root,
+                )
+            )
+            contract = positive_rotation_proof_acquisition_contract(typed_intent)
+            raw_failures = contract.get("failed_checks")
+            failed_checks.extend(
+                [str(item) for item in raw_failures if str(item)]
+                if isinstance(raw_failures, list)
+                else ["producer acquisition contract did not return strict diagnostics"]
+            )
+            if contract.get("reachable") is not True and not failed_checks:
+                failed_checks.append("producer acquisition contract rejected the route")
+
+    reachable = not failed_checks
+    return {
+        **diagnostics,
+        "tp_proof_acquisition_route_reachable": reachable,
+        "tp_proof_acquisition_route_status": (
+            "TP_PROOF_ACQUISITION_ROUTE_REACHABLE"
+            if reachable
+            else "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE"
+        ),
+        "tp_proof_acquisition_route_reason": (
+            f"{mode} supplies a self-consistent TP-proof acquisition route."
+            if reachable
+            else "; ".join(failed_checks)
+        ),
+    }
+
+
+def _typed_positive_rotation_intent(
+    value: dict[str, Any],
+) -> tuple[OrderIntent | None, str | None]:
+    pair = value.get("pair")
+    side_value = value.get("side")
+    order_type_value = value.get("order_type")
+    units = value.get("units")
+    entry = value.get("entry")
+    take_profit = value.get("tp")
+    stop_loss = value.get("sl")
+    market_context = value.get("market_context")
+    metadata = value.get("metadata")
+    if pair.__class__ is not str or pair not in DEFAULT_TRADER_PAIRS:
+        return None, "intent pair is not an exact canonical trader pair"
+    if side_value not in {"LONG", "SHORT"}:
+        return None, "intent side is not exact LONG/SHORT"
+    if order_type_value not in {item.value for item in OrderType}:
+        return None, "intent order_type is not an exact canonical value"
+    if units.__class__ is not int or units <= 0 or units > (2**63 - 1):
+        return None, "intent units are not a signed-64-bit positive integer"
+    numeric_values = (entry, take_profit, stop_loss)
+    if any(
+        item.__class__ not in {int, float}
+        or not math.isfinite(float(item))
+        or float(item) <= 0.0
+        for item in numeric_values
+    ):
+        return None, "intent entry/TP/SL are not exact finite positive numbers"
+    if not isinstance(market_context, dict):
+        return None, "intent market_context is missing"
+    method_value = market_context.get("method")
+    if method_value not in {item.value for item in TradeMethod}:
+        return None, "intent method is not an exact canonical value"
+    if value.get("owner") != Owner.TRADER.value:
+        return None, "intent owner is not exact trader"
+    if not isinstance(metadata, dict):
+        return None, "intent metadata is missing or malformed"
+    try:
+        side = Side.parse(side_value)
+        order_type = OrderType.parse(order_type_value)
+        method = TradeMethod.parse(method_value)
+    except ValueError as exc:
+        return None, f"intent identity is unsupported: {exc}"
+    entry_number = float(entry)
+    tp_number = float(take_profit)
+    sl_number = float(stop_loss)
+    if side == Side.LONG and not (sl_number < entry_number < tp_number):
+        return None, "LONG intent does not have side-consistent TP/SL geometry"
+    if side == Side.SHORT and not (tp_number < entry_number < sl_number):
+        return None, "SHORT intent does not have side-consistent TP/SL geometry"
+    return (
+        OrderIntent(
+            pair=pair,
+            side=side,
+            order_type=order_type,
+            units=units,
+            entry=entry_number,
+            tp=tp_number,
+            sl=sl_number,
+            thesis="read-only positive-rotation route verification",
+            owner=Owner.TRADER,
+            market_context=MarketContext(
+                regime="",
+                narrative="",
+                chart_story="",
+                method=method,
+                invalidation="",
+            ),
+            metadata=dict(metadata),
+        ),
+        None,
+    )
+
+
+def _positive_rotation_lane_contract_failures(
+    *,
+    lane_id: object,
+    intent: OrderIntent,
+) -> list[str]:
+    metadata = intent.metadata or {}
+    desk = metadata.get("desk")
+    if (
+        desk.__class__ is not str
+        or not desk
+        or desk != desk.strip().lower()
+        or any(not (char.islower() or char.isdigit() or char == "_") for char in desk)
+    ):
+        return ["intent desk is not an exact canonical lane desk"]
+    if lane_id.__class__ is not str:
+        return ["lane_id is not an exact string"]
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method is None:
+        return ["intent method is missing from the lane contract"]
+    parent = f"{desk}:{intent.pair}:{intent.side.value}:{method.value}"
+    default_order_type = (
+        OrderType.LIMIT if method == TradeMethod.RANGE_ROTATION else OrderType.STOP_ENTRY
+    )
+    expected = parent
+    if intent.order_type != default_order_type:
+        suffix = {
+            OrderType.LIMIT: "LIMIT",
+            OrderType.MARKET: "MARKET",
+            OrderType.STOP_ENTRY: "STOP",
+        }.get(intent.order_type)
+        if suffix is None:
+            return ["intent order type has no canonical lane suffix"]
+        expected = f"{parent}:{suffix}"
+    if lane_id != expected:
+        return [f"lane_id does not match the exact producer lane identity {expected}"]
+    return []
+
+
+def _positive_rotation_sizing_contract_failures(
+    *,
+    raw_intent: dict[str, Any],
+    intent: OrderIntent,
+    risk_metrics: object,
+    broker_snapshot: dict[str, Any] | None = None,
+    intent_generated_at_utc: object = None,
+    lane_id: object = None,
+    sizing_receipt_root: Path | None = None,
+) -> list[str]:
+    """Bind an actionable repair route to the producer's validated sizing receipt."""
+
+    metadata = intent.metadata or {}
+    if not isinstance(risk_metrics, dict):
+        return ["risk_metrics is missing from the producer route contract"]
+    failures: list[str] = []
+    numeric_keys = (
+        "entry_price",
+        "loss_pips",
+        "reward_pips",
+        "risk_jpy",
+        "reward_jpy",
+        "reward_risk",
+        "jpy_per_pip",
+        "estimated_margin_jpy",
+    )
+    numbers: dict[str, float] = {}
+    for key in numeric_keys:
+        value = risk_metrics.get(key)
+        if value.__class__ not in {int, float} or not math.isfinite(float(value)):
+            failures.append(f"risk_metrics.{key} is not an exact finite number")
+            continue
+        numbers[key] = float(value)
+    if failures:
+        return failures
+    strictly_positive_keys = tuple(
+        key for key in numeric_keys if key != "estimated_margin_jpy"
+    )
+    if any(numbers[key] <= 0.0 for key in strictly_positive_keys):
+        failures.append("producer risk metrics are not strictly positive")
+    if numbers["estimated_margin_jpy"] < 0.0:
+        failures.append("producer estimated margin is negative")
+
+    factor = float(DEFAULT_SPECS[intent.pair].pip_factor)
+    entry = float(intent.entry or 0.0)
+    expected_loss_pips = abs(float(intent.sl) - entry) * factor
+    expected_reward_pips = abs(float(intent.tp) - entry) * factor
+    expected_reward_risk = expected_reward_pips / expected_loss_pips
+    comparisons = (
+        ("entry_price", numbers["entry_price"], entry, 1e-9),
+        ("loss_pips", numbers["loss_pips"], expected_loss_pips, 1e-6),
+        ("reward_pips", numbers["reward_pips"], expected_reward_pips, 1e-6),
+        ("reward_risk", numbers["reward_risk"], expected_reward_risk, 1e-6),
+        (
+            "risk_jpy",
+            numbers["risk_jpy"],
+            numbers["loss_pips"] * numbers["jpy_per_pip"],
+            1e-4,
+        ),
+        (
+            "reward_jpy",
+            numbers["reward_jpy"],
+            numbers["reward_pips"] * numbers["jpy_per_pip"],
+            1e-4,
+        ),
+    )
+    for key, actual, expected, tolerance in comparisons:
+        if not math.isclose(actual, expected, rel_tol=1e-9, abs_tol=tolerance):
+            failures.append(f"risk_metrics.{key} does not match intent geometry")
+
+    exact_metadata = {
+        "sizing_actual_risk_jpy": (numbers["risk_jpy"], 4),
+        "sizing_actual_reward_jpy": (numbers["reward_jpy"], 4),
+        "sizing_actual_loss_pips": (numbers["loss_pips"], 4),
+        "sizing_actual_reward_pips": (numbers["reward_pips"], 4),
+        "sizing_actual_jpy_per_pip": (numbers["jpy_per_pip"], 8),
+        "sizing_actual_estimated_margin_jpy": (
+            numbers["estimated_margin_jpy"],
+            4,
+        ),
+    }
+    for key, (expected, digits) in exact_metadata.items():
+        value = metadata.get(key)
+        if (
+            value.__class__ not in {int, float}
+            or not math.isfinite(float(value))
+            or not math.isclose(
+                float(value),
+                round(expected, digits),
+                rel_tol=0.0,
+                abs_tol=10 ** (-(digits + 1)),
+            )
+        ):
+            failures.append(f"{key} does not match the producer risk receipt")
+    if metadata.get("sizing_actual_units") != intent.units:
+        failures.append("sizing_actual_units does not match intent units")
+    if metadata.get("sizing_actual_risk_basis") != "RISK_ENGINE_VALIDATED_ORDER":
+        failures.append("sizing_actual_risk_basis is not producer validated")
+
+    spec = DEFAULT_SPECS[intent.pair]
+    quote_to_jpy = metadata.get("sizing_actual_quote_to_jpy")
+    margin_rate = metadata.get("sizing_actual_margin_rate")
+    if (
+        quote_to_jpy.__class__ not in {int, float}
+        or not math.isfinite(float(quote_to_jpy))
+        or float(quote_to_jpy) <= 0.0
+    ):
+        failures.append("sizing_actual_quote_to_jpy is not a positive finite receipt")
+    if (
+        margin_rate.__class__ not in {int, float}
+        or not math.isfinite(float(margin_rate))
+        or not math.isclose(
+            float(margin_rate),
+            float(spec.margin_rate),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        failures.append("sizing_actual_margin_rate does not match the instrument spec")
+    conversion_failures, anchored_quote_to_jpy = (
+        _positive_rotation_conversion_anchor_failures(
+            intent=intent,
+            broker_snapshot=broker_snapshot,
+            intent_generated_at_utc=intent_generated_at_utc,
+        )
+    )
+    failures.extend(conversion_failures)
+    failures.extend(
+        _positive_rotation_actual_sizing_anchor_failures(
+            lane_id=lane_id,
+            intent=intent,
+            risk_metrics=risk_metrics,
+            sizing_receipt_root=sizing_receipt_root,
+        )
+    )
+    if (
+        anchored_quote_to_jpy is not None
+        and quote_to_jpy.__class__ in {int, float}
+        and math.isfinite(float(quote_to_jpy))
+        and not math.isclose(
+            float(quote_to_jpy),
+            round(anchored_quote_to_jpy, 8),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        failures.append(
+            "sizing_actual_quote_to_jpy does not match independent broker snapshot"
+        )
+    if (
+        anchored_quote_to_jpy is not None
+        and margin_rate.__class__ in {int, float}
+        and math.isfinite(float(margin_rate))
+    ):
+        expected_jpy_per_pip = (
+            intent.units / float(spec.pip_factor) * anchored_quote_to_jpy
+        )
+        expected_margin, margin_failure = (
+            _positive_rotation_expected_incremental_margin_jpy(
+                intent=intent,
+                broker_snapshot=broker_snapshot,
+                entry_price=entry,
+                quote_to_jpy=anchored_quote_to_jpy,
+                margin_rate=float(margin_rate),
+            )
+        )
+        if margin_failure is not None:
+            failures.append(margin_failure)
+        if not math.isclose(
+            numbers["jpy_per_pip"],
+            expected_jpy_per_pip,
+            rel_tol=1e-9,
+            abs_tol=1e-6,
+        ):
+            failures.append("risk_metrics.jpy_per_pip is not bound to intent units")
+        if expected_margin is not None and not math.isclose(
+            numbers["estimated_margin_jpy"], expected_margin, rel_tol=1e-9, abs_tol=0.001
+        ):
+            failures.append(
+                "risk_metrics.estimated_margin_jpy is not bound to incremental broker margin units"
+            )
+
+    effective_cap = metadata.get("loss_asymmetry_guard_effective_max_loss_jpy")
+    receipt_cap = metadata.get("sizing_actual_risk_cap_jpy")
+    if (
+        effective_cap.__class__ not in {int, float}
+        or receipt_cap.__class__ not in {int, float}
+        or not math.isfinite(float(effective_cap))
+        or not math.isfinite(float(receipt_cap))
+        or float(effective_cap) <= 0.0
+        or not math.isclose(
+            float(receipt_cap),
+            round(float(effective_cap), 4),
+            rel_tol=0.0,
+            abs_tol=1e-5,
+        )
+    ):
+        failures.append("sizing_actual_risk_cap_jpy does not match the guard cap")
+    else:
+        cap = float(effective_cap)
+        if numbers["risk_jpy"] > cap + 1e-4:
+            failures.append("producer actual risk exceeds the effective guard cap")
+        utilization = metadata.get("sizing_actual_risk_cap_utilization")
+        if (
+            utilization.__class__ not in {int, float}
+            or not math.isfinite(float(utilization))
+            or not math.isclose(
+                float(utilization),
+                round(numbers["risk_jpy"] / cap, 6),
+                rel_tol=0.0,
+                abs_tol=1e-7,
+            )
+        ):
+            failures.append("sizing_actual_risk_cap_utilization is inconsistent")
+    if raw_intent.get("units") != metadata.get("sizing_actual_units"):
+        failures.append("raw intent units are not bound to the sizing receipt")
+    return failures
+
+
+def _positive_rotation_expected_incremental_margin_jpy(
+    *,
+    intent: OrderIntent,
+    broker_snapshot: dict[str, Any] | None,
+    entry_price: float,
+    quote_to_jpy: float,
+    margin_rate: float,
+) -> tuple[float | None, str | None]:
+    """Reconstruct RiskEngine's same-pair hedging margin from broker truth."""
+
+    if broker_snapshot.__class__ is not dict:
+        return None, "independent broker snapshot cannot prove incremental margin"
+    account = broker_snapshot.get("account")
+    if account is None:
+        hedging_enabled = False
+    elif account.__class__ is not dict:
+        return None, "independent broker account is malformed for incremental margin"
+    else:
+        raw_hedging = account.get("hedging_enabled", False)
+        if raw_hedging.__class__ is not bool:
+            return None, "broker hedging_enabled is not an exact boolean"
+        hedging_enabled = raw_hedging
+
+    margin_units = intent.units
+    if hedging_enabled:
+        positions = broker_snapshot.get("positions", [])
+        if positions.__class__ is not list:
+            return None, "broker positions are malformed for incremental margin"
+        long_units = 0
+        short_units = 0
+        for row in positions:
+            if row.__class__ is not dict:
+                return None, "broker position row is malformed for incremental margin"
+            pair = row.get("pair")
+            side = row.get("side")
+            units = row.get("units")
+            if (
+                pair.__class__ is not str
+                or side not in {Side.LONG.value, Side.SHORT.value}
+                or units.__class__ is not int
+                or units <= 0
+            ):
+                return None, "broker position identity is malformed for incremental margin"
+            if pair != intent.pair:
+                continue
+            if side == Side.LONG.value:
+                long_units += units
+            else:
+                short_units += units
+        before_larger_side = max(long_units, short_units)
+        if intent.side == Side.LONG:
+            long_units += intent.units
+        else:
+            short_units += intent.units
+        margin_units = max(
+            0,
+            max(long_units, short_units) - before_larger_side,
+        )
+
+    return (
+        margin_units * entry_price * quote_to_jpy * margin_rate,
+        None,
+    )
+
+
+def _positive_rotation_conversion_anchor_failures(
+    *,
+    intent: OrderIntent,
+    broker_snapshot: dict[str, Any] | None,
+    intent_generated_at_utc: object,
+) -> tuple[list[str], float | None]:
+    """Resolve sizing conversion from independent current broker truth."""
+
+    metadata = intent.metadata or {}
+    receipt = metadata.get("sizing_actual_conversion_receipt")
+    if receipt.__class__ is not dict:
+        return ["sizing conversion receipt is missing or malformed"], None
+    expected = sizing_conversion_snapshot_receipt_from_payload(
+        intent.pair,
+        broker_snapshot,
+    )
+    if expected is None:
+        return ["independent broker snapshot cannot resolve sizing conversion"], None
+    try:
+        actual_canonical = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        expected_canonical = json.dumps(
+            expected,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return ["sizing conversion receipt is not strict canonical JSON"], None
+    if actual_canonical != expected_canonical:
+        return ["sizing conversion receipt does not match independent broker snapshot"], None
+
+    snapshot_time = _strict_contract_utc(expected.get("snapshot_fetched_at_utc"))
+    generated_time = _strict_contract_utc(intent_generated_at_utc)
+    if snapshot_time is None or generated_time is None:
+        return ["sizing conversion snapshot/generation time is missing or malformed"], None
+    age_seconds = (generated_time - snapshot_time).total_seconds()
+    if age_seconds < 0.0 or age_seconds > float(RiskPolicy().max_quote_age_seconds):
+        return [
+            "sizing conversion broker snapshot was not fresh at intent generation"
+        ], None
+
+    source = expected.get("conversion_source")
+    if not isinstance(source, dict):
+        return ["independent sizing conversion source is malformed"], None
+    quote_to_jpy = source.get("selected_quote_to_jpy")
+    if (
+        quote_to_jpy.__class__ not in {int, float}
+        or not math.isfinite(float(quote_to_jpy))
+        or float(quote_to_jpy) <= 0.0
+    ):
+        return ["independent sizing conversion value is not positive and finite"], None
+    return [], float(quote_to_jpy)
+
+
+def _strict_contract_utc(value: object) -> datetime | None:
+    if value.__class__ is not str or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _positive_rotation_actual_sizing_anchor_failures(
+    *,
+    lane_id: object,
+    intent: OrderIntent,
+    risk_metrics: object,
+    sizing_receipt_root: Path | None,
+) -> list[str]:
+    metadata = intent.metadata or {}
+    if metadata.get("sizing_actual_anchor_contract") != SIZING_ACTUAL_ANCHOR_VERSION:
+        return ["sizing actual anchor contract is missing or unsupported"]
+    digest = metadata.get("sizing_actual_anchor_sha256")
+    if (
+        digest.__class__ is not str
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
+        return ["sizing actual anchor digest is malformed"]
+    if sizing_receipt_root is None:
+        return ["independent sizing actual receipt root is unavailable"]
+    path = sizing_receipt_root / f"{digest}.json"
+    try:
+        raw = path.read_text(encoding="utf-8")
+        anchored = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return ["independent sizing actual receipt is missing or unreadable"]
+    if anchored.__class__ is not dict:
+        return ["independent sizing actual receipt is malformed"]
+    anchored_digest = anchored.get("receipt_sha256")
+    unsigned = {
+        key: value
+        for key, value in anchored.items()
+        if key != "receipt_sha256"
+    }
+    try:
+        canonical_unsigned = json.dumps(
+            unsigned,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return ["independent sizing actual receipt is not canonical JSON"]
+    calculated_digest = hashlib.sha256(canonical_unsigned).hexdigest()
+    if anchored_digest != digest or calculated_digest != digest:
+        return ["independent sizing actual receipt digest does not verify"]
+
+    expected = sizing_actual_anchor_receipt(
+        lane_id=lane_id,
+        intent=intent,
+        risk_metrics=risk_metrics,
+        sizing_metadata=metadata,
+    )
+    if expected is None:
+        return ["current intent cannot reconstruct the sizing actual anchor"]
+    try:
+        anchored_canonical = json.dumps(
+            anchored,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        expected_canonical = json.dumps(
+            expected,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return ["sizing actual anchor comparison is not canonical JSON"]
+    if anchored_canonical != expected_canonical:
+        return ["current sizing does not match independent producer receipt"]
+    return []
+
 
 def _top_intent_live_readiness_blockers(
     intents: dict[str, Any],
@@ -9049,14 +9767,37 @@ def _top_intent_live_readiness_blockers(
     ]
 
 
-def _intent_live_readiness_family_breakdown(intents: dict[str, Any]) -> dict[str, Any]:
-    all_non_live = _live_readiness_family_scope(intents)
-    dry_run_passed = _live_readiness_family_scope(intents, statuses={"DRY_RUN_PASSED"})
+def _intent_live_readiness_family_breakdown(
+    intents: dict[str, Any],
+    *,
+    broker_snapshot: dict[str, Any] | None = None,
+    sizing_receipt_root: Path | None = None,
+) -> dict[str, Any]:
+    generated_at_utc = intents.get("generated_at_utc")
+    all_non_live = _live_readiness_family_scope(
+        intents,
+        broker_snapshot=broker_snapshot,
+        intent_generated_at_utc=generated_at_utc,
+        sizing_receipt_root=sizing_receipt_root,
+    )
+    dry_run_passed = _live_readiness_family_scope(
+        intents,
+        statuses={"DRY_RUN_PASSED"},
+        broker_snapshot=broker_snapshot,
+        intent_generated_at_utc=generated_at_utc,
+        sizing_receipt_root=sizing_receipt_root,
+    )
     return {
         "all_non_live_ready": all_non_live["families"],
         "nearest_all_non_live_ready_candidates": all_non_live["nearest_candidates"],
+        "nearest_all_non_live_ready_actionable_candidate": all_non_live[
+            "nearest_actionable_candidate"
+        ],
         "dry_run_passed": dry_run_passed["families"],
         "nearest_live_ready_candidates": dry_run_passed["nearest_candidates"],
+        "nearest_live_ready_actionable_candidate": dry_run_passed[
+            "nearest_actionable_candidate"
+        ],
     }
 
 
@@ -9076,10 +9817,70 @@ def _no_live_ready_next_action(
             "Refresh broker truth and regenerate intents after quotes/spreads become tradable; "
             "do not treat market-evidence noise as a strategy expansion defect yet."
         )
-    candidates = live_readiness_breakdown.get("nearest_live_ready_candidates")
-    if not isinstance(candidates, list) or not candidates:
-        candidates = live_readiness_breakdown.get("nearest_all_non_live_ready_candidates")
-    nearest = candidates[0] if isinstance(candidates, list) and candidates else None
+    candidate_rows: list[dict[str, Any]] = []
+    seen_lane_ids: set[str] = set()
+    for key in (
+        "nearest_live_ready_actionable_candidate",
+        "nearest_all_non_live_ready_actionable_candidate",
+    ):
+        candidate = live_readiness_breakdown.get(key)
+        if not isinstance(candidate, dict):
+            continue
+        lane_id = str(candidate.get("lane_id") or "").strip()
+        if lane_id and lane_id in seen_lane_ids:
+            continue
+        if lane_id:
+            seen_lane_ids.add(lane_id)
+        candidate_rows.append(candidate)
+    for key in (
+        "nearest_live_ready_candidates",
+        "nearest_all_non_live_ready_candidates",
+    ):
+        candidates = live_readiness_breakdown.get(key)
+        if not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            lane_id = str(candidate.get("lane_id") or "").strip()
+            if lane_id and lane_id in seen_lane_ids:
+                continue
+            if lane_id:
+                seen_lane_ids.add(lane_id)
+            candidate_rows.append(candidate)
+
+    integrity_valid_candidates = [
+        candidate
+        for candidate in candidate_rows
+        if candidate.get("candidate_contract_valid") is not False
+    ]
+    if candidate_rows and not integrity_valid_candidates:
+        return (
+            "INTENT_CANDIDATE_CONTRACT_UNTRUSTED: contradictory rows reuse the same "
+            "lane_id, so no lane-specific repair is trustworthy. Regenerate one unique "
+            "order-intent row per lane and preserve the union of its blocker evidence."
+        )
+    reachable_candidates = [
+        candidate
+        for candidate in integrity_valid_candidates
+        if not _candidate_tp_proof_acquisition_route_unreachable(candidate)
+    ]
+    if integrity_valid_candidates and not reachable_candidates:
+        return (
+            "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE: every named candidate still "
+            "requires TP proof but exposes no self-consistent route that can create it. "
+            "Build or validate one exact non-market attached-TP proof-collection lane, "
+            "or one approved predictive SCOUT forward-evidence lane; an exact "
+            "TP_PROVEN_HARVEST receipt can clear the gate when it already exists. "
+            "OANDA campaign firepower is audit-only. Do not wait for receipts that "
+            "the current gates cannot generate."
+        )
+    complete_candidates = [
+        candidate
+        for candidate in reachable_candidates
+        if _candidate_has_complete_authoritative_codes(candidate)
+    ]
+    nearest = complete_candidates[0] if complete_candidates else None
     if not isinstance(nearest, dict):
         return (
             "Refresh market context and inspect top live blockers instead of ending flat "
@@ -9087,18 +9888,8 @@ def _no_live_ready_next_action(
         )
     lane_id = str(nearest.get("lane_id") or "").strip()
     raw_blocker_codes = nearest.get("authoritative_live_blocker_codes")
-    blocker_codes = (
-        [str(code).strip() for code in raw_blocker_codes]
-        if isinstance(raw_blocker_codes, list)
-        and raw_blocker_codes
-        and all(isinstance(code, str) and code.strip() for code in raw_blocker_codes)
-        else []
-    )
-    authoritative_codes_complete = (
-        nearest.get("authoritative_live_blocker_codes_complete") is True
-        and len(blocker_codes) == len(set(blocker_codes))
-    )
-    if not lane_id or not authoritative_codes_complete:
+    blocker_codes = [str(code).strip() for code in raw_blocker_codes]
+    if not lane_id:
         return (
             "Refresh market context and inspect top live blockers instead of ending flat "
             "without a named gate."
@@ -9110,6 +9901,51 @@ def _no_live_ready_next_action(
     )
 
 
+def _candidate_has_complete_authoritative_codes(candidate: dict[str, Any]) -> bool:
+    raw_codes = candidate.get("authoritative_live_blocker_codes")
+    return bool(
+        candidate.get("authoritative_live_blocker_codes_complete") is True
+        and isinstance(raw_codes, list)
+        and raw_codes
+        and all(isinstance(code, str) and code.strip() for code in raw_codes)
+        and len(raw_codes) == len(set(raw_codes))
+    )
+
+
+def _candidate_tp_proof_acquisition_route_unreachable(
+    candidate: dict[str, Any],
+) -> bool:
+    authoritative_codes = candidate.get("authoritative_live_blocker_codes")
+    authoritative_negative = bool(
+        isinstance(authoritative_codes, list)
+        and {
+            _NEGATIVE_EXPECTANCY_TP_ROTATION_BLOCKER,
+            _OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED,
+        }.intersection(authoritative_codes)
+    )
+    blockers = candidate.get("blockers")
+    structured_negative = bool(
+        isinstance(blockers, list)
+        and any(
+            blocker.get("code")
+            in {
+                _NEGATIVE_EXPECTANCY_TP_ROTATION_BLOCKER,
+                _OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED,
+            }
+            for blocker in blockers
+            if isinstance(blocker, dict)
+        )
+    )
+    required = bool(
+        candidate.get("tp_proof_acquisition_required") is True
+        or authoritative_negative
+        or structured_negative
+    )
+    return bool(
+        required and candidate.get("tp_proof_acquisition_route_reachable") is not True
+    )
+
+
 def _live_readiness_family_scope(
     intents: dict[str, Any],
     *,
@@ -9117,6 +9953,9 @@ def _live_readiness_family_scope(
     family_limit: int = 8,
     blocker_limit: int = 5,
     candidate_limit: int = 8,
+    broker_snapshot: dict[str, Any] | None = None,
+    intent_generated_at_utc: object = None,
+    sizing_receipt_root: Path | None = None,
 ) -> dict[str, Any]:
     status_filter = {item.upper() for item in statuses} if statuses is not None else None
     family_lane_counts: dict[str, int] = {}
@@ -9124,7 +9963,7 @@ def _live_readiness_family_scope(
     family_blocker_counts: dict[str, dict[str, int]] = {}
     family_blocker_keys: set[tuple[str, str, str]] = set()
     family_examples: dict[str, list[str]] = {}
-    candidates_by_lane: dict[str, dict[str, Any]] = {}
+    candidates_by_lane: dict[str, list[dict[str, Any]]] = {}
     anonymous_candidate_index = 0
 
     for result in intents.get("results", []) or []:
@@ -9167,12 +10006,14 @@ def _live_readiness_family_scope(
             if lane_key and lane_key not in family_examples.setdefault(family, []):
                 family_examples[family].append(lane_key)
 
-        candidate = _nearest_live_ready_candidate(result, issues)
-        previous = candidates_by_lane.get(lane_key)
-        if previous is None or _nearest_live_ready_candidate_sort_key(
-            candidate
-        ) < _nearest_live_ready_candidate_sort_key(previous):
-            candidates_by_lane[lane_key] = candidate
+        candidate = _nearest_live_ready_candidate(
+            result,
+            issues,
+            broker_snapshot=broker_snapshot,
+            intent_generated_at_utc=intent_generated_at_utc,
+            sizing_receipt_root=sizing_receipt_root,
+        )
+        candidates_by_lane.setdefault(lane_key, []).append(candidate)
 
     families = []
     for family, lane_count in sorted(
@@ -9196,24 +10037,73 @@ def _live_readiness_family_scope(
         )
 
     candidates = sorted(
-        candidates_by_lane.values(),
+        (
+            _merge_live_readiness_candidate_rows(rows)
+            for rows in candidates_by_lane.values()
+        ),
         key=_nearest_live_ready_candidate_sort_key,
     )
-    return {"families": families, "nearest_candidates": candidates[:candidate_limit]}
+    nearest_actionable = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.get("candidate_contract_valid") is True
+            and not _candidate_tp_proof_acquisition_route_unreachable(candidate)
+            and _candidate_has_complete_authoritative_codes(candidate)
+            and str(candidate.get("lane_id") or "").strip()
+        ),
+        None,
+    )
+    return {
+        "families": families,
+        "nearest_candidates": candidates[:candidate_limit],
+        "nearest_actionable_candidate": nearest_actionable,
+    }
 
 
 def _nearest_live_ready_candidate(
     result: dict[str, Any],
     issues: list[dict[str, Any]],
+    *,
+    broker_snapshot: dict[str, Any] | None = None,
+    intent_generated_at_utc: object = None,
+    sizing_receipt_root: Path | None = None,
 ) -> dict[str, Any]:
     intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
-    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
-    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-    risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+    metadata = (
+        intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    )
+    market_context = (
+        intent.get("market_context")
+        if isinstance(intent.get("market_context"), dict)
+        else {}
+    )
+    risk_metrics = (
+        result.get("risk_metrics")
+        if isinstance(result.get("risk_metrics"), dict)
+        else {}
+    )
     families = sorted({str(issue.get("family") or "other") for issue in issues})
     blockers = [_nearest_live_ready_blocker(issue) for issue in issues[:6]]
+    structured_blocker_codes = sorted(
+        {
+            str(issue.get("code") or "").strip()
+            for issue in issues
+            if str(issue.get("code") or "").strip()
+        }
+    )
     authoritative_codes, authoritative_codes_complete = (
         _authoritative_live_blocker_codes(result)
+    )
+    acquisition_route = _tp_proof_acquisition_route(
+        intent,
+        lane_id=result.get("lane_id"),
+        risk_metrics=result.get("risk_metrics"),
+        authoritative_codes=authoritative_codes,
+        issues=issues,
+        broker_snapshot=broker_snapshot,
+        intent_generated_at_utc=intent_generated_at_utc,
+        sizing_receipt_root=sizing_receipt_root,
     )
     return {
         "lane_id": str(result.get("lane_id") or ""),
@@ -9236,9 +10126,131 @@ def _nearest_live_ready_candidate(
             len(authoritative_codes) if authoritative_codes_complete else len(issues)
         ),
         "blockers": blockers,
+        "structured_live_blocker_codes": structured_blocker_codes,
         "authoritative_live_blocker_codes": authoritative_codes,
         "authoritative_live_blocker_codes_complete": authoritative_codes_complete,
+        "source_contract_sha256": _live_readiness_source_contract_sha256(result),
+        **acquisition_route,
     }
+
+
+def _live_readiness_source_contract_sha256(result: dict[str, Any]) -> str | None:
+    """Bind duplicate integrity to the raw lane contract, not its projection.
+
+    Candidate fields are a deliberately small reporting projection.  They omit
+    execution geometry and most acquisition evidence, so they cannot establish
+    that two rows reusing a lane id are the same executable contract.  Hash the
+    complete raw result so a new or previously overlooked execution field (for
+    example ``risk_allowed``) cannot silently escape duplicate integrity.
+    Fail closed on non-JSON input rather than normalizing it with ``default=str``.
+    """
+
+    try:
+        canonical = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _merge_live_readiness_candidate_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    ordered = sorted(rows, key=_nearest_live_ready_candidate_sort_key)
+    candidate = dict(ordered[0])
+    if len(ordered) == 1:
+        digest = candidate.get("source_contract_sha256")
+        digest_valid = digest.__class__ is str and len(digest) == 64
+        candidate["candidate_contract_valid"] = digest_valid
+        candidate["candidate_integrity_status"] = (
+            "UNIQUE" if digest_valid else "RAW_CONTRACT_INVALID"
+        )
+        candidate["duplicate_lane_row_count"] = 1
+        return candidate
+
+    source_contract_digests = [row.get("source_contract_sha256") for row in ordered]
+    source_contract_is_identical = bool(
+        all(
+            digest.__class__ is str and len(digest) == 64
+            for digest in source_contract_digests
+        )
+        and len(set(source_contract_digests)) == 1
+    )
+    projected_signatures = {
+        json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        for row in ordered
+    }
+    if source_contract_is_identical and len(projected_signatures) == 1:
+        candidate["candidate_contract_valid"] = True
+        candidate["candidate_integrity_status"] = "IDENTICAL_DUPLICATE_COLLAPSED"
+        candidate["duplicate_lane_row_count"] = len(ordered)
+        return candidate
+
+    candidate["candidate_contract_valid"] = False
+    candidate["candidate_integrity_status"] = "DUPLICATE_CONTRADICTION"
+    candidate["duplicate_lane_row_count"] = len(ordered)
+    candidate["duplicate_positive_rotation_modes"] = sorted(
+        {
+            str(row.get("positive_rotation_mode") or "") or "NONE"
+            for row in ordered
+        }
+    )
+    candidate["blocker_families"] = sorted(
+        {
+            str(family)
+            for row in ordered
+            for family in row.get("blocker_families", [])
+        }
+    )
+    candidate["blocker_family_count"] = len(candidate["blocker_families"])
+    blocker_rows: dict[str, dict[str, Any]] = {}
+    for row in ordered:
+        for blocker in row.get("blockers", []):
+            if not isinstance(blocker, dict):
+                continue
+            key = json.dumps(blocker, ensure_ascii=False, sort_keys=True, default=str)
+            blocker_rows.setdefault(key, blocker)
+    candidate["blockers"] = [blocker_rows[key] for key in sorted(blocker_rows)]
+    candidate["structured_live_blocker_codes"] = sorted(
+        {
+            str(code)
+            for row in ordered
+            for code in row.get("structured_live_blocker_codes", [])
+            if str(code)
+        }
+    )
+    candidate["authoritative_live_blocker_codes"] = sorted(
+        {
+            str(code)
+            for row in ordered
+            for code in row.get("authoritative_live_blocker_codes", [])
+            if str(code)
+        }
+    )
+    candidate["authoritative_live_blocker_codes_complete"] = False
+    candidate["blocker_count"] = max(
+        len(candidate["structured_live_blocker_codes"]),
+        len(candidate["authoritative_live_blocker_codes"]),
+    )
+    required = any(
+        row.get("tp_proof_acquisition_required") is True for row in ordered
+    )
+    candidate["tp_proof_acquisition_required"] = required
+    candidate["tp_proof_acquisition_route_reachable"] = False if required else None
+    candidate["tp_proof_acquisition_route_status"] = (
+        "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE"
+        if required
+        else "TP_PROOF_ACQUISITION_ROUTE_NOT_REQUIRED"
+    )
+    candidate["tp_proof_acquisition_route_reason"] = (
+        "contradictory rows reuse one lane_id; route evidence is not trustworthy"
+    )
+    return candidate
 
 
 def _authoritative_live_blocker_codes(
@@ -9312,6 +10324,8 @@ def _nearest_live_ready_candidate_sort_key(item: dict[str, Any]) -> tuple[Any, .
     reward_risk = _maybe_float(item.get("reward_risk"))
     forecast_confidence = _maybe_float(item.get("forecast_confidence"))
     return (
+        0 if item.get("candidate_contract_valid") is not False else 1,
+        1 if _candidate_tp_proof_acquisition_route_unreachable(item) else 0,
         int(item.get("blocker_family_count") or 0),
         int(item.get("blocker_count") or 0),
         0 if str(item.get("status") or "").upper() == "DRY_RUN_PASSED" else 1,

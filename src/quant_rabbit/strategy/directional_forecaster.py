@@ -51,10 +51,23 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from quant_rabbit.analysis.candles import (
+    PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    SUPPORTED_GRANULARITIES,
+    TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+    TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
+    TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
+    TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+    _technical_candle_cadence_valid,
+)
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
 from quant_rabbit.strategy.regime_family_weighting import forecast_direction_consistency
@@ -141,6 +154,21 @@ FORECAST_D_ANCHOR_HORIZON_MIN = int(os.environ.get("QR_FORECAST_D_ANCHOR_HORIZON
 FORECAST_RANGE_HORIZON_MIN = int(os.environ.get("QR_FORECAST_RANGE_HORIZON_MIN", "120"))
 
 RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
+
+# Full-cycle pair charts are rebuilt on the five-minute trader cadence. The
+# observed chart-to-final-snapshot gap is only a few minutes, while the
+# guardian's established freshness budget is 12 minutes; reuse that bounded
+# operational window so a skipped refresh cannot authorize a later forecast.
+TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS = 12 * 60
+# These timestamps are written on the same host. Permit only tiny
+# serialization/clock-order jitter, never a future-dated freshness lease.
+TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS = 5
+TECHNICAL_CANDLE_LATEST_COMPLETE_MAX_AGE_SECONDS: dict[str, int] = {
+    # One missed M1 close plus bounded cycle/serialization allowance.
+    "M1": 3 * 60,
+    # One missed M5 close plus one full bar of bounded cycle allowance.
+    "M5": 10 * 60,
+}
 
 
 @dataclass(frozen=True)
@@ -230,6 +258,525 @@ def _to_int(v: Any) -> Optional[int]:
         return int(v)
     except (TypeError, ValueError):
         return None
+
+
+def _technical_candle_integrity_forecast_blockers(
+    pair_chart: Dict[str, Any],
+    *,
+    expected_pair: str,
+    require_technical_candle_integrity: bool,
+    now_utc: datetime | None,
+) -> tuple[str, ...]:
+    """Fail closed on blocked or self-contradictory production MBA evidence."""
+
+    if not isinstance(require_technical_candle_integrity, bool):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    forecast_now = _aware_utc_datetime(now_utc)
+    if require_technical_candle_integrity and forecast_now is None:
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    generated_present = "generated_at_utc" in pair_chart
+    generated_at = (
+        _strict_aware_iso_datetime(pair_chart.get("generated_at_utc"))
+        if generated_present
+        else None
+    )
+    if (generated_present and generated_at is None) or (
+        require_technical_candle_integrity and generated_at is None
+    ):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    if require_technical_candle_integrity:
+        assert forecast_now is not None and generated_at is not None
+        chart_age_seconds = (forecast_now - generated_at).total_seconds()
+        if (
+            chart_age_seconds < -TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS
+            or chart_age_seconds > TECHNICAL_CANDLE_FORECAST_MAX_AGE_SECONDS
+        ):
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    raw = pair_chart.get("technical_candle_integrity")
+    if raw is None:
+        return (
+            (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+            if require_technical_candle_integrity or generated_present
+            else ()
+        )
+    if not isinstance(raw, dict) or raw.get("schema") != PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA:
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+
+    from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+
+    if (
+        expected_pair.__class__ is not str
+        or expected_pair != expected_pair.upper()
+        or expected_pair not in NORMAL_SPREAD_PIPS
+        or pair_chart.get("pair") != expected_pair
+        or raw.get("pair") != expected_pair
+    ):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+
+    source = raw.get("source")
+    status = raw.get("evaluation_status")
+    forecast_blocking = raw.get("forecast_blocking")
+    codes = raw.get("codes")
+    blocking_codes = raw.get("blocking_codes")
+    requested_timeframes = raw.get("requested_timeframes")
+    timeframes = raw.get("timeframes")
+    if (
+        not isinstance(source, str)
+        or status not in {"PASS", "DEGRADED", "BLOCKED", "NOT_EVALUATED"}
+        or not isinstance(forecast_blocking, bool)
+        or not _valid_integrity_code_list(codes)
+        or not _valid_integrity_code_list(blocking_codes)
+        or not _is_unique_nonempty_string_list(requested_timeframes)
+        or not requested_timeframes
+        or any(tf not in SUPPORTED_GRANULARITIES for tf in requested_timeframes)
+        or not isinstance(timeframes, dict)
+        or set(timeframes) != set(requested_timeframes)
+    ):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    if (
+        require_technical_candle_integrity
+        and not TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES.issubset(
+            set(requested_timeframes)
+        )
+    ):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    if (require_technical_candle_integrity or generated_present) and source != "OANDA_MBA":
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+
+    views = pair_chart.get("views")
+    if not isinstance(views, list) or len(views) != len(requested_timeframes):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    view_by_tf: dict[str, dict[str, Any]] = {}
+    for view in views:
+        if not isinstance(view, dict):
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        tf = view.get("granularity")
+        if tf not in SUPPORTED_GRANULARITIES or tf in view_by_tf:
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        view_by_tf[tf] = view
+    if set(view_by_tf) != set(requested_timeframes):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+
+    derived_sources: list[str] = []
+    derived_codes: list[str] = []
+    derived_blocking_codes: list[str] = []
+    evaluated_count = 0
+    for tf in requested_timeframes:
+        item = timeframes.get(tf)
+        if not isinstance(item, dict) or item.get("schema") != TECHNICAL_CANDLE_INTEGRITY_SCHEMA:
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        view = view_by_tf[tf]
+        if view.get("candle_integrity") != item:
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        item_source = item.get("source")
+        item_status = item.get("evaluation_status")
+        item_blocking = item.get("forecast_blocking")
+        item_codes = item.get("codes")
+        item_blocking_codes = item.get("blocking_codes")
+        if (
+            item.get("pair") != expected_pair
+            or item.get("granularity") != tf
+            or item.get("payload_instrument") != expected_pair
+            or item.get("payload_granularity") != tf
+            or not isinstance(item_source, str)
+            or item_status not in {"PASS", "DEGRADED", "BLOCKED", "NOT_EVALUATED"}
+            or not isinstance(item_blocking, bool)
+            or not _valid_integrity_code_list(item_codes)
+            or not _valid_integrity_code_list(item_blocking_codes)
+            or item_blocking != bool(item_blocking_codes)
+        ):
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        if (require_technical_candle_integrity or generated_present) and item_source != "OANDA_MBA":
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        if item_source == "OANDA_MBA" and not _valid_mba_integrity(
+            item,
+            chart_generated_at=generated_at,
+            view=view,
+            forecast_now=(forecast_now if require_technical_candle_integrity else None),
+        ):
+            return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+        if item_status != "NOT_EVALUATED":
+            evaluated_count += 1
+        derived_sources.append(item_source)
+        derived_codes.extend(item_codes)
+        derived_blocking_codes.extend(item_blocking_codes)
+
+    derived_sources = list(dict.fromkeys(derived_sources))
+    expected_source = derived_sources[0] if len(derived_sources) == 1 else "MIXED"
+    derived_codes = list(dict.fromkeys(derived_codes))
+    derived_blocking_codes = list(dict.fromkeys(derived_blocking_codes))
+    if derived_blocking_codes:
+        expected_status = "BLOCKED"
+    elif evaluated_count == 0:
+        expected_status = "NOT_EVALUATED"
+    elif derived_codes:
+        expected_status = "DEGRADED"
+    else:
+        expected_status = "PASS"
+    aggregate_evaluated_count = raw.get("evaluated_timeframe_count")
+    if (
+        not _is_exact_nonnegative_int(aggregate_evaluated_count)
+        or source != expected_source
+        or status != expected_status
+        or aggregate_evaluated_count != evaluated_count
+        or list(codes) != derived_codes
+        or list(blocking_codes) != derived_blocking_codes
+        or forecast_blocking != bool(derived_blocking_codes)
+    ):
+        return (TECHNICAL_CANDLE_PROVENANCE_INVALID,)
+    return tuple(blocking_codes) if forecast_blocking else ()
+
+
+def _is_unique_nonempty_string_list(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, str) and item for item in value)
+        and len(value) == len(set(value))
+    )
+
+
+def _valid_integrity_code_list(value: object) -> bool:
+    allowed = {
+        TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+        TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    }
+    return (
+        _is_unique_nonempty_string_list(value)
+        and all(code in allowed for code in value)
+    ) or value == []
+
+
+def _valid_mba_integrity(
+    item: dict[str, Any],
+    *,
+    chart_generated_at: datetime | None,
+    view: dict[str, Any],
+    forecast_now: datetime | None,
+) -> bool:
+    granularity = item.get("granularity")
+    expected_spread_mode = (
+        TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE
+        if granularity in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+        else TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE
+    )
+    if item.get("spread_evaluation_mode") != expected_spread_mode:
+        return False
+    counts: dict[str, int] = {}
+    for key in (
+        "requested_count",
+        "raw_entry_count",
+        "complete_entry_count",
+        "clean_count",
+        "recent_clean_tail_count",
+        "contaminated_count",
+        "malformed_count",
+        "quarantined_count",
+    ):
+        value = item.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+        counts[key] = value
+    coverage_complete = (
+        counts["requested_count"] > 0
+        and counts["raw_entry_count"] == counts["requested_count"]
+    )
+    if (
+        not coverage_complete
+        or item.get("coverage_complete") is not coverage_complete
+    ):
+        return False
+    if (
+        counts["quarantined_count"] != counts["contaminated_count"] + counts["malformed_count"]
+        or counts["clean_count"] + counts["contaminated_count"] > counts["complete_entry_count"]
+        or counts["recent_clean_tail_count"] > counts["clean_count"]
+        or counts["complete_entry_count"] > counts["raw_entry_count"]
+        or (
+            counts["malformed_count"] == 0
+            and counts["clean_count"] + counts["contaminated_count"]
+            != counts["complete_entry_count"]
+        )
+    ):
+        return False
+    indicator_warmup_min_clean_count = (
+        TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+        if granularity in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+        else 1
+    )
+    warmup_complete = counts["clean_count"] >= indicator_warmup_min_clean_count
+    recent_clean_coverage_complete = (
+        counts["recent_clean_tail_count"]
+        >= indicator_warmup_min_clean_count
+    )
+    if (
+        item.get("indicator_warmup_min_clean_count")
+        != indicator_warmup_min_clean_count
+        or item.get("indicator_warmup_complete") is not warmup_complete
+        or item.get("recent_clean_coverage_complete")
+        is not recent_clean_coverage_complete
+        or (
+            counts["contaminated_count"] == 0
+            and counts["malformed_count"] == 0
+            and counts["recent_clean_tail_count"] != counts["clean_count"]
+        )
+    ):
+        return False
+    if (
+        expected_spread_mode == TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE
+        and counts["contaminated_count"] != 0
+    ):
+        return False
+
+    normal = _strict_finite_number(item.get("normal_spread_pips"))
+    multiple = _strict_finite_number(item.get("max_spread_multiple"))
+    cap = _strict_finite_number(item.get("spread_cap_pips"))
+    if (
+        item.get("requested_price") != "MBA"
+        or item.get("policy_source") != "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple"
+        or normal is None or multiple is None or cap is None
+        or not all(value > 0.0 for value in (normal, multiple, cap))
+    ):
+        return False
+    from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+    from quant_rabbit.risk import RiskPolicy
+
+    canonical_normal = _strict_finite_number(NORMAL_SPREAD_PIPS.get(item.get("pair")))
+    canonical_multiple = _strict_finite_number(RiskPolicy().max_spread_multiple)
+    if canonical_normal is None or canonical_multiple is None:
+        return False
+    canonical_cap = round(canonical_normal * canonical_multiple, 6)
+    if normal != canonical_normal or multiple != canonical_multiple or cap != canonical_cap:
+        return False
+
+    state = item.get("recent_tail_state")
+    if state not in {"CLEAN", "SPREAD_CONTAMINATED", "PROVENANCE_INVALID"}:
+        return False
+    if item.get("recent_tail_contaminated") is not (state == "SPREAD_CONTAMINATED"):
+        return False
+    if item.get("recent_tail_invalid") is not (state == "PROVENANCE_INVALID"):
+        return False
+    if (
+        (state == "CLEAN" and counts["recent_clean_tail_count"] <= 0)
+        or (state == "SPREAD_CONTAMINATED" and counts["recent_clean_tail_count"] != 0)
+    ):
+        return False
+    provenance_complete = counts["malformed_count"] == 0 and counts["complete_entry_count"] > 0
+    if item.get("provenance_complete") is not provenance_complete:
+        return False
+
+    latest_complete_raw = item.get("latest_complete_timestamp_utc")
+    latest_clean_raw = item.get("latest_clean_timestamp_utc")
+    latest_complete = _strict_aware_iso_datetime(latest_complete_raw)
+    latest_clean = _strict_aware_iso_datetime(latest_clean_raw)
+    if counts["complete_entry_count"] > 0:
+        if latest_complete is None:
+            return False
+    elif latest_complete_raw is not None:
+        return False
+    if counts["clean_count"] > 0:
+        if latest_clean is None:
+            return False
+    elif latest_clean_raw is not None:
+        return False
+    if chart_generated_at is not None and (
+        (latest_complete is not None and latest_complete > chart_generated_at)
+        or (latest_clean is not None and latest_clean > chart_generated_at)
+    ):
+        return False
+    latest_complete_max_age = TECHNICAL_CANDLE_LATEST_COMPLETE_MAX_AGE_SECONDS.get(
+        str(granularity)
+    )
+    if forecast_now is not None and latest_complete_max_age is not None:
+        if latest_complete is None:
+            return False
+        latest_complete_age_seconds = (forecast_now - latest_complete).total_seconds()
+        if (
+            latest_complete_age_seconds
+            < -TECHNICAL_CANDLE_FORECAST_MAX_FUTURE_SKEW_SECONDS
+            or latest_complete_age_seconds > latest_complete_max_age
+        ):
+            return False
+    if state == "CLEAN" and latest_complete != latest_clean:
+        return False
+    if state == "SPREAD_CONTAMINATED":
+        if latest_complete is None:
+            return False
+        if counts["clean_count"] > 0:
+            if latest_clean is None or latest_clean >= latest_complete:
+                return False
+        elif latest_clean is not None:
+            return False
+
+    indicators = view.get("indicators")
+    if not isinstance(indicators, dict):
+        return False
+    view_candle_count = indicators.get("candles_count")
+    if (
+        not _is_exact_nonnegative_int(view_candle_count)
+        or view_candle_count != counts["recent_clean_tail_count"]
+    ):
+        return False
+    recent_candles = view.get("recent_candles")
+    if not isinstance(recent_candles, list):
+        return False
+    if counts["recent_clean_tail_count"] > 0:
+        expected_recent_count = min(
+            counts["recent_clean_tail_count"],
+            TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+        )
+        if (
+            len(recent_candles) != expected_recent_count
+        ):
+            return False
+        prior_recent: datetime | None = None
+        for recent in recent_candles:
+            if not isinstance(recent, dict):
+                return False
+            recent_time = _strict_aware_iso_datetime(recent.get("t"))
+            if recent_time is None or not _technical_candle_cadence_valid(
+                granularity=str(granularity),
+                timestamp=recent_time,
+                prior_timestamp=prior_recent,
+            ):
+                return False
+            prior_recent = recent_time
+        recent_tail_raw = recent_candles[-1].get("t")
+        if (
+            recent_tail_raw != latest_clean_raw
+            or _strict_aware_iso_datetime(recent_tail_raw) != latest_clean
+        ):
+            return False
+    elif recent_candles:
+        return False
+
+    quarantine_details = item.get("quarantine_details")
+    truncated = item.get("quarantine_details_truncated")
+    if (
+        not isinstance(quarantine_details, list)
+        or len(quarantine_details) > 8
+        or not _is_exact_nonnegative_int(truncated)
+        or len(quarantine_details) + truncated != counts["quarantined_count"]
+    ):
+        return False
+    parsed_quarantine: list[tuple[str, datetime | None]] = []
+    for detail in quarantine_details:
+        if not isinstance(detail, dict):
+            return False
+        code = detail.get("code")
+        if code not in {
+            TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+            TECHNICAL_CANDLE_PROVENANCE_INVALID,
+        }:
+            return False
+        if code == TECHNICAL_CANDLE_SPREAD_CONTAMINATED:
+            detail_max_spread = _strict_finite_number(detail.get("max_spread_pips"))
+            detail_spread_cap = _strict_finite_number(detail.get("spread_cap_pips"))
+            if (
+                detail_max_spread is None
+                or detail_spread_cap is None
+                or detail_spread_cap != cap
+                or detail_max_spread <= detail_spread_cap
+            ):
+                return False
+        else:
+            reason = detail.get("reason")
+            if not isinstance(reason, str) or not reason or len(reason) > 256:
+                return False
+        detail_time_raw = detail.get("timestamp_utc")
+        detail_time = (
+            _strict_aware_iso_datetime(detail_time_raw)
+            if detail_time_raw is not None
+            else None
+        )
+        if detail_time_raw is not None and detail_time is None:
+            return False
+        if detail_time is not None and chart_generated_at is not None and detail_time > chart_generated_at:
+            return False
+        parsed_quarantine.append((code, detail_time))
+    if state == "SPREAD_CONTAMINATED":
+        if (
+            not parsed_quarantine
+            or parsed_quarantine[-1][0] != TECHNICAL_CANDLE_SPREAD_CONTAMINATED
+            or parsed_quarantine[-1][1] != latest_complete
+        ):
+            return False
+    if state == "CLEAN" and counts["contaminated_count"] > 0 and counts["malformed_count"] == 0:
+        if (
+            not parsed_quarantine
+            or parsed_quarantine[-1][0] != TECHNICAL_CANDLE_SPREAD_CONTAMINATED
+            or parsed_quarantine[-1][1] is None
+            or latest_complete is None
+            or parsed_quarantine[-1][1] >= latest_complete
+        ):
+            return False
+        if (
+            recent_candles
+            and parsed_quarantine[-1][1]
+            >= _strict_aware_iso_datetime(recent_candles[0].get("t"))
+        ):
+            return False
+
+    expected_codes: list[str] = []
+    expected_blocking_codes: list[str] = []
+    clean_coverage_blocked = (
+        state == "CLEAN"
+        and (not warmup_complete or not recent_clean_coverage_complete)
+    )
+    if counts["contaminated_count"] > 0:
+        expected_codes.append(TECHNICAL_CANDLE_SPREAD_CONTAMINATED)
+    if (
+        counts["malformed_count"] > 0
+        or counts["complete_entry_count"] <= 0
+        or counts["clean_count"] <= 0
+        or clean_coverage_blocked
+    ):
+        expected_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+    if state == "SPREAD_CONTAMINATED":
+        expected_blocking_codes.append(TECHNICAL_CANDLE_SPREAD_CONTAMINATED)
+    if (
+        counts["malformed_count"] > 0
+        or state == "PROVENANCE_INVALID"
+        or counts["complete_entry_count"] <= 0
+        or counts["clean_count"] <= 0
+        or clean_coverage_blocked
+    ):
+        expected_blocking_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+    expected_status = "BLOCKED" if expected_blocking_codes else "DEGRADED" if expected_codes else "PASS"
+    return (
+        item.get("codes") == expected_codes
+        and item.get("blocking_codes") == expected_blocking_codes
+        and item.get("forecast_blocking") is bool(expected_blocking_codes)
+        and item.get("evaluation_status") == expected_status
+    )
+
+
+def _strict_finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if isfinite(number) else None
+
+
+def _is_exact_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _strict_aware_iso_datetime(value: object) -> datetime | None:
+    if value.__class__ is not str or not value or value != value.strip() or "T" not in value:
+        return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _aware_utc_datetime(value: object) -> datetime | None:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value.astimezone(timezone.utc)
 
 
 def _pip_factor(pair: str, pair_chart: Dict[str, Any]) -> float:
@@ -1375,6 +1922,7 @@ def synthesize_forecast(
     calendar_path: Path | None = None,
     strategy_profile_path: Path | None = None,
     now_utc: datetime | None = None,
+    require_technical_candle_integrity: bool = True,
 ) -> DirectionalForecast:
     """Combine all detector outputs into ONE directional forecast.
 
@@ -1396,6 +1944,23 @@ def synthesize_forecast(
     Confidence: computed as |UP - DOWN| / total_score, clamped 0-1,
     then multiplied by historical accuracy multiplier.
     """
+    integrity_blockers = _technical_candle_integrity_forecast_blockers(
+        pair_chart,
+        expected_pair=pair,
+        require_technical_candle_integrity=require_technical_candle_integrity,
+        now_utc=now_utc,
+    )
+    if integrity_blockers:
+        return DirectionalForecast(
+            pair=pair, direction="UNCLEAR", confidence=0.0,
+            invalidation_price=None, target_price=None, horizon_min=0,
+            drivers_for=(), drivers_against=integrity_blockers,
+            rationale_summary=(
+                f"{','.join(integrity_blockers)}: technical candle provenance blocks directional forecast"
+            ),
+            current_price=current_price,
+            raw_confidence=0.0,
+        )
     technical_context_v1 = build_forecast_technical_context(
         pair_chart,
         pair=pair,

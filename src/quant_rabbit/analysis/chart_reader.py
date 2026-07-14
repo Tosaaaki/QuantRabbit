@@ -18,14 +18,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
-from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
-
-# How many of the most-recent OHLCV bars to publish per view. 30 is
-# enough for candlestick-pattern detectors (look back 1-3 bars),
-# volume-spike rolling averages (20-bar baseline), and short-window
-# time-exhaustion runs (≤10 bars). Bounded so pair_charts.json stays
-# under a few hundred KB even with 7 timeframes × N pairs.
-RECENT_CANDLES_PUBLISH = 30
+from quant_rabbit.analysis.candles import (
+    PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+    TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_PROVENANCE_INVALID,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
+    TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
+    Candle,
+    fetch_candles_via_client,
+    fetch_technical_candles_via_client,
+)
 from quant_rabbit.analysis.indicators import (
     IndicatorSet,
     compute_indicators,
@@ -43,6 +47,15 @@ from quant_rabbit.analysis.families import FamilyScores, compute_family_scores
 from quant_rabbit.analysis.statfilters import StatFilterReading, compute_stat_filters
 from quant_rabbit.analysis.sessions import SessionContext, build_session_context
 from quant_rabbit.analysis.smc import SMCReading, analyze_smc
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+
+
+# How many of the most-recent OHLCV bars to publish per view. 30 is
+# enough for candlestick-pattern detectors (look back 1-3 bars),
+# volume-spike rolling averages (20-bar baseline), and short-window
+# time-exhaustion runs (≤10 bars). Bounded so pair_charts.json stays
+# under a few hundred KB even with 7 timeframes × N pairs.
+RECENT_CANDLES_PUBLISH = 30
 
 
 # Default trader chart stack. These are roles, not equal votes:
@@ -109,6 +122,7 @@ class ChartView:
     # element of both. Empty tuples when there aren't enough bars to
     # seed the indicator (early-startup case).
     indicator_series: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    candle_integrity: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -131,6 +145,7 @@ class ChartView:
                 for c in self.recent_candles
             ],
             "indicator_series": {k: list(v) for k, v in self.indicator_series.items()},
+            "candle_integrity": self.candle_integrity,
         }
 
 
@@ -145,6 +160,7 @@ class PairChart:
     warnings: tuple[str, ...] = field(default_factory=tuple)
     session: SessionContext | None = None  # killzone / Judas / Silver Bullet / JP holiday
     confluence: dict[str, object] = field(default_factory=dict)
+    technical_candle_integrity: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -157,6 +173,7 @@ class PairChart:
             "views": [view.to_dict() for view in self.views],
             "session": _session_to_dict(self.session),
             "confluence": self.confluence,
+            "technical_candle_integrity": self.technical_candle_integrity,
         }
 
 
@@ -175,24 +192,85 @@ def build_pair_chart(
 ) -> PairChart:
     """Build a multi-timeframe view for a pair.
 
-    `candles_by_tf` lets tests inject prebuilt series; in production we go
-    through `client.get_json` via `fetch_candles_via_client`.
+    `candles_by_tf` lets tests inject prebuilt series. Production FX fetches
+    one MBA packet per timeframe: MID remains the indicator input while BID
+    and ASK prove that a rollover spread did not distort the closed bar.
     """
 
+    pair_key = pair.upper()
     views: list[ChartView] = []
     warnings: list[str] = []
     candles_by_tf_resolved: dict[str, tuple[Candle, ...]] = {}
+    integrity_by_tf: dict[str, dict[str, object]] = {}
     for tf in timeframes:
         if candles_by_tf is not None and tf in candles_by_tf:
             candles = tuple(candles_by_tf[tf])
+            candle_integrity = _not_evaluated_candle_integrity(
+                pair=pair_key,
+                granularity=tf,
+                source="INJECTED",
+                clean_count=len(candles),
+                reason="caller-supplied candles have no broker bid/ask provenance",
+            )
         else:
             try:
-                candles = fetch_candles_via_client(client, pair, tf, count=count)
+                if pair_key in NORMAL_SPREAD_PIPS:
+                    batch = fetch_technical_candles_via_client(client, pair_key, tf, count=count)
+                    candle_integrity = batch.integrity
+                    clean_tail_count = candle_integrity.get("recent_clean_tail_count")
+                    expected_warmup_min = (
+                        TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+                        if tf in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+                        else 1
+                    )
+                    if (
+                        isinstance(clean_tail_count, int)
+                        and not isinstance(clean_tail_count, bool)
+                        and 0 <= clean_tail_count <= len(batch.candles)
+                        and candle_integrity.get("indicator_warmup_min_clean_count")
+                        == expected_warmup_min
+                    ):
+                        candles = (
+                            batch.candles[-clean_tail_count:]
+                            if clean_tail_count > 0
+                            else ()
+                        )
+                    else:
+                        # The parser is the trusted producer, but keep this
+                        # consumer fail-closed if a future receipt shape drifts.
+                        candles = ()
+                else:
+                    # Context-only assets do not have an FX normal-spread
+                    # policy. Preserve MID without inventing a threshold.
+                    candles = fetch_candles_via_client(client, pair_key, tf, count=count)
+                    candle_integrity = _not_evaluated_candle_integrity(
+                        pair=pair_key,
+                        granularity=tf,
+                        source="OANDA_MID",
+                        clean_count=len(candles),
+                        reason="canonical NORMAL_SPREAD_PIPS policy unavailable for context asset",
+                    )
             except Exception as exc:  # pragma: no cover - network path
-                warnings.append(f"{tf} fetch failed: {exc}")
+                failure_reason = str(exc)[:256]
+                warnings.append(f"{tf} fetch failed: {failure_reason}")
+                integrity_by_tf[tf] = _failed_candle_integrity(
+                    pair=pair_key,
+                    granularity=tf,
+                    source="OANDA_MBA" if pair_key in NORMAL_SPREAD_PIPS else "OANDA_MID",
+                    reason=failure_reason,
+                )
                 continue
+        integrity_by_tf[tf] = candle_integrity
+        if candle_integrity.get("forecast_blocking") is True:
+            blocking_codes = candle_integrity.get("blocking_codes") or []
+            warnings.append(f"{tf} technical candle integrity BLOCKED: {','.join(map(str, blocking_codes))}")
         candles_by_tf_resolved[tf] = candles
-        indicators = compute_indicators(pair, tf, candles)
+        # Only the latest uninterrupted clean MID run reaches indicators and
+        # structure.  This prevents a known quarantined bar from being silently
+        # bridged by older history. Genuine no-tick gaps remain inside this run
+        # because the MBA parser accepts whole-cadence gaps without resetting
+        # ``recent_clean_tail_count``.
+        indicators = compute_indicators(pair_key, tf, candles)
         regime, long_bias, short_bias = _classify(indicators)
         structure = analyze_structure(
             candles,
@@ -226,11 +304,12 @@ def build_pair_chart(
                 smc=smc_reading,
                 recent_candles=tuple(candles[-RECENT_CANDLES_PUBLISH:]) if candles else tuple(),
                 indicator_series=series_map,
+                candle_integrity=candle_integrity,
             )
         )
 
     long_score, short_score, dominant = _aggregate(views)
-    chart_story = _build_chart_story(pair, views, dominant)
+    chart_story = _build_chart_story(pair_key, views, dominant)
     confluence = _build_confluence(views, long_score, short_score, dominant)
     # 2026-05-13 emergency precision additions (B/C/D for trader_brain
     # and attack_advisor consumption). All metrics are market-derived
@@ -242,8 +321,13 @@ def build_pair_chart(
     # Session context: derived from the M5 candles regardless of how they were
     # obtained (caller-supplied or fetched).
     session = _build_session_for_pair(timeframes, candles_by_tf_resolved, views)
+    technical_candle_integrity = _aggregate_technical_candle_integrity(
+        pair=pair_key,
+        requested_timeframes=timeframes,
+        integrity_by_tf=integrity_by_tf,
+    )
     return PairChart(
-        pair=pair,
+        pair=pair_key,
         views=tuple(views),
         long_score=long_score,
         short_score=short_score,
@@ -252,7 +336,122 @@ def build_pair_chart(
         warnings=tuple(warnings),
         session=session,
         confluence=confluence,
+        technical_candle_integrity=technical_candle_integrity,
     )
+
+
+def _not_evaluated_candle_integrity(
+    *,
+    pair: str,
+    granularity: str,
+    source: str,
+    clean_count: int,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        "schema": TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": pair,
+        "granularity": granularity,
+        "source": source,
+        "spread_evaluation_mode": _candle_spread_evaluation_mode(granularity),
+        "evaluation_status": "NOT_EVALUATED",
+        "evaluation_reason": reason,
+        "clean_count": clean_count,
+        "contaminated_count": 0,
+        "malformed_count": 0,
+        "provenance_complete": False,
+        "forecast_blocking": False,
+        "codes": [],
+        "blocking_codes": [],
+    }
+
+
+def _failed_candle_integrity(
+    *, pair: str, granularity: str, source: str, reason: str
+) -> dict[str, object]:
+    return {
+        "schema": TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": pair,
+        "granularity": granularity,
+        "source": source,
+        "spread_evaluation_mode": _candle_spread_evaluation_mode(granularity),
+        "evaluation_status": "BLOCKED",
+        "evaluation_reason": reason[:256],
+        "clean_count": 0,
+        "contaminated_count": 0,
+        "malformed_count": 1,
+        "provenance_complete": False,
+        "forecast_blocking": True,
+        "codes": [TECHNICAL_CANDLE_PROVENANCE_INVALID],
+        "blocking_codes": [TECHNICAL_CANDLE_PROVENANCE_INVALID],
+    }
+
+
+def _candle_spread_evaluation_mode(granularity: str) -> str:
+    return (
+        TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE
+        if granularity in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+        else TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE
+    )
+
+
+def _aggregate_technical_candle_integrity(
+    *,
+    pair: str,
+    requested_timeframes: tuple[str, ...],
+    integrity_by_tf: Mapping[str, dict[str, object]],
+) -> dict[str, object]:
+    sources: list[str] = []
+    codes: list[str] = []
+    blocking_codes: list[str] = []
+    evaluated_count = 0
+    for tf in requested_timeframes:
+        item = integrity_by_tf.get(tf)
+        if not isinstance(item, dict):
+            codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+            blocking_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+            continue
+        source = item.get("source")
+        if isinstance(source, str) and source:
+            sources.append(source)
+        if item.get("evaluation_status") != "NOT_EVALUATED":
+            evaluated_count += 1
+        for code in item.get("codes") or []:
+            if isinstance(code, str) and code:
+                codes.append(code)
+        if item.get("forecast_blocking") is True:
+            for code in item.get("blocking_codes") or []:
+                if isinstance(code, str) and code:
+                    blocking_codes.append(code)
+            if not item.get("blocking_codes"):
+                codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+                blocking_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
+
+    codes = list(dict.fromkeys(codes))
+    blocking_codes = list(dict.fromkeys(blocking_codes))
+    forecast_blocking = bool(blocking_codes)
+    if forecast_blocking:
+        status = "BLOCKED"
+    elif evaluated_count == 0:
+        status = "NOT_EVALUATED"
+    elif codes:
+        status = "DEGRADED"
+    else:
+        status = "PASS"
+    unique_sources = list(dict.fromkeys(sources))
+    source = unique_sources[0] if len(unique_sources) == 1 else "MIXED"
+    return {
+        "schema": PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": pair,
+        "source": source,
+        "evaluation_status": status,
+        "forecast_blocking": forecast_blocking,
+        "codes": codes,
+        "blocking_codes": blocking_codes,
+        "requested_timeframes": list(requested_timeframes),
+        "evaluated_timeframe_count": evaluated_count,
+        "timeframes": {tf: integrity_by_tf[tf] for tf in requested_timeframes if tf in integrity_by_tf},
+    }
 
 
 def _build_extended_confluence(

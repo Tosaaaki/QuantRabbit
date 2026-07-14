@@ -32,6 +32,15 @@ ALLOWED_OANDA_CLOSE_PROVENANCES = frozenset(
 )
 
 
+def _strict_unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        payload[key] = value
+    return payload
+
+
 def _oanda_http_timeout_seconds() -> float:
     raw = os.environ.get("QR_OANDA_HTTP_TIMEOUT_SECONDS")
     if raw is None or not raw.strip():
@@ -79,7 +88,7 @@ class OandaReadOnlyClient:
             url = f"{url}?{urllib.parse.urlencode(query)}"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
         with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
-            return json.loads(resp.read())
+            return json.loads(resp.read(), object_pairs_hook=_strict_unique_json_object)
 
     def snapshot(self, pairs: Iterable[str]) -> BrokerSnapshot:
         fetched_at = datetime.now(timezone.utc)

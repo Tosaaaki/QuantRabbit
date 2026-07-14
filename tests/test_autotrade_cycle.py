@@ -29,6 +29,8 @@ from quant_rabbit.automation import (
 )
 from quant_rabbit.broker.execution import LiveOrderStageSummary
 import quant_rabbit.broker.execution as execution_module
+from quant_rabbit.analysis.candles import _technical_candles_from_payload
+from quant_rabbit.analysis.chart_reader import _aggregate_technical_candle_integrity
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit import forecast_precision
 from quant_rabbit.gpt_trader import (
@@ -36,7 +38,7 @@ from quant_rabbit.gpt_trader import (
     _decision_from_payload,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
-from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
     apply_codex_market_read_overlay,
@@ -48,6 +50,7 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context,
     build_forecast_technical_context_evidence,
 )
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 from tests.support_bidask_rules import write_nonmatching_bidask_rules
 
@@ -831,6 +834,15 @@ def _ensure_test_forecast_technical_context(
         "generated_at_utc",
         pair_charts_payload.get("generated_at_utc"),
     )
+    _attach_test_oanda_mba_integrity(
+        pair_chart=pair_chart,
+        pair=pair,
+        now_utc=now_utc,
+        regime_state=regime_state,
+        family_scores=family_scores,
+        structure_kind=structure_kind,
+        m5_atr_pips=m5_atr_pips,
+    )
     if matching_indexes:
         charts[matching_indexes[0]] = pair_chart
     else:
@@ -896,6 +908,155 @@ def _ensure_test_forecast_technical_context(
     metadata["forecast_regime_family_direction"] = receipt["aggregate"][
         "direction"
     ]
+
+
+def _attach_test_oanda_mba_integrity(
+    *,
+    pair_chart: dict[str, Any],
+    pair: str,
+    now_utc: datetime,
+    regime_state: str,
+    family_scores: dict[str, float],
+    structure_kind: str,
+    m5_atr_pips: float,
+) -> None:
+    """Build strict production-shaped MBA proof for isolated cycle fixtures."""
+
+    generated_raw = pair_chart.get("generated_at_utc")
+    if not isinstance(generated_raw, str):
+        raise AssertionError("test pair chart requires a generated-at timestamp")
+    try:
+        generated_at = datetime.fromisoformat(
+            generated_raw.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+    except ValueError as exc:
+        raise AssertionError("test pair chart generated-at timestamp is invalid") from exc
+    clock = min(generated_at, now_utc.astimezone(timezone.utc))
+    timeframes = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+    pip_factor = instrument_pip_factor(pair)
+    decimal_places = 3 if pip_factor == 100 else 5
+    mid_price = 113.100 if pip_factor == 100 else 1.10000
+    half_spread = 0.003 if pip_factor == 100 else 0.00003
+    normal_spread = NORMAL_SPREAD_PIPS[pair]
+    max_spread_multiple = RiskPolicy().max_spread_multiple
+    views: list[dict[str, Any]] = []
+    integrity_by_tf: dict[str, dict[str, object]] = {}
+    atr_multipliers = {
+        "M1": 0.5,
+        "M5": 1.0,
+        "M15": 1.5,
+        "M30": 2.0,
+        "H1": 4.0,
+        "H4": 8.0,
+        "D": 12.0,
+    }
+    for timeframe in timeframes:
+        cadence_seconds = {
+            "M1": 60,
+            "M5": 5 * 60,
+            "M15": 15 * 60,
+            "M30": 30 * 60,
+            "H1": 60 * 60,
+            "H4": 4 * 60 * 60,
+            "D": 24 * 60 * 60,
+        }[timeframe]
+        boundary_epoch = int(clock.timestamp()) // cadence_seconds * cadence_seconds
+        candle_time = datetime.fromtimestamp(
+            boundary_epoch - cadence_seconds,
+            tz=timezone.utc,
+        )
+        fmt = f"{{:.{decimal_places}f}}"
+        blocks = []
+        for history_index in range(30):
+            history_time = candle_time - timedelta(
+                seconds=cadence_seconds * (29 - history_index)
+            )
+            blocks.append({
+                "time": history_time.isoformat(timespec="microseconds").replace(
+                    "+00:00", "Z"
+                ),
+                "complete": True,
+                "mid": {
+                    key: fmt.format(mid_price) for key in ("o", "h", "l", "c")
+                },
+                "bid": {
+                    key: fmt.format(mid_price - half_spread)
+                    for key in ("o", "h", "l", "c")
+                },
+                "ask": {
+                    key: fmt.format(mid_price + half_spread)
+                    for key in ("o", "h", "l", "c")
+                },
+                "volume": 100,
+            })
+        batch = _technical_candles_from_payload(
+            {
+                "instrument": pair,
+                "granularity": timeframe,
+                "candles": blocks,
+            },
+            pair=pair,
+            granularity=timeframe,
+            requested_count=30,
+            pip_factor=pip_factor,
+            normal_spread_pips=float(normal_spread),
+            max_spread_multiple=float(max_spread_multiple),
+        )
+        if batch.integrity.get("forecast_blocking") is not False or len(batch.candles) != 30:
+            raise AssertionError(
+                f"test MBA fixture failed production parsing for {pair} {timeframe}"
+            )
+        candle = batch.candles[-1]
+        view = {
+            "granularity": timeframe,
+            "regime": regime_state,
+            "regime_reading": {
+                "state": regime_state,
+                "atr_percentile": 50.0,
+            },
+            "family_scores": dict(family_scores),
+            "indicators": {
+                "atr_pips": m5_atr_pips * atr_multipliers[timeframe],
+                "candles_count": len(batch.candles),
+            },
+            "structure": {
+                "structure_events": [
+                    {
+                        "kind": structure_kind,
+                        "index": 0,
+                        "close_confirmed": True,
+                    }
+                ]
+            },
+            # The 30 timestamps exercise the production warm-up contract.
+            # Only the last row carries OHLC because these lifecycle tests do
+            # not intend to create a synthetic 30-bar timing pattern.
+            "recent_candles": [
+                (
+                    {"t": recent.timestamp_utc.isoformat()}
+                    if index < len(batch.candles) - 1
+                    else {
+                        "t": candle.timestamp_utc.isoformat(),
+                        "o": candle.open,
+                        "h": candle.high,
+                        "l": candle.low,
+                        "c": candle.close,
+                        "v": candle.volume,
+                        "complete": True,
+                    }
+                )
+                for index, recent in enumerate(batch.candles)
+            ],
+            "candle_integrity": batch.integrity,
+        }
+        views.append(view)
+        integrity_by_tf[timeframe] = batch.integrity
+    pair_chart["views"] = views
+    pair_chart["technical_candle_integrity"] = _aggregate_technical_candle_integrity(
+        pair=pair,
+        requested_timeframes=timeframes,
+        integrity_by_tf=integrity_by_tf,
+    )
 
 
 def _ensure_test_exact_vehicle_ledger(
@@ -1975,7 +2136,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=snapshot_path,
                 intents_path=intents_path,
@@ -3164,7 +3325,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -3762,7 +3923,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=snapshot_path,
                 intents_path=intents_path,
@@ -5758,7 +5919,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            summary = AutoTradeCycle(
+            summary = _ForecastReceiptFixtureCycle(
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
@@ -5783,7 +5944,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 execution_ledger_report_path=root / "execution_ledger.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(
-                    _gpt_trade_decision(),
+                    _gpt_trade_decision(
+                        lane_id=(
+                            "trend_trader:EUR_USD:LONG:"
+                            "TREND_CONTINUATION:MARKET"
+                        )
+                    ),
                     capital_allocation_size_multiple=0.75,
                 ),
                 refresh_market_story=False,
@@ -5793,7 +5959,10 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(
+                summary.selected_lane_id,
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+            )
             self.assertEqual(summary.selected_lane_size_multiple, 0.75)
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
@@ -5947,7 +6116,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 root = Path(tmp)
                 data_root = root / "data"
                 data_root.mkdir()
-                now = datetime(2026, 6, 5, 16, 0, tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
                 stale_snapshot = BrokerSnapshot(
                     fetched_at_utc=now - timedelta(minutes=20),
                     positions=(
@@ -6065,7 +6234,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 root = Path(tmp)
                 data_root = root / "data"
                 data_root.mkdir()
-                now = datetime(2026, 6, 5, 16, 0, tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
                 stale_snapshot = BrokerSnapshot(
                     fetched_at_utc=now - timedelta(minutes=20),
                     positions=(
@@ -7250,7 +7419,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
             )
 
-            class RejectedLearningCycle(AutoTradeCycle):
+            class RejectedLearningCycle(_ForecastReceiptFixtureCycle):
                 def _run_gpt_handoff(self) -> GptHandoffSummary:
                     return GptHandoffSummary(
                         status="REJECTED",
@@ -9296,7 +9465,15 @@ def _pair_charts(root: Path, pairs: tuple[str, ...] = ("EUR_USD",)) -> Path:
                 ],
             }
         )
-    path.write_text(json.dumps({"charts": charts}) + "\n")
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "charts": charts,
+            }
+        )
+        + "\n"
+    )
     return path
 
 
@@ -9314,6 +9491,7 @@ def _entry_invalidation_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",

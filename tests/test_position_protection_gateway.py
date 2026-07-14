@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +20,9 @@ from quant_rabbit.strategy.position_manager import (
     ManagedPosition,
     PositionManagementDecision,
 )
+
+
+TEST_SNAPSHOT_AT = datetime.now(timezone.utc)
 
 
 class PositionProtectionGatewayTest(unittest.TestCase):
@@ -66,6 +69,8 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "STAGED")
             self.assertFalse(summary.sent)
             self.assertEqual(client.dependent_orders, [])
+            payload = json.loads((root / "exec.json").read_text())
+            self.assertFalse(payload["actions"][0]["broker_post_attempted"])
             self.assertIn('"price": "1.17290"', (root / "exec.md").read_text())
 
     def test_sends_break_even_stop_when_live_enabled(self) -> None:
@@ -81,6 +86,8 @@ class PositionProtectionGatewayTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "SENT")
             self.assertTrue(summary.sent)
+            payload = json.loads((root / "exec.json").read_text())
+            self.assertTrue(payload["actions"][0]["broker_post_attempted"])
             self.assertEqual(client.dependent_orders[0][1]["stopLoss"]["price"], "1.17290")
 
     def test_sends_sl_free_break_even_stop_when_live_enabled(self) -> None:
@@ -250,6 +257,7 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertIn("POSITION_CLOSE_SPREAD_TOO_WIDE", (root / "exec.md").read_text())
 
     def test_allows_gpt_verified_review_exit_when_session_cap_covers_spread(self) -> None:
+        snapshot_at = datetime(2026, 6, 12, 16, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ",
             {
@@ -265,10 +273,12 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                 output_path=root / "exec.json",
                 report_path=root / "exec.md",
                 live_enabled=True,
+                clock=lambda: snapshot_at,
             ).run(
                 decision=_decision(
                     ACTION_REVIEW_EXIT,
                     stop=None,
+                    snapshot_fetched_at_utc=snapshot_at.isoformat(),
                     reasons=(
                         "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
                         "execute only through PositionProtectionGateway",
@@ -278,7 +288,7 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                     unrealized_pl_jpy=-90.0,
                     quote_bid=1.17000,
                     quote_ask=1.17017,
-                    fetched_at_utc=datetime(2026, 6, 12, 16, 0, tzinfo=timezone.utc),
+                    fetched_at_utc=snapshot_at,
                 ),
                 send=True,
             )
@@ -468,6 +478,128 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.dependent_orders[0][1]["takeProfit"]["price"], "1.17500")
             self.assertNotIn("stopLoss", client.dependent_orders[0][1])
+            payload = json.loads((root / "exec.json").read_text())
+            action = payload["actions"][0]
+            self.assertEqual(action["pair"], "EUR_USD")
+            self.assertEqual(action["owner"], "unknown")
+            self.assertEqual(
+                action["broker_position_identity"],
+                {
+                    "snapshot_fetched_at_utc": action["broker_position_identity"][
+                        "snapshot_fetched_at_utc"
+                    ],
+                    "trade_id": "1",
+                    "pair": "EUR_USD",
+                    "owner": "unknown",
+                },
+            )
+
+    def test_blocks_managed_pair_that_contradicts_broker_position_identity(self) -> None:
+        decision = _decision(
+            ACTION_REPAIR_TAKE_PROFIT,
+            stop=None,
+            take_profit=1.1750,
+        )
+        managed = decision.positions[0]
+        mismatched = PositionManagementDecision(
+            generated_at_utc=decision.generated_at_utc,
+            snapshot_fetched_at_utc=decision.snapshot_fetched_at_utc,
+            action=decision.action,
+            positions=(
+                ManagedPosition(
+                    trade_id=managed.trade_id,
+                    pair="GBP_USD",
+                    side=managed.side,
+                    units=managed.units,
+                    action=managed.action,
+                    unrealized_pl_jpy=managed.unrealized_pl_jpy,
+                    remaining_risk_jpy=managed.remaining_risk_jpy,
+                    remaining_reward_jpy=managed.remaining_reward_jpy,
+                    same_direction_score=managed.same_direction_score,
+                    opposite_direction_score=managed.opposite_direction_score,
+                    recommended_stop_loss=managed.recommended_stop_loss,
+                    recommended_take_profit=managed.recommended_take_profit,
+                    reasons=managed.reasons,
+                    owner=managed.owner,
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(decision=mismatched, snapshot=_snapshot(), send=True)
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.dependent_orders, [])
+        self.assertEqual(payload["actions"][0]["pair"], "EUR_USD")
+        self.assertEqual(
+            payload["actions"][0]["issues"][0]["code"],
+            "BROKER_POSITION_PAIR_MISMATCH",
+        )
+
+    def test_blocks_decision_bound_to_a_different_broker_snapshot(self) -> None:
+        decision = _decision(ACTION_REPAIR_TAKE_PROFIT, stop=None, take_profit=1.1750)
+        mismatched = PositionManagementDecision(
+            generated_at_utc=decision.generated_at_utc,
+            snapshot_fetched_at_utc=(TEST_SNAPSHOT_AT - timedelta(seconds=1)).isoformat(),
+            action=decision.action,
+            positions=decision.positions,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(decision=mismatched, snapshot=_snapshot(), send=True)
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertEqual(
+            payload["actions"][0]["issues"][0]["code"],
+            "BROKER_SNAPSHOT_DECISION_MISMATCH",
+        )
+
+    def test_blocks_stale_broker_snapshot_before_post(self) -> None:
+        stale_at = TEST_SNAPSHOT_AT - timedelta(minutes=6)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: TEST_SNAPSHOT_AT,
+            ).run(
+                decision=_decision(
+                    ACTION_REPAIR_TAKE_PROFIT,
+                    stop=None,
+                    take_profit=1.1750,
+                    snapshot_fetched_at_utc=stale_at.isoformat(),
+                ),
+                snapshot=_snapshot(fetched_at_utc=stale_at),
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertEqual(client.dependent_orders, [])
+        self.assertEqual(
+            payload["actions"][0]["issues"][0]["code"],
+            "BROKER_SNAPSHOT_STALE",
+        )
 
     def test_operator_manual_auto_tp_modify_false_blocks_take_profit_replace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -555,8 +687,8 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                 live_enabled=True,
             ).run(
                 decision=PositionManagementDecision(
-                    generated_at_utc="2026-05-01T00:00:00+00:00",
-                    snapshot_fetched_at_utc="2026-05-01T00:00:00+00:00",
+                    generated_at_utc=TEST_SNAPSHOT_AT.isoformat(),
+                    snapshot_fetched_at_utc=TEST_SNAPSHOT_AT.isoformat(),
                     action="MIXED",
                     positions=(
                         ManagedPosition(
@@ -606,6 +738,79 @@ class PositionProtectionGatewayTest(unittest.TestCase):
         self.assertEqual(payload["actions"][0]["response"]["relatedTransactionIDs"], ["20"])
         self.assertFalse(payload["actions"][1]["sent"])
         self.assertEqual(payload["actions"][1]["issues"][0]["code"], "POSITION_PROTECTION_SEND_FAILED")
+
+    def test_rechecks_snapshot_freshness_before_each_broker_post(self) -> None:
+        clock_now = [TEST_SNAPSHOT_AT]
+
+        class AdvancingClient(FakePositionClient):
+            def replace_trade_dependent_orders(
+                self,
+                trade_id: str,
+                order_request: dict[str, Any],
+            ) -> dict[str, Any]:
+                response = super().replace_trade_dependent_orders(
+                    trade_id,
+                    order_request,
+                )
+                clock_now[0] = clock_now[0] + timedelta(seconds=301)
+                return response
+
+        decision = PositionManagementDecision(
+            generated_at_utc=TEST_SNAPSHOT_AT.isoformat(),
+            snapshot_fetched_at_utc=TEST_SNAPSHOT_AT.isoformat(),
+            action="MIXED",
+            positions=tuple(
+                ManagedPosition(
+                    trade_id=trade_id,
+                    pair="EUR_USD",
+                    side="LONG",
+                    units=1000,
+                    action=ACTION_REPAIR_TAKE_PROFIT,
+                    unrealized_pl_jpy=80.0,
+                    remaining_risk_jpy=50.0,
+                    remaining_reward_jpy=150.0,
+                    same_direction_score=None,
+                    opposite_direction_score=None,
+                    recommended_stop_loss=None,
+                    recommended_take_profit=take_profit,
+                    reasons=("test",),
+                    owner="trader",
+                )
+                for trade_id, take_profit in (("1", 1.1750), ("2", 1.1760))
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = AdvancingClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+                clock=lambda: clock_now[0],
+            ).run(
+                decision=decision,
+                snapshot=_two_position_snapshot(),
+                send=True,
+            )
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "PARTIAL_SENT_WITH_BLOCKS")
+        self.assertEqual([trade_id for trade_id, _ in client.dependent_orders], ["1"])
+        self.assertTrue(payload["actions"][0]["broker_post_attempted"])
+        self.assertFalse(payload["actions"][1]["broker_post_attempted"])
+        self.assertEqual(
+            payload["actions"][0]["send_boundary_checked_at_utc"],
+            TEST_SNAPSHOT_AT.isoformat(),
+        )
+        self.assertEqual(
+            payload["actions"][1]["send_boundary_checked_at_utc"],
+            (TEST_SNAPSHOT_AT + timedelta(seconds=301)).isoformat(),
+        )
+        self.assertEqual(
+            payload["actions"][1]["issues"][0]["code"],
+            "BROKER_SNAPSHOT_STALE",
+        )
 
 
 class FakePositionClient:
@@ -664,10 +869,13 @@ def _decision(
     stop: float | None,
     take_profit: float | None = None,
     reasons: tuple[str, ...] = ("test",),
+    snapshot_fetched_at_utc: str | None = None,
 ) -> PositionManagementDecision:
     return PositionManagementDecision(
-        generated_at_utc="2026-05-01T00:00:00+00:00",
-        snapshot_fetched_at_utc="2026-05-01T00:00:00+00:00",
+        generated_at_utc=TEST_SNAPSHOT_AT.isoformat(),
+        snapshot_fetched_at_utc=(
+            snapshot_fetched_at_utc or TEST_SNAPSHOT_AT.isoformat()
+        ),
         action=action,
         positions=(
             ManagedPosition(
@@ -700,7 +908,7 @@ def _snapshot(
     fetched_at_utc: datetime | None = None,
     raw: dict[str, Any] | None = None,
 ) -> BrokerSnapshot:
-    now = fetched_at_utc or datetime.now(timezone.utc)
+    now = fetched_at_utc or TEST_SNAPSHOT_AT
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=(
@@ -722,7 +930,7 @@ def _snapshot(
 
 
 def _two_position_snapshot() -> BrokerSnapshot:
-    now = datetime.now(timezone.utc)
+    now = TEST_SNAPSHOT_AT
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=(

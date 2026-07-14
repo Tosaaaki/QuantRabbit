@@ -1,0 +1,74 @@
+{
+  "schema": "QR_OANDA_SPREAD_CALIBRATION_V1",
+  "calibration_sha256": "6f1d23e68afd4d787b9ea66b908039c8e49633456456de9f2764c790ea9ede49",
+  "source_evidence_sha256": "9a42bc509ca6c6dfe868c5504a80a516c9f9bfe861925c329b368676e3d10d51",
+  "evidence_policy_version": "OANDA_M5_MBA_SESSION_SPREAD_MONTHLY_V1",
+  "max_age_days_after_window": 31,
+  "valid_until_utc": "2026-08-13T15:00:00Z",
+  "method": {
+    "broker": "OANDA",
+    "candle_price_component": "MBA",
+    "granularity": "M5",
+    "spread_definition": "max(ASK.o-BID.o, ASK.c-BID.c) in pips",
+    "excluded_price_fields": [
+      "h",
+      "l"
+    ],
+    "percentile_method": "nearest_rank",
+    "recommended_baseline_formula": "ceil(P95_endpoint_spread / RiskPolicy.max_spread_multiple, 0.1 pip)",
+    "max_spread_multiple": 2.5,
+    "rounding_step_pips": 0.1
+  },
+  "window": {
+    "from_utc": "2026-07-06T12:00:00Z",
+    "to_utc": "2026-07-13T15:00:00Z"
+  },
+  "business_days_utc": [
+    "2026-07-06",
+    "2026-07-07",
+    "2026-07-08",
+    "2026-07-09",
+    "2026-07-10",
+    "2026-07-13"
+  ],
+  "session": {
+    "timezone": "UTC",
+    "start_hour_inclusive": 12,
+    "end_hour_exclusive": 15,
+    "weekday_filter": "MONDAY_TO_FRIDAY"
+  },
+  "broker_http_methods_used": [
+    "GET"
+  ],
+  "broker_write_performed": false,
+  "pairs": [
+    {"pair": "EUR_USD", "sample_count": 216, "p50_pips": 1.6, "p95_pips": 1.7, "p99_pips": 1.8, "max_pips": 1.9, "recommended_baseline_pips": 0.7},
+    {"pair": "GBP_USD", "sample_count": 216, "p50_pips": 1.9, "p95_pips": 2.1, "p99_pips": 2.6, "max_pips": 2.8, "recommended_baseline_pips": 0.9},
+    {"pair": "AUD_USD", "sample_count": 216, "p50_pips": 1.4, "p95_pips": 1.5, "p99_pips": 1.6, "max_pips": 1.8, "recommended_baseline_pips": 0.6},
+    {"pair": "NZD_USD", "sample_count": 216, "p50_pips": 1.5, "p95_pips": 1.6, "p99_pips": 1.8, "max_pips": 2.1, "recommended_baseline_pips": 0.7},
+    {"pair": "USD_JPY", "sample_count": 216, "p50_pips": 1.6, "p95_pips": 1.8, "p99_pips": 1.9, "max_pips": 2.5, "recommended_baseline_pips": 0.8},
+    {"pair": "USD_CAD", "sample_count": 216, "p50_pips": 1.8, "p95_pips": 1.9, "p99_pips": 2.3, "max_pips": 3.3, "recommended_baseline_pips": 0.8},
+    {"pair": "USD_CHF", "sample_count": 216, "p50_pips": 1.5, "p95_pips": 1.7, "p99_pips": 2.0, "max_pips": 2.5, "recommended_baseline_pips": 0.7},
+    {"pair": "EUR_GBP", "sample_count": 216, "p50_pips": 1.4, "p95_pips": 1.5, "p99_pips": 2.1, "max_pips": 2.6, "recommended_baseline_pips": 0.6},
+    {"pair": "EUR_JPY", "sample_count": 216, "p50_pips": 2.8, "p95_pips": 3.1, "p99_pips": 5.0, "max_pips": 5.7, "recommended_baseline_pips": 1.3},
+    {"pair": "EUR_AUD", "sample_count": 216, "p50_pips": 3.6, "p95_pips": 4.0, "p99_pips": 6.6, "max_pips": 7.4, "recommended_baseline_pips": 1.6},
+    {"pair": "EUR_CAD", "sample_count": 216, "p50_pips": 2.8, "p95_pips": 3.1, "p99_pips": 4.8, "max_pips": 6.6, "recommended_baseline_pips": 1.3},
+    {"pair": "EUR_CHF", "sample_count": 216, "p50_pips": 1.6, "p95_pips": 1.7, "p99_pips": 2.6, "max_pips": 3.1, "recommended_baseline_pips": 0.7},
+    {"pair": "EUR_NZD", "sample_count": 216, "p50_pips": 6.4, "p95_pips": 7.2, "p99_pips": 11.1, "max_pips": 12.3, "recommended_baseline_pips": 2.9},
+    {"pair": "GBP_JPY", "sample_count": 216, "p50_pips": 3.4, "p95_pips": 3.7, "p99_pips": 7.2, "max_pips": 7.8, "recommended_baseline_pips": 1.5},
+    {"pair": "GBP_AUD", "sample_count": 216, "p50_pips": 5.1, "p95_pips": 5.7, "p99_pips": 8.2, "max_pips": 9.2, "recommended_baseline_pips": 2.3},
+    {"pair": "GBP_CAD", "sample_count": 216, "p50_pips": 3.4, "p95_pips": 4.0, "p99_pips": 6.5, "max_pips": 9.8, "recommended_baseline_pips": 1.6},
+    {"pair": "GBP_CHF", "sample_count": 216, "p50_pips": 2.4, "p95_pips": 2.6, "p99_pips": 4.1, "max_pips": 6.8, "recommended_baseline_pips": 1.1},
+    {"pair": "GBP_NZD", "sample_count": 216, "p50_pips": 8.4, "p95_pips": 9.5, "p99_pips": 13.4, "max_pips": 14.6, "recommended_baseline_pips": 3.8},
+    {"pair": "AUD_JPY", "sample_count": 216, "p50_pips": 2.3, "p95_pips": 2.5, "p99_pips": 4.4, "max_pips": 4.8, "recommended_baseline_pips": 1.0},
+    {"pair": "AUD_CAD", "sample_count": 216, "p50_pips": 2.3, "p95_pips": 3.0, "p99_pips": 3.6, "max_pips": 5.7, "recommended_baseline_pips": 1.2},
+    {"pair": "AUD_CHF", "sample_count": 216, "p50_pips": 1.5, "p95_pips": 1.8, "p99_pips": 2.5, "max_pips": 3.8, "recommended_baseline_pips": 0.8},
+    {"pair": "AUD_NZD", "sample_count": 216, "p50_pips": 2.7, "p95_pips": 2.9, "p99_pips": 5.1, "max_pips": 7.5, "recommended_baseline_pips": 1.2},
+    {"pair": "CAD_JPY", "sample_count": 216, "p50_pips": 2.0, "p95_pips": 2.6, "p99_pips": 3.1, "max_pips": 4.9, "recommended_baseline_pips": 1.1},
+    {"pair": "CAD_CHF", "sample_count": 216, "p50_pips": 1.4, "p95_pips": 1.8, "p99_pips": 2.9, "max_pips": 7.8, "recommended_baseline_pips": 0.8},
+    {"pair": "CHF_JPY", "sample_count": 216, "p50_pips": 3.9, "p95_pips": 4.3, "p99_pips": 6.8, "max_pips": 10.7, "recommended_baseline_pips": 1.8},
+    {"pair": "NZD_JPY", "sample_count": 216, "p50_pips": 2.6, "p95_pips": 3.2, "p99_pips": 5.5, "max_pips": 7.9, "recommended_baseline_pips": 1.3},
+    {"pair": "NZD_CAD", "sample_count": 216, "p50_pips": 2.5, "p95_pips": 3.3, "p99_pips": 4.7, "max_pips": 6.4, "recommended_baseline_pips": 1.4},
+    {"pair": "NZD_CHF", "sample_count": 216, "p50_pips": 1.5, "p95_pips": 1.9, "p99_pips": 3.1, "max_pips": 4.8, "recommended_baseline_pips": 0.8}
+  ]
+}

@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import os
+import copy
 import sqlite3
 import tempfile
 import unittest
@@ -14,12 +15,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quant_rabbit.execution_ledger import (
+    GATEWAY_SENT_INTEGRITY_MIGRATION_KEY,
+    GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION,
     LEGACY_EVENT_BACKFILL_MIGRATION_KEY,
     LEGACY_EVENT_BACKFILL_MIGRATION_VERSION,
     OANDA_TRANSACTION_COVERAGE_START_KEY,
     ExecutionLedger,
     _events_from_transaction,
     _migrate_legacy_transaction_coverage_marker,
+    validated_gateway_receipt_sent_mutations,
 )
 import quant_rabbit.execution_ledger as execution_ledger_module
 from quant_rabbit.models import AccountSummary
@@ -84,6 +88,68 @@ def _seed_legacy_coverage_proof(
             now,
         ),
     )
+
+
+def _current_position_execution_action() -> dict[str, object]:
+    return {
+        "trade_id": "T-current",
+        "pair": "EUR_USD",
+        "owner": "trader",
+        "broker_position_identity": {
+            "snapshot_fetched_at_utc": "2026-07-13T20:24:27+00:00",
+            "trade_id": "T-current",
+            "pair": "EUR_USD",
+            "owner": "trader",
+        },
+        "send_boundary_checked_at_utc": "2026-07-13T20:24:28+00:00",
+        "management_action": "TAKE_PROFIT_MARKET",
+        "sent": True,
+        "broker_post_attempted": True,
+        "request": {
+            "type": "CLOSE",
+            "trade_id": "T-current",
+            "units": "ALL",
+        },
+        "response": {
+            "orderCreateTransaction": {
+                "id": "order-current",
+                "instrument": "EUR_USD",
+                "type": "MARKET_ORDER",
+                "reason": "TRADE_CLOSE",
+                "positionFill": "REDUCE_ONLY",
+                "tradeClose": {"tradeID": "T-current", "units": "ALL"},
+            },
+            "orderFillTransaction": {
+                "id": "fill-current",
+                "instrument": "EUR_USD",
+                "type": "ORDER_FILL",
+                "reason": "MARKET_ORDER_TRADE_CLOSE",
+                "orderID": "order-current",
+                "tradesClosed": [{"tradeID": "T-current"}],
+            },
+            # OANDA may include a dependent-order cancellation ID without a
+            # sibling transaction object when closing a protected trade.
+            "relatedTransactionIDs": [
+                "order-current",
+                "fill-current",
+                "dependent-cancel-current",
+            ],
+            "lastTransactionID": "dependent-cancel-current",
+        },
+    }
+
+
+def _current_broker_snapshot() -> dict[str, object]:
+    return {
+        "fetched_at_utc": "2026-07-13T20:24:27+00:00",
+        "positions": [
+            {
+                "trade_id": "T-current",
+                "pair": "EUR_USD",
+                "owner": "trader",
+            }
+        ],
+    }
 
 
 class ExecutionLedgerTest(unittest.TestCase):
@@ -1048,6 +1114,581 @@ class ExecutionLedgerTest(unittest.TestCase):
                 1.18,
                 1.17,
             ))
+
+    def test_records_profit_partial_close_sent_from_exact_aggregate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "profit_partial_close.json"
+            action = {
+                "trade_id": "T-profit",
+                "pair": "EUR_USD",
+                "management_action": "PROFIT_PARTIAL_CLOSE",
+                "sent": True,
+                "request": {
+                    "type": "CLOSE",
+                    "trade_id": "T-profit",
+                    "units": "7500",
+                },
+                "response": {
+                    "orderCreateTransaction": {"id": "473028"},
+                    "orderFillTransaction": {
+                        "id": "473029",
+                        "orderID": "473028",
+                    },
+                },
+            }
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                        "status": "SENT",
+                        "sent_count": 1,
+                        "actions": [action],
+                        "results": [{**action, "request": None}],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(
+                db_path=root / "ledger.db",
+                report_path=root / "ledger.md",
+            )
+
+            summary = ledger.record_gateway_receipt(
+                kind="position_execution",
+                receipt_path=receipt,
+            )
+
+            self.assertEqual(summary.gateway_receipts_inserted, 1)
+            self.assertEqual(summary.events_inserted, 1)
+            with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
+                stored_sent = conn.execute(
+                    "SELECT sent FROM gateway_receipts"
+                ).fetchone()[0]
+                event_type = conn.execute(
+                    "SELECT event_type FROM execution_events"
+                ).fetchone()[0]
+            self.assertEqual(stored_sent, 1)
+            self.assertEqual(event_type, "GATEWAY_TRADE_CLOSE_SENT")
+
+    def test_current_position_execution_receipt_validates_exact_close_identity(self) -> None:
+        action = _current_position_execution_action()
+
+        mutations = validated_gateway_receipt_sent_mutations(
+            schema="position-execution",
+            payload={
+                "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                "status": "SENT",
+                "send_requested": True,
+                "sent": True,
+                "actions": [action],
+            },
+            broker_snapshot=_current_broker_snapshot(),
+        )
+
+        self.assertEqual(len(mutations), 1)
+        self.assertEqual(mutations[0]["trade_id"], "T-current")
+        self.assertEqual(
+            mutations[0]["send_boundary_checked_at_utc"],
+            "2026-07-13T20:24:28+00:00",
+        )
+        self.assertEqual(mutations[0]["order_id"], "order-current")
+        self.assertEqual(mutations[0]["fill_transaction_id"], "fill-current")
+
+    def test_current_sent_receipt_requires_separate_broker_snapshot_truth(self) -> None:
+        with self.assertRaisesRegex(ValueError, "authoritative broker snapshot"):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent": True,
+                    "actions": [_current_position_execution_action()],
+                },
+            )
+
+    def test_current_position_execution_rejects_broker_truth_contradictions(self) -> None:
+        cases: tuple[tuple[str, object, str], ...] = (
+            (
+                "missing_trade_identity",
+                lambda action: (
+                    action["response"]["orderCreateTransaction"].pop("tradeClose"),
+                    action["response"]["orderFillTransaction"].pop("tradesClosed"),
+                ),
+                "trade identity is missing",
+            ),
+            (
+                "extra_trade_identity",
+                lambda action: action["response"]["orderFillTransaction"].update(
+                    {"tradeReduced": {"tradeID": "T-other"}}
+                ),
+                "trade identity is missing or contradicts",
+            ),
+            (
+                "instrument_mismatch",
+                lambda action: action["response"]["orderFillTransaction"].update(
+                    {"instrument": "GBP_USD"}
+                ),
+                "instrument identity contradicts pair",
+            ),
+            (
+                "owner_tag_mismatch",
+                lambda action: action["response"]["orderCreateTransaction"].update(
+                    {"clientExtensions": {"tag": "manual"}}
+                ),
+                "owner tag contradicts owner",
+            ),
+            (
+                "nested_transaction_not_related",
+                lambda action: action["response"]["relatedTransactionIDs"].remove(
+                    "fill-current"
+                ),
+                "transaction object IDs are not all present",
+            ),
+            (
+                "last_transaction_not_tail",
+                lambda action: action["response"].update(
+                    {"lastTransactionID": "fill-current"}
+                ),
+                "lastTransactionID contradicts",
+            ),
+            (
+                "duplicate_related_transaction",
+                lambda action: action["response"]["relatedTransactionIDs"].append(
+                    "fill-current"
+                ),
+                "non-empty and unique",
+            ),
+            (
+                "duplicate_transaction_object_identity",
+                lambda action: action["response"]["orderFillTransaction"].update(
+                    {"id": "order-current"}
+                ),
+                "transaction object IDs are duplicated",
+            ),
+            (
+                "wrong_order_operation_for_close",
+                lambda action: action["response"].update(
+                    {
+                        "takeProfitOrderTransaction": action["response"].pop(
+                            "orderCreateTransaction"
+                        )
+                    }
+                ),
+                "lacks exact orderCreateTransaction/fill identity",
+            ),
+            (
+                "non_string_owner_tag",
+                lambda action: action["response"]["orderCreateTransaction"].update(
+                    {"clientExtensions": {"tag": []}}
+                ),
+                "clientExtensions.tag must be a non-empty string",
+            ),
+            (
+                "stale_snapshot_identity",
+                lambda action: action["broker_position_identity"].update(
+                    {"snapshot_fetched_at_utc": "2026-07-13T20:00:00+00:00"}
+                ),
+                "outside the execution freshness window",
+            ),
+            (
+                "missing_send_boundary_check",
+                lambda action: action.pop("send_boundary_checked_at_utc"),
+                "send_boundary_checked_at_utc must be a non-empty string",
+            ),
+            (
+                "stale_at_send_boundary",
+                lambda action: action.update(
+                    {
+                        "send_boundary_checked_at_utc": (
+                            "2026-07-13T20:29:28+00:00"
+                        )
+                    }
+                ),
+                "outside the execution freshness window",
+            ),
+            (
+                "send_boundary_precedes_receipt",
+                lambda action: action.update(
+                    {
+                        "send_boundary_checked_at_utc": (
+                            "2026-07-13T20:24:20+00:00"
+                        )
+                    }
+                ),
+                "precedes receipt generation",
+            ),
+            (
+                "snapshot_pair_self_attribution",
+                lambda action: action["broker_position_identity"].update(
+                    {"pair": "GBP_USD"}
+                ),
+                "broker_position_identity contradicts",
+            ),
+            (
+                "snapshot_owner_self_attribution",
+                lambda action: action["broker_position_identity"].update(
+                    {"owner": "manual"}
+                ),
+                "broker_position_identity contradicts",
+            ),
+            (
+                "receipt_pair_and_snapshot_identity_self_attribution",
+                lambda action: (
+                    action.update({"pair": "GBP_JPY"}),
+                    action["broker_position_identity"].update({"pair": "GBP_JPY"}),
+                    action["response"]["orderCreateTransaction"].update(
+                        {"instrument": "GBP_JPY"}
+                    ),
+                    action["response"]["orderFillTransaction"].update(
+                        {"instrument": "GBP_JPY"}
+                    ),
+                ),
+                "contradicts the authoritative broker snapshot",
+            ),
+            (
+                "receipt_owner_and_snapshot_identity_self_attribution",
+                lambda action: (
+                    action.update({"owner": "manual"}),
+                    action["broker_position_identity"].update({"owner": "manual"}),
+                ),
+                "CLOSE mutation requires exact owner=trader",
+            ),
+            (
+                "close_instrument_identity_omitted",
+                lambda action: (
+                    action["response"]["orderCreateTransaction"].pop("instrument"),
+                    action["response"]["orderFillTransaction"].pop("instrument"),
+                ),
+                "must each carry the exact broker instrument",
+            ),
+            (
+                "filled_response_also_contains_reject",
+                lambda action: (
+                    action["response"].update(
+                        {
+                            "orderRejectTransaction": {
+                                "id": "reject-current",
+                                "instrument": "EUR_USD",
+                                "tradeClose": {"tradeID": "T-current"},
+                            }
+                        }
+                    ),
+                    action["response"]["relatedTransactionIDs"].insert(
+                        -1, "reject-current"
+                    ),
+                ),
+                "contains broker reject transaction evidence",
+            ),
+            (
+                "dependent_order_semantics_relabelled_as_close",
+                lambda action: action["response"]["orderCreateTransaction"].update(
+                    {"type": "TAKE_PROFIT_ORDER", "reason": "CLIENT_ORDER"}
+                ),
+                "lacks exact OANDA trade-close transaction semantics",
+            ),
+        )
+        for name, mutate, error in cases:
+            with self.subTest(name=name):
+                action = copy.deepcopy(_current_position_execution_action())
+                mutate(action)
+                with self.assertRaisesRegex(ValueError, error):
+                    validated_gateway_receipt_sent_mutations(
+                        schema="position-execution",
+                        payload={
+                            "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                            "status": "SENT",
+                            "send_requested": True,
+                            "sent": True,
+                            "actions": [action],
+                        },
+                        broker_snapshot=_current_broker_snapshot(),
+                    )
+
+    def test_current_receipt_rejects_internal_order_fill_contradiction(self) -> None:
+        mutation = {
+            "trade_id": "T-current",
+            "pair": "EUR_USD",
+            "owner": "trader",
+            "management_action": "PROFIT_PARTIAL_CLOSE",
+            "sent": True,
+            "broker_post_attempted": True,
+            "request": {
+                "type": "CLOSE",
+                "trade_id": "T-current",
+                "units": "1000",
+            },
+            "response": {
+                "orderCreateTransaction": {"id": "order-current"},
+                "orderFillTransaction": {
+                    "id": "fill-current",
+                    "orderID": "different-order",
+                    "tradeReduced": {"tradeID": "T-current"},
+                },
+                "relatedTransactionIDs": ["order-current", "fill-current"],
+                "lastTransactionID": "fill-current",
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "fill.orderID contradicts"):
+            validated_gateway_receipt_sent_mutations(
+                schema="profit-partial-close",
+                payload={
+                    "status": "SENT",
+                    "send_requested": True,
+                    "sent_count": 1,
+                    "actions": [mutation],
+                    "results": [mutation],
+                },
+            )
+
+    def test_dependent_order_identity_uses_separate_broker_snapshot_truth(self) -> None:
+        mutation = {
+            "trade_id": "T-tp",
+            "pair": "USD_JPY",
+            "owner": "manual",
+            "management_action": "TP_REBALANCE",
+            "sent": True,
+            "broker_post_attempted": True,
+            "request": {
+                "type": "DEPENDENT_ORDER_REPLACE",
+                "trade_id": "T-tp",
+                "order_request": {
+                    "takeProfit": {"price": "158.500", "timeInForce": "GTC"}
+                },
+            },
+            # OANDA TakeProfitOrderTransaction names the trade but does not
+            # carry an instrument. Pair/owner therefore come from the separate
+            # pre-send broker snapshot, never from the receipt's own claim.
+            "response": {
+                "takeProfitOrderTransaction": {
+                    "id": "tp-order",
+                    "tradeID": "T-tp",
+                },
+                "relatedTransactionIDs": ["tp-order"],
+                "lastTransactionID": "tp-order",
+            },
+        }
+        payload = {
+            "status": "SENT",
+            "send_requested": True,
+            "sent_count": 1,
+            "actions": [mutation],
+            "results": [mutation],
+        }
+        snapshot = {
+            "positions": [
+                {"trade_id": "T-tp", "pair": "USD_JPY", "owner": "manual"}
+            ]
+        }
+
+        accepted = validated_gateway_receipt_sent_mutations(
+            schema="tp-rebalance",
+            payload=payload,
+            broker_snapshot=snapshot,
+        )
+        self.assertEqual(accepted[0]["pair"], "USD_JPY")
+        self.assertEqual(accepted[0]["owner"], "manual")
+
+        forged = copy.deepcopy(payload)
+        forged["actions"][0]["pair"] = "EUR_USD"
+        forged["actions"][0]["owner"] = "trader"
+        forged["results"][0]["pair"] = "EUR_USD"
+        forged["results"][0]["owner"] = "trader"
+        with self.assertRaisesRegex(
+            ValueError,
+            "pair/owner contradicts the authoritative broker snapshot",
+        ):
+            validated_gateway_receipt_sent_mutations(
+                schema="tp-rebalance",
+                payload=forged,
+                broker_snapshot=snapshot,
+            )
+
+    def test_current_receipt_rejects_uncertain_post_outcome_as_zero_send(self) -> None:
+        with self.assertRaisesRegex(ValueError, "uncertain broker POST outcome"):
+            validated_gateway_receipt_sent_mutations(
+                schema="position-execution",
+                payload={
+                    "status": "BLOCKED",
+                    "send_requested": True,
+                    "sent": False,
+                    "actions": [
+                        {
+                            "sent": False,
+                            "broker_post_attempted": True,
+                            "response": {"error": "transport timeout"},
+                        }
+                    ],
+                },
+            )
+
+    def test_current_receipt_rejects_hidden_transaction_on_non_sent_row(self) -> None:
+        with self.assertRaisesRegex(ValueError, "carries broker transaction evidence"):
+            validated_gateway_receipt_sent_mutations(
+                schema="profit-partial-close",
+                payload={
+                    "status": "STAGED",
+                    "send_requested": False,
+                    "sent_count": 0,
+                    "actions": [
+                        {
+                            "sent": False,
+                            "broker_post_attempted": False,
+                            "response": {
+                                "orderFillTransaction": {
+                                    "id": "fill-hidden",
+                                    "orderID": "order-hidden",
+                                }
+                            },
+                        }
+                    ],
+                    "results": [
+                        {
+                            "sent": False,
+                            "broker_post_attempted": False,
+                            "response": {
+                                "orderFillTransaction": {
+                                    "id": "fill-hidden",
+                                    "orderID": "order-hidden",
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
+
+    def test_rejects_malformed_or_contradictory_gateway_sent_evidence(self) -> None:
+        cases = {
+            "truthy_top_level": (
+                "live_order",
+                {"sent": "true"},
+                "sent must be an exact boolean",
+            ),
+            "boolean_count": (
+                "live_order",
+                {"sent_count": True},
+                "sent_count must be an exact non-negative integer",
+            ),
+            "negative_count": (
+                "position_execution",
+                {"sent_count": -1},
+                "sent_count must be an exact non-negative integer",
+            ),
+            "truthy_action": (
+                "position_execution",
+                {"actions": [{"sent": 1}]},
+                r"actions\[0\]\.sent must be an exact boolean",
+            ),
+            "top_level_contradiction": (
+                "position_execution",
+                {
+                    "sent": False,
+                    "sent_count": 1,
+                    "actions": [{"sent": True}],
+                    "results": [{"sent": True}],
+                },
+                "top-level sent contradicts",
+            ),
+            "count_contradiction": (
+                "position_execution",
+                {
+                    "sent_count": 2,
+                    "actions": [{"sent": True}],
+                    "results": [{"sent": True}],
+                },
+                "sent counts contradict",
+            ),
+            "duplicate_view_contradiction": (
+                "position_execution",
+                {
+                    "actions": [{"sent": True}],
+                    "results": [{"sent": False}],
+                },
+                "sent counts contradict",
+            ),
+        }
+        for name, (kind, payload, message) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                receipt = root / "receipt.json"
+                receipt.write_text(json.dumps(payload))
+                ledger = ExecutionLedger(
+                    db_path=root / "ledger.db",
+                    report_path=root / "ledger.md",
+                )
+
+                with self.assertRaisesRegex(ValueError, message):
+                    ledger.record_gateway_receipt(kind=kind, receipt_path=receipt)
+
+                with closing(sqlite3.connect(root / "ledger.db")) as conn, conn:
+                    receipt_count = conn.execute(
+                        "SELECT COUNT(*) FROM gateway_receipts"
+                    ).fetchone()[0]
+                    event_count = conn.execute(
+                        "SELECT COUNT(*) FROM execution_events"
+                    ).fetchone()[0]
+                self.assertEqual(receipt_count, 0)
+                self.assertEqual(event_count, 0)
+
+    def test_migration_repairs_legacy_profit_partial_close_sent_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "ledger.db"
+            ledger = ExecutionLedger(db_path=db_path, report_path=root / "ledger.md")
+            ledger.record_gateway_receipt(
+                kind="live_order",
+                receipt_path=root / "missing.json",
+            )
+            payload = {
+                "generated_at_utc": "2026-07-13T20:24:28+00:00",
+                "status": "SENT",
+                "sent_count": 1,
+                "actions": [{"sent": True}],
+                "results": [{"sent": True}],
+            }
+            with closing(sqlite3.connect(db_path)) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO gateway_receipts(
+                        receipt_uid, ts_utc, kind, status, sent, lane_id,
+                        lane_ids_json, path, payload_json, inserted_at_utc
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "legacy-profit-partial",
+                        payload["generated_at_utc"],
+                        "position_execution",
+                        "SENT",
+                        0,
+                        None,
+                        "[]",
+                        str(root / "profit_partial_close.json"),
+                        json.dumps(payload),
+                        payload["generated_at_utc"],
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM sync_state WHERE key = ?",
+                    (GATEWAY_SENT_INTEGRITY_MIGRATION_KEY,),
+                )
+
+            ledger.record_gateway_receipt(
+                kind="live_order",
+                receipt_path=root / "still-missing.json",
+            )
+
+            with closing(sqlite3.connect(db_path)) as conn, conn:
+                sent = conn.execute(
+                    "SELECT sent FROM gateway_receipts WHERE receipt_uid = ?",
+                    ("legacy-profit-partial",),
+                ).fetchone()[0]
+                marker = conn.execute(
+                    "SELECT value FROM sync_state WHERE key = ?",
+                    (GATEWAY_SENT_INTEGRITY_MIGRATION_KEY,),
+                ).fetchone()[0]
+            self.assertEqual(sent, 1)
+            self.assertEqual(marker, GATEWAY_SENT_INTEGRITY_MIGRATION_VERSION)
 
     def test_records_position_close_receipt_order_id_for_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

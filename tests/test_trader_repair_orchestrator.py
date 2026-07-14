@@ -19,6 +19,7 @@ from quant_rabbit.trader_repair_orchestrator import (
     STATUS_BLOCKED,
     STATUS_READY,
     TraderRepairOrchestrator,
+    _count_watermark,
     _evaluate_success_condition,
 )
 from quant_rabbit.trader_support_bot import (
@@ -40,6 +41,73 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderRepairOrchestratorTest(unittest.TestCase):
+    def test_count_watermark_accepts_only_exact_non_negative_integer_counts(self) -> None:
+        self.assertEqual(_count_watermark(0), 0)
+        self.assertEqual(_count_watermark(3), 3)
+        for malformed in (True, False, -1, 1.0, 1.5, "1", None, [], {}):
+            with self.subTest(malformed=malformed):
+                self.assertIsNone(_count_watermark(malformed))
+
+    def test_count_success_conditions_fail_closed_for_malformed_values(self) -> None:
+        increasing = {
+            "mode": "all",
+            "checks": [{"field": "proof_queue_count", "operator": "gt", "value": 0}],
+        }
+        for malformed in (True, False, -1, 1.0, 0.5, "1", None, [], {}):
+            with self.subTest(direction="increase", malformed=malformed):
+                result = _evaluate_success_condition(
+                    increasing,
+                    {"proof_queue_count": malformed},
+                )
+                self.assertEqual(result["status"], "NOT_MET")
+        self.assertEqual(
+            _evaluate_success_condition(increasing, {"proof_queue_count": 1})["status"],
+            "MET",
+        )
+
+        decreasing = {
+            "mode": "all",
+            "checks": [
+                {
+                    "field": "rejected_proof_candidate_count",
+                    "operator": "lt",
+                    "value": 1,
+                }
+            ],
+        }
+        for malformed in (True, False, -1, 0.0, 0.5, "0", None, [], {}):
+            with self.subTest(direction="decrease", malformed=malformed):
+                result = _evaluate_success_condition(
+                    decreasing,
+                    {"rejected_proof_candidate_count": malformed},
+                )
+                self.assertEqual(result["status"], "NOT_MET")
+        self.assertEqual(
+            _evaluate_success_condition(
+                decreasing,
+                {"rejected_proof_candidate_count": 0},
+            )["status"],
+            "MET",
+        )
+
+    def test_count_success_condition_requires_exact_integer_expected_watermark(self) -> None:
+        for malformed in (True, False, -1, 1.0, 0.5, "1", None, [], {}):
+            with self.subTest(malformed=malformed):
+                result = _evaluate_success_condition(
+                    {
+                        "mode": "all",
+                        "checks": [
+                            {
+                                "field": "proof_ready_count",
+                                "operator": "gt",
+                                "value": malformed,
+                            }
+                        ],
+                    },
+                    {"proof_ready_count": 2},
+                )
+                self.assertEqual(result["status"], "NOT_MET")
+
     def test_wait_stage_does_not_dispatch_follow_up_evidence_work_early(self) -> None:
         now = datetime(2026, 7, 10, 0, 20, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1713,6 +1781,439 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("Gateway status: `NO_LIVE_READY_INTENT`", report_text)
             self.assertIn("Proof queue empty reason", report_text)
             self.assertIn("Next evidence actions", report_text)
+
+    def test_rejected_proof_action_requires_progress_beyond_current_queue_watermark(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+            )
+            _write_as_proof_artifacts(root)
+            proof_path = root / "as_proof_pack_queue.json"
+            proof_payload = json.loads(proof_path.read_text())
+            proof_payload["summary"]["queue_count"] = 1
+            proof_payload["summary"]["proof_ready_count"] = 1
+            proof_payload["queue"] = [
+                {
+                    "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                    "proof_classification": "EVIDENCE_GAP",
+                    "can_enter_proof_pack": True,
+                    "can_create_live_permission": False,
+                }
+            ]
+            proof_path.write_text(
+                json.dumps(proof_payload, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            state = payload["loop_engineering_prompt"]["current_state"]
+            action = next(
+                item
+                for item in payload["next_evidence_actions"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            evaluations = {
+                row["field"]: row
+                for row in action["success_condition_evaluation"]["checks"]
+            }
+            self.assertEqual(state["proof_queue_count"], 1)
+            self.assertEqual(action["success_condition_evaluation"]["status"], "NOT_MET")
+            self.assertEqual(evaluations["proof_queue_count"]["expected"], 1)
+            self.assertFalse(evaluations["proof_queue_count"]["passed"])
+
+            progressed = _evaluate_success_condition(
+                action["success_condition"],
+                {**state, "proof_queue_count": 2},
+            )
+            self.assertEqual(progressed["status"], "MET")
+
+            portfolio_action = next(
+                item
+                for item in payload["next_evidence_actions"]
+                if item["action_id"] == "refresh_portfolio_4x_path_planner"
+            )
+            portfolio_checks = {
+                row["field"]: row
+                for row in portfolio_action["success_condition_evaluation"]["checks"]
+            }
+            self.assertEqual(state["proof_ready_count"], 1)
+            self.assertEqual(
+                portfolio_action["success_condition_evaluation"]["status"],
+                "NOT_MET",
+            )
+            self.assertEqual(portfolio_checks["proof_ready_count"]["expected"], 1)
+            self.assertFalse(portfolio_checks["proof_ready_count"]["passed"])
+            portfolio_progressed = _evaluate_success_condition(
+                portfolio_action["success_condition"],
+                {**state, "proof_ready_count": 2},
+            )
+            self.assertEqual(portfolio_progressed["status"], "MET")
+            malformed_portfolio_clearance = _evaluate_success_condition(
+                portfolio_action["success_condition"],
+                {
+                    **state,
+                    "portfolio_status": "ERROR",
+                    "portfolio_can_create_live_permission": 1,
+                    "portfolio_can_reach_4x_now": 1.0,
+                },
+            )
+            self.assertEqual(malformed_portfolio_clearance["status"], "NOT_MET")
+            valid_portfolio_clearance = _evaluate_success_condition(
+                portfolio_action["success_condition"],
+                {**state, "portfolio_status": "LIVE_READY_PORTFOLIO"},
+            )
+            self.assertEqual(valid_portfolio_clearance["status"], "MET")
+
+            valid_first_output = output.read_text()
+            tampered_variants: list[tuple[str, dict[str, object], str | None]] = []
+
+            missing_status_value = json.loads(valid_first_output)
+            tampered_portfolio = next(
+                item
+                for item in missing_status_value["next_evidence_actions"]
+                if item["action_id"] == "refresh_portfolio_4x_path_planner"
+            )
+            next(
+                check
+                for check in tampered_portfolio["success_condition"]["checks"]
+                if check["field"] == "portfolio_status"
+            ).pop("value")
+            tampered_variants.append(
+                ("missing_non_count_value", missing_status_value, "refresh_portfolio_4x_path_planner")
+            )
+
+            lowered_count_watermark = json.loads(valid_first_output)
+            tampered_collection = next(
+                item
+                for item in lowered_count_watermark["next_evidence_actions"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            next(
+                check
+                for check in tampered_collection["success_condition"]["checks"]
+                if check["field"] == "proof_queue_count"
+            )["value"] = 0
+            tampered_variants.append(
+                (
+                    "lowered_count_watermark",
+                    lowered_count_watermark,
+                    "collect_exact_tp_or_live_grade_harvest_evidence",
+                )
+            )
+
+            unknown_action = json.loads(valid_first_output)
+            unknown_action["next_evidence_actions"].append(
+                {
+                    "action_id": "unknown_forged_action",
+                    "category": "gateway_issue",
+                    "progress_watermark_contract": "evidence_action_progress_v1",
+                    "success_condition": {
+                        "description": "forged",
+                        "schema_version": "success_condition_v1",
+                        "verification_scope": "forged",
+                        "mode": "all",
+                        "checks": [
+                            {"field": "proof_routing_allowed", "operator": "is_true"}
+                        ],
+                    },
+                    "success_condition_evaluation": {
+                        "status": "NOT_MET",
+                        "passed": False,
+                        "mode": "all",
+                        "checks": [
+                            {
+                                "field": "proof_routing_allowed",
+                                "operator": "is_true",
+                                "expected": None,
+                                "actual": False,
+                                "passed": False,
+                            }
+                        ],
+                    },
+                }
+            )
+            tampered_variants.append(("unknown_action", unknown_action, None))
+
+            for label, tampered, reset_action_id in tampered_variants:
+                with self.subTest(tamper=label):
+                    output.write_text(
+                        json.dumps(tampered, ensure_ascii=False, indent=2, sort_keys=True)
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    TraderRepairOrchestrator(
+                        support_bot_path=support,
+                        output_path=output,
+                        report_path=report,
+                    ).run()
+                    hardened = json.loads(output.read_text())
+                    self.assertNotIn("evidence_action_progress", hardened)
+                    self.assertNotIn(
+                        "unknown_forged_action",
+                        [
+                            item["action_id"]
+                            for item in hardened.get("next_evidence_actions", [])
+                        ],
+                    )
+                    if reset_action_id:
+                        hardened_action = next(
+                            item
+                            for item in hardened["next_evidence_actions"]
+                            if item["action_id"] == reset_action_id
+                        )
+                        self.assertEqual(
+                            hardened_action["progress_watermark_source"],
+                            "CURRENT_REFRESH",
+                        )
+                    output.write_text(valid_first_output, encoding="utf-8")
+
+            proof_payload["summary"]["queue_count"] = 2
+            proof_payload["summary"]["proof_ready_count"] = 2
+            proof_payload["queue"].append(
+                {
+                    "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                    "proof_classification": "EVIDENCE_GAP",
+                    "can_enter_proof_pack": True,
+                    "can_create_live_permission": False,
+                }
+            )
+            proof_path.write_text(
+                json.dumps(proof_payload, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            advanced_payload = json.loads(output.read_text())
+            advanced_action = next(
+                item
+                for item in advanced_payload["next_evidence_actions"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            advanced_queue_check = next(
+                row
+                for row in advanced_action["success_condition_evaluation"]["checks"]
+                if row["field"] == "proof_queue_count"
+            )
+            self.assertEqual(advanced_action["progress_watermark_source"], "PREVIOUS_REFRESH")
+            self.assertEqual(advanced_queue_check["expected"], 1)
+            self.assertEqual(advanced_queue_check["actual"], 2)
+            self.assertTrue(advanced_queue_check["passed"])
+            self.assertEqual(
+                advanced_action["success_condition_evaluation"]["status"],
+                "MET",
+            )
+            progress_receipt = next(
+                item
+                for item in advanced_payload["evidence_action_progress"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            self.assertEqual(
+                progress_receipt["success_condition_evaluation"]["status"],
+                "MET",
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            reset_payload = json.loads(output.read_text())
+            reset_action = next(
+                item
+                for item in reset_payload["next_evidence_actions"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            reset_queue_check = next(
+                row
+                for row in reset_action["success_condition_evaluation"]["checks"]
+                if row["field"] == "proof_queue_count"
+            )
+            self.assertEqual(reset_action["progress_watermark_source"], "CURRENT_REFRESH")
+            self.assertEqual(reset_queue_check["expected"], 2)
+            self.assertEqual(reset_queue_check["actual"], 2)
+            self.assertFalse(reset_queue_check["passed"])
+            self.assertEqual(
+                reset_action["success_condition_evaluation"]["status"],
+                "NOT_MET",
+            )
+
+            proof_payload["summary"]["can_create_live_permission_count"] = 1
+            proof_path.write_text(
+                json.dumps(proof_payload, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            cleared_payload = json.loads(output.read_text())
+            self.assertNotIn("next_evidence_actions", cleared_payload)
+            cleared_progress = next(
+                item
+                for item in cleared_payload["evidence_action_progress"]
+                if item["action_id"]
+                == "collect_exact_tp_or_live_grade_harvest_evidence"
+            )
+            self.assertEqual(
+                cleared_progress["success_condition_evaluation"]["status"],
+                "MET",
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+            one_cycle_later_payload = json.loads(output.read_text())
+            self.assertNotIn("next_evidence_actions", one_cycle_later_payload)
+            self.assertNotIn("evidence_action_progress", one_cycle_later_payload)
+
+    def test_evidence_watermark_does_not_rebaseline_after_count_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    )
+                ],
+            )
+            _write_as_proof_artifacts(root)
+            proof_path = root / "as_proof_pack_queue.json"
+            proof_payload = json.loads(proof_path.read_text())
+
+            def refresh_counts(
+                queue_count: int,
+                proof_ready_count: int,
+                rejected_count: int,
+            ) -> dict[str, object]:
+                proof_payload["summary"]["queue_count"] = queue_count
+                proof_payload["summary"]["proof_ready_count"] = proof_ready_count
+                proof_payload["summary"]["rejected_candidate_count"] = rejected_count
+                proof_payload["queue"] = [
+                    {"lane_id": f"lane-{index}"} for index in range(queue_count)
+                ]
+                proof_path.write_text(
+                    json.dumps(
+                        proof_payload,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                TraderRepairOrchestrator(
+                    support_bot_path=support,
+                    output_path=output,
+                    report_path=report,
+                ).run()
+                return json.loads(output.read_text())
+
+            def collection_action(payload: dict[str, object]) -> dict[str, object]:
+                return next(
+                    item
+                    for item in payload["next_evidence_actions"]
+                    if item["action_id"]
+                    == "collect_exact_tp_or_live_grade_harvest_evidence"
+                )
+
+            baseline = collection_action(refresh_counts(1, 1, 4))
+            self.assertEqual(baseline["progress_watermark_source"], "CURRENT_REFRESH")
+
+            regressed = collection_action(refresh_counts(0, 0, 5))
+            regressed_checks = {
+                row["field"]: row
+                for row in regressed["success_condition_evaluation"]["checks"]
+            }
+            self.assertEqual(regressed["progress_watermark_source"], "PREVIOUS_REFRESH")
+            self.assertEqual(regressed_checks["proof_queue_count"]["expected"], 1)
+            self.assertEqual(
+                regressed_checks["rejected_proof_candidate_count"]["expected"],
+                4,
+            )
+            self.assertEqual(regressed["success_condition_evaluation"]["status"], "NOT_MET")
+
+            still_regressed_payload = refresh_counts(0, 0, 5)
+            still_regressed = collection_action(still_regressed_payload)
+            self.assertEqual(
+                still_regressed["progress_watermark_source"],
+                "PREVIOUS_REFRESH",
+            )
+            self.assertEqual(
+                still_regressed["progress_watermark_origin"]["condition_state"][
+                    "proof_queue_count"
+                ],
+                1,
+            )
+            self.assertNotIn("evidence_action_progress", still_regressed_payload)
+
+            merely_recovered_payload = refresh_counts(1, 1, 4)
+            merely_recovered = collection_action(merely_recovered_payload)
+            recovered_checks = {
+                row["field"]: row
+                for row in merely_recovered["success_condition_evaluation"]["checks"]
+            }
+            self.assertEqual(
+                merely_recovered["progress_watermark_source"],
+                "PREVIOUS_REFRESH",
+            )
+            self.assertFalse(recovered_checks["proof_queue_count"]["passed"])
+            self.assertFalse(
+                recovered_checks["rejected_proof_candidate_count"]["passed"]
+            )
+            self.assertEqual(
+                merely_recovered["success_condition_evaluation"]["status"],
+                "NOT_MET",
+            )
+            self.assertNotIn("evidence_action_progress", merely_recovered_payload)
+
+            genuinely_advanced_payload = refresh_counts(2, 2, 3)
+            genuinely_advanced = collection_action(genuinely_advanced_payload)
+            self.assertEqual(
+                genuinely_advanced["success_condition_evaluation"]["status"],
+                "MET",
+            )
+            self.assertIn("evidence_action_progress", genuinely_advanced_payload)
 
     def test_proof_queue_empty_reason_marks_stale_artifact_and_lowers_primary_priority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -16,6 +16,56 @@ from quant_rabbit.verification_ledger import VerificationLedger, VerificationLed
 
 
 class VerificationLedgerTest(unittest.TestCase):
+    def test_gateway_observation_uses_exact_partial_close_sent_aggregate(self) -> None:
+        observations = verification_ledger_module._gateway_observations(
+            "run-partial",
+            Path("profit_partial_close.json"),
+            "position_execution",
+            {
+                "status": "SENT",
+                "sent_count": 1,
+                "actions": [{"sent": True}],
+                "results": [{"sent": True}],
+            },
+        )
+
+        gateway_status = next(
+            item for item in observations if item["check_name"] == "gateway_status"
+        )
+        evidence = json.loads(gateway_status["evidence_json"])
+        self.assertEqual(gateway_status["status"], "PASS")
+        self.assertEqual(
+            evidence,
+            {"sent": True, "sent_count": 1},
+        )
+
+    def test_gateway_observation_blocks_malformed_sent_evidence(self) -> None:
+        observations = verification_ledger_module._gateway_observations(
+            "run-malformed",
+            Path("position_execution.json"),
+            "position_execution",
+            {
+                "status": "SENT",
+                "sent": False,
+                "sent_count": 1,
+                "actions": [{"sent": True}],
+                "results": [{"sent": True}],
+            },
+        )
+
+        gateway_status = next(
+            item for item in observations if item["check_name"] == "gateway_status"
+        )
+        evidence = json.loads(gateway_status["evidence_json"])
+        self.assertEqual(gateway_status["status"], "BLOCK")
+        self.assertEqual(gateway_status["severity"], "BLOCK")
+        self.assertIsNone(evidence["sent"])
+        self.assertIsNone(evidence["sent_count"])
+        self.assertIn(
+            "top-level sent contradicts",
+            evidence["sent_integrity_error"],
+        )
+
     def test_records_verification_blockers_and_effect_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

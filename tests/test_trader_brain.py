@@ -10,10 +10,18 @@ from pathlib import Path
 from unittest import mock
 
 from quant_rabbit import forecast_precision
+from quant_rabbit.analysis.candles import (
+    PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+    TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE,
+    TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
+    TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
+)
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.trader_brain import (
-    ACTION_MONITOR_EXISTING,
     ACTION_NO_TRADE,
     ACTION_SEND_ENTRY,
     CAPTURE_SEGMENT_TP_PROVEN_BONUS,
@@ -241,7 +249,12 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             intents.write_text(json.dumps({"results": [result]}))
             pair_charts = root / "pair_charts.json"
             pair_charts.write_text(
-                json.dumps({"charts": [{"pair": "EUR_USD", "views": []}]})
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "charts": [{"pair": "EUR_USD", "views": []}],
+                    }
+                )
             )
             brain = TraderBrain(
                 intents_path=intents,
@@ -1029,6 +1042,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             pair_charts_path.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "AUD_JPY",
@@ -3279,6 +3293,143 @@ def _market_preference_intents(root: Path) -> Path:
     return path
 
 
+def _bind_clean_oanda_mba_integrity(
+    chart: dict,
+    *,
+    generated_at_utc: str,
+) -> dict:
+    pair = str(chart["pair"])
+    generated_at = datetime.fromisoformat(generated_at_utc.replace("Z", "+00:00"))
+    normal_spread_pips = NORMAL_SPREAD_PIPS[pair]
+    max_spread_multiple = RiskPolicy().max_spread_multiple
+    requested_timeframes: list[str] = []
+    timeframe_integrity: dict[str, dict] = {}
+    views = chart["views"]
+    present_timeframes = {
+        str(view.get("granularity"))
+        for view in views
+        if isinstance(view, dict)
+    }
+    for required_timeframe in sorted(TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES):
+        if required_timeframe not in present_timeframes:
+            views.append({
+                "granularity": required_timeframe,
+                "indicators": {},
+                "recent_candles": [{}],
+            })
+    for view in views:
+        timeframe = str(view["granularity"])
+        cadence_seconds = {
+            "M1": 60,
+            "M5": 5 * 60,
+            "M15": 15 * 60,
+            "M30": 30 * 60,
+            "H1": 60 * 60,
+            "H4": 4 * 60 * 60,
+            "D": 24 * 60 * 60,
+        }[timeframe]
+        boundary_epoch = (
+            int(generated_at.timestamp()) // cadence_seconds * cadence_seconds
+        )
+        latest_candle_at = datetime.fromtimestamp(
+            boundary_epoch - cadence_seconds,
+            tz=timezone.utc,
+        )
+        requested_timeframes.append(timeframe)
+        recent_candles = view.get("recent_candles")
+        if not isinstance(recent_candles, list) or not recent_candles:
+            recent_candles = [{}]
+        minimum_clean_count = (
+            TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+            if timeframe in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+            else 1
+        )
+        if len(recent_candles) < minimum_clean_count:
+            recent_candles = [
+                {} for _ in range(minimum_clean_count - len(recent_candles))
+            ] + recent_candles
+        view["recent_candles"] = recent_candles
+        for index, recent in enumerate(recent_candles):
+            recent_candles[index] = {
+                **recent,
+                "t": (
+                    latest_candle_at
+                    - timedelta(
+                        seconds=cadence_seconds
+                        * (len(recent_candles) - index - 1)
+                    )
+                ).isoformat(),
+            }
+        latest_candle = recent_candles[-1]["t"]
+        indicators = view.get("indicators")
+        if not isinstance(indicators, dict):
+            indicators = {}
+            view["indicators"] = indicators
+        clean_count = len(recent_candles)
+        indicators["candles_count"] = clean_count
+        integrity = {
+            "schema": TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+            "pair": pair,
+            "granularity": timeframe,
+            "payload_instrument": pair,
+            "payload_granularity": timeframe,
+            "source": "OANDA_MBA",
+            "requested_price": "MBA",
+            "spread_evaluation_mode": (
+                TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE
+                if timeframe in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+                else TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE
+            ),
+            "evaluation_status": "PASS",
+            "policy_source": "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple",
+            "normal_spread_pips": normal_spread_pips,
+            "max_spread_multiple": max_spread_multiple,
+            "spread_cap_pips": round(
+                normal_spread_pips * max_spread_multiple,
+                6,
+            ),
+            "requested_count": clean_count,
+            "raw_entry_count": clean_count,
+            "coverage_complete": True,
+            "complete_entry_count": clean_count,
+            "clean_count": clean_count,
+            "indicator_warmup_min_clean_count": minimum_clean_count,
+            "recent_clean_tail_count": clean_count,
+            "indicator_warmup_complete": True,
+            "recent_clean_coverage_complete": True,
+            "contaminated_count": 0,
+            "malformed_count": 0,
+            "quarantined_count": 0,
+            "recent_tail_state": "CLEAN",
+            "recent_tail_contaminated": False,
+            "recent_tail_invalid": False,
+            "provenance_complete": True,
+            "forecast_blocking": False,
+            "codes": [],
+            "blocking_codes": [],
+            "latest_complete_timestamp_utc": latest_candle,
+            "latest_clean_timestamp_utc": latest_candle,
+            "quarantine_details": [],
+            "quarantine_details_truncated": 0,
+        }
+        view["candle_integrity"] = integrity
+        timeframe_integrity[timeframe] = integrity
+    chart["generated_at_utc"] = generated_at_utc
+    chart["technical_candle_integrity"] = {
+        "schema": PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA,
+        "pair": pair,
+        "source": "OANDA_MBA",
+        "evaluation_status": "PASS",
+        "forecast_blocking": False,
+        "codes": [],
+        "blocking_codes": [],
+        "requested_timeframes": requested_timeframes,
+        "evaluated_timeframe_count": len(requested_timeframes),
+        "timeframes": timeframe_integrity,
+    }
+    return chart
+
+
 def _entry_timing_pair_charts(root: Path, *close_dirs: int) -> Path:
     path = root / "pair_charts.json"
     candles = []
@@ -3286,60 +3437,58 @@ def _entry_timing_pair_charts(root: Path, *close_dirs: int) -> Path:
         open_price = 1.1700 + i * 0.0001
         close_price = open_price + (0.0002 if direction > 0 else -0.0002)
         candles.append({"o": open_price, "c": close_price})
+    generated_at_utc = datetime.now(timezone.utc).isoformat()
+    chart = _bind_clean_oanda_mba_integrity(
+        {
+            "pair": "EUR_USD",
+            "views": [
+                {
+                    "granularity": "M5",
+                    "recent_candles": candles,
+                }
+            ],
+        },
+        generated_at_utc=generated_at_utc,
+    )
     path.write_text(
-        json.dumps(
-            {
-                "charts": [
-                    {
-                        "pair": "EUR_USD",
-                        "views": [
-                            {
-                                "granularity": "M5",
-                                "recent_candles": candles,
-                            }
-                        ],
-                    }
-                ]
-            }
-        )
+        json.dumps({"generated_at_utc": generated_at_utc, "charts": [chart]})
     )
     return path
 
 
 def _operating_tf_momentum_pair_charts(root: Path) -> Path:
     path = root / "pair_charts.json"
+    generated_at_utc = datetime.now(timezone.utc).isoformat()
+    chart = _bind_clean_oanda_mba_integrity(
+        {
+            "pair": "EUR_USD",
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime": "TREND_UP",
+                    "indicators": {"adx_14": 44.0},
+                    "recent_candles": [
+                        {"o": 1.1609, "c": 1.1611},
+                        {"o": 1.1611, "c": 1.1615},
+                        {"o": 1.1615, "c": 1.1617},
+                    ],
+                },
+                {
+                    "granularity": "M15",
+                    "regime": "TREND_UP",
+                    "indicators": {"adx_14": 32.0},
+                },
+                {
+                    "granularity": "M30",
+                    "regime": "IMPULSE_UP",
+                    "indicators": {"adx_14": 21.0},
+                },
+            ],
+        },
+        generated_at_utc=generated_at_utc,
+    )
     path.write_text(
-        json.dumps(
-            {
-                "charts": [
-                    {
-                        "pair": "EUR_USD",
-                        "views": [
-                            {
-                                "granularity": "M5",
-                                "regime": "TREND_UP",
-                                "indicators": {"adx_14": 44.0},
-                                "recent_candles": [
-                                    {"o": 1.1609, "c": 1.1611},
-                                    {"o": 1.1611, "c": 1.1615},
-                                    {"o": 1.1615, "c": 1.1617},
-                                ],
-                            },
-                            {
-                                "granularity": "M15",
-                                "regime": "TREND_UP",
-                                "indicators": {"adx_14": 32.0},
-                            },
-                            {
-                                "granularity": "M30",
-                                "regime": "IMPULSE_UP",
-                                "indicators": {"adx_14": 21.0},
-                            },
-                        ],
-                    }
-                ]
-            }
-        )
+        json.dumps({"generated_at_utc": generated_at_utc, "charts": [chart]})
     )
     return path
 
@@ -3349,6 +3498,7 @@ def _technical_opposition_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",

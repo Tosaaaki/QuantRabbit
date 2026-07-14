@@ -40,6 +40,7 @@ from quant_rabbit.strategy.intent_generator import (
     _annotate_oanda_campaign_current_risk_firepower,
     _append_current_range_phase_lanes,
     _append_forecast_seed_lanes,
+    _capture_positive_rotation_live_issue,
     _exact_vehicle_net_metrics,
     _exact_vehicle_take_profit_metrics,
     _forecast_context_payload,
@@ -59,6 +60,7 @@ from quant_rabbit.strategy.intent_generator import (
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
     _risk_budgeted_units,
+    sizing_conversion_snapshot_receipt_from_payload,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLaneLossStreak, SameDayLossStreak
 from quant_rabbit.strategy.forecast_technical_context import (
@@ -120,6 +122,7 @@ def _capture_scoped_tp_payload(
         "expectancy_jpy_per_trade": expectancy_jpy_per_trade,
     }
     return {
+        "generated_at_utc": "2026-07-02T00:00:00+00:00",
         "by_pair_side_exit_reason": {
             pair: {
                 side: {
@@ -137,6 +140,67 @@ def _capture_scoped_tp_payload(
             }
         },
     }
+
+
+def _exact_vehicle_rotation_metadata(*, trades: int) -> dict[str, object]:
+    avg_win_jpy = 500.0
+    proven = trades >= 20
+    return {
+        "loss_asymmetry_guard_active": True,
+        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+        "loss_asymmetry_guard_mode": (
+            "TP_PROVEN_RELAXED" if proven else "CAP_AVG_WIN"
+        ),
+        "loss_asymmetry_guard_relaxed": proven,
+        "loss_asymmetry_guard_loss_cap_jpy": 500.0,
+        "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+        "loss_asymmetry_guard_effective_max_loss_jpy": (
+            1000.0 if proven else 500.0
+        ),
+        "max_loss_jpy": 1000.0 if proven else 500.0,
+        "attach_take_profit_on_fill": True,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_take_profit_exact_vehicle_required": True,
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD_VEHICLE",
+        "capture_take_profit_scope_key": (
+            "EUR_USD|LONG|RANGE_ROTATION|LIMIT|TAKE_PROFIT_ORDER"
+        ),
+        "capture_take_profit_vehicle": "LIMIT",
+        "capture_take_profit_metrics_source": (
+            "data/execution_ledger.db:exact_vehicle_take_profit"
+        ),
+        "capture_take_profit_trades": trades,
+        "capture_take_profit_wins": trades,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_expectancy_jpy": avg_win_jpy,
+        "capture_take_profit_net_jpy": trades * avg_win_jpy,
+        "capture_take_profit_avg_win_jpy": avg_win_jpy,
+        "capture_take_profit_avg_loss_jpy": 0.0,
+        "capture_avg_win_jpy": 500.0,
+        "capture_avg_loss_jpy": 100.0,
+        "capture_market_close_expectancy_jpy": -100.0,
+    }
+
+
+def _write_exact_vehicle_rotation_wins(
+    root: Path,
+    *,
+    method: str = "RANGE_ROTATION",
+    count: int = 93,
+    realized_pl_jpy: float = 504.0,
+) -> None:
+    desk = "range_trader" if method == "RANGE_ROTATION" else "failure_trader"
+    _write_exact_vehicle_take_profit_closes(
+        root,
+        lane_id=f"{desk}:EUR_USD:LONG:{method}:LIMIT",
+        pair="EUR_USD",
+        side="LONG",
+        entry_reason="LIMIT_ORDER",
+        count=count,
+        realized_pl_jpy=realized_pl_jpy,
+    )
 
 
 def _write_oanda_campaign_firepower_report(
@@ -1585,6 +1649,89 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
+    def test_positive_rotation_live_gate_rejects_impossible_or_broad_tp_proof(
+        self,
+    ) -> None:
+        def intent_for(metadata: dict[str, object]) -> OrderIntent:
+            return OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                units=1000,
+                entry=1.1000,
+                tp=1.1010,
+                sl=1.0990,
+                thesis="exact vehicle TP proof",
+                market_context=MarketContext(
+                    regime="RANGE",
+                    narrative="",
+                    chart_story="",
+                    method=TradeMethod.RANGE_ROTATION,
+                    invalidation="",
+                ),
+                metadata=metadata,
+            )
+
+        proven_metadata = _exact_vehicle_rotation_metadata(trades=20)
+        self.assertIsNone(
+            _capture_positive_rotation_live_issue(intent_for(proven_metadata))
+        )
+        self.assertTrue(proven_metadata["positive_rotation_live_ready"])
+        self.assertEqual(
+            proven_metadata["positive_rotation_mode"],
+            "TP_PROVEN_HARVEST",
+        )
+
+        collection_metadata = _exact_vehicle_rotation_metadata(trades=7)
+        collection_issue = _capture_positive_rotation_live_issue(
+            intent_for(collection_metadata)
+        )
+        self.assertIsNotNone(collection_issue)
+        assert collection_issue is not None
+        self.assertEqual(
+            collection_issue["code"],
+            POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
+        )
+        self.assertEqual(
+            collection_metadata["positive_rotation_mode"],
+            "TP_PROOF_COLLECTION_HARVEST",
+        )
+
+        for trades in (7, 20):
+            variants = (
+                ("float-trades", {"capture_take_profit_trades": float(trades)}),
+                ("wins-exceed-trades", {"capture_take_profit_wins": trades + 1}),
+                ("counts-do-not-sum", {"capture_take_profit_wins": trades - 1}),
+                ("expectancy-not-net", {"capture_take_profit_expectancy_jpy": 1.0}),
+                ("net-not-outcomes", {"capture_take_profit_net_jpy": 1.0}),
+                ("negative-average-loss", {"capture_take_profit_avg_loss_jpy": -1.0}),
+                (
+                    "broad-scope",
+                    {
+                        "capture_take_profit_exact_vehicle_required": False,
+                        "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                        "capture_take_profit_scope_key": (
+                            "EUR_USD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                        ),
+                    },
+                ),
+                ("wrong-vehicle", {"capture_take_profit_vehicle": "STOP"}),
+                (
+                    "wrong-source",
+                    {"capture_take_profit_metrics_source": "data/capture_economics.json"},
+                ),
+                ("wrong-scope-key", {"capture_take_profit_scope_key": "garbage"}),
+            )
+            for label, changes in variants:
+                with self.subTest(trades=trades, variant=label):
+                    metadata = _exact_vehicle_rotation_metadata(trades=trades)
+                    metadata.update(changes)
+                    issue = _capture_positive_rotation_live_issue(intent_for(metadata))
+                    self.assertIsNotNone(issue)
+                    assert issue is not None
+                    self.assertEqual(issue["code"], POSITIVE_ROTATION_LIVE_BLOCK_CODE)
+                    self.assertNotIn("positive_rotation_live_ready", metadata)
+
     def test_sub1000_sizing_uses_loss_asymmetry_effective_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1629,6 +1776,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             (root / "daily_target_state.json").write_text(
                 json.dumps(
                     {
@@ -1702,7 +1850,11 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["max_loss_jpy"], 1000.0)
             self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
             self.assertEqual(metadata["tp_target_intent"], "HARVEST")
-            self.assertEqual(metadata["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
+            self.assertEqual(
+                metadata["capture_take_profit_scope"],
+                "PAIR_SIDE_METHOD_VEHICLE",
+            )
+            self.assertEqual(metadata["capture_take_profit_vehicle"], "LIMIT")
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             self.assertEqual(
                 metadata["positive_rotation_confidence_method"],
@@ -1881,7 +2033,6 @@ class IntentGeneratorTest(unittest.TestCase):
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
-                        "generated_at_utc": "2026-06-17T14:05:31+00:00",
                         "status": "NEGATIVE_EXPECTANCY",
                         "overall": {
                             "trades": 210,
@@ -1909,6 +2060,7 @@ class IntentGeneratorTest(unittest.TestCase):
                             },
                         },
                         **_capture_scoped_tp_payload(),
+                        "generated_at_utc": "2026-06-17T14:05:31+00:00",
                     }
                 )
             )
@@ -1964,6 +2116,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_tp_proven_but_daily_firepower_short_warns_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             (root / "daily_target_state.json").write_text(
                 json.dumps(
                     {
@@ -2045,6 +2198,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_tp_proven_uses_matching_oanda_campaign_firepower_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             _write_oanda_campaign_firepower_report(root, exit_shape="tp2_sl1")
             (root / "daily_target_state.json").write_text(
                 json.dumps(
@@ -2609,6 +2763,7 @@ class IntentGeneratorTest(unittest.TestCase):
             pair_charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "EUR_USD",
@@ -2669,6 +2824,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             _write_oanda_campaign_firepower_report(
                 root,
                 pair="GBP_USD",
@@ -2747,6 +2903,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_thin_exact_tp_collection_warns_without_claiming_tp_proven_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                count=10,
+                realized_pl_jpy=600.0,
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -2829,6 +2990,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_thin_tp_collection_uses_sub1000_units_without_floor_lift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                count=10,
+                realized_pl_jpy=600.0,
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -2904,6 +3070,12 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_thin_exact_tp_collection_survives_stale_chart_bias_as_separate_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                method="BREAKOUT_FAILURE",
+                count=10,
+                realized_pl_jpy=600.0,
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -2986,6 +3158,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_thin_tp_collection_allows_self_improvement_p0_repair_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                count=10,
+                realized_pl_jpy=600.0,
+            )
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -3082,9 +3259,13 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertEqual(result["live_blockers"], [])
 
-    def test_tp_proven_pair_side_method_rotation_survives_stale_chart_bias(self) -> None:
+    def test_tp_proven_exact_vehicle_rotation_survives_stale_chart_bias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                method="BREAKOUT_FAILURE",
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -3145,10 +3326,13 @@ class IntentGeneratorTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
             self.assertEqual(metadata["chart_direction_bias"], "SHORT")
-            self.assertEqual(metadata["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
+            self.assertEqual(
+                metadata["capture_take_profit_scope"],
+                "PAIR_SIDE_METHOD_VEHICLE",
+            )
             self.assertEqual(
                 metadata["capture_take_profit_scope_key"],
-                "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "EUR_USD|LONG|BREAKOUT_FAILURE|LIMIT|TAKE_PROFIT_ORDER",
             )
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             self.assertTrue(metadata["positive_rotation_direction_bias_conflict_overridden"])
@@ -3160,6 +3344,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_tp_positive_but_stress_negative_blocks_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                count=20,
+                realized_pl_jpy=20.0,
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -3402,6 +3591,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "USD_JPY",
@@ -3711,6 +3901,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "AUD_JPY",
@@ -3899,6 +4090,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "USD_JPY",
@@ -6193,7 +6385,14 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertIsNotNone(seed)
             compute_hit_rates.assert_called_once_with(data_root)
-            self.assertAlmostEqual(synthesize_forecast.call_args.kwargs["spread_pips"], 0.8)
+            forecast_kwargs = synthesize_forecast.call_args.kwargs
+            self.assertAlmostEqual(forecast_kwargs["spread_pips"], 0.8)
+            self.assertIs(forecast_kwargs["require_technical_candle_integrity"], True)
+            self.assertEqual(
+                forecast_kwargs["pair_chart"]["generated_at_utc"],
+                charts["EUR_USD"]["generated_at_utc"],
+            )
+            self.assertNotEqual(forecast_kwargs["pair_chart"]["generated_at_utc"], "")
             kwargs = detect_forward.call_args.kwargs
             self.assertEqual(kwargs["calendar_path"], data_root / "economic_calendar.json")
             self.assertEqual(kwargs["news_digest_path"], root / "logs" / "news_digest.md")
@@ -6294,6 +6493,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "EUR_USD",
@@ -6477,6 +6677,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "EUR_USD",
@@ -6695,6 +6896,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "EUR_USD",
@@ -6832,6 +7034,7 @@ class IntentGeneratorTest(unittest.TestCase):
             charts.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "charts": [
                             {
                                 "pair": "EUR_USD",
@@ -10621,6 +10824,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_self_improvement_profitability_p0_allows_tp_proven_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -11607,6 +11811,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_month_scale_residual_group_does_not_block_different_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             _write_profitability_p0_and_negative_capture(root)
             (root / "capture_economics.json").write_text(
                 json.dumps(
@@ -11734,6 +11939,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_month_scale_residual_metrics_without_p0_does_not_block_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             _write_profitability_p0_and_negative_capture(root)
             (root / "capture_economics.json").write_text(
                 json.dumps(
@@ -12124,6 +12330,25 @@ class IntentGeneratorTest(unittest.TestCase):
                 places=4,
             )
             self.assertLess(metadata["sizing_actual_risk_cap_utilization"], 1.0)
+            self.assertEqual(
+                metadata["sizing_actual_anchor_contract"],
+                "ACTUAL_SIZING_ANCHOR_V1",
+            )
+            sizing_anchor_path = (
+                root
+                / "sizing_actual_receipts"
+                / f"{metadata['sizing_actual_anchor_sha256']}.json"
+            )
+            self.assertTrue(sizing_anchor_path.exists())
+            sizing_anchor = json.loads(sizing_anchor_path.read_text())
+            self.assertEqual(
+                sizing_anchor["intent"]["units"],
+                result["intent"]["units"],
+            )
+            self.assertEqual(
+                sizing_anchor["risk_metrics"]["risk_jpy"],
+                result["risk_metrics"]["risk_jpy"],
+            )
             self.assertAlmostEqual(
                 metadata["positive_rotation_oanda_campaign_current_risk_pct"],
                 expected_current_risk_pct,
@@ -12535,6 +12760,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_self_improvement_profitability_p0_repair_allows_range_m5_tie_against_broader_lean(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -13066,6 +13292,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_forecast_adverse_path_allows_tp_proven_breakout_failure_repair_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                method="BREAKOUT_FAILURE",
+                count=20,
+            )
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -13333,6 +13564,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_pending_churn_allows_tp_proven_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(root)
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -13530,6 +13762,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_pending_churn_group_with_thin_pair_sample_allows_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_exact_vehicle_rotation_wins(
+                root,
+                count=10,
+                realized_pl_jpy=600.0,
+            )
             (root / "self_improvement_audit.json").write_text(
                 json.dumps(
                     {
@@ -14694,6 +14931,7 @@ def _pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -14731,6 +14969,7 @@ def _pair_charts_with_context(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -14771,6 +15010,7 @@ def _pair_charts_location_map(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -14939,6 +15179,7 @@ def _pair_charts_tp_mode(root: Path, *, adx: float, atr_percentile: float) -> Pa
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
@@ -15021,9 +15262,11 @@ def _pair_charts_with_direction(
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
+                        "generated_at_utc": "",
                         "dominant_regime": dominant_regime,
                         "long_score": long_score,
                         "short_score": short_score,
@@ -17804,6 +18047,84 @@ class DisasterSlMetadataTest(unittest.TestCase):
             chart_context={"h4_atr_pips": 30.0, "session_current_tag": "LONDON"},
         )
         self.assertEqual(meta, {})
+
+
+class SizingConversionSnapshotReceiptTest(unittest.TestCase):
+    @staticmethod
+    def _snapshot() -> dict[str, object]:
+        timestamp = "2026-07-14T00:00:00Z"
+        return {
+            "fetched_at_utc": timestamp,
+            "quotes": {
+                "EUR_USD": {
+                    "bid": 1.0999,
+                    "ask": 1.1001,
+                    "timestamp_utc": timestamp,
+                },
+                "USD_JPY": {
+                    "bid": 157.2,
+                    "ask": 157.21,
+                    "timestamp_utc": timestamp,
+                },
+            },
+            "home_conversions": {},
+        }
+
+    def test_receipt_uses_canonical_broker_conversion_leg(self) -> None:
+        receipt = sizing_conversion_snapshot_receipt_from_payload(
+            "EUR_USD",
+            self._snapshot(),
+        )
+
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        source = receipt["conversion_source"]
+        self.assertEqual(source["kind"], "BROKER_CONVERSION_QUOTE")
+        self.assertEqual(source["instrument"], "USD_JPY")
+        self.assertEqual(source["orientation"], "QUOTE_CURRENCY_TO_JPY")
+        self.assertEqual(source["selected_price_rule"], "MAX_BID_ASK")
+        self.assertEqual(source["selected_quote_to_jpy"], 157.21)
+        self.assertEqual(len(receipt["snapshot_conversion_sha256"]), 64)
+
+    def test_raw_snapshot_parser_rejects_coercible_or_defaultable_evidence(
+        self,
+    ) -> None:
+        variants: list[tuple[str, dict[str, object]]] = []
+
+        def mutated(label: str) -> dict[str, object]:
+            payload = json.loads(json.dumps(self._snapshot()))
+            variants.append((label, payload))
+            return payload
+
+        missing_fetched = mutated("missing-fetched-at")
+        missing_fetched.pop("fetched_at_utc")
+
+        naive_fetched = mutated("naive-fetched-at")
+        naive_fetched["fetched_at_utc"] = "2026-07-14T00:00:00"
+
+        string_bid = mutated("string-bid")
+        string_bid["quotes"]["EUR_USD"]["bid"] = "1.0999"  # type: ignore[index]
+
+        bool_bid = mutated("bool-bid")
+        bool_bid["quotes"]["EUR_USD"]["bid"] = True  # type: ignore[index]
+
+        missing_timestamp = mutated("missing-quote-timestamp")
+        missing_timestamp["quotes"]["EUR_USD"].pop("timestamp_utc")  # type: ignore[index]
+
+        string_home = mutated("string-home-conversion")
+        string_home["home_conversions"] = {"USD": "157.2"}
+
+        wrong_embedded_pair = mutated("wrong-embedded-pair")
+        wrong_embedded_pair["quotes"]["USD_JPY"]["pair"] = "JPY_USD"  # type: ignore[index]
+
+        for label, payload in variants:
+            with self.subTest(variant=label):
+                self.assertIsNone(
+                    sizing_conversion_snapshot_receipt_from_payload(
+                        "EUR_USD",
+                        payload,
+                    )
+                )
 
 
 class SameDayLossStreakIssueTest(unittest.TestCase):
