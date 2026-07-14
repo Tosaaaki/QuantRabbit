@@ -80,6 +80,7 @@ CODEX_DIRECT_RESULT_STATUSES = {"CODEX_USAGE_LIMIT", *CODEX_MODEL_FAILURE_STATUS
 # older snapshots are likely from a previous operating window and should wait
 # for the normal trader refresh instead of prompting GPT from stale quotes.
 BROKER_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
+GUARDIAN_EVENT_STATE_MAX_AGE_SECONDS = 5 * 60
 
 # Codex wake should finish well inside one event-driven review window. A hung
 # local CLI must not hold repeated launchd invocations open indefinitely.
@@ -540,6 +541,7 @@ def _run_dispatcher_once(
         dispatcher_state=dispatcher_state,
         now=clock,
         env=environ,
+        event_state=event_state,
     )
     if selected is None:
         result = {
@@ -765,7 +767,13 @@ def _run_dispatcher_once(
     if parsed["valid"]:
         if not parsed["receipt"].get("dedupe_key") and selected.get("dedupe_key"):
             parsed["receipt"]["dedupe_key"] = selected["dedupe_key"]
-        review = review_guardian_action_receipt(parsed["receipt"], events=events, selected_event=selected, now=clock)
+        review = review_guardian_action_receipt(
+            parsed["receipt"],
+            events=events,
+            previous_state=event_state,
+            selected_event=selected,
+            now=clock,
+        )
         receipt_action = str(parsed["receipt"].get("action") or "").upper()
         if review.get("status") == "ACCEPTED" and receipt_action in GUARDIAN_ACTIONS:
             tuning_handoff = _maybe_write_tuning_work_order(
@@ -1420,6 +1428,7 @@ def _select_dispatch_event(
     dispatcher_state: dict[str, Any],
     now: datetime,
     env: dict[str, str],
+    event_state: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     review_events = escalation.get("events_to_review")
     if not isinstance(review_events, list) or not review_events:
@@ -1434,7 +1443,10 @@ def _select_dispatch_event(
     candidates: list[dict[str, Any]] = []
     pending_events: list[dict[str, Any]] = []
     suppressed: list[dict[str, Any]] = []
-    del events_payload
+    blocked_pairs = _technical_input_blocked_pairs(
+        events_payload=events_payload,
+        event_state=event_state,
+    )
     for raw_event in review_events:
         if not isinstance(raw_event, dict):
             continue
@@ -1443,6 +1455,39 @@ def _select_dispatch_event(
         # identity and could evade backoff indefinitely.
         event = dict(raw_event)
         event["wake_reason_codes"] = list(raw_event.get("wake_reason_codes") or [])
+        pair = str(event.get("pair") or "").upper()
+        action_hint = str(event.get("action_hint") or "").upper()
+        if pair in blocked_pairs and action_hint in {"TRADE", "ADD"}:
+            suppressed.append(
+                {
+                    "event": event,
+                    "reason": "TECHNICAL_INPUT_BLOCKED",
+                }
+            )
+            continue
+        if (
+            event_state is not None
+            and action_hint in {"TRADE", "ADD"}
+            and not _technical_state_available_for_entry(
+                pair=pair,
+                events_payload=events_payload,
+                event_state=event_state,
+                now=now,
+                max_age_seconds=int(
+                    env.get(
+                        "QR_GUARDIAN_EVENT_STATE_MAX_AGE_SECONDS",
+                        GUARDIAN_EVENT_STATE_MAX_AGE_SECONDS,
+                    )
+                ),
+            )
+        ):
+            suppressed.append(
+                {
+                    "event": event,
+                    "reason": "GUARDIAN_TECHNICAL_STATE_UNAVAILABLE",
+                }
+            )
+            continue
         reasons = {str(item).strip().upper() for item in event.get("wake_reason_codes") or [] if str(item).strip()}
         dedupe_key = str(event.get("dedupe_key") or "").strip()
         if not dedupe_key:
@@ -1504,6 +1549,83 @@ def _select_dispatch_event(
         "pending_events": pending_events,
         "selected_priority": _dispatch_priority_evidence(selected),
     }
+
+
+def _technical_input_blocked_pairs(
+    *,
+    events_payload: dict[str, Any],
+    event_state: dict[str, Any] | None,
+) -> set[str]:
+    current = [
+        item
+        for item in events_payload.get("events", []) or []
+        if isinstance(item, dict)
+    ]
+    fresh_pairs = {
+        str(item.get("pair") or "").upper()
+        for item in current
+        if str(item.get("event_type") or "").upper() == "TECHNICAL_STATE_CHANGE"
+        and str(item.get("pair") or "").strip()
+    }
+    blocked = {
+        str(item.get("pair") or "").upper()
+        for item in current
+        if str(item.get("event_type") or "").upper() == "TECHNICAL_INPUT_STALE"
+        and str(item.get("pair") or "").strip()
+    }
+    state = event_state if isinstance(event_state, dict) else {}
+    state_events = state.get("events") if isinstance(state.get("events"), dict) else {}
+    for item in state_events.values():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("event_type") or "").upper() != "TECHNICAL_INPUT_STALE":
+            continue
+        pair = str(item.get("pair") or "").upper()
+        if pair and pair not in fresh_pairs:
+            blocked.add(pair)
+    return blocked
+
+
+def _technical_state_available_for_entry(
+    *,
+    pair: str,
+    events_payload: dict[str, Any],
+    event_state: dict[str, Any],
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    del events_payload
+    generated = _strict_aware_utc(event_state.get("generated_at_utc"))
+    state_events = event_state.get("events") if isinstance(event_state.get("events"), dict) else None
+    if generated is None or state_events is None:
+        return False
+    age = (now - generated).total_seconds()
+    if age < -5 or age > max(1, max_age_seconds):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("pair") or "").upper() == pair
+        and str(item.get("event_type") or "").upper() == "TECHNICAL_STATE_CHANGE"
+        and _technical_clock_is_current(
+            item.get("last_seen_at_utc"),
+            now=now,
+            max_age_seconds=max_age_seconds,
+        )
+        for item in state_events.values()
+    )
+
+
+def _technical_clock_is_current(
+    value: Any,
+    *,
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    parsed = _strict_aware_utc(value)
+    if parsed is None:
+        return False
+    age = (now - parsed).total_seconds()
+    return age >= -5 and age <= max(1, max_age_seconds)
 
 
 def _dispatch_throttle_seconds(event: dict[str, Any], env: dict[str, str]) -> int:
@@ -8700,6 +8822,21 @@ def _parse_utc(raw: Any) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _strict_aware_utc(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    text = str(raw).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _valid_activation_ledger_anchor(value: object) -> bool:

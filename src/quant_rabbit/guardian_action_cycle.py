@@ -31,6 +31,7 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_ACTION_REVIEW,
     DEFAULT_GUARDIAN_ESCALATION,
+    DEFAULT_GUARDIAN_EVENT_STATE,
     DEFAULT_GUARDIAN_EVENTS,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LIVE_ORDER_REQUEST,
@@ -45,6 +46,7 @@ DEFAULT_ACTION_CYCLE_REPORT = ROOT / "docs" / "guardian_action_cycle_report.md"
 DEFAULT_ACTION_CYCLE_LOG = ROOT / "logs" / "guardian_action_cycle.log"
 DEFAULT_LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
 DEFAULT_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
+DEFAULT_EVENT_STATE_MAX_AGE_SECONDS = 5 * 60
 
 GUARDIAN_ACTIONS = {"TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION"}
 ENTRY_ACTIONS = {"TRADE", "ADD"}
@@ -66,6 +68,7 @@ class GuardianActionCyclePaths:
     action_receipt: Path = DEFAULT_GUARDIAN_ACTION_RECEIPT
     escalation: Path = DEFAULT_GUARDIAN_ESCALATION
     events: Path = DEFAULT_GUARDIAN_EVENTS
+    event_state: Path = DEFAULT_GUARDIAN_EVENT_STATE
     broker_snapshot: Path = DEFAULT_BROKER_SNAPSHOT
     daily_target_state: Path = DEFAULT_DAILY_TARGET_STATE
     order_intents: Path = DEFAULT_ORDER_INTENTS
@@ -87,6 +90,7 @@ class GuardianActionCyclePaths:
             action_receipt=root / "data" / "guardian_action_receipt.json",
             escalation=root / "data" / "guardian_escalation.json",
             events=root / "data" / "guardian_events.json",
+            event_state=root / "data" / "guardian_event_state.json",
             broker_snapshot=root / "data" / "broker_snapshot.json",
             daily_target_state=root / "data" / "daily_target_state.json",
             order_intents=root / "data" / "order_intents.json",
@@ -114,6 +118,7 @@ def run_guardian_action_cycle(
     receipt_payload = _load_json(paths.action_receipt)
     escalation_payload = _load_json(paths.escalation)
     events_payload = _load_json(paths.events)
+    event_state_payload = _load_json(paths.event_state)
     snapshot_payload = _load_json(paths.broker_snapshot)
     daily_target_state = _load_json(paths.daily_target_state)
     order_intents = _load_json(paths.order_intents)
@@ -124,8 +129,15 @@ def run_guardian_action_cycle(
     action = str(receipt.get("action") or "").upper()
     events = _events_from_payload(events_payload)
     selected_event = {event.event_id: event for event in events}.get(str(receipt.get("event_id") or ""))
-    verifier = review_guardian_action_receipt(receipt_payload, events=events, previous_state={}, now=clock)
+    verifier = review_guardian_action_receipt(
+        receipt_payload,
+        events=events,
+        previous_state=event_state_payload,
+        selected_event=selected_event,
+        now=clock,
+    )
     flags = _execution_flags(environ)
+    lane_id = _selected_lane_id(receipt, order_intents)
 
     strict_issues = _strict_receipt_issues(
         receipt_payload=receipt_payload,
@@ -133,9 +145,19 @@ def run_guardian_action_cycle(
         verifier=verifier,
         selected_event=selected_event,
         events_payload=events_payload,
+        event_state_payload=event_state_payload,
         snapshot_payload=snapshot_payload,
         previous_result=previous_result,
         now=clock,
+    )
+    strict_issues.extend(
+        _entry_intent_binding_issues(
+            action=action,
+            receipt=receipt,
+            selected_event=selected_event,
+            lane_id=lane_id,
+            order_intents_payload=order_intents,
+        )
     )
     manual_safety = _manual_exposure_safety(
         receipt=receipt,
@@ -176,7 +198,6 @@ def run_guardian_action_cycle(
     if flags["all_enabled"] and action in ENTRY_ACTIONS and not strict_issues:
         ledger_sync = _sync_execution_ledger(paths=paths, env=environ, command_runner=command_runner)
 
-    lane_id = _selected_lane_id(receipt, order_intents)
     risk_result = _risk_result(
         action=action,
         lane_id=lane_id,
@@ -185,6 +206,16 @@ def run_guardian_action_cycle(
         live_enabled=flags["live_enabled"],
         now=clock,
     )
+    if flags["all_enabled"] and action in ENTRY_ACTIONS and not (
+        str(risk_result.get("status") or "").upper() == "ALLOWED"
+        and risk_result.get("allowed") is True
+    ):
+        strict_issues.append(
+            _issue(
+                "RISK_ENGINE_NOT_ALLOWED",
+                f"entry requires explicit ALLOWED/allowed=true, got {risk_result.get('status') or 'missing'}",
+            )
+        )
 
     no_send = []
     if not flags["all_enabled"]:
@@ -197,7 +228,10 @@ def run_guardian_action_cycle(
         no_send.append("NO_EXECUTABLE_ACTION")
     if action in ENTRY_ACTIONS and not lane_id:
         no_send.append("NEEDS_TRADER_CONFIRMATION")
-    if risk_result.get("status") == "BLOCKED":
+    if action in ENTRY_ACTIONS and not (
+        str(risk_result.get("status") or "").upper() == "ALLOWED"
+        and risk_result.get("allowed") is True
+    ):
         no_send.append("RISK_ENGINE_BLOCKED")
 
     gateway_result = None
@@ -251,6 +285,7 @@ def run_guardian_action_cycle(
             "guardian_action_receipt": str(paths.action_receipt),
             "guardian_escalation": str(paths.escalation),
             "guardian_events": str(paths.events),
+            "guardian_event_state": str(paths.event_state),
             "broker_snapshot": str(paths.broker_snapshot),
             "daily_target_state": str(paths.daily_target_state),
             "order_intents": str(paths.order_intents),
@@ -279,6 +314,7 @@ def _strict_receipt_issues(
     verifier: dict[str, Any],
     selected_event: GuardianEvent | None,
     events_payload: dict[str, Any],
+    event_state_payload: dict[str, Any],
     snapshot_payload: dict[str, Any],
     previous_result: dict[str, Any],
     now: datetime,
@@ -308,6 +344,44 @@ def _strict_receipt_issues(
         issues.append(_issue("GUARDIAN_ACTION_NO_DIRECT_OANDA_REQUIRED", "no_direct_oanda=true is required"))
     if action in ENTRY_ACTIONS and receipt.get("new_information") is not True:
         issues.append(_issue("GUARDIAN_ACTION_REQUIRES_NEW_INFORMATION", "TRADE/ADD requires new_information=true"))
+    canonical_pair = selected_event.pair if selected_event is not None else ""
+    if action in ENTRY_ACTIONS and selected_event is not None:
+        if selected_event.action_hint.upper() not in ENTRY_ACTIONS:
+            issues.append(
+                _issue(
+                    "GUARDIAN_ACTION_EVENT_DOES_NOT_AUTHORIZE_ENTRY",
+                    "TRADE/ADD requires selected event action_hint TRADE or ADD",
+                )
+            )
+        if str(selected_event.direction or "").upper() not in {"LONG", "SHORT"}:
+            issues.append(
+                _issue(
+                    "GUARDIAN_ACTION_EVENT_DIRECTION_REQUIRED",
+                    "TRADE/ADD requires selected event direction LONG or SHORT",
+                )
+            )
+    if action in ENTRY_ACTIONS and canonical_pair in _technical_input_blocked_pairs(
+        events_payload=events_payload,
+        event_state_payload=event_state_payload,
+    ):
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_TECHNICAL_INPUT_STALE",
+                f"{canonical_pair} technical input is fail-closed; TRADE/ADD is forbidden",
+            )
+        )
+    if action in ENTRY_ACTIONS and canonical_pair and not _technical_state_available_for_entry(
+        pair=canonical_pair,
+        events_payload=events_payload,
+        event_state_payload=event_state_payload,
+        now=now,
+    ):
+        issues.append(
+            _issue(
+                "GUARDIAN_TECHNICAL_STATE_UNAVAILABLE",
+                f"{canonical_pair} has no current fail-closed technical baseline",
+            )
+        )
     if verifier.get("status") != "ACCEPTED":
         issues.append(_issue("GUARDIAN_ACTION_VERIFIER_REJECTED", "guardian receipt verifier did not accept the receipt"))
 
@@ -343,6 +417,128 @@ def _strict_receipt_issues(
         issues.append(_issue("GUARDIAN_EVENTS_MISSING", "guardian_events.json must contain current events list"))
     if not snapshot_payload:
         issues.append(_issue("BROKER_SNAPSHOT_MISSING", "broker_snapshot.json is required before guardian action"))
+    return issues
+
+
+def _technical_input_blocked_pairs(
+    *,
+    events_payload: dict[str, Any],
+    event_state_payload: dict[str, Any],
+) -> set[str]:
+    current_rows = [
+        item
+        for item in events_payload.get("events", []) or []
+        if isinstance(item, dict)
+    ]
+    fresh_pairs = {
+        str(item.get("pair") or "").upper()
+        for item in current_rows
+        if str(item.get("event_type") or "").upper() == "TECHNICAL_STATE_CHANGE"
+        and str(item.get("pair") or "").strip()
+    }
+    blocked = {
+        str(item.get("pair") or "").upper()
+        for item in current_rows
+        if str(item.get("event_type") or "").upper() == "TECHNICAL_INPUT_STALE"
+        and str(item.get("pair") or "").strip()
+    }
+    state_events = (
+        event_state_payload.get("events")
+        if isinstance(event_state_payload.get("events"), dict)
+        else {}
+    )
+    for item in state_events.values():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("event_type") or "").upper() != "TECHNICAL_INPUT_STALE":
+            continue
+        pair = str(item.get("pair") or "").upper()
+        if pair and pair not in fresh_pairs:
+            blocked.add(pair)
+    return blocked
+
+
+def _technical_state_available_for_entry(
+    *,
+    pair: str,
+    events_payload: dict[str, Any],
+    event_state_payload: dict[str, Any],
+    now: datetime,
+) -> bool:
+    pair = pair.upper()
+    del events_payload
+    generated = _strict_aware_utc(event_state_payload.get("generated_at_utc"))
+    state_events = (
+        event_state_payload.get("events")
+        if isinstance(event_state_payload.get("events"), dict)
+        else None
+    )
+    if generated is None or state_events is None:
+        return False
+    age = (now - generated).total_seconds()
+    if age < -5 or age > DEFAULT_EVENT_STATE_MAX_AGE_SECONDS:
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("pair") or "").upper() == pair
+        and str(item.get("event_type") or "").upper() == "TECHNICAL_STATE_CHANGE"
+        and _clock_is_current(
+            item.get("last_seen_at_utc"),
+            now=now,
+            max_age_seconds=DEFAULT_EVENT_STATE_MAX_AGE_SECONDS,
+        )
+        for item in state_events.values()
+    )
+
+
+def _clock_is_current(
+    value: Any,
+    *,
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    parsed = _strict_aware_utc(value)
+    if parsed is None:
+        return False
+    age = (now - parsed).total_seconds()
+    return age >= -5 and age <= max(1, max_age_seconds)
+
+
+def _entry_intent_binding_issues(
+    *,
+    action: str,
+    receipt: dict[str, Any],
+    selected_event: GuardianEvent | None,
+    lane_id: str | None,
+    order_intents_payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    if action not in ENTRY_ACTIONS or selected_event is None or not lane_id:
+        return []
+    selected = _find_intent_result(order_intents_payload, lane_id)
+    if selected is None:
+        return []
+    intent = selected.get("intent") if isinstance(selected.get("intent"), dict) else selected
+    intent_pair = str(intent.get("pair") or "").upper()
+    intent_side = str(intent.get("side") or "").upper()
+    receipt_pair = str(receipt.get("pair") or "").upper()
+    receipt_side = str(receipt.get("side") or receipt.get("direction") or "").upper()
+    event_pair = selected_event.pair.upper()
+    event_side = str(selected_event.direction or "").upper()
+    issues: list[dict[str, str]] = []
+    if not receipt_pair or receipt_pair != event_pair or intent_pair != event_pair:
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_ENTRY_PAIR_MISMATCH",
+                "receipt, selected event, and selected intent must bind the same pair",
+            )
+        )
+    if not receipt_side or (event_side and receipt_side != event_side) or intent_side != receipt_side:
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_ENTRY_SIDE_MISMATCH",
+                "receipt, selected event, and selected intent must bind the same side",
+            )
+        )
     return issues
 
 
@@ -954,6 +1150,21 @@ def _parse_utc(value: Any) -> datetime | None:
         return datetime.fromisoformat(text).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _strict_aware_utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _utc(value: datetime | None) -> datetime:

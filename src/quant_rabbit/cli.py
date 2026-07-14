@@ -5069,6 +5069,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_guardian_events.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_guardian_events.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_guardian_events.add_argument("--chart-freshness", type=Path, default=None)
     p_guardian_events.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_guardian_events.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_guardian_events.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
@@ -5092,6 +5093,7 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_action.add_argument("--action-receipt", type=Path, default=DEFAULT_GUARDIAN_ACTION_RECEIPT)
     p_guardian_action.add_argument("--escalation", type=Path, default=DEFAULT_GUARDIAN_ESCALATION)
     p_guardian_action.add_argument("--events", type=Path, default=DEFAULT_GUARDIAN_EVENTS)
+    p_guardian_action.add_argument("--event-state", type=Path, default=DEFAULT_GUARDIAN_EVENT_STATE)
     p_guardian_action.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_guardian_action.add_argument("--daily-target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_guardian_action.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -8919,6 +8921,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_guardian_event_router(
             snapshot_path=args.snapshot,
             pair_charts_path=args.pair_charts,
+            chart_freshness_path=args.chart_freshness,
             order_intents_path=args.order_intents,
             self_improvement_audit_path=args.self_improvement_audit,
             position_management_path=args.position_management,
@@ -8965,6 +8968,7 @@ def main(argv: list[str] | None = None) -> int:
                 action_receipt=args.action_receipt,
                 escalation=args.escalation,
                 events=args.events,
+                event_state=args.event_state,
                 broker_snapshot=args.snapshot,
                 daily_target_state=args.daily_target_state,
                 order_intents=args.order_intents,

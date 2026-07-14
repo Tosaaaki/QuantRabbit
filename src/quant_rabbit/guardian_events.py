@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,9 @@ from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import Owner
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.risk import RiskPolicy
+from quant_rabbit.strategy.directional_forecaster import (
+    validate_mba_integrity_receipt,
+)
 
 
 EVENT_TYPES = (
@@ -50,6 +53,7 @@ SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
 GUARDIAN_ACTIONS = ("TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION")
 TUNING_ONLY_EVENT_TYPES = {"TECHNICAL_STATE_CHANGE", "TECHNICAL_INPUT_STALE"}
+ENTRY_ACTION_HINTS = {"TRADE", "ADD"}
 MAX_RETAINED_TECHNICAL_BASELINES = 64
 
 # Cadence contract, not market geometry: a repeated identical state should not
@@ -158,6 +162,63 @@ class GuardianRouterSummary:
     action_review_status: str | None = None
 
 
+def _event_requests_entry(event: GuardianEvent) -> bool:
+    # Review type alone is not an entry request: CONTRACT_NO_ADD_TRIGGER uses
+    # ADD_REVIEW/HOLD and must remain visible as safety evidence.  Any GPT
+    # attempt to turn such a review into TRADE/ADD is rejected again by the
+    # receipt and action-cycle stale-pair gates.
+    return event.action_hint.upper() in ENTRY_ACTION_HINTS
+
+
+def _technical_input_blocked_pairs(
+    events: list[GuardianEvent],
+    *,
+    previous_state: dict[str, Any] | None = None,
+) -> set[str]:
+    """Return pairs whose latest rotating technical baseline is fail-closed.
+
+    A pair omitted from the current bounded chart window remains blocked while
+    its retained TECHNICAL_INPUT_STALE baseline is current.  A newly observed
+    TECHNICAL_STATE_CHANGE explicitly clears that retained baseline.
+    """
+
+    fresh_pairs = {
+        event.pair
+        for event in events
+        if event.event_type == "TECHNICAL_STATE_CHANGE" and event.pair
+    }
+    blocked = {
+        event.pair
+        for event in events
+        if event.event_type == "TECHNICAL_INPUT_STALE" and event.pair
+    }
+    state = previous_state if isinstance(previous_state, dict) else {}
+    state_events = state.get("events") if isinstance(state.get("events"), dict) else {}
+    for prior in state_events.values():
+        if not isinstance(prior, dict):
+            continue
+        if str(prior.get("event_type") or "").upper() != "TECHNICAL_INPUT_STALE":
+            continue
+        pair = _pair(prior.get("pair"))
+        if pair and pair not in fresh_pairs:
+            blocked.add(pair)
+    return blocked
+
+
+def _suppress_entry_events_for_technical_blocks(
+    events: list[GuardianEvent],
+    *,
+    blocked_pairs: set[str],
+) -> list[GuardianEvent]:
+    if not blocked_pairs:
+        return events
+    return [
+        event
+        for event in events
+        if not (event.pair in blocked_pairs and _event_requests_entry(event))
+    ]
+
+
 def run_guardian_event_router(
     *,
     snapshot_path: Path,
@@ -177,12 +238,21 @@ def run_guardian_event_router(
     action_receipt_input_path: Path | None = None,
     action_receipt_output_path: Path | None = None,
     action_review_report_path: Path,
+    chart_freshness_path: Path | None = None,
     now: datetime | None = None,
 ) -> GuardianRouterSummary:
     now = _utc(now)
+    pair_charts, pair_charts_sha256 = _load_json_with_sha256(pair_charts_path)
     inputs = {
         "snapshot": _load_json(snapshot_path),
-        "pair_charts": _load_json(pair_charts_path),
+        # Parse and hash one immutable byte snapshot.  Reading the JSON and
+        # digest separately would let a concurrent replacement bind the
+        # freshness receipt to different chart content than the router used.
+        "pair_charts": pair_charts,
+        "chart_freshness": _load_json(chart_freshness_path),
+        "chart_freshness_required": chart_freshness_path is not None,
+        "pair_charts_sha256": pair_charts_sha256,
+        "technical_integrity_required": True,
         "order_intents": _load_json(order_intents_path),
         "self_improvement_audit": _load_json(self_improvement_audit_path),
         "position_management": _load_json(position_management_path),
@@ -200,6 +270,15 @@ def run_guardian_event_router(
         dispatcher_state=inputs["wake_dispatcher_state"],
         now=now,
     )
+    blocked_pairs = {
+        str(pair)
+        for pair in escalation.get("technical_input_blocked_pairs", []) or []
+        if str(pair)
+    }
+    events = _suppress_entry_events_for_technical_blocks(
+        events,
+        blocked_pairs=blocked_pairs,
+    )
 
     events_payload = {
         "generated_at_utc": now.isoformat(),
@@ -214,6 +293,9 @@ def run_guardian_event_router(
         "inputs": {
             "snapshot": str(snapshot_path),
             "pair_charts": str(pair_charts_path),
+            "chart_freshness": str(chart_freshness_path)
+            if chart_freshness_path is not None
+            else None,
             "order_intents": str(order_intents_path),
             "position_management": str(position_management_path),
             "thesis_evolution": str(thesis_evolution_path),
@@ -237,7 +319,7 @@ def run_guardian_event_router(
         action_review = review_guardian_action_receipt(
             action_payload,
             events=events,
-            previous_state=previous_state,
+            previous_state=next_state,
             now=now,
         )
         if action_receipt_output_path is not None:
@@ -285,6 +367,11 @@ def detect_guardian_events(*, inputs: dict[str, Any], now: datetime | None = Non
     collected: list[GuardianEvent] = []
     snapshot = inputs.get("snapshot") if isinstance(inputs.get("snapshot"), dict) else {}
     pair_charts = inputs.get("pair_charts") if isinstance(inputs.get("pair_charts"), dict) else {}
+    chart_freshness = (
+        inputs.get("chart_freshness")
+        if isinstance(inputs.get("chart_freshness"), dict)
+        else {}
+    )
     order_intents = inputs.get("order_intents") if isinstance(inputs.get("order_intents"), dict) else {}
     self_improvement_audit = (
         inputs.get("self_improvement_audit") if isinstance(inputs.get("self_improvement_audit"), dict) else {}
@@ -308,13 +395,28 @@ def detect_guardian_events(*, inputs: dict[str, Any], now: datetime | None = Non
     collected.extend(_self_improvement_pending_cancel_events(self_improvement_audit, snapshot=snapshot, now=now))
     collected.extend(_contract_events(trigger_contract, snapshot=snapshot, now=now))
     collected.extend(_wake_parse_failure_events(wake_dispatcher_state, now=now))
-    collected.extend(_pair_chart_events(pair_charts, snapshot=snapshot, now=now))
+    collected.extend(
+        _pair_chart_events(
+            pair_charts,
+            snapshot=snapshot,
+            now=now,
+            chart_freshness=chart_freshness,
+            chart_freshness_required=inputs.get("chart_freshness_required") is True,
+            pair_charts_sha256=str(inputs.get("pair_charts_sha256") or ""),
+            technical_integrity_required=inputs.get("technical_integrity_required")
+            is True,
+        )
+    )
     collected.extend(_order_intent_events(order_intents, now=now))
     collected.extend(_position_management_events(position_management, now=now))
     collected.extend(_thesis_evolution_events(thesis_evolution, now=now))
     collected.extend(_forecast_persistence_events(forecast_persistence, now=now))
     collected.extend(_market_context_matrix_events(market_context_matrix, now=now))
-    return _dedupe_events(collected)
+    deduped = _dedupe_events(collected)
+    return _suppress_entry_events_for_technical_blocks(
+        deduped,
+        blocked_pairs=_technical_input_blocked_pairs(deduped),
+    )
 
 
 def evaluate_guardian_escalation(
@@ -350,6 +452,14 @@ def evaluate_guardian_escalation(
         )
     )
     previous_events = previous.get("events") if isinstance(previous.get("events"), dict) else {}
+    technical_input_blocked_pairs = _technical_input_blocked_pairs(
+        events,
+        previous_state=previous,
+    )
+    events = _suppress_entry_events_for_technical_blocks(
+        events,
+        blocked_pairs=technical_input_blocked_pairs,
+    )
     dispatcher = dispatcher_state if isinstance(dispatcher_state, dict) else {}
     reviewed_events = (
         dispatcher.get("reviewed_events")
@@ -595,6 +705,7 @@ def evaluate_guardian_escalation(
             "live_order_gateway_required": True,
         },
         "wake_reason_codes": sorted(set(wake_reason_codes)),
+        "technical_input_blocked_pairs": sorted(technical_input_blocked_pairs),
         "events_to_review": review_events,
         "suppressed_events": suppressed_events,
         "diagnostics": diagnostics,
@@ -652,6 +763,17 @@ def review_guardian_action_receipt(
 
     if action in {"TRADE", "ADD"}:
         issues.extend(_guardian_trade_add_action_issues(receipt, event=event))
+        canonical_pair = event.pair if event is not None else _pair(receipt.get("pair"))
+        if canonical_pair in _technical_input_blocked_pairs(
+            events,
+            previous_state=previous_state,
+        ):
+            issues.append(
+                _issue(
+                    "GUARDIAN_ACTION_TECHNICAL_INPUT_STALE",
+                    f"{canonical_pair} technical input is fail-closed; TRADE/ADD is forbidden",
+                )
+            )
     if event is not None and event.event_type in TUNING_ONLY_EVENT_TYPES and action not in {"HOLD", "NO_ACTION"}:
         issues.append(
             _issue(
@@ -1656,7 +1778,16 @@ def _current_trader_pending_orders_by_id(snapshot: dict[str, Any]) -> dict[str, 
     return orders
 
 
-def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:
+def _pair_chart_events(
+    pair_charts: dict[str, Any],
+    *,
+    snapshot: dict[str, Any],
+    now: datetime,
+    chart_freshness: dict[str, Any] | None = None,
+    chart_freshness_required: bool = False,
+    pair_charts_sha256: str = "",
+    technical_integrity_required: bool = False,
+) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
     chart_rows = _chart_rows(pair_charts)
     charts_by_pair = {
@@ -1691,6 +1822,38 @@ def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any],
 
     for pair in monitor_pairs:
         chart = charts_by_pair.get(pair)
+        freshness_issue = _guardian_pair_freshness_issue(
+            pair,
+            pair_charts=pair_charts,
+            chart_freshness=chart_freshness,
+            chart_freshness_required=chart_freshness_required,
+            pair_charts_sha256=pair_charts_sha256,
+            now=now,
+        )
+        if freshness_issue is not None:
+            events.append(
+                _event(
+                    event_type="TECHNICAL_INPUT_STALE",
+                    pair=pair,
+                    direction=None,
+                    thesis="bounded guardian chart freshness receipt",
+                    price_zone="guardian per-pair technical freshness is fail-closed",
+                    severity="P1" if _pair_has_open_exposure(snapshot, pair) else "P2",
+                    recommended_review_type="TUNING_REVIEW",
+                    action_hint="HOLD" if _pair_has_open_exposure(snapshot, pair) else "NO_ACTION",
+                    now=now,
+                    details={
+                        "fresh": False,
+                        "status": "GUARDIAN_CHART_FRESHNESS_BLOCKED",
+                        "freshness_issue": freshness_issue,
+                        "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                        "live_permission_allowed": False,
+                        "no_direct_oanda": True,
+                        "preserve_blockers": True,
+                    },
+                )
+            )
+            continue
         if chart is None:
             events.append(
                 _event(
@@ -1719,6 +1882,7 @@ def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any],
             pair_charts=pair_charts,
             snapshot=snapshot,
             now=now,
+            technical_integrity_required=technical_integrity_required,
         )
         if technical_event is not None:
             events.append(technical_event)
@@ -1757,6 +1921,102 @@ def _pair_chart_events(pair_charts: dict[str, Any], *, snapshot: dict[str, Any],
     return events
 
 
+def _guardian_pair_freshness_issue(
+    pair: str,
+    *,
+    pair_charts: dict[str, Any],
+    chart_freshness: dict[str, Any] | None,
+    chart_freshness_required: bool,
+    pair_charts_sha256: str,
+    now: datetime,
+) -> dict[str, Any] | None:
+    if not chart_freshness_required:
+        return None
+    payload = chart_freshness if isinstance(chart_freshness, dict) else {}
+    checked = _parse_aware_utc(payload.get("checked_at_utc"))
+    source_generated = _parse_aware_utc(payload.get("source_generated_at_utc"))
+    chart_generated = _parse_aware_utc(pair_charts.get("generated_at_utc"))
+    expected_sha = str(payload.get("source_pair_charts_sha256") or "").lower()
+    max_age = int(
+        os.environ.get(
+            "QR_GUARDIAN_CHART_MAX_AGE_SECONDS",
+            DEFAULT_GUARDIAN_CHART_MAX_AGE_SECONDS,
+        )
+    )
+    reasons: list[str] = []
+    if checked is None:
+        reasons.append("INVALID_CHECKED_AT_UTC")
+    else:
+        age = (now - checked).total_seconds()
+        if age < -5:
+            reasons.append("FUTURE_CHECKED_AT_UTC")
+        elif age > max_age:
+            reasons.append("STALE_CHECKED_AT_UTC")
+    if source_generated is None or chart_generated is None or source_generated != chart_generated:
+        reasons.append("PAIR_CHART_GENERATED_AT_BINDING_MISMATCH")
+    if (
+        len(expected_sha) != 64
+        or any(char not in "0123456789abcdef" for char in expected_sha)
+        or expected_sha != pair_charts_sha256.lower()
+    ):
+        reasons.append("PAIR_CHART_SHA256_BINDING_MISMATCH")
+    rows = payload.get("rows") if isinstance(payload.get("rows"), list) else None
+    pair_rows: dict[str, list[dict[str, Any]]] = {}
+    if rows is None:
+        reasons.append("FRESHNESS_ROWS_MISSING")
+    else:
+        for row in rows:
+            if not isinstance(row, dict) or _pair(row.get("pair")) != pair:
+                continue
+            timeframe = str(row.get("timeframe") or "").upper()
+            pair_rows.setdefault(timeframe, []).append(row)
+        allowed = {"FRESH", "TECHNICAL_INPUT_BLOCKED_CURRENT"}
+        expected_max_ages = {"M1": 120.0, "M5": 600.0, "M15": 1800.0}
+        for timeframe in ("M1", "M5", "M15"):
+            matches = pair_rows.get(timeframe, [])
+            if len(matches) != 1:
+                reasons.append(f"{timeframe}_FRESHNESS_ROW_COUNT_{len(matches)}")
+                continue
+            status = str(matches[0].get("status") or "").upper()
+            if status not in allowed:
+                reasons.append(f"{timeframe}_FRESHNESS_{status or 'MISSING_STATUS'}")
+                continue
+            row = matches[0]
+            max_age_value = row.get("max_age_seconds")
+            expected_max_age = expected_max_ages[timeframe]
+            if (
+                isinstance(max_age_value, bool)
+                or not isinstance(max_age_value, (int, float))
+                or float(max_age_value) != expected_max_age
+            ):
+                reasons.append(f"{timeframe}_MAX_AGE_CONTRACT_INVALID")
+                continue
+            closed_at = _parse_aware_utc(
+                row.get("latest_complete_candle_closed_at_utc")
+            )
+            if closed_at is None:
+                reasons.append(f"{timeframe}_CLOSED_AT_INVALID")
+                continue
+            row_age = (now - closed_at).total_seconds()
+            if row_age < -5:
+                reasons.append(f"{timeframe}_CLOSED_AT_FUTURE")
+            elif row_age > expected_max_age:
+                reasons.append(f"{timeframe}_CLOSED_AT_STALE")
+    if not reasons:
+        return None
+    return {
+        "reasons": reasons,
+        "checked_at_utc": payload.get("checked_at_utc"),
+        "source_generated_at_utc": payload.get("source_generated_at_utc"),
+        "source_pair_charts_sha256": payload.get("source_pair_charts_sha256"),
+        "pair_charts_sha256": pair_charts_sha256 or None,
+        "row_statuses": {
+            timeframe: [str(row.get("status") or "") for row in matches]
+            for timeframe, matches in sorted(pair_rows.items())
+        },
+    }
+
+
 def _guardian_monitor_pairs(pair_charts: dict[str, Any], *, snapshot: dict[str, Any]) -> list[str]:
     pairs: list[str] = []
     explicit = pair_charts.get("guardian_monitor_pairs")
@@ -1790,11 +2050,19 @@ def _guardian_monitor_scope(pair_charts: dict[str, Any], pair: str) -> Any:
 
 
 def _guardian_chart_freshness(pair_charts: dict[str, Any], *, now: datetime) -> dict[str, Any]:
-    generated = _parse_utc(pair_charts.get("generated_at_utc"))
+    generated = _parse_aware_utc(pair_charts.get("generated_at_utc"))
     max_age = int(os.environ.get("QR_GUARDIAN_CHART_MAX_AGE_SECONDS", DEFAULT_GUARDIAN_CHART_MAX_AGE_SECONDS))
     if generated is None:
-        return {"fresh": False, "status": "MISSING_GENERATED_AT", "max_age_seconds": max_age}
-    age = max(0.0, (now - generated).total_seconds())
+        return {"fresh": False, "status": "INVALID_GENERATED_AT", "max_age_seconds": max_age}
+    age = (now - generated).total_seconds()
+    if age < -5:
+        return {
+            "fresh": False,
+            "status": "FUTURE_GENERATED_AT",
+            "generated_at_utc": generated.isoformat(),
+            "age_seconds": round(age, 3),
+            "max_age_seconds": max_age,
+        }
     return {
         "fresh": age <= max_age,
         "status": "FRESH" if age <= max_age else "STALE",
@@ -1820,12 +2088,164 @@ def _technical_state_event(
     pair_charts: dict[str, Any],
     snapshot: dict[str, Any],
     now: datetime,
+    technical_integrity_required: bool = False,
 ) -> GuardianEvent | None:
     views = {
         str(item.get("granularity") or "").upper(): item
         for item in chart.get("views", []) or []
         if isinstance(item, dict)
     }
+    if technical_integrity_required:
+        integrity_issues: list[str] = []
+        chart_generated_at = _parse_aware_utc(pair_charts.get("generated_at_utc"))
+        timeframe_seconds = {"M1": 60, "M5": 300, "M15": 900}
+        for timeframe, seconds in timeframe_seconds.items():
+            view = views.get(timeframe)
+            if not isinstance(view, dict):
+                integrity_issues.append(f"{timeframe}_VIEW_MISSING")
+                continue
+            integrity = (
+                view.get("candle_integrity")
+                if isinstance(view.get("candle_integrity"), dict)
+                else {}
+            )
+            scope_bound = bool(
+                integrity.get("pair") == pair
+                and integrity.get("granularity") == timeframe
+                and view.get("granularity") == timeframe
+            )
+            receipt_valid = bool(
+                integrity
+                and chart_generated_at is not None
+                and scope_bound
+                and validate_mba_integrity_receipt(
+                    integrity,
+                    chart_generated_at=chart_generated_at,
+                    view=view,
+                    now_utc=None,
+                )
+            )
+            if not receipt_valid:
+                integrity_issues.append(f"{timeframe}_RECEIPT_INVALID")
+                continue
+            started_at = _parse_aware_utc(
+                integrity.get("latest_complete_timestamp_utc")
+            )
+            if started_at is None:
+                integrity_issues.append(f"{timeframe}_LATEST_COMPLETE_INVALID")
+                continue
+            closed_at = started_at + timedelta(seconds=seconds)
+            age = (now - closed_at).total_seconds()
+            if age < -5:
+                integrity_issues.append(f"{timeframe}_LATEST_COMPLETE_FUTURE")
+            elif age > seconds * 2:
+                integrity_issues.append(f"{timeframe}_LATEST_COMPLETE_STALE")
+        if integrity_issues:
+            open_exposure = _pair_has_open_exposure(snapshot, pair)
+            return _event(
+                event_type="TECHNICAL_INPUT_STALE",
+                pair=pair,
+                direction=None,
+                thesis="canonical technical candle integrity receipt",
+                price_zone="guardian technical receipt is invalid, missing, or stale",
+                severity="P1" if open_exposure else "P2",
+                recommended_review_type="TUNING_REVIEW",
+                action_hint="HOLD" if open_exposure else "NO_ACTION",
+                now=now,
+                details={
+                    "fresh": False,
+                    "status": "TECHNICAL_CANDLE_INTEGRITY_RECEIPT_INVALID",
+                    "integrity_issues": integrity_issues,
+                    "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                    "open_exposure": open_exposure,
+                    "live_permission_allowed": False,
+                    "no_direct_oanda": True,
+                    "preserve_blockers": True,
+                },
+            )
+    blocked_integrity: dict[str, dict[str, Any]] = {}
+    for timeframe in ("M1", "M5", "M15"):
+        view = views.get(timeframe)
+        integrity = (
+            view.get("candle_integrity")
+            if isinstance(view, dict)
+            and isinstance(view.get("candle_integrity"), dict)
+            else {}
+        )
+        if integrity.get("forecast_blocking") is not True:
+            continue
+        codes = integrity.get("blocking_codes")
+        blocked_integrity[timeframe] = {
+            "evaluation_status": str(
+                integrity.get("evaluation_status") or "UNKNOWN"
+            ).upper(),
+            "blocking_codes": [
+                str(code)
+                for code in codes
+                if isinstance(code, str) and code
+            ]
+            if isinstance(codes, list)
+            else [],
+            "latest_complete_timestamp_utc": integrity.get(
+                "latest_complete_timestamp_utc"
+            ),
+            "recent_clean_tail_count": integrity.get("recent_clean_tail_count"),
+            "recent_tail_state": integrity.get("recent_tail_state"),
+        }
+    aggregate_integrity = (
+        chart.get("technical_candle_integrity")
+        if isinstance(chart.get("technical_candle_integrity"), dict)
+        else {}
+    )
+    if aggregate_integrity.get("forecast_blocking") is True and not blocked_integrity:
+        codes = aggregate_integrity.get("blocking_codes")
+        blocked_integrity["AGGREGATE"] = {
+            "evaluation_status": str(
+                aggregate_integrity.get("evaluation_status") or "UNKNOWN"
+            ).upper(),
+            "blocking_codes": [
+                str(code)
+                for code in codes
+                if isinstance(code, str) and code
+            ]
+            if isinstance(codes, list)
+            else [],
+            "latest_complete_timestamp_utc": None,
+            "recent_clean_tail_count": None,
+            "recent_tail_state": None,
+        }
+    if blocked_integrity:
+        open_exposure = _pair_has_open_exposure(snapshot, pair)
+        blocking_codes = sorted(
+            {
+                code
+                for item in blocked_integrity.values()
+                for code in item["blocking_codes"]
+            }
+        )
+        return _event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair=pair,
+            direction=None,
+            thesis="bounded guardian technical candle integrity",
+            price_zone="guardian technical input is quarantined by broker MBA integrity",
+            severity="P1" if open_exposure else "P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="HOLD" if open_exposure else "NO_ACTION",
+            now=now,
+            details={
+                "fresh": False,
+                "status": "TECHNICAL_CANDLE_INTEGRITY_BLOCKED",
+                "blocked_timeframes": list(blocked_integrity),
+                "blocking_codes": blocking_codes,
+                "integrity_by_timeframe": blocked_integrity,
+                "monitor_scope": _guardian_monitor_scope(pair_charts, pair),
+                "open_exposure": open_exposure,
+                "live_permission_allowed": False,
+                "no_direct_oanda": True,
+                "preserve_blockers": True,
+            },
+        )
     m5 = views.get("M5") or views.get("M1")
     if not isinstance(m5, dict):
         open_exposure = _pair_has_open_exposure(snapshot, pair)
@@ -4030,6 +4450,20 @@ def _guardian_trade_add_action_issues(
     action = str(receipt.get("action") or "").strip().upper()
     if action not in {"TRADE", "ADD"}:
         return issues
+    if event is not None and event.action_hint.upper() not in {"TRADE", "ADD"}:
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_EVENT_DOES_NOT_AUTHORIZE_ENTRY",
+                "TRADE/ADD requires selected event action_hint TRADE or ADD",
+            )
+        )
+    if event is not None and str(event.direction or "").upper() not in {"LONG", "SHORT"}:
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_EVENT_DIRECTION_REQUIRED",
+                "TRADE/ADD requires selected event direction LONG or SHORT",
+            )
+        )
     if receipt.get("new_information") is not True:
         issues.append(_issue("GUARDIAN_ACTION_REQUIRES_NEW_INFORMATION", "TRADE/ADD requires new_information=true"))
     if _truthy(receipt.get("same_pair_thesis_action_recently_sent")) or _truthy(receipt.get("duplicate_recent_action")):
@@ -4217,6 +4651,21 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path,
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     )
+
+
+def _load_json_with_sha256(path: Path | str | None) -> tuple[dict[str, Any], str]:
+    if path is None:
+        return {}, ""
+    try:
+        raw = Path(path).read_bytes()
+    except (OSError, ValueError):
+        return {}, ""
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return {}, digest
+    return (payload if isinstance(payload, dict) else {}), digest
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -4508,6 +4957,18 @@ def _parse_utc(value: Any) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_aware_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
     return parsed.astimezone(timezone.utc)
 
 

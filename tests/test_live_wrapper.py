@@ -1626,6 +1626,209 @@ class LiveWrapperTest(unittest.TestCase):
             )
             self.assertEqual(retried_pairs, {*failed_pairs, hard_pair})
 
+    def test_position_guardian_current_integrity_block_does_not_pin_rotation(self) -> None:
+        for chart_mode in (
+            "INTEGRITY_BLOCKED",
+            "INTEGRITY_BLOCKED_PROVENANCE_INVALID",
+        ):
+            with self.subTest(chart_mode=chart_mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env, capture = _guardian_wrapper_env(
+                    root,
+                    snapshot={
+                        "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                        "positions": [],
+                        "orders": [],
+                        "quotes": {
+                            pair: {"bid": 1.0, "ask": 1.0001}
+                            for pair in DEFAULT_TRADER_PAIRS
+                        },
+                    },
+                    trigger_contract={"entries": []},
+                    candidate_limit=2,
+                )
+                env["QR_FAKE_GUARDIAN_CHART_MODE"] = chart_mode
+
+                first = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(first.returncode, 0, first.stderr)
+                freshness_path = root / "data" / "position_guardian_chart_freshness.json"
+                freshness = json.loads(freshness_path.read_text())
+                self.assertEqual(freshness["status"], "FRESH")
+                self.assertEqual(
+                    freshness["blocked_technical_inputs"],
+                    [f"{DEFAULT_TRADER_PAIRS[0]}:M5"],
+                )
+                self.assertEqual(freshness["coverage_cursor"], 2)
+                self.assertTrue(freshness["coverage_cursor_advanced"])
+                self.assertFalse(freshness["coverage_retry_required"])
+
+                freshness["next_refresh_after_utc"] = "2000-01-01T00:00:00+00:00"
+                freshness_path.write_text(json.dumps(freshness))
+                env["QR_FAKE_GUARDIAN_CHART_MODE"] = "FRESH"
+                second = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(second.returncode, 0, second.stderr)
+
+                calls = [json.loads(line) for line in capture.read_text().splitlines()]
+                pair_calls = [call for call in calls if "pair-charts" in call]
+                self.assertEqual(len(pair_calls), 2)
+                self.assertEqual(
+                    pair_calls[0][pair_calls[0].index("--pairs") + 1].split(","),
+                    list(DEFAULT_TRADER_PAIRS[:2]),
+                )
+                self.assertEqual(
+                    pair_calls[1][pair_calls[1].index("--pairs") + 1].split(","),
+                    list(DEFAULT_TRADER_PAIRS[2:4]),
+                )
+                final_freshness = json.loads(freshness_path.read_text())
+                self.assertEqual(final_freshness["coverage_cursor"], 4)
+
+    def test_position_guardian_integrity_block_without_valid_clock_retries_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, _capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        pair: {"bid": 1.0, "ask": 1.0001}
+                        for pair in DEFAULT_TRADER_PAIRS
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            env["QR_FAKE_GUARDIAN_CHART_MODE"] = "INTEGRITY_BLOCKED_BAD_CLOCK"
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            freshness = json.loads(
+                (root / "data" / "position_guardian_chart_freshness.json").read_text()
+            )
+            self.assertEqual(freshness["status"], "PARTIAL")
+            self.assertIsNone(freshness["coverage_cursor"])
+            self.assertFalse(freshness["coverage_cursor_advanced"])
+            self.assertTrue(freshness["coverage_retry_required"])
+            blocked_row = next(
+                row
+                for row in freshness["rows"]
+                if row["pair"] == DEFAULT_TRADER_PAIRS[0]
+                and row["timeframe"] == "M5"
+            )
+            self.assertEqual(
+                blocked_row["status"],
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            )
+
+    def test_position_guardian_invalid_or_incomplete_integrity_retries_scope(self) -> None:
+        cases = (
+            (
+                "INTEGRITY_BLOCKED_INVALID_RECEIPT",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            (
+                "INTEGRITY_BLOCKED_MALFORMED",
+                "INCOMPLETE_TECHNICAL_CANDLE_INTEGRITY_ACQUISITION",
+            ),
+            (
+                "INTEGRITY_BLOCKED_FUTURE_CLOCK",
+                "FUTURE_COMPLETE_CANDLE_TIME",
+            ),
+            ("FUTURE", "FUTURE_COMPLETE_CANDLE_TIME"),
+            (
+                "NAIVE_CANDLE_TIME",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            (
+                "INTEGRITY_BLOCKED_WRONG_PAIR",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            (
+                "INTEGRITY_BLOCKED_WRONG_TIMEFRAME",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            (
+                "INTEGRITY_BLOCKED_FALSE_FLAG",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            ("NAIVE_GENERATED_AT", "INVALID_CHART_GENERATED_AT_UTC"),
+            ("FUTURE_GENERATED_AT", "INVALID_CHART_GENERATED_AT_UTC"),
+            (
+                "MISSING_INTEGRITY_RECEIPT",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+            (
+                "EMPTY_INTEGRITY_RECEIPT",
+                "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+            ),
+        )
+        for chart_mode, expected_row_status in cases:
+            with self.subTest(chart_mode=chart_mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env, _capture = _guardian_wrapper_env(
+                    root,
+                    snapshot={
+                        "fetched_at_utc": "2026-07-10T00:00:00+00:00",
+                        "positions": [],
+                        "orders": [],
+                        "quotes": {
+                            pair: {"bid": 1.0, "ask": 1.0001}
+                            for pair in DEFAULT_TRADER_PAIRS
+                        },
+                    },
+                    trigger_contract={"entries": []},
+                    candidate_limit=2,
+                )
+                env["QR_FAKE_GUARDIAN_CHART_MODE"] = chart_mode
+
+                result = subprocess.run(
+                    ["bash", str(GUARDIAN_WRAPPER)],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                freshness = json.loads(
+                    (root / "data" / "position_guardian_chart_freshness.json").read_text()
+                )
+                self.assertEqual(freshness["status"], "PARTIAL")
+                self.assertIsNone(freshness["coverage_cursor"])
+                self.assertFalse(freshness["coverage_cursor_advanced"])
+                self.assertTrue(freshness["coverage_retry_required"])
+                blocked_row = next(
+                    row
+                    for row in freshness["rows"]
+                    if row["pair"] == DEFAULT_TRADER_PAIRS[0]
+                    and row["timeframe"] == "M5"
+                )
+                self.assertEqual(blocked_row["status"], expected_row_status)
+
     def test_position_guardian_absolute_cursor_covers_all_pairs_under_priority_churn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2363,12 +2566,112 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from quant_rabbit.analysis.candles import _technical_candles_from_payload
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.risk import RiskPolicy
+
 
 def value_after(args, name, default=None):
     try:
         return args[args.index(name) + 1]
     except (ValueError, IndexError):
         return default
+
+
+def integrity_blocked_view(pair, timeframe, now, chart_mode):
+    duration = {"M1": 60, "M5": 300, "M15": 900}[timeframe]
+    latest_epoch = int(now.timestamp())
+    latest_epoch -= latest_epoch % duration
+    if chart_mode in {"FUTURE", "INTEGRITY_BLOCKED_FUTURE_CLOCK"}:
+        pass
+    elif chart_mode == "STALE":
+        latest_epoch -= duration * 4
+    else:
+        latest_epoch -= duration
+    latest = datetime.fromtimestamp(latest_epoch, tz=timezone.utc)
+    count = 120
+    factor = instrument_pip_factor(pair)
+    decimals = 3 if factor == 100 else 5
+    base = 100.0 if factor == 100 else 1.0
+    cap_pips = NORMAL_SPREAD_PIPS[pair] * RiskPolicy().max_spread_multiple
+    clean_spread_pips = NORMAL_SPREAD_PIPS[pair]
+    if chart_mode == "INTEGRITY_BLOCKED_PROVENANCE_INVALID":
+        contaminated_index = count - 6
+    elif chart_mode == "INTEGRITY_BLOCKED_MALFORMED":
+        contaminated_index = None
+    elif chart_mode.startswith("INTEGRITY_BLOCKED"):
+        contaminated_index = count - 1
+    else:
+        contaminated_index = None
+    candles = []
+    for index in range(count):
+        started = latest - timedelta(seconds=duration * (count - 1 - index))
+        spread_pips = cap_pips + 0.1 if index == contaminated_index else clean_spread_pips
+        half_spread = spread_pips / factor / 2.0
+        bid = f"{base - half_spread:.{decimals}f}"
+        ask = f"{base + half_spread:.{decimals}f}"
+        mid = f"{base:.{decimals}f}"
+        candle = {
+                "time": started.isoformat().replace("+00:00", "Z"),
+                "complete": True,
+                "volume": 1,
+                "mid": {"o": mid, "h": mid, "l": mid, "c": mid},
+                "bid": {"o": bid, "h": bid, "l": bid, "c": bid},
+                "ask": {"o": ask, "h": ask, "l": ask, "c": ask},
+            }
+        if chart_mode == "INTEGRITY_BLOCKED_MALFORMED" and index == count - 6:
+            candle.pop("ask")
+        candles.append(candle)
+    batch = _technical_candles_from_payload(
+        {"instrument": pair, "granularity": timeframe, "candles": candles},
+        pair=pair,
+        granularity=timeframe,
+        requested_count=count,
+        pip_factor=factor,
+        normal_spread_pips=NORMAL_SPREAD_PIPS[pair],
+        max_spread_multiple=RiskPolicy().max_spread_multiple,
+    )
+    integrity = dict(batch.integrity)
+    tail_count = integrity["recent_clean_tail_count"]
+    published = list(batch.candles[-tail_count:])[-30:] if tail_count else []
+    recent = [
+        {
+            "t": candle.timestamp_utc.isoformat(),
+            "complete": candle.complete,
+            "o": candle.open,
+            "h": candle.high,
+            "l": candle.low,
+            "c": candle.close,
+            "v": candle.volume,
+        }
+        for candle in published
+    ]
+    if chart_mode == "NAIVE_CANDLE_TIME" and recent:
+        recent[-1]["t"] = recent[-1]["t"].replace("+00:00", "")
+    if chart_mode == "INTEGRITY_BLOCKED_BAD_CLOCK":
+        integrity["latest_complete_timestamp_utc"] = "2026-07-14T00:00:00"
+    elif chart_mode == "INTEGRITY_BLOCKED_INVALID_RECEIPT":
+        integrity["raw_entry_count"] += 1
+    elif chart_mode == "INTEGRITY_BLOCKED_WRONG_PAIR":
+        integrity["pair"] = "GBP_USD" if pair != "GBP_USD" else "EUR_USD"
+    elif chart_mode == "INTEGRITY_BLOCKED_WRONG_TIMEFRAME":
+        integrity["granularity"] = "M1"
+    elif chart_mode == "INTEGRITY_BLOCKED_FALSE_FLAG":
+        integrity["forecast_blocking"] = False
+    view = {
+        "granularity": timeframe,
+        "recent_candles": recent,
+        # Match the production chart contract: this count records the full
+        # contiguous clean tail even though only the newest 30 candles are
+        # published in ``recent_candles``.
+        "indicators": {"candles_count": tail_count},
+        "candle_integrity": integrity,
+    }
+    if chart_mode == "MISSING_INTEGRITY_RECEIPT":
+        view.pop("candle_integrity")
+    elif chart_mode == "EMPTY_INTEGRITY_RECEIPT":
+        view["candle_integrity"] = {}
+    return view
 
 
 args = sys.argv[1:]
@@ -2396,36 +2699,66 @@ elif command == "pair-charts":
     durations = {"M1": 60, "M5": 300, "M15": 900}
     now = datetime.now(timezone.utc)
     chart_mode = str(os.environ.get("QR_FAKE_GUARDIAN_CHART_MODE") or "FRESH").upper()
-    if chart_mode not in {"FRESH", "PARTIAL", "STALE"}:
+    if chart_mode not in {
+        "FRESH",
+        "PARTIAL",
+        "STALE",
+        "FUTURE",
+        "NAIVE_CANDLE_TIME",
+        "NAIVE_GENERATED_AT",
+        "FUTURE_GENERATED_AT",
+        "MISSING_INTEGRITY_RECEIPT",
+        "EMPTY_INTEGRITY_RECEIPT",
+        "INTEGRITY_BLOCKED",
+        "INTEGRITY_BLOCKED_BAD_CLOCK",
+        "INTEGRITY_BLOCKED_PROVENANCE_INVALID",
+        "INTEGRITY_BLOCKED_FUTURE_CLOCK",
+        "INTEGRITY_BLOCKED_INVALID_RECEIPT",
+        "INTEGRITY_BLOCKED_MALFORMED",
+        "INTEGRITY_BLOCKED_WRONG_PAIR",
+        "INTEGRITY_BLOCKED_WRONG_TIMEFRAME",
+        "INTEGRITY_BLOCKED_FALSE_FLAG",
+    }:
         raise SystemExit(65)
     charts = []
     for pair in pairs:
         views = []
         for timeframe in timeframes:
-            age_multiplier = 4 if chart_mode == "STALE" else 1
-            started = now - timedelta(seconds=durations[timeframe] * age_multiplier)
-            views.append(
-                {
-                    "granularity": timeframe,
-                    "recent_candles": [
-                        {
-                            "t": started.isoformat(),
-                            "complete": True,
-                            "o": 1.0,
-                            "h": 1.1,
-                            "l": 0.9,
-                            "c": 1.0,
-                            "v": 1,
-                        }
-                    ],
-                }
-            )
+            targeted_mode = chart_mode if chart_mode in {
+                "FRESH",
+                "PARTIAL",
+                "STALE",
+                "FUTURE",
+                "NAIVE_CANDLE_TIME",
+            } else "FRESH"
+            if pair == pairs[0] and timeframe == "M5" and chart_mode in {
+                "INTEGRITY_BLOCKED",
+                "INTEGRITY_BLOCKED_BAD_CLOCK",
+                "INTEGRITY_BLOCKED_PROVENANCE_INVALID",
+                "INTEGRITY_BLOCKED_FUTURE_CLOCK",
+                "INTEGRITY_BLOCKED_INVALID_RECEIPT",
+                "INTEGRITY_BLOCKED_MALFORMED",
+                "INTEGRITY_BLOCKED_WRONG_PAIR",
+                "INTEGRITY_BLOCKED_WRONG_TIMEFRAME",
+                "INTEGRITY_BLOCKED_FALSE_FLAG",
+                "MISSING_INTEGRITY_RECEIPT",
+                "EMPTY_INTEGRITY_RECEIPT",
+            }:
+                targeted_mode = chart_mode
+            view = integrity_blocked_view(pair, timeframe, now, targeted_mode)
+            views.append(view)
         charts.append({"pair": pair, "views": views})
     if chart_mode == "PARTIAL" and charts:
         charts = charts[:-1]
     pairs_failed = len(pairs) - len(charts)
     payload = {
-        "generated_at_utc": now.isoformat(),
+        "generated_at_utc": (
+            now.replace(tzinfo=None).isoformat()
+            if chart_mode == "NAIVE_GENERATED_AT"
+            else (now + timedelta(minutes=10)).isoformat()
+            if chart_mode == "FUTURE_GENERATED_AT"
+            else now.isoformat()
+        ),
         "timeframes": timeframes,
         "pairs_requested": len(pairs),
         "pairs_succeeded": len(charts),

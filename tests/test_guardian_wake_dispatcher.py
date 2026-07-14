@@ -320,10 +320,13 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             paths.event_state.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": NOW.isoformat(),
                         "events": {
                             selected["dedupe_key"]: {
                                 "event_id": "state-event-must-not-leak",
+                                "event_type": "TECHNICAL_STATE_CHANGE",
                                 "pair": "EUR_USD",
+                                "last_seen_at_utc": NOW.isoformat(),
                                 "details": {"mid": 1.1422},
                             },
                             sibling["dedupe_key"]: {"event_id": sibling["event_id"]},
@@ -771,6 +774,87 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             ]
         )
 
+    def test_retained_stale_pair_suppresses_pending_entry_dispatch(self) -> None:
+        entry = {
+            **_event(
+                severity="P1",
+                event_id="pending-entry",
+                pair="EUR_USD",
+                dedupe_key="pending-entry-key",
+            ),
+            "wake_reason_codes": ["DURABLE_PENDING_DISPATCH"],
+        }
+
+        selected, selection = _select_dispatch_event(
+            escalation={"events_to_review": [entry]},
+            events_payload={
+                "generated_at_utc": NOW.isoformat(),
+                "events": [entry],
+            },
+            dispatcher_state={},
+            now=NOW,
+            env={},
+            event_state={
+                "generated_at_utc": NOW.isoformat(),
+                "events": {
+                    "EUR_USD|stale": {
+                        "event_type": "TECHNICAL_INPUT_STALE",
+                        "pair": "EUR_USD",
+                        "last_seen_at_utc": (NOW - timedelta(minutes=20)).isoformat(),
+                    }
+                },
+            },
+        )
+
+        self.assertIsNone(selected)
+        self.assertEqual(selection["status"], "NO_DISPATCHABLE_EVENT")
+        self.assertEqual(selection["suppressed"][0]["reason"], "TECHNICAL_INPUT_BLOCKED")
+
+    def test_missing_or_old_technical_baseline_suppresses_entry_dispatch(self) -> None:
+        entry = {
+            **_event(
+                severity="P1",
+                event_id="entry-without-state",
+                pair="EUR_USD",
+                dedupe_key="entry-without-state-key",
+            ),
+            "wake_reason_codes": ["NEW_EVENT"],
+        }
+        for events_generated_at, event_state in (
+            (None, {}),
+            (
+                (NOW - timedelta(minutes=10)).isoformat(),
+                {
+                    "generated_at_utc": NOW.isoformat(),
+                    "events": {
+                        "EUR_USD|technical": {
+                            "event_type": "TECHNICAL_STATE_CHANGE",
+                            "pair": "EUR_USD",
+                            "last_seen_at_utc": (NOW - timedelta(minutes=10)).isoformat(),
+                        }
+                    },
+                },
+            ),
+        ):
+            with self.subTest(events_generated_at=events_generated_at):
+                events_payload = {"events": [entry]}
+                if events_generated_at is not None:
+                    events_payload["generated_at_utc"] = events_generated_at
+                selected, selection = _select_dispatch_event(
+                    escalation={"events_to_review": [entry]},
+                    events_payload=events_payload,
+                    dispatcher_state={},
+                    now=NOW,
+                    env={},
+                    event_state=event_state,
+                )
+
+                self.assertIsNone(selected)
+                self.assertEqual(
+                    selection["suppressed"][0]["reason"],
+                    "GUARDIAN_TECHNICAL_STATE_UNAVAILABLE",
+                )
+
     def test_multiple_review_events_are_durably_drained_across_router_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -793,6 +877,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 "wake_reason_codes": ["NEW_EVENT"],
             }
             paths.events.write_text(json.dumps({"events": [first_event, second_event]}))
+            _write_technical_state(paths, "AAA_USD", "BBB_USD")
             paths.escalation.write_text(
                 json.dumps(
                     {
@@ -4815,6 +4900,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 "wake_reason_codes": ["VOLATILITY_BUCKET_CHANGE"],
             }
             paths.events.write_text(json.dumps({"events": [second_event]}))
+            _write_technical_state(paths, "EUR_USD", "GBP_USD")
             paths.escalation.write_text(
                 json.dumps({"wake_gpt": True, "events_to_review": [second_event]})
             )
@@ -5658,6 +5744,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 dedupe_key="USD_CAD|thesis|FAILED_ACCEPTANCE|TRADE",
             )
             paths.events.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "events": [aud, usd]}))
+            _write_technical_state(paths, "AUD_JPY", "USD_CAD")
             paths.escalation.write_text(
                 json.dumps(
                     {
@@ -5901,7 +5988,20 @@ def _fixture(
     paths.prompt_template.write_text("Return JSON only.\n")
     paths.daily_target_state.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "mode": "PURSUE_TARGET"}))
     paths.event_report.write_text("# Guardian Event Report\n")
-    paths.event_state.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "events": {}}))
+    paths.event_state.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": NOW.isoformat(),
+                "events": {
+                    "EUR_USD|technical": {
+                        "event_type": "TECHNICAL_STATE_CHANGE",
+                        "pair": "EUR_USD",
+                        "last_seen_at_utc": NOW.isoformat(),
+                    }
+                },
+            }
+        )
+    )
     paths.broker_snapshot.write_text(
         json.dumps(
             {
@@ -5933,6 +6033,28 @@ def _write_wake(paths: DispatcherPaths, *, severity: str, reasons: tuple[str, ..
                 "model_target": "GPT-5.5",
                 "wake_reason_codes": list(reasons),
                 "events_to_review": [review_event],
+            }
+        )
+    )
+
+
+def _write_technical_state(
+    paths: DispatcherPaths,
+    *pairs: str,
+    now: datetime = NOW,
+) -> None:
+    paths.event_state.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "events": {
+                    f"{pair}|technical": {
+                        "event_type": "TECHNICAL_STATE_CHANGE",
+                        "pair": pair,
+                        "last_seen_at_utc": now.isoformat(),
+                    }
+                    for pair in pairs
+                },
             }
         )
     )

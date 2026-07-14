@@ -923,6 +923,29 @@ def _valid_mba_integrity(
     )
 
 
+def validate_mba_integrity_receipt(
+    item: dict[str, Any],
+    *,
+    chart_generated_at: datetime | None,
+    view: dict[str, Any],
+    now_utc: datetime | None,
+) -> bool:
+    """Validate one producer-owned OANDA MBA integrity receipt exactly.
+
+    Fast monitoring needs to distinguish a current, self-consistent
+    pair-local quarantine from a malformed chart packet.  Reuse the same
+    validator as the directional forecaster so a wrapper cannot weaken the
+    count, provenance, cadence, spread-policy, or bounded-quarantine contract.
+    """
+
+    return _valid_mba_integrity(
+        item,
+        chart_generated_at=chart_generated_at,
+        view=view,
+        forecast_now=_aware_utc_datetime(now_utc),
+    )
+
+
 def _strict_finite_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None

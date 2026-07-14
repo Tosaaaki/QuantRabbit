@@ -584,11 +584,16 @@ PY
 
 write_chart_freshness() {
   "$QR_PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}" "${15}" "${16}" "${17}" "${18}" <<'PY'
+import hashlib
 import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from quant_rabbit.strategy.directional_forecaster import (
+    validate_mba_integrity_receipt,
+)
 
 charts_path = Path(sys.argv[1])
 freshness_path = Path(sys.argv[2])
@@ -627,7 +632,8 @@ try:
 except (TypeError, ValueError):
     effective_candidate_limit = configured_candidate_limit
 
-payload = json.loads(charts_path.read_text())
+charts_bytes = charts_path.read_bytes()
+payload = json.loads(charts_bytes.decode("utf-8"))
 try:
     prior_freshness = json.loads(freshness_path.read_text())
 except Exception:
@@ -637,6 +643,20 @@ if not isinstance(prior_freshness, dict):
 now = datetime.now(timezone.utc)
 timeframe_seconds = {"M1": 60, "M5": 300, "M15": 900}
 monitor_pairs = [*open_pairs, *candidate_pairs]
+
+
+def parse_aware_utc(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 try:
     snapshot = json.loads(snapshot_path.read_text())
 except Exception:
@@ -728,6 +748,7 @@ payload["guardian_monitor_scope"] = monitor_scope
 charts_temporary = charts_path.with_name(f".{charts_path.name}.{os.getpid()}.tmp")
 charts_temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 os.replace(charts_temporary, charts_path)
+source_pair_charts_sha256 = hashlib.sha256(charts_path.read_bytes()).hexdigest()
 chart_by_pair = {
     str(item.get("pair") or "").upper(): item
     for item in payload.get("charts", []) or []
@@ -736,6 +757,14 @@ chart_by_pair = {
 rows = []
 missing = []
 stale = []
+blocked = []
+invalid_integrity = []
+incomplete_integrity = []
+chart_generated_at = parse_aware_utc(payload.get("generated_at_utc"))
+chart_generated_at_valid = bool(
+    chart_generated_at is not None
+    and (chart_generated_at - now).total_seconds() <= 5
+)
 for pair in monitor_pairs:
     chart = chart_by_pair.get(pair)
     views = {
@@ -745,36 +774,160 @@ for pair in monitor_pairs:
     }
     for timeframe, seconds in timeframe_seconds.items():
         view = views.get(timeframe)
+        integrity = (
+            view.get("candle_integrity")
+            if isinstance(view, dict)
+            and isinstance(view.get("candle_integrity"), dict)
+            else {}
+        )
+        integrity_present = bool(integrity)
+        blocking_codes = integrity.get("blocking_codes")
+        integrity_scope_bound = bool(
+            integrity.get("pair") == pair
+            and integrity.get("granularity") == timeframe
+            and isinstance(view, dict)
+            and view.get("granularity") == timeframe
+        )
+        integrity_receipt_valid = bool(
+            integrity_present
+            and chart_generated_at_valid
+            and integrity_scope_bound
+            and isinstance(view, dict)
+            and validate_mba_integrity_receipt(
+                integrity,
+                chart_generated_at=chart_generated_at,
+                view=view,
+                now_utc=None,
+            )
+        )
+        integrity_blocked = bool(
+            integrity_receipt_valid
+            and integrity.get("forecast_blocking") is True
+            and str(integrity.get("evaluation_status") or "").upper() == "BLOCKED"
+            and isinstance(blocking_codes, list)
+            and any(isinstance(code, str) and code for code in blocking_codes)
+        )
+        integrity_acquisition_complete = bool(
+            integrity_receipt_valid
+            and integrity.get("coverage_complete") is True
+            and integrity.get("provenance_complete") is True
+            and type(integrity.get("malformed_count")) is int
+            and integrity.get("malformed_count") == 0
+            and type(integrity.get("complete_entry_count")) is int
+            and integrity.get("complete_entry_count") > 0
+        )
+        if not chart_generated_at_valid:
+            missing.append(f"{pair}:{timeframe}")
+            rows.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "INVALID_CHART_GENERATED_AT_UTC",
+                    "source_generated_at_utc": payload.get("generated_at_utc"),
+                }
+            )
+            continue
+        if not integrity_receipt_valid:
+            missing.append(f"{pair}:{timeframe}")
+            invalid_integrity.append(f"{pair}:{timeframe}")
+            rows.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "INVALID_TECHNICAL_CANDLE_INTEGRITY_RECEIPT",
+                    "blocking_codes": blocking_codes,
+                }
+            )
+            continue
+        if integrity_blocked and not integrity_acquisition_complete:
+            missing.append(f"{pair}:{timeframe}")
+            incomplete_integrity.append(f"{pair}:{timeframe}")
+            rows.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "INCOMPLETE_TECHNICAL_CANDLE_INTEGRITY_ACQUISITION",
+                    "blocking_codes": blocking_codes,
+                    "coverage_complete": integrity.get("coverage_complete"),
+                    "provenance_complete": integrity.get("provenance_complete"),
+                    "malformed_count": integrity.get("malformed_count"),
+                    "complete_entry_count": integrity.get("complete_entry_count"),
+                }
+            )
+            continue
         candles = (view or {}).get("recent_candles", []) or []
         complete = [item for item in candles if isinstance(item, dict) and item.get("complete") is True]
         if not complete:
-            missing.append(f"{pair}:{timeframe}")
-            rows.append({"pair": pair, "timeframe": timeframe, "status": "MISSING_COMPLETE_CANDLE"})
-            continue
-        latest = complete[-1]
-        try:
-            started_at = datetime.fromisoformat(str(latest.get("t") or "").replace("Z", "+00:00"))
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=timezone.utc)
-        except ValueError:
-            missing.append(f"{pair}:{timeframe}")
-            rows.append({"pair": pair, "timeframe": timeframe, "status": "INVALID_COMPLETE_CANDLE_TIME"})
-            continue
+            # The chart reader intentionally withholds an execution-timeframe
+            # series when the most recent broker MBA candle is spread- or
+            # provenance-contaminated.  That is current, fail-closed market
+            # evidence, not a transport/shape failure.  Preserve the block for
+            # the event router and entry gates, but do not let one quarantined
+            # pair pin the entire 28-pair rotation until its next clean M5.
+            # A malformed/missing integrity clock still remains PARTIAL.
+            if integrity_acquisition_complete:
+                started_at = parse_aware_utc(
+                    integrity.get("latest_complete_timestamp_utc")
+                )
+                if started_at is None:
+                    missing.append(f"{pair}:{timeframe}")
+                    rows.append(
+                        {
+                            "pair": pair,
+                            "timeframe": timeframe,
+                            "status": "BLOCKED_INTEGRITY_CLOCK_MISSING",
+                            "blocking_codes": blocking_codes,
+                        }
+                    )
+                    continue
+            else:
+                missing.append(f"{pair}:{timeframe}")
+                rows.append({"pair": pair, "timeframe": timeframe, "status": "MISSING_COMPLETE_CANDLE"})
+                continue
+        else:
+            latest = complete[-1]
+            started_at = parse_aware_utc(latest.get("t"))
+            if started_at is None:
+                missing.append(f"{pair}:{timeframe}")
+                rows.append({"pair": pair, "timeframe": timeframe, "status": "INVALID_COMPLETE_CANDLE_TIME"})
+                continue
         closed_at = started_at + timedelta(seconds=seconds)
+        if closed_at > now:
+            missing.append(f"{pair}:{timeframe}")
+            rows.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "FUTURE_COMPLETE_CANDLE_TIME",
+                    "latest_complete_candle_started_at_utc": started_at.isoformat(),
+                    "latest_complete_candle_closed_at_utc": closed_at.isoformat(),
+                    "blocking_codes": blocking_codes if integrity_blocked else [],
+                }
+            )
+            continue
         age_seconds = max(0.0, (now - closed_at).total_seconds())
         max_age_seconds = float(seconds * 2)
-        status = "FRESH" if age_seconds <= max_age_seconds else "STALE"
-        if status == "STALE":
+        row_status = (
+            "TECHNICAL_INPUT_BLOCKED_CURRENT"
+            if integrity_blocked and age_seconds <= max_age_seconds
+            else "FRESH"
+            if age_seconds <= max_age_seconds
+            else "STALE"
+        )
+        if row_status == "STALE":
             stale.append(f"{pair}:{timeframe}")
+        elif row_status == "TECHNICAL_INPUT_BLOCKED_CURRENT":
+            blocked.append(f"{pair}:{timeframe}")
         rows.append(
             {
                 "pair": pair,
                 "timeframe": timeframe,
-                "status": status,
+                "status": row_status,
                 "latest_complete_candle_started_at_utc": started_at.isoformat(),
                 "latest_complete_candle_closed_at_utc": closed_at.isoformat(),
                 "age_seconds": round(age_seconds, 3),
                 "max_age_seconds": max_age_seconds,
+                "blocking_codes": blocking_codes if integrity_blocked else [],
             }
         )
 
@@ -833,6 +986,7 @@ freshness = {
     "analysis_packet_may_include_current_open_candle": False,
     "analysis_packet_complete_only": True,
     "source_generated_at_utc": payload.get("generated_at_utc"),
+    "source_pair_charts_sha256": source_pair_charts_sha256,
     "next_refresh_after_utc": next_minute.isoformat(),
     "timeframes": list(timeframe_seconds),
     "open_position_pairs": open_pairs,
@@ -873,6 +1027,9 @@ freshness = {
     "candidate_pair_limit_applied": len(candidate_pairs) <= effective_candidate_limit,
     "missing_complete_candles": missing,
     "stale_complete_candles": stale,
+    "blocked_technical_inputs": blocked,
+    "invalid_technical_integrity_receipts": invalid_integrity,
+    "incomplete_technical_integrity_acquisitions": incomplete_integrity,
     "rows": rows,
 }
 freshness_path.parent.mkdir(parents=True, exist_ok=True)
@@ -891,6 +1048,9 @@ if report_path.exists():
     report += f"- Monitor pairs: `{','.join(monitor_pairs) or 'none'}`\n"
     report += "- Timeframes: `M1,M5,M15` (refresh no faster than the next M1 close)\n"
     report += f"- Fresh/missing/stale rows: `{len(rows) - len(missing) - len(stale)}/{len(missing)}/{len(stale)}`\n"
+    report += f"- Current technical-integrity blocks: `{','.join(blocked) or 'none'}`\n"
+    report += f"- Invalid technical-integrity receipts: `{','.join(invalid_integrity) or 'none'}`\n"
+    report += f"- Incomplete technical-integrity acquisitions: `{','.join(incomplete_integrity) or 'none'}`\n"
     report += f"- Detail JSON: `{freshness_path}`\n"
     report_path.write_text(report)
 print(f"{status}|{len(rows)}|{len(missing)}|{len(stale)}|{next_minute.isoformat()}")
@@ -999,6 +1159,9 @@ freshness = {
     "candidate_pair_limit_expanded_for_hard_priority": False,
     "requested_candidate_pair_count": 0,
     "candidate_pair_limit_applied": True,
+    "blocked_technical_inputs": [],
+    "invalid_technical_integrity_receipts": [],
+    "incomplete_technical_integrity_acquisitions": [],
     "rows": [],
 }
 for path, payload in ((charts_path, charts), (freshness_path, freshness)):
@@ -1112,6 +1275,7 @@ run_guardian_event_router() {
   "$QR_PYTHON" -m quant_rabbit.cli guardian-event-router \
     --snapshot "$guardian_snapshot" \
     --pair-charts "$guardian_charts" \
+    --chart-freshness "$guardian_chart_freshness" \
     --order-intents "$guardian_order_intents" \
     --position-management "$guardian_management" \
     --thesis-evolution "${QR_POSITION_GUARDIAN_THESIS_EVOLUTION:-data/thesis_evolution_report.json}" \

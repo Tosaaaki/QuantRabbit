@@ -193,6 +193,248 @@ class GuardianActionCycleTest(unittest.TestCase):
             self.assertEqual(calls, [(LANE_ID, True)])
             self.assertTrue(result["no_direct_oanda"])
 
+    def test_retained_technical_input_stale_blocks_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            paths.event_state.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "events": {
+                            "EUR_USD|stale": {
+                                "event_id": "stale-1",
+                                "event_type": "TECHNICAL_INPUT_STALE",
+                                "pair": "EUR_USD",
+                                "action_hint": "NO_ACTION",
+                            }
+                        },
+                    }
+                )
+            )
+            calls: list[tuple[str, bool]] = []
+
+            with patch(
+                "quant_rabbit.guardian_action_cycle._risk_result",
+                return_value={"status": "ALLOWED", "allowed": True},
+            ):
+                result = run_guardian_action_cycle(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                    },
+                    command_runner=_command_ok,
+                    gateway_runner=_gateway(calls, status="SENT"),
+                )
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("GUARDIAN_ACTION_TECHNICAL_INPUT_STALE", codes)
+            self.assertEqual(calls, [])
+
+    def test_receipt_event_intent_pair_or_side_mismatch_blocks_gateway(self) -> None:
+        for receipt_overrides, expected_code in (
+            ({"pair": "GBP_USD"}, "GUARDIAN_ACTION_ENTRY_PAIR_MISMATCH"),
+            ({"side": "SHORT"}, "GUARDIAN_ACTION_ENTRY_SIDE_MISMATCH"),
+        ):
+            with self.subTest(receipt_overrides=receipt_overrides), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp), receipt_overrides=receipt_overrides)
+                calls: list[tuple[str, bool]] = []
+
+                with patch(
+                    "quant_rabbit.guardian_action_cycle._risk_result",
+                    return_value={"status": "ALLOWED", "allowed": True},
+                ):
+                    result = run_guardian_action_cycle(
+                        paths=paths,
+                        now=NOW,
+                        env={
+                            "QR_LIVE_ENABLED": "1",
+                            "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                            "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        },
+                        command_runner=_command_ok,
+                        gateway_runner=_gateway(calls, status="SENT"),
+                    )
+
+                codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertIn(expected_code, codes)
+                self.assertEqual(calls, [])
+
+    def test_trade_receipt_cannot_upgrade_hold_or_directionless_event(self) -> None:
+        for event_overrides, expected_code in (
+            (
+                {"action_hint": "HOLD"},
+                "GUARDIAN_ACTION_EVENT_DOES_NOT_AUTHORIZE_ENTRY",
+            ),
+            (
+                {"direction": None},
+                "GUARDIAN_ACTION_EVENT_DIRECTION_REQUIRED",
+            ),
+        ):
+            with self.subTest(event_overrides=event_overrides), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp), event_overrides=event_overrides)
+                calls: list[tuple[str, bool]] = []
+
+                with patch(
+                    "quant_rabbit.guardian_action_cycle._risk_result",
+                    return_value={"status": "ALLOWED", "allowed": True},
+                ):
+                    result = run_guardian_action_cycle(
+                        paths=paths,
+                        now=NOW,
+                        env={
+                            "QR_LIVE_ENABLED": "1",
+                            "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                            "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        },
+                        command_runner=_command_ok,
+                        gateway_runner=_gateway(calls, status="SENT"),
+                    )
+
+                codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertIn(expected_code, codes)
+                self.assertEqual(calls, [])
+
+    def test_current_raw_technical_event_cannot_replace_persisted_state_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            paths.event_state.write_text("{}")
+            events_payload = json.loads(paths.events.read_text())
+            events_payload["events"].append(
+                {
+                    "event_id": "raw-technical",
+                    "event_type": "TECHNICAL_STATE_CHANGE",
+                    "pair": "EUR_USD",
+                    "action_hint": "NO_ACTION",
+                    "last_seen_at_utc": NOW.isoformat(),
+                }
+            )
+            paths.events.write_text(json.dumps(events_payload))
+            calls: list[tuple[str, bool]] = []
+
+            with patch(
+                "quant_rabbit.guardian_action_cycle._risk_result",
+                return_value={"status": "ALLOWED", "allowed": True},
+            ):
+                result = run_guardian_action_cycle(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                    },
+                    command_runner=_command_ok,
+                    gateway_runner=_gateway(calls, status="SENT"),
+                )
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("GUARDIAN_TECHNICAL_STATE_UNAVAILABLE", codes)
+            self.assertEqual(calls, [])
+
+    def test_missing_or_stale_technical_state_blocks_gateway(self) -> None:
+        for state_payload, events_generated_at in (
+            ({}, None),
+            (
+                {
+                    "generated_at_utc": (NOW - timedelta(minutes=10)).isoformat(),
+                    "events": {
+                        "EUR_USD|technical": {
+                            "event_type": "TECHNICAL_STATE_CHANGE",
+                            "pair": "EUR_USD",
+                        }
+                    },
+                },
+                (NOW - timedelta(minutes=10)).isoformat(),
+            ),
+        ):
+            with self.subTest(state_payload=state_payload), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp))
+                paths.event_state.write_text(json.dumps(state_payload))
+                events_payload = json.loads(paths.events.read_text())
+                if events_generated_at is None:
+                    events_payload.pop("generated_at_utc", None)
+                else:
+                    events_payload["generated_at_utc"] = events_generated_at
+                paths.events.write_text(json.dumps(events_payload))
+                calls: list[tuple[str, bool]] = []
+
+                with patch(
+                    "quant_rabbit.guardian_action_cycle._risk_result",
+                    return_value={"status": "ALLOWED", "allowed": True},
+                ):
+                    result = run_guardian_action_cycle(
+                        paths=paths,
+                        now=NOW,
+                        env={
+                            "QR_LIVE_ENABLED": "1",
+                            "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                            "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        },
+                        command_runner=_command_ok,
+                        gateway_runner=_gateway(calls, status="SENT"),
+                    )
+
+                codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertIn("GUARDIAN_TECHNICAL_STATE_UNAVAILABLE", codes)
+                self.assertEqual(calls, [])
+
+    def test_missing_lane_or_risk_exception_never_calls_gateway(self) -> None:
+        cases = (
+            (
+                {"lane_id": "missing-lane"},
+                None,
+            ),
+            (
+                {},
+                {
+                    "status": "REJECTED",
+                    "issues": [{"code": "RISK_ENGINE_EXCEPTION"}],
+                },
+            ),
+            ({}, {"status": "ALLOWED", "allowed": False}),
+            ({}, {"status": "READY", "allowed": True}),
+        )
+        for receipt_overrides, mocked_risk in cases:
+            with self.subTest(receipt_overrides=receipt_overrides), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp), receipt_overrides=receipt_overrides)
+                calls: list[tuple[str, bool]] = []
+                risk_patch = (
+                    patch(
+                        "quant_rabbit.guardian_action_cycle._risk_result",
+                        return_value=mocked_risk,
+                    )
+                    if mocked_risk is not None
+                    else patch(
+                        "quant_rabbit.guardian_action_cycle.RiskEngine.validate",
+                        side_effect=RuntimeError("risk failure"),
+                    )
+                )
+                with risk_patch:
+                    result = run_guardian_action_cycle(
+                        paths=paths,
+                        now=NOW,
+                        env={
+                            "QR_LIVE_ENABLED": "1",
+                            "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                            "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        },
+                        command_runner=_command_ok,
+                        gateway_runner=_gateway(calls, status="SENT"),
+                    )
+
+                codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertIn("RISK_ENGINE_NOT_ALLOWED", codes)
+                self.assertEqual(calls, [])
+
     def test_action_cycle_does_not_call_direct_oanda_write_methods(self) -> None:
         source = (ROOT / "src" / "quant_rabbit" / "guardian_action_cycle.py").read_text()
 
@@ -342,6 +584,22 @@ def _fixture(
             }
         )
     paths.events.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "events": [event]}))
+    paths.event_state.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": NOW.isoformat(),
+                "events": {
+                    "EUR_USD|technical": {
+                        "event_id": "technical-1",
+                        "event_type": "TECHNICAL_STATE_CHANGE",
+                        "pair": "EUR_USD",
+                        "action_hint": "NO_ACTION",
+                        "last_seen_at_utc": NOW.isoformat(),
+                    }
+                },
+            }
+        )
+    )
     paths.escalation.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "wake_gpt": True, "events_to_review": [event]}))
     paths.action_receipt.write_text(
         json.dumps(

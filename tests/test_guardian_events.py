@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import quant_rabbit.guardian_events as guardian_events_module
+from quant_rabbit.analysis.candles import _technical_candles_from_payload
 from quant_rabbit.cli import main
 from quant_rabbit.guardian_events import (
     build_guardian_trigger_contract,
@@ -19,6 +20,8 @@ from quant_rabbit.guardian_events import (
     write_guardian_trigger_contract_report,
 )
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.risk import RiskPolicy
 
 
 NOW = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
@@ -651,6 +654,536 @@ class GuardianEventRouterTest(unittest.TestCase):
             )
         )
 
+    def test_current_integrity_block_emits_stale_input_not_technical_state(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": -30000,
+                    "owner": "operator_manual",
+                }
+            ]
+        )
+        charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+        m5 = next(
+            view
+            for view in charts["charts"][0]["views"]
+            if view["granularity"] == "M5"
+        )
+        m5["recent_candles"] = []
+        m5["candle_integrity"] = {
+            "evaluation_status": "BLOCKED",
+            "forecast_blocking": True,
+            "blocking_codes": ["TECHNICAL_CANDLE_SPREAD_CONTAMINATED"],
+            "latest_complete_timestamp_utc": (NOW - timedelta(minutes=5)).isoformat(),
+            "recent_clean_tail_count": 0,
+            "recent_tail_state": "SPREAD_CONTAMINATED",
+        }
+        charts["charts"][0]["technical_candle_integrity"] = {
+            "evaluation_status": "BLOCKED",
+            "forecast_blocking": True,
+            "blocking_codes": ["TECHNICAL_CANDLE_SPREAD_CONTAMINATED"],
+        }
+
+        events = detect_guardian_events(
+            inputs={"snapshot": snapshot, "pair_charts": charts},
+            now=NOW,
+        )
+
+        technical = [event for event in events if event.event_type.startswith("TECHNICAL_")]
+        self.assertEqual([event.event_type for event in technical], ["TECHNICAL_INPUT_STALE"])
+        self.assertEqual(
+            technical[0].details["status"],
+            "TECHNICAL_CANDLE_INTEGRITY_BLOCKED",
+        )
+        self.assertEqual(technical[0].details["blocked_timeframes"], ["M5"])
+        self.assertEqual(
+            technical[0].details["blocking_codes"],
+            ["TECHNICAL_CANDLE_SPREAD_CONTAMINATED"],
+        )
+        self.assertEqual(technical[0].action_hint, "HOLD")
+        self.assertFalse(technical[0].details["live_permission_allowed"])
+
+    def test_external_freshness_receipt_revalidates_each_timeframe_clock(self) -> None:
+        charts = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M1", "M5", "M15"),
+        )
+        charts["charts"][0]["guardian_events"] = [
+            {
+                "event_type": "SQUEEZE_RELEASE",
+                "direction": "LONG",
+                "thesis": "must not bypass stale M1 evidence",
+                "price_zone": "M1 release",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        ]
+        pair_charts_sha256 = "a" * 64
+        freshness = {
+            "checked_at_utc": NOW.isoformat(),
+            "source_generated_at_utc": NOW.isoformat(),
+            "source_pair_charts_sha256": pair_charts_sha256,
+            "rows": [
+                {
+                    "pair": "EUR_USD",
+                    "timeframe": timeframe,
+                    "status": "FRESH",
+                    "max_age_seconds": max_age,
+                    "latest_complete_candle_closed_at_utc": closed_at.isoformat(),
+                }
+                for timeframe, max_age, closed_at in (
+                    ("M1", 120.0, NOW - timedelta(minutes=20)),
+                    ("M5", 600.0, NOW),
+                    ("M15", 1800.0, NOW),
+                )
+            ],
+        }
+
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "chart_freshness": freshness,
+                "chart_freshness_required": True,
+                "pair_charts_sha256": pair_charts_sha256,
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+        self.assertEqual(
+            events[0].details["status"],
+            "GUARDIAN_CHART_FRESHNESS_BLOCKED",
+        )
+        self.assertIn(
+            "M1_CLOSED_AT_STALE",
+            events[0].details["freshness_issue"]["reasons"],
+        )
+
+    def test_external_freshness_receipt_accepts_exact_current_three_timeframe_binding(self) -> None:
+        charts = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M1", "M5", "M15"),
+        )
+        pair_charts_sha256 = "a" * 64
+
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "chart_freshness": _external_freshness_receipt(
+                    pair_charts_sha256=pair_charts_sha256,
+                ),
+                "chart_freshness_required": True,
+                "pair_charts_sha256": pair_charts_sha256,
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_STATE_CHANGE"],
+        )
+
+    def test_external_freshness_receipt_rejects_pair_chart_sha_mismatch(self) -> None:
+        charts = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M1", "M5", "M15"),
+        )
+
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "chart_freshness": _external_freshness_receipt(
+                    pair_charts_sha256="a" * 64,
+                ),
+                "chart_freshness_required": True,
+                "pair_charts_sha256": "b" * 64,
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+        self.assertIn(
+            "PAIR_CHART_SHA256_BINDING_MISMATCH",
+            events[0].details["freshness_issue"]["reasons"],
+        )
+
+    def test_router_integrity_mode_requires_canonical_receipts_for_all_fast_views(self) -> None:
+        charts = _technical_chart_payload(
+            mid=1.17305,
+            generated_at=NOW,
+            timeframes=("M1", "M5", "M15"),
+        )
+        charts["charts"][0]["guardian_events"] = [
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "direction": "LONG",
+                "thesis": "receipt-less entry must stay blocked",
+                "price_zone": "M5 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        ]
+
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "technical_integrity_required": True,
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+        self.assertEqual(
+            events[0].details["status"],
+            "TECHNICAL_CANDLE_INTEGRITY_RECEIPT_INVALID",
+        )
+        self.assertEqual(
+            events[0].details["integrity_issues"],
+            ["M1_RECEIPT_INVALID", "M5_RECEIPT_INVALID", "M15_RECEIPT_INVALID"],
+        )
+
+    def test_router_integrity_mode_accepts_current_canonical_three_timeframe_receipts(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": _canonical_integrity_chart_payload(),
+                "technical_integrity_required": True,
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_STATE_CHANGE"],
+        )
+
+    def test_stale_canonical_receipts_preserve_block_and_suppress_entry_without_external_proof(self) -> None:
+        charts = _canonical_integrity_chart_payload(stale_by=timedelta(minutes=20))
+        charts["charts"][0]["guardian_events"] = [
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "direction": "LONG",
+                "thesis": "stale receipt must not authorize entry",
+                "price_zone": "M5 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        ]
+
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "technical_integrity_required": True,
+            },
+            now=NOW,
+        )
+        _escalation, state = evaluate_guardian_escalation(
+            events=events,
+            previous_state={
+                "generated_at_utc": (NOW - timedelta(minutes=1)).isoformat(),
+                "events": {
+                    "EUR_USD|prior-stale": {
+                        "event_type": "TECHNICAL_INPUT_STALE",
+                        "pair": "EUR_USD",
+                        "last_seen_at_utc": (NOW - timedelta(minutes=1)).isoformat(),
+                    }
+                },
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["TECHNICAL_INPUT_STALE"],
+        )
+        self.assertIn("M1_LATEST_COMPLETE_STALE", events[0].details["integrity_issues"])
+        self.assertIn("M5_LATEST_COMPLETE_STALE", events[0].details["integrity_issues"])
+        self.assertTrue(
+            any(
+                item.get("event_type") == "TECHNICAL_INPUT_STALE"
+                for item in state["events"].values()
+            )
+        )
+
+    def test_integrity_block_suppresses_same_pair_entries_but_keeps_other_pair_and_safety(self) -> None:
+        charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+        chart = charts["charts"][0]
+        chart["chart_story"] = "failed acceptance below the major figure"
+        chart["guardian_events"] = [
+            {
+                "event_type": "SQUEEZE_RELEASE",
+                "direction": "LONG",
+                "thesis": "same-pair squeeze",
+                "price_zone": "M5 release",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        ]
+        m5 = next(view for view in chart["views"] if view["granularity"] == "M5")
+        m5["recent_candles"] = []
+        m5["candle_integrity"] = {
+            "evaluation_status": "BLOCKED",
+            "forecast_blocking": True,
+            "blocking_codes": ["TECHNICAL_CANDLE_SPREAD_CONTAMINATED"],
+            "latest_complete_timestamp_utc": (NOW - timedelta(minutes=5)).isoformat(),
+            "recent_clean_tail_count": 0,
+            "recent_tail_state": "SPREAD_CONTAMINATED",
+        }
+        order_intents = {
+            "results": [
+                {
+                    "lane_id": "eur-entry",
+                    "status": "LIVE_READY",
+                    "intent": {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "thesis": "same-pair intent",
+                        "entry": 1.17,
+                        "metadata": {"squeeze_release": True},
+                    },
+                },
+                {
+                    "lane_id": "gbp-entry",
+                    "status": "LIVE_READY",
+                    "intent": {
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "thesis": "unrelated intent",
+                        "entry": 1.31,
+                        "metadata": {"squeeze_release": True},
+                    },
+                },
+            ]
+        }
+        events = detect_guardian_events(
+            inputs={
+                "snapshot": _snapshot(),
+                "pair_charts": charts,
+                "order_intents": order_intents,
+                "position_management": {
+                    "positions": [
+                        {
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "trade_id": "safe-reduce",
+                            "action": "RECOMMEND_CLOSE",
+                            "thesis": "risk exit",
+                            "reasons": ["structural BROKEN"],
+                        }
+                    ]
+                },
+                "market_context_matrix": {
+                    "pairs": {
+                        "EUR_USD": {
+                            "LONG": {
+                                "theme_confirmation": True,
+                                "support_count": 3,
+                                "reject_count": 0,
+                            }
+                        }
+                    }
+                },
+            },
+            now=NOW,
+        )
+
+        self.assertFalse(
+            any(
+                event.pair == "EUR_USD" and event.action_hint in {"TRADE", "ADD"}
+                for event in events
+            )
+        )
+        self.assertTrue(
+            any(event.pair == "GBP_USD" and event.action_hint == "TRADE" for event in events)
+        )
+        self.assertTrue(
+            any(event.pair == "EUR_USD" and event.action_hint == "REDUCE" for event in events)
+        )
+
+    def test_retained_stale_baseline_suppresses_rotated_out_pair_entry(self) -> None:
+        stale = guardian_events_module._event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair="EUR_USD",
+            direction=None,
+            thesis="technical input",
+            price_zone="quarantined",
+            severity="P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="NO_ACTION",
+            now=NOW,
+        )
+        _, previous_state = evaluate_guardian_escalation(
+            events=[stale],
+            previous_state={},
+            now=NOW,
+        )
+        entry = guardian_events_module._event(
+            event_type="SQUEEZE_RELEASE",
+            pair="EUR_USD",
+            direction="LONG",
+            thesis="rotated-out stale pair",
+            price_zone="M5 release",
+            severity="P1",
+            recommended_review_type="ENTRY_REVIEW",
+            action_hint="TRADE",
+            now=NOW + timedelta(minutes=1),
+        )
+
+        escalation, next_state = evaluate_guardian_escalation(
+            events=[entry],
+            previous_state=previous_state,
+            now=NOW + timedelta(minutes=1),
+        )
+
+        self.assertEqual(escalation["technical_input_blocked_pairs"], ["EUR_USD"])
+        self.assertFalse(
+            any(item.get("action_hint") == "TRADE" for item in escalation["events_to_review"])
+        )
+        self.assertTrue(
+            any(
+                item.get("event_type") == "TECHNICAL_INPUT_STALE"
+                for item in next_state["events"].values()
+            )
+        )
+
+    def test_technical_block_keeps_explicit_no_add_hold_signal(self) -> None:
+        stale = guardian_events_module._event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair="EUR_USD",
+            direction=None,
+            thesis="technical input",
+            price_zone="quarantined",
+            severity="P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="NO_ACTION",
+            now=NOW,
+        )
+        no_add = guardian_events_module._event(
+            event_type="CONTRACT_NO_ADD_TRIGGER",
+            pair="EUR_USD",
+            direction="LONG",
+            thesis="do not add",
+            price_zone="no-add boundary",
+            severity="P1",
+            recommended_review_type="ADD_REVIEW",
+            action_hint="HOLD",
+            thesis_state="WOUNDED",
+            now=NOW,
+        )
+
+        filtered = guardian_events_module._suppress_entry_events_for_technical_blocks(
+            [stale, no_add],
+            blocked_pairs={"EUR_USD"},
+        )
+
+        self.assertEqual({event.event_type for event in filtered}, {
+            "TECHNICAL_INPUT_STALE",
+            "CONTRACT_NO_ADD_TRIGGER",
+        })
+
+    def test_trade_receipt_rejects_same_pair_stale_sibling(self) -> None:
+        entry = guardian_events_module._event(
+            event_type="SQUEEZE_RELEASE",
+            pair="EUR_USD",
+            direction="LONG",
+            thesis="entry",
+            price_zone="M5 release",
+            severity="P1",
+            recommended_review_type="ENTRY_REVIEW",
+            action_hint="TRADE",
+            thesis_state="ALIVE",
+            now=NOW,
+        )
+        stale = guardian_events_module._event(
+            event_type="TECHNICAL_INPUT_STALE",
+            pair="EUR_USD",
+            direction=None,
+            thesis="technical input",
+            price_zone="quarantined",
+            severity="P2",
+            recommended_review_type="TUNING_REVIEW",
+            action_hint="NO_ACTION",
+            now=NOW,
+        )
+        review = review_guardian_action_receipt(
+            {
+                "action": "TRADE",
+                "new_information": True,
+                "event_id": entry.event_id,
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "thesis_state": "ALIVE",
+                "reason": "fresh signal",
+                "invalidation": "break failed",
+                "harvest_trigger": "target reached",
+                "gateway_required": True,
+            },
+            events=[entry, stale],
+            selected_event=entry,
+            now=NOW,
+        )
+
+        self.assertEqual(review["status"], "REJECTED")
+        self.assertIn("GUARDIAN_ACTION_TECHNICAL_INPUT_STALE", _issue_codes(review))
+
+    def test_trade_receipt_cannot_upgrade_hold_or_directionless_event(self) -> None:
+        for action_hint, direction, expected_code in (
+            ("HOLD", "LONG", "GUARDIAN_ACTION_EVENT_DOES_NOT_AUTHORIZE_ENTRY"),
+            ("TRADE", None, "GUARDIAN_ACTION_EVENT_DIRECTION_REQUIRED"),
+        ):
+            with self.subTest(action_hint=action_hint, direction=direction):
+                event = guardian_events_module._event(
+                    event_type="FAILED_ACCEPTANCE",
+                    pair="EUR_USD",
+                    direction=direction,
+                    thesis="review only",
+                    price_zone="review zone",
+                    severity="P1",
+                    recommended_review_type="ENTRY_REVIEW",
+                    action_hint=action_hint,
+                    thesis_state="ALIVE",
+                    now=NOW,
+                )
+                review = review_guardian_action_receipt(
+                    {
+                        "action": "TRADE",
+                        "new_information": True,
+                        "event_id": event.event_id,
+                        "pair": "EUR_USD",
+                        "side": direction or "LONG",
+                        "thesis_state": "ALIVE",
+                        "reason": "attempted upgrade",
+                        "invalidation": "invalidated",
+                        "harvest_trigger": "harvest",
+                        "gateway_required": True,
+                    },
+                    events=[event],
+                    selected_event=event,
+                    now=NOW,
+                )
+
+                self.assertEqual(review["status"], "REJECTED")
+                self.assertIn(expected_code, _issue_codes(review))
+
     def test_missing_complete_flag_cannot_be_used_as_closed_candle_watermark(self) -> None:
         charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
         for view in charts["charts"][0]["views"]:
@@ -1260,6 +1793,25 @@ class GuardianEventRouterTest(unittest.TestCase):
             [event.event_type for event in events if event.event_type.startswith("TECHNICAL_")],
             ["TECHNICAL_INPUT_STALE"],
         )
+
+    def test_naive_or_future_chart_generated_at_is_fail_closed(self) -> None:
+        for generated_at, expected_status in (
+            ("2026-06-30T03:30:00", "INVALID_GENERATED_AT"),
+            ((NOW + timedelta(minutes=10)).isoformat(), "FUTURE_GENERATED_AT"),
+        ):
+            with self.subTest(generated_at=generated_at):
+                charts = _technical_chart_payload(mid=1.17305, generated_at=NOW)
+                charts["generated_at_utc"] = generated_at
+                events = detect_guardian_events(
+                    inputs={"snapshot": _snapshot(), "pair_charts": charts},
+                    now=NOW,
+                )
+
+                technical = [
+                    event for event in events if event.event_type == "TECHNICAL_INPUT_STALE"
+                ]
+                self.assertEqual(len(technical), 1)
+                self.assertEqual(technical[0].details["status"], expected_status)
 
     def test_accepted_harvest_ack_does_not_retrigger_price_entered_every_probe(self) -> None:
         events = _events_from_chart(
@@ -3138,6 +3690,122 @@ def _technical_chart_payload(
             {
                 "pair": "EUR_USD",
                 "dominant_regime": regime,
+                "views": views,
+            }
+        ],
+    }
+
+
+def _external_freshness_receipt(*, pair_charts_sha256: str) -> dict:
+    return {
+        "checked_at_utc": NOW.isoformat(),
+        "source_generated_at_utc": NOW.isoformat(),
+        "source_pair_charts_sha256": pair_charts_sha256,
+        "rows": [
+            {
+                "pair": "EUR_USD",
+                "timeframe": timeframe,
+                "status": "FRESH",
+                "max_age_seconds": max_age,
+                "latest_complete_candle_closed_at_utc": NOW.isoformat(),
+            }
+            for timeframe, max_age in (
+                ("M1", 120.0),
+                ("M5", 600.0),
+                ("M15", 1800.0),
+            )
+        ],
+    }
+
+
+def _canonical_integrity_chart_payload(
+    *,
+    stale_by: timedelta = timedelta(0),
+) -> dict:
+    pair = "EUR_USD"
+    factor = instrument_pip_factor(pair)
+    normal_spread_pips = NORMAL_SPREAD_PIPS[pair]
+    half_spread = normal_spread_pips / factor / 2.0
+    base = 1.17305
+    views = []
+    for timeframe, seconds in (("M1", 60), ("M5", 300), ("M15", 900)):
+        reference = NOW - stale_by
+        latest_epoch = ((int(reference.timestamp()) - 1) // seconds) * seconds
+        latest = datetime.fromtimestamp(latest_epoch, tz=timezone.utc)
+        candles = []
+        for index in range(120):
+            started = latest - timedelta(seconds=seconds * (119 - index))
+            bid = f"{base - half_spread:.5f}"
+            ask = f"{base + half_spread:.5f}"
+            mid = f"{base:.5f}"
+            candles.append(
+                {
+                    "time": started.isoformat().replace("+00:00", "Z"),
+                    "complete": True,
+                    "volume": 1,
+                    "mid": {"o": mid, "h": mid, "l": mid, "c": mid},
+                    "bid": {"o": bid, "h": bid, "l": bid, "c": bid},
+                    "ask": {"o": ask, "h": ask, "l": ask, "c": ask},
+                }
+            )
+        batch = _technical_candles_from_payload(
+            {
+                "instrument": pair,
+                "granularity": timeframe,
+                "candles": candles,
+            },
+            pair=pair,
+            granularity=timeframe,
+            requested_count=120,
+            pip_factor=factor,
+            normal_spread_pips=normal_spread_pips,
+            max_spread_multiple=RiskPolicy().max_spread_multiple,
+        )
+        integrity = dict(batch.integrity)
+        clean_tail_count = integrity["recent_clean_tail_count"]
+        published = list(batch.candles[-clean_tail_count:])[-30:]
+        views.append(
+            {
+                "granularity": timeframe,
+                "recent_candles": [
+                    {
+                        "t": candle.timestamp_utc.isoformat(),
+                        "complete": candle.complete,
+                        "o": candle.open,
+                        "h": candle.high,
+                        "l": candle.low,
+                        "c": candle.close,
+                        "v": candle.volume,
+                    }
+                    for candle in published
+                ],
+                "indicators": {
+                    "candles_count": clean_tail_count,
+                    "close": base,
+                    "atr_pips": 2.0,
+                    "regime_quantile": "NORMAL",
+                    "supertrend_dir": -1,
+                    "linreg_slope_20": -1.0,
+                },
+                "family_scores": {
+                    "trend_score": -0.8,
+                    "mean_rev_score": -0.6,
+                    "breakout_score": 0.7,
+                },
+                "candle_integrity": integrity,
+            }
+        )
+    return {
+        "generated_at_utc": NOW.isoformat(),
+        "guardian_monitor_pairs": [pair],
+        "guardian_monitor_scope": {
+            pair: ["configured_rotation", "canonical_integrity_fixture"]
+        },
+        "charts": [
+            {
+                "pair": pair,
+                "mid": base,
+                "dominant_regime": "TREND_DOWN",
                 "views": views,
             }
         ],
