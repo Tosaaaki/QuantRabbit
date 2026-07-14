@@ -6,12 +6,14 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from quant_rabbit.analysis.market_context_matrix import pair_charts_artifact_binding
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.cli import (
     DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST,
     _LIVE_ARTIFACT_WRITER_COMMANDS,
@@ -19,22 +21,30 @@ from quant_rabbit.cli import (
     _LIVE_RUNTIME_COMMANDS,
     _SL_FREE_RUNTIME_DEFAULTS,
     _auto_refresh_market_evidence_if_required,
+    _broker_snapshot_refresh,
     _direct_autotrade_audit_sidecar_steps,
     _fresh_partial_close_forbidden_trade_reasons,
     _post_autotrade_failure_sidecar_steps,
     _partial_close_receipt_actions,
     _pre_entry_projection_verification_if_required,
+    _refresh_daily_target_after_snapshot_refresh_if_required,
     _refresh_current_forecast_history,
     _resolve_audit_execution_ledger_db,
     _resolve_audit_sidecar_path,
     _run_direct_autotrade_audit_sidecars,
     _snapshot_from_json,
     _snapshot_to_json,
+    _trusted_consolidated_intent_preflight,
     main,
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
-from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
+from quant_rabbit.paths import (
+    DEFAULT_CAPITAL_FLOWS,
+    DEFAULT_CAPTURE_ECONOMICS,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
+)
 from quant_rabbit.profitability_acceptance import (
     ProfitabilityAcceptanceAuditor,
     _bidask_rule_findings,
@@ -51,6 +61,46 @@ _EQUITY_DERIVED_RISK_ARGS = (
     "--risk-equity-jpy",
     "200000",
 )
+
+
+def _write_bound_market_context_matrix(
+    root: Path,
+    *,
+    matrix_generated_at_utc: str,
+    pair_charts_generated_at_utc: str = "2026-06-08T08:00:00+00:00",
+) -> tuple[Path, Path]:
+    pair_charts_path = root / "pair_charts.json"
+    pair_charts_payload = {
+        "generated_at_utc": pair_charts_generated_at_utc,
+        "pairs_requested": len(DEFAULT_TRADER_PAIRS),
+        "pairs_succeeded": len(DEFAULT_TRADER_PAIRS),
+        "pairs_failed": 0,
+        "partial": False,
+        "charts": [
+            {"pair": pair, "long_score": 0.6, "short_score": 0.4}
+            for pair in DEFAULT_TRADER_PAIRS
+        ],
+    }
+    pair_charts_raw = (
+        json.dumps(pair_charts_payload, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    pair_charts_path.write_bytes(pair_charts_raw)
+    binding = pair_charts_artifact_binding(pair_charts_payload, raw=pair_charts_raw)
+    assert binding is not None
+    matrix_path = root / "market_context_matrix.json"
+    matrix_path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": matrix_generated_at_utc,
+                "pair_charts_binding": binding,
+                "pairs": {
+                    pair: {"LONG": {"evidence_ref": f"matrix:{pair}:LONG"}}
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
+            }
+        )
+    )
+    return matrix_path, pair_charts_path
 
 
 class PartialCloseOwnershipBoundaryTest(unittest.TestCase):
@@ -4933,6 +4983,250 @@ class CliHelpTest(unittest.TestCase):
             max_candidates=56,
         )
 
+    def test_generate_intents_consolidated_preflight_skips_slow_internal_reads(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=0,
+                generated=0,
+                needs_snapshot=False,
+                dry_run_passed=0,
+                live_ready=0,
+            )
+            stdout = io.StringIO()
+
+            def market_refresh(**_: object) -> dict[str, str]:
+                calls.append("market_validation")
+                return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
+
+            def campaign_refresh(**_: object) -> dict[str, str]:
+                calls.append("campaign")
+                return {"status": "SKIPPED", "reason": "campaign_plan_current"}
+
+            def generator_run(**_: object) -> SimpleNamespace:
+                calls.append("generator")
+                return summary
+
+            with mock.patch(
+                "quant_rabbit.cli._trusted_consolidated_intent_preflight",
+                return_value=True,
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                side_effect=market_refresh,
+            ), mock.patch(
+                "quant_rabbit.cli._reanchor_reused_market_evidence_after_preflight"
+            ) as reanchor, mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required"
+            ) as ledger_sync, mock.patch(
+                "quant_rabbit.cli._pre_entry_capture_economics_refresh_if_required"
+            ) as capture_refresh, mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required"
+            ) as projection_refresh, mock.patch(
+                "quant_rabbit.cli._auto_refresh_campaign_plan_if_required",
+                side_effect=campaign_refresh,
+            ), mock.patch(
+                "quant_rabbit.cli._refresh_snapshot_before_intent_generation_if_required",
+                return_value=None,
+            ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.side_effect = generator_run
+                code = main(
+                    [
+                        "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(root / "data" / "broker_snapshot.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--reuse-market-artifacts",
+                        "--consolidated-preflight-complete",
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["market_validation", "campaign", "generator"])
+        reanchor.assert_not_called()
+        ledger_sync.assert_not_called()
+        capture_refresh.assert_not_called()
+        projection_refresh.assert_not_called()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            payload["projection_verification"]["reason"],
+            "consolidated_preflight_complete_under_inherited_live_lock",
+        )
+
+    def test_generate_intents_direct_reuse_reanchors_after_slow_preflight(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=0,
+                generated=0,
+                needs_snapshot=False,
+                dry_run_passed=0,
+                live_ready=0,
+            )
+            stdout = io.StringIO()
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_REQUIRE_TELEMETRY_FOR_LIVE": "1"},
+                clear=False,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+                side_effect=lambda **_: calls.append("ledger") or {"status": "SYNCED"},
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_capture_economics_refresh_if_required",
+                side_effect=lambda **_: calls.append("capture") or {"status": "OK"},
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+                side_effect=lambda **_: calls.append("projection") or {"status": "OK"},
+            ), mock.patch(
+                "quant_rabbit.cli._reanchor_reused_market_evidence_after_preflight",
+                side_effect=lambda **_: calls.append("reanchor") or {"status": "REFRESHED"},
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                side_effect=lambda **_: calls.append("market_validation") or {"status": "SKIPPED"},
+            ), mock.patch(
+                "quant_rabbit.cli._refresh_snapshot_after_market_evidence_if_required",
+                side_effect=lambda **_: calls.append("snapshot") or None,
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_campaign_plan_if_required",
+                side_effect=lambda **_: calls.append("campaign") or {"status": "SKIPPED"},
+            ), mock.patch(
+                "quant_rabbit.cli._refresh_snapshot_before_intent_generation_if_required",
+                return_value=None,
+            ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.side_effect = (
+                    lambda **_: calls.append("generator") or summary
+                )
+                code = main(
+                    [
+                        "generate-intents",
+                        *_EQUITY_DERIVED_RISK_ARGS,
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(root / "data" / "broker_snapshot.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--reuse-market-artifacts",
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            calls,
+            [
+                "ledger",
+                "capture",
+                "projection",
+                "reanchor",
+                "market_validation",
+                "snapshot",
+                "campaign",
+                "generator",
+            ],
+        )
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["market_evidence_refresh"]["status"], "REFRESHED")
+        self.assertEqual(payload["market_evidence_refresh"]["reuse_validation_status"], "SKIPPED")
+
+    def test_generate_intents_rejects_untrusted_consolidated_preflight_marker(self) -> None:
+        stdout = io.StringIO()
+        with mock.patch(
+            "quant_rabbit.cli._trusted_consolidated_intent_preflight",
+            return_value=False,
+        ), mock.patch(
+            "quant_rabbit.cli._auto_refresh_market_evidence_if_required"
+        ) as market_refresh, redirect_stdout(stdout):
+            code = main(
+                [
+                    "generate-intents",
+                    *_EQUITY_DERIVED_RISK_ARGS,
+                    "--reuse-market-artifacts",
+                    "--consolidated-preflight-complete",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        market_refresh.assert_not_called()
+        self.assertIn("not bound to the inherited live-cycle lock", json.loads(stdout.getvalue())["error"])
+
+    def test_consolidated_preflight_trust_requires_cycle_step_run_id(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "QR_AUTOTRADE_LOCK_HELD": "1",
+                "QR_AUTOTRADE_LOCK_DIR": "/tmp/quant-rabbit-test-lock",
+                "QR_AUTOTRADE_LOCK_OWNER_TOKEN": "owner-token",
+                "QR_CYCLE_STEP_RUN_ID": "",
+            },
+            clear=False,
+        ), mock.patch(
+            "quant_rabbit.cli._cycle_runtime_lock_env_is_valid",
+            return_value=True,
+        ) as lock_valid:
+            trusted = _trusted_consolidated_intent_preflight(True)
+
+        self.assertFalse(trusted)
+        lock_valid.assert_not_called()
+
+    def test_consolidated_preflight_trust_requires_owner_token(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "QR_AUTOTRADE_LOCK_HELD": "1",
+                "QR_AUTOTRADE_LOCK_DIR": "/tmp/quant-rabbit-test-lock",
+                "QR_AUTOTRADE_LOCK_OWNER_TOKEN": "",
+                "QR_CYCLE_STEP_RUN_ID": "cycle-step-run",
+            },
+            clear=False,
+        ), mock.patch(
+            "quant_rabbit.cli._cycle_runtime_lock_env_is_valid",
+            return_value=True,
+        ) as lock_valid:
+            trusted = _trusted_consolidated_intent_preflight(True)
+
+        self.assertFalse(trusted)
+        lock_valid.assert_not_called()
+
+    def test_consolidated_preflight_trust_requires_valid_inherited_lock(self) -> None:
+        lock_dir = "/tmp/quant-rabbit-test-lock"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "QR_AUTOTRADE_LOCK_HELD": "1",
+                "QR_AUTOTRADE_LOCK_DIR": lock_dir,
+                "QR_AUTOTRADE_LOCK_OWNER_TOKEN": "owner-token",
+                "QR_CYCLE_STEP_RUN_ID": "cycle-step-run",
+            },
+            clear=False,
+        ), mock.patch(
+            "quant_rabbit.cli._cycle_runtime_lock_env_is_valid",
+            return_value=True,
+        ) as lock_valid:
+            trusted = _trusted_consolidated_intent_preflight(True)
+
+        self.assertTrue(trusted)
+        lock_valid.assert_called_once_with(Path(lock_dir))
+
     def test_generate_intents_refreshes_memory_health_after_direct_intent_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5556,7 +5850,10 @@ class CliHelpTest(unittest.TestCase):
             fresh_at = datetime.now(timezone.utc)
             fresh_snapshot = BrokerSnapshot(
                 fetched_at_utc=fresh_at,
-                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+                quotes={
+                    pair: Quote(pair, 1.1002, 1.1004, fresh_at)
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
             )
             stdout = io.StringIO()
 
@@ -5599,11 +5896,103 @@ class CliHelpTest(unittest.TestCase):
             reuse_market_artifacts=False,
             market_context_matrix_path=DEFAULT_MARKET_CONTEXT_MATRIX,
         )
-        client_cls.return_value.snapshot.assert_called_once_with(("EUR_USD",))
+        client_cls.return_value.snapshot.assert_called_once_with(DEFAULT_TRADER_PAIRS)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["snapshot_refresh"]["status"], "REFRESHED")
         self.assertEqual(refreshed["fetched_at_utc"], fresh_at.isoformat())
         self.assertEqual(refreshed["quotes"]["EUR_USD"]["bid"], 1.1002)
+
+    def test_generate_intents_stops_when_final_snapshot_refresh_fails(self) -> None:
+        stdout = io.StringIO()
+        with mock.patch(
+            "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+            return_value={"status": "REFRESHED"},
+        ), mock.patch(
+            "quant_rabbit.cli._refresh_snapshot_after_market_evidence_if_required",
+            return_value={"status": "SNAPSHOT_REFRESH_FAILED", "error": "quote fetch failed"},
+        ), mock.patch(
+            "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+            return_value=None,
+        ), mock.patch(
+            "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+            return_value=None,
+        ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+            code = main(
+                [
+                    "generate-intents",
+                    *_EQUITY_DERIVED_RISK_ARGS,
+                    "--no-refresh-market-story",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        generator_cls.assert_not_called()
+        self.assertEqual(json.loads(stdout.getvalue())["error"], "quote fetch failed")
+
+    def test_generate_intents_realigned_target_and_campaign_after_final_snapshot(self) -> None:
+        calls: list[str] = []
+        final_snapshot = {"status": "REFRESHED", "fetched_at_utc": "2026-07-14T06:00:00+00:00"}
+        summary = SimpleNamespace(
+            output_path=Path("data/order_intents.json"),
+            report_path=Path("docs/order_intents_report.md"),
+            candidates_seen=0,
+            generated=0,
+            needs_snapshot=False,
+            dry_run_passed=0,
+            live_ready=0,
+        )
+        stdout = io.StringIO()
+
+        def target_refresh(**kwargs: object) -> dict[str, str] | None:
+            if kwargs.get("snapshot_refresh") is None:
+                return None
+            calls.append("target_final")
+            self.assertEqual(kwargs["snapshot_refresh"], final_snapshot)
+            return {"status": "REFRESHED"}
+
+        with mock.patch.dict(
+            os.environ,
+            {"QR_REQUIRE_TELEMETRY_FOR_LIVE": "1"},
+            clear=False,
+        ), mock.patch(
+            "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+            return_value=None,
+        ), mock.patch(
+            "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+            return_value=None,
+        ), mock.patch(
+            "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+            return_value={"status": "SKIPPED"},
+        ), mock.patch(
+            "quant_rabbit.cli._refresh_snapshot_after_market_evidence_if_required",
+            return_value=None,
+        ), mock.patch(
+            "quant_rabbit.cli._refresh_daily_target_after_snapshot_refresh_if_required",
+            side_effect=target_refresh,
+        ) as target_helper, mock.patch(
+            "quant_rabbit.cli._auto_refresh_campaign_plan_if_required",
+            side_effect=lambda **_: calls.append("campaign") or {"status": "SKIPPED"},
+        ), mock.patch(
+            "quant_rabbit.cli._refresh_snapshot_before_intent_generation_if_required",
+            side_effect=lambda **_: calls.append("snapshot_final") or final_snapshot,
+        ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+            generator_cls.return_value.run.side_effect = (
+                lambda **_: calls.append("generator") or summary
+            )
+            code = main(
+                [
+                    "generate-intents",
+                    *_EQUITY_DERIVED_RISK_ARGS,
+                    "--no-refresh-market-story",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            calls,
+            ["campaign", "snapshot_final", "target_final", "campaign", "generator"],
+        )
+        self.assertEqual(target_helper.call_count, 2)
 
     def test_generate_intents_refreshes_daily_target_after_snapshot_refresh_before_campaign(self) -> None:
         calls: list[str] = []
@@ -5661,7 +6050,10 @@ class CliHelpTest(unittest.TestCase):
             )
             fresh_snapshot = BrokerSnapshot(
                 fetched_at_utc=fresh_at,
-                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+                quotes={
+                    pair: Quote(pair, 1.1002, 1.1004, fresh_at)
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
             )
 
             def target_run(**_: object) -> SimpleNamespace:
@@ -5751,7 +6143,9 @@ class CliHelpTest(unittest.TestCase):
         ledger_cls.assert_called_once_with(
             state_path=target,
             report_path=target.with_suffix(".md"),
+            capital_flows_path=DEFAULT_CAPITAL_FLOWS,
             pace_backtest_path=mock.ANY,
+            execution_ledger_path=DEFAULT_EXECUTION_LEDGER_DB,
         )
         planner_cls.return_value.run.assert_called_once_with(start_balance_jpy=10000.0, target_return_pct=10.0)
         payload = json.loads(stdout.getvalue())
@@ -5768,6 +6162,65 @@ class CliHelpTest(unittest.TestCase):
         )
         self.assertEqual(payload["campaign_refresh"]["status"], "REFRESHED")
         self.assertIn("daily_target_state_newer", payload["campaign_refresh"]["refresh_reasons"])
+
+    def test_snapshot_target_refresh_keeps_account_delta_audit_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            campaign = root / "daily_campaign_plan.json"
+            target = root / "daily_target_state.json"
+            snapshot_path = root / "broker_snapshot.json"
+            target.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": (now + timedelta(hours=9)).date().isoformat(),
+                        "start_balance_jpy": 200_000.0,
+                        "current_equity_jpy": 200_000.0,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": 0.0,
+                        "daily_risk_pct": 10.0,
+                    }
+                )
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=198_500.0,
+                    balance_jpy=198_500.0,
+                    unrealized_pl_jpy=0.0,
+                    last_transaction_id="999",
+                    fetched_at_utc=now,
+                ),
+            )
+            snapshot_path.write_text(_snapshot_to_json(snapshot))
+
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_EXECUTION_LEDGER_DB",
+                root / "missing-execution-ledger.db",
+            ), mock.patch(
+                "quant_rabbit.cli.DEFAULT_CAPITAL_FLOWS",
+                root / "missing-capital-flows.json",
+            ), mock.patch(
+                "quant_rabbit.cli.DEFAULT_AI_TEST_BOT_BACKTEST",
+                root / "missing-pace-backtest.json",
+            ):
+                result = _refresh_daily_target_after_snapshot_refresh_if_required(
+                    snapshot_refresh={"status": "REFRESHED"},
+                    campaign_plan_path=campaign,
+                    snapshot_path=snapshot_path,
+                )
+
+            refreshed = json.loads(target.read_text())
+
+        self.assertEqual(result["status"], "REFRESHED")
+        self.assertEqual(result["per_trade_risk_budget_jpy"], 0.0)
+        self.assertEqual(refreshed["daily_loss_capacity_before_open_jpy"], 0.0)
+        self.assertTrue(
+            any(
+                "CAMPAIGN_ACCOUNT_DELTA_AUDIT_UNAVAILABLE" in blocker
+                for blocker in refreshed["blockers"]
+            )
+        )
 
     def test_generate_intents_refreshes_stale_snapshot_after_projection_preflight(self) -> None:
         calls: list[str] = []
@@ -5803,7 +6256,10 @@ class CliHelpTest(unittest.TestCase):
             )
             fresh_snapshot = BrokerSnapshot(
                 fetched_at_utc=fresh_at,
-                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+                quotes={
+                    pair: Quote(pair, 1.1002, 1.1004, fresh_at)
+                    for pair in DEFAULT_TRADER_PAIRS
+                },
             )
 
             def projection_preflight(**_: object) -> dict[str, str]:
@@ -5987,6 +6443,130 @@ class CliHelpTest(unittest.TestCase):
 
         self.assertEqual(result, {"status": "SKIPPED", "reason": "test_harness"})
 
+    def test_auto_market_evidence_refresh_fetches_pair_charts_after_slow_context(self) -> None:
+        call_order: list[str] = []
+        worker_count = mock.Mock(return_value=2)
+
+        def payload_builder(name: str, payload: dict[str, object]):
+            def build(*_args: object, **_kwargs: object) -> SimpleNamespace:
+                call_order.append(name)
+                return SimpleNamespace(to_dict=lambda: payload)
+
+            return build
+
+        def build_context_assets(*_args: object, **_kwargs: object) -> dict[str, object]:
+            call_order.append("context_assets")
+            return {"charts": [], "issues": []}
+
+        def build_pair_chart(pair: str, **_kwargs: object) -> SimpleNamespace:
+            call_order.append(f"pair_chart:{pair}")
+            return SimpleNamespace(
+                to_dict=lambda: {
+                    "pair": pair,
+                    "long_score": 0.6,
+                    "short_score": 0.4,
+                }
+            )
+
+        def build_matrix(**_kwargs: object) -> dict[str, object]:
+            call_order.append("matrix")
+            return {
+                "pairs": {
+                    "EUR_USD": {
+                        "LONG": {
+                            "supports": [],
+                            "rejects": [],
+                            "warnings": [],
+                            "missing": [],
+                        }
+                    }
+                },
+                "issues": [],
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            patchers = (
+                mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch("quant_rabbit.cli.DEFAULT_TRADER_PAIRS_ARG", "EUR_USD,USD_CAD"),
+                mock.patch("quant_rabbit.cli.DEFAULT_PAIR_CHARTS", Path(tmp) / "pair_charts.json"),
+                mock.patch("quant_rabbit.cli._pair_chart_worker_count", new=worker_count),
+                mock.patch(
+                    "quant_rabbit.cli._broker_instruments_snapshot",
+                    return_value={
+                        "issues": [],
+                        "context_assets_tradeable": [],
+                        "context_assets_not_tradeable": [],
+                    },
+                ),
+                mock.patch("quant_rabbit.cli._write_json"),
+                mock.patch("quant_rabbit.cli._write_broker_instruments_report"),
+                mock.patch(
+                    "quant_rabbit.analysis.context_assets.build_context_asset_charts",
+                    side_effect=build_context_assets,
+                ),
+                mock.patch("quant_rabbit.analysis.context_assets.write_context_asset_charts_report"),
+                mock.patch(
+                    "quant_rabbit.analysis.cross_asset.build_cross_asset_snapshot",
+                    side_effect=payload_builder("cross_asset", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.flow.build_flow_snapshot",
+                    side_effect=payload_builder("flow", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.strength.build_strength_snapshot",
+                    side_effect=payload_builder("strength", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.levels.build_levels_snapshot",
+                    side_effect=payload_builder("levels", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.calendar.build_calendar_snapshot",
+                    side_effect=payload_builder("calendar", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.cot.build_cot_snapshot",
+                    side_effect=payload_builder("cot", {"issues": []}),
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.options.build_option_skew_snapshot",
+                    side_effect=payload_builder("option_skew", {"issues": []}),
+                ),
+                mock.patch("quant_rabbit.analysis.chart_reader.build_pair_chart", side_effect=build_pair_chart),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
+                mock.patch(
+                    "quant_rabbit.analysis.market_context_matrix.build_market_context_matrix",
+                    side_effect=build_matrix,
+                ),
+                mock.patch("quant_rabbit.analysis.market_context_matrix.write_market_context_matrix_report"),
+            )
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            result = _auto_refresh_market_evidence_if_required(label="test")
+            with mock.patch(
+                "quant_rabbit.cli._build_pair_charts_concurrently",
+                return_value=(
+                    [SimpleNamespace(to_dict=lambda: {"pair": "EUR_USD"})],
+                    [{"pair": "USD_CAD", "error": "timeout"}],
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "requires complete pair-chart coverage; received=1/2 failed=USD_CAD",
+                ):
+                    _auto_refresh_market_evidence_if_required(label="test-incomplete")
+
+        first_pair_chart = next(
+            index for index, name in enumerate(call_order) if name.startswith("pair_chart:")
+        )
+        self.assertEqual(result["status"], "REFRESHED")
+        self.assertEqual(worker_count.call_count, 2)
+        worker_count.assert_called_with(None, 2)
+        self.assertGreater(first_pair_chart, call_order.index("option_skew"))
+        self.assertLess(first_pair_chart, call_order.index("matrix"))
+
     def test_autotrade_reuse_market_artifacts_skips_auto_market_refresh(self) -> None:
         summary = type(
             "Summary",
@@ -6036,6 +6616,183 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         refresh.assert_called_once_with(label="autotrade-cycle", reuse_market_artifacts=True)
 
+    def test_autotrade_send_acquires_lock_before_reuse_validation(self) -> None:
+        stdout = io.StringIO()
+        with mock.patch(
+            "quant_rabbit.cli._acquire_cycle_runtime_lock",
+            side_effect=RuntimeError("another live cycle owns the lock"),
+        ) as acquire, mock.patch(
+            "quant_rabbit.cli._auto_refresh_market_evidence_if_required"
+        ) as refresh, mock.patch(
+            "quant_rabbit.cli.AutoTradeCycle"
+        ) as cycle_cls, redirect_stdout(stdout):
+            code = main(["autotrade-cycle", "--send", "--reuse-market-artifacts"])
+
+        self.assertEqual(code, 2)
+        acquire.assert_called_once_with("direct-autotrade-cycle-preflight")
+        refresh.assert_not_called()
+        cycle_cls.assert_not_called()
+        self.assertIn("another live cycle owns the lock", json.loads(stdout.getvalue())["error"])
+
+    def test_production_direct_dry_run_acquires_lock_even_when_audit_tail_disabled(self) -> None:
+        stdout = io.StringIO()
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"QR_RUN_DIRECT_AUTOTRADE_AUDIT_SIDECARS": "0"},
+                clear=False,
+            ),
+            mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+            mock.patch(
+                "quant_rabbit.cli._acquire_cycle_runtime_lock",
+                side_effect=RuntimeError("another live cycle owns the lock"),
+            ) as acquire,
+            mock.patch("quant_rabbit.cli._auto_refresh_market_evidence_if_required") as refresh,
+            mock.patch("quant_rabbit.cli.AutoTradeCycle") as cycle_cls,
+            redirect_stdout(stdout),
+        ):
+            code = main(["autotrade-cycle", "--reuse-market-artifacts"])
+
+        self.assertEqual(code, 2)
+        acquire.assert_called_once_with("direct-autotrade-cycle-preflight")
+        refresh.assert_not_called()
+        cycle_cls.assert_not_called()
+
+    def test_broker_snapshot_refresh_preserves_full_configured_universe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "broker_snapshot.json"
+            snapshot_path.write_text(
+                json.dumps({"quotes": {"EUR_USD": {}, "XAU_USD": {}}}) + "\n"
+            )
+            observed_pairs: list[tuple[str, ...]] = []
+
+            class FakeClient:
+                def snapshot(self, pairs: tuple[str, ...]) -> SimpleNamespace:
+                    observed_pairs.append(pairs)
+                    return SimpleNamespace(
+                        fetched_at_utc=datetime(2026, 7, 14, tzinfo=timezone.utc),
+                        positions=(),
+                        orders=(),
+                        quotes={pair: object() for pair in pairs},
+                    )
+
+            with (
+                mock.patch("quant_rabbit.cli.DEFAULT_TRADER_PAIRS_ARG", "EUR_USD,USD_CAD"),
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=FakeClient()),
+                mock.patch("quant_rabbit.cli._snapshot_to_json", return_value="{}"),
+            ):
+                result = _broker_snapshot_refresh(snapshot_path)
+
+        self.assertEqual(result["status"], "REFRESHED")
+        self.assertEqual(observed_pairs, [("EUR_USD", "USD_CAD", "XAU_USD")])
+
+    def test_broker_snapshot_refresh_rejects_partial_universe_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "broker_snapshot.json"
+            original = json.dumps({"sentinel": "preserve-me"}) + "\n"
+            snapshot_path.write_text(original)
+
+            class FakeClient:
+                def snapshot(self, pairs: tuple[str, ...]) -> SimpleNamespace:
+                    self.requested_pairs = pairs
+                    return SimpleNamespace(
+                        fetched_at_utc=datetime(2026, 7, 14, tzinfo=timezone.utc),
+                        positions=(),
+                        orders=(),
+                        quotes={"EUR_USD": object()},
+                    )
+
+            client = FakeClient()
+            with (
+                mock.patch("quant_rabbit.cli.DEFAULT_TRADER_PAIRS_ARG", "EUR_USD,USD_CAD"),
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=client),
+                mock.patch("quant_rabbit.cli._snapshot_to_json") as serialize,
+            ):
+                result = _broker_snapshot_refresh(snapshot_path)
+            preserved = snapshot_path.read_text()
+
+        self.assertEqual(result["status"], "SNAPSHOT_REFRESH_FAILED")
+        self.assertIn("USD_CAD", result["error"])
+        self.assertEqual(client.requested_pairs, ("EUR_USD", "USD_CAD"))
+        self.assertEqual(preserved, original)
+        serialize.assert_not_called()
+
+    def test_direct_autotrade_send_holds_owned_lock_through_audit_sidecars(self) -> None:
+        summary = SimpleNamespace(
+            status="NO_LIVE_READY_INTENT",
+            report_path=Path("docs/autotrade_cycle_report.md"),
+            snapshot_path=Path("data/broker_snapshot.json"),
+            intents_path=Path("data/order_intents.json"),
+            selected_lane_id=None,
+            selected_lane_ids=(),
+            deterministic_lane_id=None,
+            decision_source=None,
+            sent=False,
+            sent_count=0,
+            positions=0,
+            orders=0,
+            live_ready=0,
+            receipt_promotions=0,
+            canceled_orders=(),
+            position_management_action=None,
+            position_execution_status=None,
+            position_execution_sent=False,
+            target_status=None,
+            target_remaining_jpy=None,
+            target_progress_pct=None,
+            selected_lane_score=None,
+            selected_lane_size_multiple=None,
+            gpt_status=None,
+            gpt_action=None,
+            gpt_allowed=None,
+            gpt_issues=0,
+            gpt_error=None,
+        )
+        token = (Path("lock"), None, "owner", None)
+        events: list[str] = []
+
+        def acquire(_command: str):
+            events.append("acquire")
+            return token
+
+        def refresh(**_kwargs):
+            events.append("refresh")
+            return {"status": "SKIPPED"}
+
+        def run(*, send: bool):
+            self.assertTrue(send)
+            events.append("run")
+            return summary
+
+        def sidecars(*, under_owned_lock: bool = False):
+            events.append(f"sidecars:{under_owned_lock}")
+            return None
+
+        def release(released_token):
+            self.assertEqual(released_token, token)
+            events.append("release")
+
+        stdout = io.StringIO()
+        with (
+            mock.patch("quant_rabbit.cli._acquire_cycle_runtime_lock", side_effect=acquire),
+            mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                side_effect=refresh,
+            ),
+            mock.patch("quant_rabbit.cli.AutoTradeCycle") as cycle_cls,
+            mock.patch(
+                "quant_rabbit.cli._run_direct_autotrade_audit_sidecars",
+                side_effect=sidecars,
+            ),
+            mock.patch("quant_rabbit.cli._release_cycle_runtime_lock", side_effect=release),
+            redirect_stdout(stdout),
+        ):
+            cycle_cls.return_value.run.side_effect = run
+            code = main(["autotrade-cycle", "--send", "--reuse-market-artifacts"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(events, ["acquire", "refresh", "run", "sidecars:True", "release"])
+
     def test_reuse_market_artifacts_requires_market_context_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             matrix = Path(tmp) / "missing_market_context_matrix.json"
@@ -6062,17 +6819,12 @@ class CliHelpTest(unittest.TestCase):
     def test_reuse_market_artifacts_requires_context_asset_and_broker_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            matrix = root / "market_context_matrix.json"
+            matrix, pair_charts = _write_bound_market_context_matrix(
+                root,
+                matrix_generated_at_utc="2026-06-08T08:10:00+00:00",
+            )
             context_assets = root / "context_asset_charts.json"
             broker_instruments = root / "broker_instruments.json"
-            matrix.write_text(
-                json.dumps(
-                    {
-                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
-                    }
-                )
-            )
             context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
 
             with self.assertRaisesRegex(RuntimeError, "broker_instruments"):
@@ -6080,6 +6832,7 @@ class CliHelpTest(unittest.TestCase):
                     label="autotrade-cycle",
                     reuse_market_artifacts=True,
                     market_context_matrix_path=matrix,
+                    pair_charts_path=pair_charts,
                     context_asset_charts_path=context_assets,
                     broker_instruments_path=broker_instruments,
                     order_intents_path=root / "missing_order_intents.json",
@@ -6088,18 +6841,13 @@ class CliHelpTest(unittest.TestCase):
     def test_reuse_market_artifacts_requires_intents_newer_than_market_context_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            matrix = root / "market_context_matrix.json"
+            matrix, pair_charts = _write_bound_market_context_matrix(
+                root,
+                matrix_generated_at_utc="2026-06-08T08:10:00+00:00",
+            )
             context_assets = root / "context_asset_charts.json"
             broker_instruments = root / "broker_instruments.json"
             order_intents = root / "order_intents.json"
-            matrix.write_text(
-                json.dumps(
-                    {
-                        "generated_at_utc": "2026-06-08T08:10:00+00:00",
-                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
-                    }
-                )
-            )
             context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
             broker_instruments.write_text(json.dumps({"tradeable_instruments": ["EUR_USD"]}))
             order_intents.write_text(
@@ -6111,6 +6859,7 @@ class CliHelpTest(unittest.TestCase):
                     label="autotrade-cycle",
                     reuse_market_artifacts=True,
                     market_context_matrix_path=matrix,
+                    pair_charts_path=pair_charts,
                     context_asset_charts_path=context_assets,
                     broker_instruments_path=broker_instruments,
                     order_intents_path=order_intents,
@@ -6119,18 +6868,13 @@ class CliHelpTest(unittest.TestCase):
     def test_reuse_market_artifacts_can_skip_existing_intent_freshness_for_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            matrix = root / "market_context_matrix.json"
+            matrix, pair_charts = _write_bound_market_context_matrix(
+                root,
+                matrix_generated_at_utc="2026-06-08T08:10:00+00:00",
+            )
             context_assets = root / "context_asset_charts.json"
             broker_instruments = root / "broker_instruments.json"
             order_intents = root / "order_intents.json"
-            matrix.write_text(
-                json.dumps(
-                    {
-                        "generated_at_utc": "2026-06-08T08:10:00+00:00",
-                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
-                    }
-                )
-            )
             context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
             broker_instruments.write_text(json.dumps({"tradeable_instruments": ["EUR_USD"]}))
             order_intents.write_text(
@@ -6142,12 +6886,66 @@ class CliHelpTest(unittest.TestCase):
                 reuse_market_artifacts=True,
                 validate_order_intents_freshness=False,
                 market_context_matrix_path=matrix,
+                pair_charts_path=pair_charts,
                 context_asset_charts_path=context_assets,
                 broker_instruments_path=broker_instruments,
                 order_intents_path=order_intents,
             )
 
         self.assertEqual(result, {"status": "SKIPPED", "reason": "reuse_market_artifacts"})
+
+    def test_reuse_market_artifacts_rejects_matrix_bound_to_previous_pair_charts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix, pair_charts = _write_bound_market_context_matrix(
+                root,
+                matrix_generated_at_utc="2026-06-08T08:10:00+00:00",
+            )
+            pair_payload = json.loads(pair_charts.read_text())
+            pair_payload["charts"][0]["long_score"] = 0.9
+            pair_charts.write_text(json.dumps(pair_payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+            with self.assertRaisesRegex(RuntimeError, "pair_charts_binding sha256 mismatch"):
+                _auto_refresh_market_evidence_if_required(
+                    label="generate-intents",
+                    reuse_market_artifacts=True,
+                    validate_order_intents_freshness=False,
+                    market_context_matrix_path=matrix,
+                    pair_charts_path=pair_charts,
+                )
+
+    def test_reuse_market_artifacts_rejects_exactly_bound_partial_pair_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix, pair_charts = _write_bound_market_context_matrix(
+                root,
+                matrix_generated_at_utc="2026-06-08T08:10:00+00:00",
+            )
+            pair_payload = json.loads(pair_charts.read_text())
+            missing_pair = pair_payload["charts"].pop()["pair"]
+            pair_payload["pairs_succeeded"] -= 1
+            pair_payload["pairs_failed"] = 1
+            pair_payload["partial"] = True
+            pair_raw = (
+                json.dumps(pair_payload, ensure_ascii=False, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            pair_charts.write_bytes(pair_raw)
+            matrix_payload = json.loads(matrix.read_text())
+            matrix_payload["pair_charts_binding"] = pair_charts_artifact_binding(
+                pair_payload,
+                raw=pair_raw,
+            )
+            matrix_payload["pairs"].pop(missing_pair)
+            matrix.write_text(json.dumps(matrix_payload))
+
+            with self.assertRaisesRegex(RuntimeError, "incomplete trader pair coverage"):
+                _auto_refresh_market_evidence_if_required(
+                    label="generate-intents",
+                    reuse_market_artifacts=True,
+                    validate_order_intents_freshness=False,
+                    market_context_matrix_path=matrix,
+                    pair_charts_path=pair_charts,
+                )
 
     def test_context_asset_charts_cli_writes_non_fx_technical_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6532,6 +7330,34 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
     SKILL_trader.md skeleton is asserted at the step-list level.
     """
 
+    def test_run_cycle_steps_shares_and_restores_consolidated_cycle_identity(self) -> None:
+        from quant_rabbit.cli import _run_cycle_steps
+
+        observed_cycle_ids: list[str | None] = []
+
+        def fake_main(_argv: list[str]) -> int:
+            observed_cycle_ids.append(os.environ.get("QR_CONSOLIDATED_CYCLE_ID"))
+            return 0
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("QR_CONSOLIDATED_CYCLE_ID", None)
+            with mock.patch("quant_rabbit.cli.main", side_effect=fake_main):
+                results, aborted = _run_cycle_steps(
+                    [
+                        {"argv": ["first"], "required": True},
+                        {"argv": ["second"], "required": True},
+                    ]
+                )
+            restored = os.environ.get("QR_CONSOLIDATED_CYCLE_ID")
+
+        self.assertFalse(aborted)
+        self.assertIsNone(restored)
+        self.assertEqual(len(observed_cycle_ids), 2)
+        self.assertTrue(observed_cycle_ids[0])
+        self.assertEqual(observed_cycle_ids[0], observed_cycle_ids[1])
+        self.assertEqual(results[0]["consolidated_cycle_id"], observed_cycle_ids[0])
+        self.assertEqual(results[1]["consolidated_cycle_id"], observed_cycle_ids[0])
+
     def test_post_autotrade_failure_sidecars_cover_profit_capture_acceptance_and_support(self) -> None:
         original_live = os.environ.get("QR_LIVE_ENABLED")
         os.environ["QR_LIVE_ENABLED"] = "1"
@@ -6551,7 +7377,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             ("daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"),
         )
         self.assertIn(("position-execution", "--send", "--confirm-live"), argv)
-        self.assertIn(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"), argv)
+        intent_argv = (
+            "generate-intents",
+            "--snapshot",
+            "data/broker_snapshot.json",
+            "--reuse-market-artifacts",
+            "--consolidated-preflight-complete",
+        )
+        self.assertIn(intent_argv, argv)
         self.assertIn(("profit-capture-bot",), argv)
         self.assertIn(("profitability-acceptance",), argv)
         self.assertIn(("trader-support-bot",), argv)
@@ -6561,7 +7394,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertIn(("active-opportunity-board",), argv)
         self.assertIn(("non-eurusd-proof-lane-mapper",), argv)
         self.assertIn(("non-eurusd-live-grade-frontier",), argv)
-        intent_idx = argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"))
+        intent_idx = argv.index(intent_argv)
         coverage_idx = argv.index(("optimize-coverage",))
         post_intent_position_management_idx = max(
             index for index, step in enumerate(argv) if step == ("position-management",)
@@ -6736,16 +7569,19 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             _cycle_sidecar_steps,
         )
 
-        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
-        step_lists = [
+        intent_step = (
+            "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts "
+            "--consolidated-preflight-complete"
+        )
+        locked_step_lists = [
             _cycle_refresh_steps("10"),
             _cycle_sidecar_steps(),
             _post_autotrade_failure_sidecar_steps(),
-            _direct_autotrade_audit_sidecar_steps(),
         ]
 
-        for specs in step_lists:
+        for specs in locked_step_lists:
             by_step = {" ".join(spec["argv"]): spec for spec in specs}
+            steps = [" ".join(spec["argv"]) for spec in specs]
             with self.subTest(steps=[spec["argv"][0] for spec in specs[:3]]):
                 self.assertIn(intent_step, by_step)
                 self.assertTrue(by_step[intent_step]["required"])
@@ -6753,26 +7589,56 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                     by_step[intent_step]["timeout_seconds"],
                     DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
                 )
+                intent_index = steps.index(intent_step)
+                self.assertEqual(
+                    steps[intent_index - 4 : intent_index + 1],
+                    [
+                        "pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json --require-complete",
+                        "market-context-matrix",
+                        "broker-snapshot --output data/broker_snapshot.json",
+                        "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+                        intent_step,
+                    ],
+                )
+
+        direct_specs = _direct_autotrade_audit_sidecar_steps()
+        direct_by_step = {" ".join(spec["argv"]): spec for spec in direct_specs}
+        direct_intent_step = (
+            "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        )
+        self.assertIn(direct_intent_step, direct_by_step)
+        self.assertTrue(direct_by_step[direct_intent_step]["required"])
+        self.assertEqual(
+            direct_by_step[direct_intent_step]["timeout_seconds"],
+            DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
+        )
+        self.assertFalse(any(spec["argv"][0] == "pair-charts" for spec in direct_specs))
 
     def test_cycle_watchdog_steps_refresh_before_intents_and_support(self) -> None:
         from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps
 
-        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        intent_step = (
+            "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts "
+            "--consolidated-preflight-complete"
+        )
         step_lists = [
-            _cycle_refresh_steps("10"),
-            _cycle_sidecar_steps(),
-            _post_autotrade_failure_sidecar_steps(),
-            _direct_autotrade_audit_sidecar_steps(),
+            (_cycle_refresh_steps("10"), intent_step),
+            (_cycle_sidecar_steps(), intent_step),
+            (_post_autotrade_failure_sidecar_steps(), intent_step),
+            (
+                _direct_autotrade_audit_sidecar_steps(),
+                "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+            ),
         ]
 
-        for specs in step_lists:
+        for specs, expected_intent_step in step_lists:
             steps = [" ".join(spec["argv"]) for spec in specs]
             watchdog_indexes = [
                 index for index, step in enumerate(steps) if step == "qr-trader-run-watchdog"
             ]
             with self.subTest(steps=[spec["argv"][0] for spec in specs[:3]]):
                 self.assertTrue(watchdog_indexes)
-                self.assertTrue(any(index < steps.index(intent_step) for index in watchdog_indexes))
+                self.assertTrue(any(index < steps.index(expected_intent_step) for index in watchdog_indexes))
                 pre_watchdog_guardian_router = max(
                     index
                     for index, step in enumerate(steps)
@@ -6902,7 +7768,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh = [" ".join(s["argv"]) for s in _cycle_refresh_steps("10")]
         # Order-sensitive anchors from docs/SKILL_trader.md section 2.
         self.assertEqual(refresh[0], "broker-snapshot --output data/broker_snapshot.json")
-        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        intent_step = (
+            "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts "
+            "--consolidated-preflight-complete"
+        )
         self.assertIn(intent_step, refresh)
         self.assertLess(refresh.index("verify-projections"), refresh.index(intent_step))
         self.assertLess(refresh.index("capture-economics"), refresh.index(intent_step))
@@ -6948,7 +7817,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("capture-economics"), refresh.index(month_scale_timing_step))
         self.assertLess(
             refresh.index(month_scale_timing_step),
-            refresh.index("generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"),
+            refresh.index(intent_step),
         )
         pre_intent_watchdog = max(
             index
@@ -6962,6 +7831,16 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertLess(pre_intent_watchdog, pre_intent_guardian_consumption)
         self.assertLess(pre_intent_guardian_consumption, refresh.index(intent_step))
+        self.assertEqual(
+            refresh[refresh.index(intent_step) - 4 : refresh.index(intent_step) + 1],
+            [
+                "pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json --require-complete",
+                "market-context-matrix",
+                "broker-snapshot --output data/broker_snapshot.json",
+                "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+                intent_step,
+            ],
+        )
         self.assertLess(refresh.index(month_scale_timing_step), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
@@ -7350,6 +8229,28 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
 
         self.assertIsNone(result)
         run_steps.assert_not_called()
+
+    def test_direct_autotrade_audit_sidecars_run_under_owned_direct_lock(self) -> None:
+        step_results = [{"step": "memory-health", "status": "OK", "rc": 0}]
+        digest = {
+            "kind": "direct_autotrade_audit_sidecars_digest",
+            "aborted": False,
+            "steps_failed": [],
+        }
+        with (
+            mock.patch.dict(os.environ, {"QR_AUTOTRADE_LOCK_HELD": "1"}, clear=False),
+            mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+            mock.patch(
+                "quant_rabbit.cli._run_cycle_steps",
+                return_value=(step_results, False),
+            ) as run_steps,
+            mock.patch("quant_rabbit.cli._cycle_digest", return_value=digest),
+            mock.patch("quant_rabbit.cli._write_json"),
+        ):
+            result = _run_direct_autotrade_audit_sidecars(under_owned_lock=True)
+
+        self.assertEqual(result, digest)
+        run_steps.assert_called_once_with(_direct_autotrade_audit_sidecar_steps())
 
     def test_direct_autotrade_audit_sidecars_can_be_disabled(self) -> None:
         with (
@@ -9206,6 +10107,53 @@ class PairChartsCommandTest(unittest.TestCase):
             self.assertTrue(printed["partial"])
             self.assertEqual(printed["pairs_failed"], 1)
             self.assertIn("GBP_USD", report.read_text())
+
+    def test_pair_charts_require_complete_preserves_previous_packet_on_partial_fetch(self) -> None:
+        def fake_build(pair: str, **_kwargs: object) -> PairChartsCommandTest._FakeChart:
+            if pair == "GBP_USD":
+                raise RuntimeError("broker candle timeout")
+            return self._FakeChart(pair)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            report = Path(tmp) / "pair_charts.md"
+            previous_output = '{"sentinel": "complete-previous-packet"}\n'
+            previous_report = "# Previous complete packet\n"
+            output.write_text(previous_output)
+            report.write_text(previous_report)
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch("quant_rabbit.analysis.chart_reader.build_pair_chart", side_effect=fake_build),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum") as momentum,
+                redirect_stdout(stdout),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD,GBP_USD,AUD_USD",
+                        "--timeframes",
+                        "M5",
+                        "--workers",
+                        "2",
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--require-complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 2)
+            self.assertEqual(output.read_text(), previous_output)
+            self.assertEqual(report.read_text(), previous_report)
+            momentum.assert_not_called()
+            printed = json.loads(stdout.getvalue())
+            self.assertEqual(printed["error"], "pair-charts requires complete exact pair coverage")
+            self.assertEqual(printed["pairs_requested"], 3)
+            self.assertEqual(printed["pairs_succeeded"], 2)
+            self.assertEqual(printed["missing_pairs"], ["GBP_USD"])
 
     def test_pair_charts_returns_failure_when_every_pair_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

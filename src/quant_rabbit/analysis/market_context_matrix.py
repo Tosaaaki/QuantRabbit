@@ -8,6 +8,7 @@ override; a missing, stale, or malformed summary cannot authorize that escape.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ SIDES = ("LONG", "SHORT")
 # `data/market_context_matrix.json`, while each intent carries the refs needed
 # to attribute later P/L to gold/oil/cross-asset/news context.
 SUMMARY_LIST_LIMIT = 8
+PAIR_CHARTS_BINDING_SCHEMA = "QR_MARKET_CONTEXT_PAIR_CHARTS_BINDING_V1"
 
 
 def build_market_context_matrix_from_payloads(
@@ -121,8 +123,9 @@ def build_market_context_matrix(
     option_skew_path: Path,
     context_asset_charts_path: Path | None = None,
 ) -> dict[str, Any]:
-    return build_market_context_matrix_from_payloads(
-        pair_charts=_load_optional_json(pair_charts_path),
+    pair_charts, pair_charts_raw = _load_optional_json_with_raw(pair_charts_path)
+    matrix = build_market_context_matrix_from_payloads(
+        pair_charts=pair_charts,
         context_asset_charts=_load_optional_json(context_asset_charts_path) if context_asset_charts_path else None,
         cross_asset=_load_optional_json(cross_asset_path),
         flow=_load_optional_json(flow_path),
@@ -132,15 +135,25 @@ def build_market_context_matrix(
         cot=_load_optional_json(cot_path),
         option_skew=_load_optional_json(option_skew_path),
     )
+    binding = pair_charts_artifact_binding(pair_charts, raw=pair_charts_raw)
+    if binding is not None:
+        matrix["pair_charts_binding"] = binding
+    return matrix
 
 
 def write_market_context_matrix_report(payload: dict[str, Any], report_path: Path) -> None:
+    pair_charts_binding = (
+        payload.get("pair_charts_binding")
+        if isinstance(payload.get("pair_charts_binding"), dict)
+        else {}
+    )
     lines = [
         "# Market Context Matrix",
         "",
         f"- Generated at UTC: `{payload.get('generated_at_utc')}`",
         f"- Trade count policy: `{payload.get('trade_count_policy')}`",
         f"- Pairs: `{len(payload.get('pairs') or {})}`",
+        f"- Pair charts SHA-256: `{pair_charts_binding.get('sha256')}`",
         "",
         "## Pair Summary",
         "",
@@ -172,11 +185,18 @@ def matrix_summary_for_intent(matrix: dict[str, Any] | None, pair: str, side: st
     side_payload = (((matrix.get("pairs") or {}).get(pair) or {}).get(side))
     if not isinstance(side_payload, dict):
         return {}
+    pair_charts_binding = (
+        matrix.get("pair_charts_binding")
+        if isinstance(matrix.get("pair_charts_binding"), dict)
+        else {}
+    )
     return {
         "market_context_matrix_ref": side_payload.get("evidence_ref"),
         "market_context_matrix_pair": pair,
         "market_context_matrix_side": side,
         "market_context_matrix_generated_at_utc": matrix.get("generated_at_utc"),
+        "market_context_pair_charts_generated_at_utc": pair_charts_binding.get("generated_at_utc"),
+        "market_context_pair_charts_sha256": pair_charts_binding.get("sha256"),
         "matrix_support_count": side_payload.get("support_count"),
         "matrix_reject_count": side_payload.get("reject_count"),
         "matrix_warning_count": side_payload.get("warning_count"),
@@ -197,14 +217,95 @@ def matrix_summary_for_intent(matrix: dict[str, Any] | None, pair: str, side: st
     }
 
 
+def pair_charts_artifact_binding(
+    payload: dict[str, Any] | None,
+    *,
+    raw: bytes | None,
+) -> dict[str, Any] | None:
+    """Seal the exact pair-chart packet consumed by the matrix builder."""
+
+    if not isinstance(payload, dict) or not isinstance(raw, bytes):
+        return None
+    generated_at = payload.get("generated_at_utc")
+    charts = payload.get("charts")
+    if not isinstance(generated_at, str) or not generated_at.strip() or not isinstance(charts, list):
+        return None
+    return {
+        "schema": PAIR_CHARTS_BINDING_SCHEMA,
+        "generated_at_utc": generated_at,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "chart_count": len(charts),
+        "pairs_requested": payload.get("pairs_requested"),
+        "pairs_succeeded": payload.get("pairs_succeeded"),
+        "pairs_failed": payload.get("pairs_failed"),
+        "partial": payload.get("partial"),
+    }
+
+
+def verify_pair_charts_artifact_binding(
+    matrix: dict[str, Any] | None,
+    *,
+    pair_charts_path: Path,
+) -> tuple[bool, str | None]:
+    """Verify matrix attribution against the current exact chart artifact."""
+
+    if not isinstance(matrix, dict):
+        return False, "market_context_matrix is not an object"
+    binding = matrix.get("pair_charts_binding")
+    if not isinstance(binding, dict):
+        return False, "market_context_matrix lacks pair_charts_binding"
+    if binding.get("schema") != PAIR_CHARTS_BINDING_SCHEMA:
+        return False, "market_context_matrix pair_charts_binding schema is invalid"
+    pair_charts, raw = _load_optional_json_with_raw(pair_charts_path)
+    expected = pair_charts_artifact_binding(pair_charts, raw=raw)
+    if expected is None:
+        return False, f"pair_charts artifact is missing or malformed: {pair_charts_path}"
+    for key in (
+        "generated_at_utc",
+        "sha256",
+        "chart_count",
+        "pairs_requested",
+        "pairs_succeeded",
+        "pairs_failed",
+        "partial",
+    ):
+        if binding.get(key) != expected.get(key):
+            return False, f"market_context_matrix pair_charts_binding {key} mismatch"
+    matrix_generated_at = _parse_aware_utc(matrix.get("generated_at_utc"))
+    charts_generated_at = _parse_aware_utc(expected.get("generated_at_utc"))
+    if matrix_generated_at is None or charts_generated_at is None:
+        return False, "matrix or pair_charts generated_at_utc is invalid"
+    if matrix_generated_at < charts_generated_at:
+        return False, "market_context_matrix predates its bound pair_charts packet"
+    return True, None
+
+
 def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    payload, _ = _load_optional_json_with_raw(path)
+    return payload
+
+
+def _load_optional_json_with_raw(path: Path) -> tuple[dict[str, Any] | None, bytes | None]:
     if not path.exists():
+        return None, None
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, None
+    return (payload, raw) if isinstance(payload, dict) else (None, raw)
+
+
+def _parse_aware_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
         return None
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
         return None
-    return payload if isinstance(payload, dict) else None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _empty_side(pair: str, side: str) -> dict[str, Any]:

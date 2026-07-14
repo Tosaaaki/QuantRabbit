@@ -251,6 +251,158 @@ arg_value() {
   return 1
 }
 
+initialize_consolidated_cycle_id() {
+  local explicit_id inherited_id generated_id response_path
+  explicit_id="$({
+    "$QR_PYTHON" - "${QR_CONSOLIDATED_CYCLE_ID:-}" <<'PY'
+import re
+import sys
+
+value = str(sys.argv[1] or "").strip()
+if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+    print(value)
+PY
+  } 2>/dev/null || true)"
+  if [[ -n "$explicit_id" ]]; then
+    export QR_CONSOLIDATED_CYCLE_ID="$explicit_id"
+    export QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS="CALLER_EXPLICIT"
+    return 0
+  fi
+
+  inherited_id=""
+  if has_arg "--reuse-market-artifacts" "${args[@]}"; then
+    response_path="$(arg_value "--gpt-decision-response" "${args[@]}" || true)"
+    response_path="${response_path:-data/codex_trader_decision_response.json}"
+    inherited_id="$({
+      "$QR_PYTHON" - \
+        data/pair_charts.json \
+        data/market_read_evidence_packet.json \
+        "$response_path" <<'PY'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+pair_charts_path = Path(sys.argv[1])
+packet_path = Path(sys.argv[2])
+response_path = Path(sys.argv[3])
+try:
+    pair_bytes = pair_charts_path.read_bytes()
+    pair_payload = json.loads(pair_bytes)
+    packet_payload = json.loads(packet_path.read_text())
+    response_payload = json.loads(response_path.read_text())
+except (OSError, json.JSONDecodeError, TypeError, ValueError):
+    raise SystemExit(0)
+if not all(isinstance(item, dict) for item in (pair_payload, packet_payload, response_payload)):
+    raise SystemExit(0)
+
+source_metadata = packet_payload.get("source_metadata")
+pair_source = (
+    source_metadata.get("pair_charts")
+    if isinstance(source_metadata, dict)
+    else None
+)
+material_sources = packet_payload.get("sources")
+material_pair_source = (
+    material_sources.get("pair_charts")
+    if isinstance(material_sources, dict)
+    else None
+)
+expected_sha = (
+    str(pair_source.get("sha256") or "").strip().lower()
+    if isinstance(pair_source, dict)
+    else ""
+)
+expected_size = pair_source.get("size_bytes") if isinstance(pair_source, dict) else None
+source_path = pair_source.get("path") if isinstance(pair_source, dict) else None
+actual_sha = hashlib.sha256(pair_bytes).hexdigest()
+cycle_id = str(pair_payload.get("cycle_id") or "").strip()
+packet_sha = str(packet_payload.get("evidence_packet_sha256") or "").strip().lower()
+packet_material = {
+    "schema_version": packet_payload.get("schema_version"),
+    "baseline_sha256": packet_payload.get("baseline_sha256"),
+    "sources": material_sources,
+    "capital_allocation_board_sha256": packet_payload.get(
+        "capital_allocation_board_sha256"
+    ),
+    "projection_calibration_evidence_sha256": packet_payload.get(
+        "projection_calibration_evidence_sha256"
+    ),
+}
+try:
+    canonical_packet_bytes = json.dumps(
+        packet_material,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+except (TypeError, ValueError):
+    raise SystemExit(0)
+rebuilt_packet_sha = hashlib.sha256(canonical_packet_bytes).hexdigest()
+decision = response_payload.get("decision")
+if not isinstance(decision, dict):
+    decision = response_payload
+provenance = decision.get("decision_provenance")
+bound_packet_sha = (
+    str(provenance.get("evidence_packet_sha256") or "").strip().lower()
+    if isinstance(provenance, dict)
+    else ""
+)
+valid_source_path = False
+if isinstance(source_path, str) and source_path.strip():
+    try:
+        valid_source_path = Path(source_path).resolve() == pair_charts_path.resolve()
+    except OSError:
+        valid_source_path = False
+if (
+    re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", cycle_id)
+    and re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+    and expected_sha == actual_sha
+    and isinstance(expected_size, int)
+    and not isinstance(expected_size, bool)
+    and expected_size == len(pair_bytes)
+    and valid_source_path
+    and isinstance(material_pair_source, dict)
+    and {
+        key: material_pair_source.get(key)
+        for key in ("path", "sha256", "size_bytes")
+    }
+    == {
+        key: pair_source.get(key)
+        for key in ("path", "sha256", "size_bytes")
+    }
+    and re.fullmatch(r"[0-9a-f]{64}", packet_sha)
+    and rebuilt_packet_sha == packet_sha
+    and bound_packet_sha == packet_sha
+):
+    print(cycle_id)
+PY
+    } 2>/dev/null || true)"
+  fi
+  if [[ -n "$inherited_id" ]]; then
+    export QR_CONSOLIDATED_CYCLE_ID="$inherited_id"
+    export QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS="MARKET_READ_SHA_BOUND"
+    echo "[run-autotrade-live] inherited consolidated cycle identity from the exact market-read pair-chart evidence." >&2
+    return 0
+  fi
+
+  generated_id="$({
+    "$QR_PYTHON" - <<'PY'
+import uuid
+
+print(uuid.uuid4().hex)
+PY
+  } 2>/dev/null || true)"
+  if [[ -z "$generated_id" ]]; then
+    echo "[run-autotrade-live] failed to initialize consolidated cycle identity." >&2
+    exit 2
+  fi
+  export QR_CONSOLIDATED_CYCLE_ID="$generated_id"
+  export QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS="UNBOUND_WRAPPER"
+}
+
 json_string_value() {
   local path="$1"
   local key="$2"
@@ -413,6 +565,7 @@ fi
 
 refresh_position_guardian_send_status
 refresh_gpt_handoff_if_needed
+initialize_consolidated_cycle_id
 
 set +e
 if [[ "$arg_count" -gt 0 ]]; then

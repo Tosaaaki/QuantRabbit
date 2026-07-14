@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -28,6 +29,154 @@ GUARDIAN_WRAPPER = ROOT / "scripts" / "run-position-guardian-live.sh"
 
 
 class LiveWrapperTest(unittest.TestCase):
+    def test_reuse_wrapper_inherits_exact_market_read_cycle_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            _write_bound_market_read_cycle(root, cycle_id="hourly-cycle-exact")
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--reuse-market-artifacts", "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _captured_cli_call_envs(capture.read_text())
+            self.assertGreaterEqual(len(calls), 2)
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_ID"] for call in calls},
+                {"hourly-cycle-exact"},
+            )
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS"] for call in calls},
+                {"MARKET_READ_SHA_BOUND"},
+            )
+            self.assertIn("inherited consolidated cycle identity", result.stderr)
+
+    def test_reuse_wrapper_rejects_tampered_market_read_cycle_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            _write_bound_market_read_cycle(
+                root,
+                cycle_id="must-not-be-inherited",
+                pair_sha_override="0" * 64,
+            )
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--reuse-market-artifacts", "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _captured_cli_call_envs(capture.read_text())
+            cycle_ids = {call["QR_CONSOLIDATED_CYCLE_ID"] for call in calls}
+            self.assertEqual(len(cycle_ids), 1)
+            self.assertNotIn("", cycle_ids)
+            self.assertNotIn("must-not-be-inherited", cycle_ids)
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS"] for call in calls},
+                {"UNBOUND_WRAPPER"},
+            )
+            self.assertNotIn("inherited consolidated cycle identity", result.stderr)
+
+    def test_explicit_wrapper_cycle_identity_takes_precedence_when_well_formed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env["QR_CONSOLIDATED_CYCLE_ID"] = "outer-hourly-cycle"
+            _write_bound_market_read_cycle(root, cycle_id="packet-cycle")
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--reuse-market-artifacts", "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _captured_cli_call_envs(capture.read_text())
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_ID"] for call in calls},
+                {"outer-hourly-cycle"},
+            )
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS"] for call in calls},
+                {"CALLER_EXPLICIT"},
+            )
+            self.assertNotIn("inherited consolidated cycle identity", result.stderr)
+
+    def test_cycle_identity_is_resolved_after_handoff_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            data = root / "data"
+            data.mkdir()
+            pair_charts = data / "pair_charts.json"
+            pair_charts.write_text(
+                json.dumps({"cycle_id": "post-refresh-cycle", "charts": []}) + "\n"
+            )
+            hook = root / "write_bound_handoff.py"
+            hook.write_text(
+                "\n".join(
+                    [
+                        "import hashlib, json, os",
+                        "from pathlib import Path",
+                        "root = Path(os.environ['QR_TRADER_ROOT_DIR'])",
+                        "pair = root / 'data' / 'pair_charts.json'",
+                        "pair_bytes = pair.read_bytes()",
+                        "pair_source = {'path': str(pair.resolve()), 'sha256': hashlib.sha256(pair_bytes).hexdigest(), 'size_bytes': len(pair_bytes)}",
+                        "material = {'schema_version': 2, 'baseline_sha256': 'c' * 64, 'sources': {'pair_charts': pair_source}, 'capital_allocation_board_sha256': 'd' * 64, 'projection_calibration_evidence_sha256': 'e' * 64}",
+                        "packet_sha = hashlib.sha256(json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()",
+                        "packet = {**material, 'evidence_packet_sha256': packet_sha, 'source_metadata': {'pair_charts': pair_source}}",
+                        "response = {'action': 'REQUEST_EVIDENCE', 'decision_provenance': {'author_kind': 'CODEX_MARKET_READ', 'evidence_packet_sha256': packet_sha}}",
+                        "(root / 'data' / 'market_read_evidence_packet.json').write_text(json.dumps(packet) + '\\n')",
+                        "(root / 'data' / 'codex_trader_decision_response.json').write_text(json.dumps(response) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            env["QR_FAKE_TRADER_DRAFT_HOOK"] = str(hook)
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--reuse-market-artifacts", "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _captured_cli_call_envs(capture.read_text())
+            post_handoff_calls = [
+                call
+                for call in calls
+                if "<autotrade-cycle>" in call["ARGV"]
+                or "<cycle-sidecars>" in call["ARGV"]
+                or "<post-autotrade-failure-sidecars>" in call["ARGV"]
+            ]
+            self.assertGreaterEqual(len(post_handoff_calls), 2)
+            self.assertEqual(
+                {call["QR_CONSOLIDATED_CYCLE_ID"] for call in post_handoff_calls},
+                {"post-refresh-cycle"},
+            )
+            self.assertIn("inherited consolidated cycle identity", result.stderr)
+
     def test_unset_live_enabled_stays_dry_run_even_with_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2504,11 +2653,18 @@ def _wrapper_env(
                 "  printf 'QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_AUTOTRADE_LOCK_HELD=%s\\n' \"${QR_AUTOTRADE_LOCK_HELD:-}\"",
+                "  printf 'QR_CONSOLIDATED_CYCLE_ID=%s\\n' \"${QR_CONSOLIDATED_CYCLE_ID:-}\"",
+                "  printf 'QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS=%s\\n' \"${QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS:-}\"",
                 "  printf 'PYTHONPATH=%s\\n' \"${PYTHONPATH:-}\"",
                 "  printf 'ARGV='",
                 "  for arg in \"$@\"; do printf '<%s>' \"$arg\"; done",
                 "  printf '\\n'",
                 "} >> \"$QR_CAPTURE_PATH\"",
+                "for arg in \"$@\"; do",
+                "  if [[ \"$arg\" == \"trader-draft-decision\" && -n \"${QR_FAKE_TRADER_DRAFT_HOOK:-}\" ]]; then",
+                f'    "{sys.executable}" "$QR_FAKE_TRADER_DRAFT_HOOK"',
+                "  fi",
+                "done",
                 "for arg in \"$@\"; do",
                 "  if [[ \"$arg\" == \"autotrade-cycle\" ]]; then",
                 f"    exit {python_exit}",
@@ -2832,6 +2988,91 @@ def _captured_cli_commands(payload: str) -> list[str]:
         if line.startswith(marker):
             commands.append(line[len(marker) :].split(">", 1)[0])
     return commands
+
+
+def _write_bound_market_read_cycle(
+    root: Path,
+    *,
+    cycle_id: str,
+    pair_sha_override: str | None = None,
+) -> None:
+    data = root / "data"
+    data.mkdir(exist_ok=True)
+    pair_charts = data / "pair_charts.json"
+    pair_charts.write_text(
+        json.dumps(
+            {
+                "cycle_id": cycle_id,
+                "generated_at_utc": "2026-07-14T00:00:00+00:00",
+                "charts": [],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    pair_sha = pair_sha_override or hashlib.sha256(pair_charts.read_bytes()).hexdigest()
+    pair_source = {
+        "path": str(pair_charts.resolve()),
+        "sha256": pair_sha,
+        "size_bytes": pair_charts.stat().st_size,
+    }
+    material = {
+        "schema_version": 2,
+        "baseline_sha256": "b" * 64,
+        "sources": {"pair_charts": pair_source},
+        "capital_allocation_board_sha256": "c" * 64,
+        "projection_calibration_evidence_sha256": "d" * 64,
+    }
+    packet_sha = hashlib.sha256(
+        json.dumps(
+            material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    (data / "market_read_evidence_packet.json").write_text(
+        json.dumps(
+            {
+                **material,
+                "evidence_packet_sha256": packet_sha,
+                "source_metadata": {
+                    "pair_charts": pair_source,
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    (data / "codex_trader_decision_response.json").write_text(
+        json.dumps(
+            {
+                "action": "REQUEST_EVIDENCE",
+                "decision_provenance": {
+                    "author_kind": "CODEX_MARKET_READ",
+                    "evidence_packet_sha256": packet_sha,
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _captured_cli_call_envs(payload: str) -> list[dict[str, str]]:
+    calls: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in payload.splitlines():
+        if line.startswith("ARGV="):
+            current["ARGV"] = line.removeprefix("ARGV=")
+            calls.append(current)
+            current = {}
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            current[key] = value
+    return calls
 
 
 def _restore_env(name: str, value: str | None) -> None:

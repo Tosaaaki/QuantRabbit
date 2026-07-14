@@ -1,14 +1,125 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from quant_rabbit.analysis.market_context_matrix import (
+    PAIR_CHARTS_BINDING_SCHEMA,
+    build_market_context_matrix,
     build_market_context_matrix_from_payloads,
     matrix_summary_for_intent,
+    verify_pair_charts_artifact_binding,
 )
 
 
 class MarketContextMatrixTest(unittest.TestCase):
+    def test_file_builder_binds_and_verifies_exact_pair_chart_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pair_charts_path = root / "pair_charts.json"
+            pair_charts = {
+                **_pair_charts(),
+                "generated_at_utc": "2026-07-14T05:00:00+00:00",
+                "pairs_requested": 1,
+                "pairs_succeeded": 1,
+                "pairs_failed": 0,
+                "partial": False,
+            }
+            raw = (json.dumps(pair_charts, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            pair_charts_path.write_bytes(raw)
+            missing = root / "missing.json"
+
+            matrix = build_market_context_matrix(
+                pair_charts_path=pair_charts_path,
+                context_asset_charts_path=missing,
+                cross_asset_path=missing,
+                flow_path=missing,
+                currency_strength_path=missing,
+                levels_path=missing,
+                calendar_path=missing,
+                cot_path=missing,
+                option_skew_path=missing,
+            )
+
+            self.assertEqual(matrix["pair_charts_binding"]["schema"], PAIR_CHARTS_BINDING_SCHEMA)
+            self.assertEqual(matrix["pair_charts_binding"]["sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(matrix["pair_charts_binding"]["chart_count"], 1)
+            valid, issue = verify_pair_charts_artifact_binding(
+                matrix,
+                pair_charts_path=pair_charts_path,
+            )
+            self.assertTrue(valid, issue)
+
+            pair_charts["charts"][0]["long_score"] = 0.8
+            pair_charts_path.write_text(json.dumps(pair_charts, ensure_ascii=False, sort_keys=True) + "\n")
+            valid, issue = verify_pair_charts_artifact_binding(
+                matrix,
+                pair_charts_path=pair_charts_path,
+            )
+            self.assertFalse(valid)
+            self.assertIn("sha256 mismatch", str(issue))
+
+    def test_pair_chart_binding_rejects_schema_time_and_coverage_contradictions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pair_charts_path = root / "pair_charts.json"
+            pair_charts = {
+                **_pair_charts(),
+                "generated_at_utc": "2026-07-14T05:00:00+00:00",
+                "pairs_requested": 1,
+                "pairs_succeeded": 1,
+                "pairs_failed": 0,
+                "partial": False,
+            }
+            pair_charts_path.write_text(json.dumps(pair_charts, sort_keys=True) + "\n")
+            missing = root / "missing.json"
+            matrix = build_market_context_matrix(
+                pair_charts_path=pair_charts_path,
+                context_asset_charts_path=missing,
+                cross_asset_path=missing,
+                flow_path=missing,
+                currency_strength_path=missing,
+                levels_path=missing,
+                calendar_path=missing,
+                cot_path=missing,
+                option_skew_path=missing,
+            )
+
+            cases = (
+                (
+                    "schema",
+                    {**matrix, "pair_charts_binding": {**matrix["pair_charts_binding"], "schema": "WRONG"}},
+                    "schema is invalid",
+                ),
+                (
+                    "coverage",
+                    {
+                        **matrix,
+                        "pair_charts_binding": {
+                            **matrix["pair_charts_binding"],
+                            "pairs_succeeded": 0,
+                        },
+                    },
+                    "pairs_succeeded mismatch",
+                ),
+                (
+                    "matrix_time",
+                    {**matrix, "generated_at_utc": "2026-07-14T04:59:59+00:00"},
+                    "predates its bound pair_charts packet",
+                ),
+            )
+            for name, candidate, expected_issue in cases:
+                with self.subTest(name=name):
+                    valid, issue = verify_pair_charts_artifact_binding(
+                        candidate,
+                        pair_charts_path=pair_charts_path,
+                    )
+                    self.assertFalse(valid)
+                    self.assertIn(expected_issue, str(issue))
+
     def test_maps_dxy_and_strength_to_eurusd_direction_without_blocking_policy(self) -> None:
         payload = build_market_context_matrix_from_payloads(
             pair_charts=_pair_charts(),

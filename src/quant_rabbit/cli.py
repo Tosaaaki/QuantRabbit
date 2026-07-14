@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import sys
 import uuid
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -711,7 +712,9 @@ def _refresh_daily_target_after_snapshot_refresh_if_required(
         summary = DailyTargetLedger(
             state_path=target_state_path,
             report_path=_daily_target_report_path_for_state(target_state_path),
+            capital_flows_path=DEFAULT_CAPITAL_FLOWS,
             pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+            execution_ledger_path=DEFAULT_EXECUTION_LEDGER_DB,
         ).run(snapshot=snapshot)
     except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
         return {
@@ -1096,11 +1099,12 @@ def _memory_health_count_and_samples(value: object) -> tuple[int, list[str]]:
 
 
 def _broker_snapshot_refresh(snapshot_path: Path) -> dict[str, Any]:
-    pairs: tuple[str, ...] = tuple(
+    configured_pairs = tuple(
         part.strip().upper()
         for part in DEFAULT_TRADER_PAIRS_ARG.split(",")
         if part.strip()
     )
+    pairs: tuple[str, ...] = configured_pairs
     try:
         if snapshot_path.exists():
             payload = json.loads(snapshot_path.read_text())
@@ -1110,8 +1114,25 @@ def _broker_snapshot_refresh(snapshot_path: Path) -> dict[str, Any]:
                 if str(pair).strip()
             )
             if snapshot_pairs:
-                pairs = snapshot_pairs
+                # Existing custom/open-position quote coverage may extend the
+                # configured universe, but it must never narrow the official
+                # opportunity scan after a strict all-pair chart re-anchor.
+                pairs = tuple(dict.fromkeys((*configured_pairs, *snapshot_pairs)))
         snapshot = OandaReadOnlyClient().snapshot(pairs)
+        snapshot_quotes = getattr(snapshot, "quotes", None)
+        if not isinstance(snapshot_quotes, Mapping):
+            raise ValueError("broker snapshot quotes must be a mapping")
+        returned_pairs = {
+            str(pair).strip().upper()
+            for pair in snapshot_quotes
+            if str(pair).strip()
+        }
+        missing_pairs = [pair for pair in pairs if pair not in returned_pairs]
+        if missing_pairs:
+            raise ValueError(
+                "broker snapshot is incomplete for the requested opportunity universe: "
+                + ",".join(missing_pairs)
+            )
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
     except (RuntimeError, OSError, json.JSONDecodeError, ValueError) as exc:
@@ -2147,12 +2168,121 @@ def _refresh_market_story_if_news_is_newer(
     return True
 
 
+def _refresh_pair_charts_and_matrix(
+    *,
+    client: Any,
+    pairs: tuple[str, ...],
+    candle_count: int,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+    market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+    market_context_matrix_report_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fetch the execution chart packet and rebuild its exact dependent matrix."""
+
+    from quant_rabbit.analysis.chart_reader import build_pair_chart
+    from quant_rabbit.analysis.market_context_matrix import (
+        build_market_context_matrix,
+        write_market_context_matrix_report,
+    )
+    from quant_rabbit.analysis.score_momentum import attach_score_momentum
+
+    chart_workers = _pair_chart_worker_count(None, len(pairs))
+    chart_results, chart_failures = _build_pair_charts_concurrently(
+        pairs,
+        client=client,
+        timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES,
+        count=candle_count,
+        workers=chart_workers,
+        builder=build_pair_chart,
+    )
+    charts = [chart.to_dict() for chart in chart_results]
+    result_pairs = [str(chart.get("pair") or "").strip().upper() for chart in charts]
+    requested_pair_set = set(pairs)
+    result_pair_set = set(result_pairs)
+    missing_pairs = sorted(requested_pair_set - result_pair_set)
+    unexpected_pairs = sorted(result_pair_set - requested_pair_set)
+    duplicate_pairs = sorted({pair for pair in result_pairs if result_pairs.count(pair) > 1})
+    if (
+        chart_failures
+        or len(chart_results) != len(pairs)
+        or len(requested_pair_set) != len(pairs)
+        or missing_pairs
+        or unexpected_pairs
+        or duplicate_pairs
+    ):
+        failed_pairs = ",".join(
+            sorted(str(item.get("pair") or "UNKNOWN") for item in chart_failures)
+        )
+        raise RuntimeError(
+            "intent-boundary market evidence refresh requires complete pair-chart coverage; "
+            f"received={len(chart_results)}/{len(pairs)} failed={failed_pairs or 'NONE'} "
+            f"missing={','.join(missing_pairs) or 'NONE'} "
+            f"unexpected={','.join(unexpected_pairs) or 'NONE'} "
+            f"duplicates={','.join(duplicate_pairs) or 'NONE'}"
+        )
+    # Bind the packet clock only after the final concurrent OANDA fetch.  The
+    # timestamp attributes these exact bytes; it must never be advanced without
+    # another candle acquisition.
+    generated_at = datetime.now(timezone.utc).isoformat()
+    cycle_id = str(os.environ.get("QR_CONSOLIDATED_CYCLE_ID") or "").strip()
+    cycle_lineage_status = str(
+        os.environ.get("QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS") or ""
+    ).strip()
+    previous_pair_charts = None
+    if pair_charts_path.exists():
+        try:
+            previous_pair_charts = json.loads(pair_charts_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            previous_pair_charts = None
+    attach_score_momentum(
+        charts,
+        previous_pair_charts,
+        generated_at,
+        cycle_id=cycle_id or None,
+        cycle_lineage_status=cycle_lineage_status or None,
+    )
+    charts.sort(key=lambda c: max(c["long_score"], c["short_score"]), reverse=True)
+    pair_payload = {
+        "generated_at_utc": generated_at,
+        "timeframes": list(DEFAULT_PAIR_CHART_TIMEFRAMES),
+        "candle_count": candle_count,
+        "pairs_requested": len(pairs),
+        "pairs_succeeded": len(charts),
+        "pairs_failed": 0,
+        "workers": chart_workers,
+        "partial": False,
+        "failures": [],
+        "charts": charts,
+    }
+    if cycle_id:
+        pair_payload["cycle_id"] = cycle_id
+    if cycle_lineage_status:
+        pair_payload["cycle_lineage_status"] = cycle_lineage_status
+    _write_json(pair_charts_path, pair_payload)
+
+    matrix = build_market_context_matrix(
+        pair_charts_path=pair_charts_path,
+        cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+        flow_path=DEFAULT_FLOW_SNAPSHOT,
+        currency_strength_path=DEFAULT_CURRENCY_STRENGTH,
+        levels_path=DEFAULT_LEVELS_SNAPSHOT,
+        calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+        cot_path=DEFAULT_COT_SNAPSHOT,
+        option_skew_path=DEFAULT_OPTION_SKEW,
+        context_asset_charts_path=DEFAULT_CONTEXT_ASSET_CHARTS,
+    )
+    _write_json(market_context_matrix_path, matrix)
+    write_market_context_matrix_report(matrix, market_context_matrix_report_path)
+    return pair_payload, matrix
+
+
 def _auto_refresh_market_evidence_if_required(
     *,
     label: str,
     reuse_market_artifacts: bool = False,
     validate_order_intents_freshness: bool = True,
     market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
     context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
     broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
     order_intents_path: Path = DEFAULT_ORDER_INTENTS,
@@ -2168,6 +2298,7 @@ def _auto_refresh_market_evidence_if_required(
         _validate_reusable_market_evidence(
             label=label,
             market_context_matrix_path=market_context_matrix_path,
+            pair_charts_path=pair_charts_path,
             context_asset_charts_path=context_asset_charts_path,
             broker_instruments_path=broker_instruments_path,
             order_intents_path=order_intents_path,
@@ -2191,7 +2322,6 @@ def _auto_refresh_market_evidence_if_required(
         client = OandaReadOnlyClient()
 
         from quant_rabbit.analysis.calendar import build_calendar_snapshot
-        from quant_rabbit.analysis.chart_reader import build_pair_chart
         from quant_rabbit.analysis.context_assets import (
             build_context_asset_charts,
             write_context_asset_charts_report,
@@ -2203,12 +2333,7 @@ def _auto_refresh_market_evidence_if_required(
         )
         from quant_rabbit.analysis.flow import build_flow_snapshot
         from quant_rabbit.analysis.levels import build_levels_snapshot
-        from quant_rabbit.analysis.market_context_matrix import (
-            build_market_context_matrix,
-            write_market_context_matrix_report,
-        )
         from quant_rabbit.analysis.options import build_option_skew_snapshot
-        from quant_rabbit.analysis.score_momentum import attach_score_momentum
         from quant_rabbit.analysis.strength import build_strength_snapshot
 
         broker_instruments = _broker_instruments_snapshot(
@@ -2218,30 +2343,6 @@ def _auto_refresh_market_evidence_if_required(
         )
         _write_json(DEFAULT_BROKER_INSTRUMENTS, broker_instruments)
         _write_broker_instruments_report(broker_instruments, DEFAULT_BROKER_INSTRUMENTS_REPORT)
-
-        charts = [
-            build_pair_chart(pair, client=client, timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES, count=candle_count).to_dict()
-            for pair in pairs
-        ]
-        # Bind the outer chart clock after the final sequential OANDA fetch.
-        # Stamping before 28 pairs × 7 timeframes could make a later pair's
-        # legitimate completed candle appear to come from the future.
-        generated_at = datetime.now(timezone.utc).isoformat()
-        previous_pair_charts = None
-        if DEFAULT_PAIR_CHARTS.exists():
-            try:
-                previous_pair_charts = json.loads(DEFAULT_PAIR_CHARTS.read_text())
-            except (OSError, json.JSONDecodeError, ValueError):
-                previous_pair_charts = None
-        attach_score_momentum(charts, previous_pair_charts, generated_at)
-        charts.sort(key=lambda c: max(c["long_score"], c["short_score"]), reverse=True)
-        pair_payload = {
-            "generated_at_utc": generated_at,
-            "timeframes": list(DEFAULT_PAIR_CHART_TIMEFRAMES),
-            "candle_count": candle_count,
-            "charts": charts,
-        }
-        _write_json(DEFAULT_PAIR_CHARTS, pair_payload)
 
         context_asset_charts = build_context_asset_charts(
             client=client,
@@ -2282,19 +2383,19 @@ def _auto_refresh_market_evidence_if_required(
         option_skew = build_option_skew_snapshot(pairs=pairs)
         _write_json(DEFAULT_OPTION_SKEW, option_skew.to_dict())
 
-        matrix = build_market_context_matrix(
+        # Fetch the execution chart packet after the slower independent
+        # context layers.  M1 and M5 freshness is validated against the broker
+        # snapshot used for forecast generation; fetching charts first made
+        # otherwise valid rows expire while context acquisition was still
+        # running.
+        pair_payload, matrix = _refresh_pair_charts_and_matrix(
+            client=client,
+            pairs=pairs,
+            candle_count=candle_count,
             pair_charts_path=DEFAULT_PAIR_CHARTS,
-            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
-            flow_path=DEFAULT_FLOW_SNAPSHOT,
-            currency_strength_path=DEFAULT_CURRENCY_STRENGTH,
-            levels_path=DEFAULT_LEVELS_SNAPSHOT,
-            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
-            cot_path=DEFAULT_COT_SNAPSHOT,
-            option_skew_path=DEFAULT_OPTION_SKEW,
-            context_asset_charts_path=DEFAULT_CONTEXT_ASSET_CHARTS,
+            market_context_matrix_path=market_context_matrix_path,
+            market_context_matrix_report_path=DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
         )
-        _write_json(market_context_matrix_path, matrix)
-        write_market_context_matrix_report(matrix, DEFAULT_MARKET_CONTEXT_MATRIX_REPORT)
     except Exception as exc:
         raise RuntimeError(f"{label} market evidence refresh failed: {exc}") from exc
 
@@ -2322,7 +2423,7 @@ def _auto_refresh_market_evidence_if_required(
     summary = {
         "status": "REFRESHED",
         "pairs": len(pairs),
-        "pair_charts_generated_at_utc": generated_at,
+        "pair_charts_generated_at_utc": pair_payload.get("generated_at_utc"),
         "market_context_pairs": len(matrix.get("pairs") or {}),
         "market_context_matrix_path": str(market_context_matrix_path),
         "context_assets": len(context_asset_charts.get("charts") or []),
@@ -2342,10 +2443,75 @@ def _auto_refresh_market_evidence_if_required(
     return summary
 
 
+def _reanchor_reused_market_evidence_after_preflight(
+    *,
+    label: str,
+    market_context_matrix_path: Path,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+) -> dict[str, Any]:
+    """Refresh only chart-dependent evidence after unlocked slow preflight.
+
+    A standalone ``generate-intents --reuse-market-artifacts`` still performs
+    ledger/projection preflight.  Reusing the packet acquired before that work
+    recreates the stale-M1/M5 bug, so the direct path re-fetches the real chart
+    bytes and rebuilds their matrix while retaining the slower context layers.
+    Consolidated cycles do this explicitly in their final step sequence and do
+    not call this helper.
+    """
+
+    if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }:
+        return {"status": "SKIPPED", "reason": "QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH"}
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return {"status": "SKIPPED", "reason": "test_harness"}
+
+    pairs = tuple(part.strip().upper() for part in DEFAULT_TRADER_PAIRS_ARG.split(",") if part.strip())
+    candle_count = int(os.environ.get("QR_MARKET_EVIDENCE_CANDLE_COUNT", "200") or "200")
+    try:
+        pair_payload, matrix = _refresh_pair_charts_and_matrix(
+            client=OandaReadOnlyClient(),
+            pairs=pairs,
+            candle_count=candle_count,
+            pair_charts_path=pair_charts_path,
+            market_context_matrix_path=market_context_matrix_path,
+            market_context_matrix_report_path=DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"{label} intent-boundary market evidence re-anchor failed: {exc}") from exc
+    return {
+        "status": "REFRESHED",
+        "reason": "reuse_reanchored_after_preflight",
+        "pairs": len(pair_payload.get("charts") or []),
+        "pair_charts_generated_at_utc": pair_payload.get("generated_at_utc"),
+        "market_context_pairs": len(matrix.get("pairs") or {}),
+        "market_context_matrix_path": str(market_context_matrix_path),
+    }
+
+
+def _trusted_consolidated_intent_preflight(requested: bool) -> bool:
+    """Accept the fast consolidated path only from the inherited live lock."""
+
+    if (
+        not requested
+        or os.environ.get("QR_AUTOTRADE_LOCK_HELD") != "1"
+        or not str(os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN") or "").strip()
+        or not str(os.environ.get("QR_CYCLE_STEP_RUN_ID") or "").strip()
+    ):
+        return False
+    lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
+    return _cycle_runtime_lock_env_is_valid(lock_dir)
+
+
 def _validate_reusable_market_evidence(
     *,
     label: str,
     market_context_matrix_path: Path,
+    pair_charts_path: Path,
     context_asset_charts_path: Path,
     broker_instruments_path: Path,
     order_intents_path: Path,
@@ -2371,6 +2537,80 @@ def _validate_reusable_market_evidence(
             f"{label} cannot reuse market artifacts: market_context_matrix="
             f"{market_context_matrix_path} has no pair/side matrix rows; refresh market context before "
             "live candidate discovery"
+        )
+    from quant_rabbit.analysis.market_context_matrix import verify_pair_charts_artifact_binding
+
+    binding_valid, binding_issue = verify_pair_charts_artifact_binding(
+        payload,
+        pair_charts_path=pair_charts_path,
+    )
+    if not binding_valid:
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: market_context_matrix="
+            f"{market_context_matrix_path} is not bound to current pair_charts={pair_charts_path}: "
+            f"{binding_issue or 'PAIR_CHARTS_BINDING_INVALID'}; rebuild market-context-matrix "
+            "from the current chart packet before live candidate discovery"
+        )
+    try:
+        pair_charts_payload = json.loads(pair_charts_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: unreadable pair_charts="
+            f"{pair_charts_path}: {exc}; reacquire the complete trader universe"
+        ) from exc
+    charts = (
+        pair_charts_payload.get("charts")
+        if isinstance(pair_charts_payload, dict) and isinstance(pair_charts_payload.get("charts"), list)
+        else []
+    )
+    chart_pairs = [
+        str(chart.get("pair") or "").strip().upper()
+        for chart in charts
+        if isinstance(chart, dict)
+    ]
+    expected_pairs = tuple(
+        part.strip().upper()
+        for part in DEFAULT_TRADER_PAIRS_ARG.split(",")
+        if part.strip()
+    )
+    expected_pair_set = set(expected_pairs)
+    chart_pair_set = set(chart_pairs)
+    matrix_pair_set = {
+        str(pair).strip().upper()
+        for pair in (payload.get("pairs") or {})
+        if str(pair).strip()
+    }
+    coverage_issues: list[str] = []
+    if pair_charts_payload.get("partial") is not False:
+        coverage_issues.append("partial must be false")
+    if pair_charts_payload.get("pairs_failed") != 0:
+        coverage_issues.append(f"pairs_failed={pair_charts_payload.get('pairs_failed')!r}")
+    for field in ("pairs_requested", "pairs_succeeded"):
+        if pair_charts_payload.get(field) != len(expected_pairs):
+            coverage_issues.append(
+                f"{field}={pair_charts_payload.get(field)!r} expected={len(expected_pairs)}"
+            )
+    if len(charts) != len(expected_pairs):
+        coverage_issues.append(f"chart_count={len(charts)} expected={len(expected_pairs)}")
+    if len(chart_pairs) != len(chart_pair_set):
+        coverage_issues.append("duplicate pair rows")
+    missing_pairs = sorted(expected_pair_set - chart_pair_set)
+    unexpected_pairs = sorted(chart_pair_set - expected_pair_set)
+    matrix_missing_pairs = sorted(expected_pair_set - matrix_pair_set)
+    matrix_unexpected_pairs = sorted(matrix_pair_set - expected_pair_set)
+    if missing_pairs:
+        coverage_issues.append(f"missing={','.join(missing_pairs)}")
+    if unexpected_pairs:
+        coverage_issues.append(f"unexpected={','.join(unexpected_pairs)}")
+    if matrix_missing_pairs:
+        coverage_issues.append(f"matrix_missing={','.join(matrix_missing_pairs)}")
+    if matrix_unexpected_pairs:
+        coverage_issues.append(f"matrix_unexpected={','.join(matrix_unexpected_pairs)}")
+    if coverage_issues:
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: incomplete trader pair coverage in "
+            f"pair_charts={pair_charts_path}: {'; '.join(coverage_issues)}; "
+            "reacquire all configured trader pairs with --require-complete"
         )
     matrix_generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
     if validate_order_intents_freshness and order_intents_path.exists() and matrix_generated_at is not None:
@@ -2525,16 +2765,76 @@ DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST = ROOT / "data" / "direct_autotrade_audit
 POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST = ROOT / "data" / "post_autotrade_failure_sidecars_digest.json"
 
 
-def _reuse_market_artifact_intent_args() -> list[str]:
-    return ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"]
+def _reuse_market_artifact_intent_args(
+    *,
+    consolidated_preflight_complete: bool = False,
+) -> list[str]:
+    args = [
+        "generate-intents",
+        "--snapshot",
+        "data/broker_snapshot.json",
+        "--reuse-market-artifacts",
+    ]
+    if consolidated_preflight_complete:
+        args.append("--consolidated-preflight-complete")
+    return args
 
 
-def _reuse_market_artifact_intent_step() -> dict[str, Any]:
+def _reuse_market_artifact_intent_step(
+    *,
+    consolidated_preflight_complete: bool = False,
+) -> dict[str, Any]:
     return {
-        "argv": _reuse_market_artifact_intent_args(),
+        "argv": _reuse_market_artifact_intent_args(
+            consolidated_preflight_complete=consolidated_preflight_complete
+        ),
         "required": True,
         "timeout_seconds": DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
     }
+
+
+def _fresh_market_reprice_steps(
+    daily_risk_pct: str = "10",
+    *,
+    consolidated_preflight_complete: bool = True,
+) -> list[dict[str, Any]]:
+    """Reacquire forecast candles and dependent truth immediately before intents.
+
+    Context/replay/projection work can legitimately take longer than the M1
+    and M5 closed-candle freshness windows.  Rewriting only an outer artifact
+    clock would conceal stale market data, so every consolidated producer
+    performs a real chart fetch, rebuilds the chart-dependent context matrix,
+    then refreshes broker/target truth before generating intents.
+    """
+
+    return [
+        {
+            "argv": [
+                "pair-charts",
+                "--timeframes",
+                "M1,M5,M15,M30,H1,H4,D",
+                "--output",
+                "data/pair_charts.json",
+                "--require-complete",
+            ],
+            "required": True,
+        },
+        {"argv": ["market-context-matrix"], "required": True},
+        _broker_snapshot_step(),
+        {
+            "argv": [
+                "daily-target-state",
+                "--snapshot",
+                "data/broker_snapshot.json",
+                "--daily-risk-pct",
+                str(daily_risk_pct),
+            ],
+            "required": True,
+        },
+        _reuse_market_artifact_intent_step(
+            consolidated_preflight_complete=consolidated_preflight_complete
+        ),
+    ]
 
 
 def _qr_trader_run_watchdog_step() -> dict[str, Any]:
@@ -2704,7 +3004,13 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         },
         _qr_trader_run_watchdog_step(),
         _guardian_receipt_consumption_step(),
-        _reuse_market_artifact_intent_step(),
+        # The first chart/matrix pass supports early reviews and TP work, but
+        # slow context, replay, and projection acquisition can age its closed
+        # M1/M5 rows past the forecast contract.  Reacquire the real candles,
+        # rebuild their dependent matrix, and then re-anchor broker truth
+        # immediately before intent pricing.  A new outer timestamp without
+        # new candle bytes would be false freshness and is forbidden.
+        *_fresh_market_reprice_steps(daily_risk_pct),
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
@@ -2777,7 +3083,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
         _guardian_receipt_consumption_step(),
-        _reuse_market_artifact_intent_step(),
+        *_fresh_market_reprice_steps(),
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
         # broker truth so self-improvement does not loop on stale sidecars.
@@ -2819,7 +3125,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
         _guardian_receipt_consumption_step(),
-        _reuse_market_artifact_intent_step(),
+        *_fresh_market_reprice_steps(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
@@ -2858,7 +3164,11 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
         _guardian_receipt_consumption_step(),
-        _reuse_market_artifact_intent_step(),
+        # A direct audit does not inherit the wrapper's completed preflight.
+        # Its generate-intents command therefore performs slow ledger/
+        # projection work first and then reacquires chart→matrix→snapshot→
+        # target internally. Do not duplicate the external five-step fetch.
+        _reuse_market_artifact_intent_step(consolidated_preflight_complete=False),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
@@ -2888,16 +3198,21 @@ def _post_intent_evidence_steps() -> list[dict[str, Any]]:
     ]
 
 
-def _should_run_direct_autotrade_audit_sidecars() -> bool:
+def _should_run_direct_autotrade_audit_sidecars(*, under_owned_lock: bool = False) -> bool:
     if os.environ.get("QR_RUN_DIRECT_AUTOTRADE_AUDIT_SIDECARS") == "0":
         return False
-    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1" and not under_owned_lock:
         return False
     return not _running_under_test_harness()
 
 
-def _run_direct_autotrade_audit_sidecars() -> dict[str, Any] | None:
-    if not _should_run_direct_autotrade_audit_sidecars():
+def _run_direct_autotrade_audit_sidecars(
+    *,
+    under_owned_lock: bool = False,
+) -> dict[str, Any] | None:
+    if not _should_run_direct_autotrade_audit_sidecars(
+        under_owned_lock=under_owned_lock
+    ):
         return None
     step_results, aborted = _run_cycle_steps(_direct_autotrade_audit_sidecar_steps())
     digest = _cycle_digest(
@@ -2939,6 +3254,11 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
 
     results: list[dict[str, Any]] = []
     aborted = False
+    previous_consolidated_cycle_id = os.environ.get("QR_CONSOLIDATED_CYCLE_ID")
+    consolidated_cycle_id = (
+        str(previous_consolidated_cycle_id or "").strip() or uuid.uuid4().hex
+    )
+    os.environ["QR_CONSOLIDATED_CYCLE_ID"] = consolidated_cycle_id
     for spec in steps:
         argv = [str(a) for a in spec["argv"]]
         name = " ".join(argv)
@@ -2984,6 +3304,7 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             "seconds": elapsed,
             "started_at_utc": started_at_utc,
             "finished_at_utc": finished_at_utc,
+            "consolidated_cycle_id": consolidated_cycle_id,
             "cycle_step_run_id": cycle_step_run_id,
         }
         if rc not in ok_rcs:
@@ -2993,6 +3314,10 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
                 entry["status"] = "TIMED_OUT_REQUIRED" if timed_out else "FAILED_REQUIRED"
                 aborted = True
         results.append(entry)
+    if previous_consolidated_cycle_id is None:
+        os.environ.pop("QR_CONSOLIDATED_CYCLE_ID", None)
+    else:
+        os.environ["QR_CONSOLIDATED_CYCLE_ID"] = previous_consolidated_cycle_id
     return results, aborted
 
 
@@ -4140,6 +4465,14 @@ def main(argv: list[str] | None = None) -> int:
     p_charts.add_argument("--workers", type=int, default=None)
     p_charts.add_argument("--output", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_charts.add_argument("--report", type=Path, default=DEFAULT_PAIR_CHARTS_REPORT)
+    p_charts.add_argument(
+        "--require-complete",
+        action="store_true",
+        help=(
+            "Fail without replacing the current packet unless every requested pair is returned exactly once. "
+            "Required at the final intent-pricing boundary."
+        ),
+    )
 
     p_cross = sub.add_parser("cross-asset-snapshot", help="Cross-asset/inter-market snapshot (DXY, US bonds, SPX, Gold, Oil, BTC).")
     p_cross.add_argument("--instruments", default="")  # empty → use defaults
@@ -5551,6 +5884,14 @@ def main(argv: list[str] | None = None) -> int:
             "Use after the explicit market evidence refresh steps in cycle-refresh."
         ),
     )
+    p_intents.add_argument(
+        "--consolidated-preflight-complete",
+        action="store_true",
+        help=(
+            "Internal cycle marker: slow ledger/projection/news preflight already completed under "
+            "the inherited live lock immediately before the final market reprice."
+        ),
+    )
 
     p_promote = sub.add_parser("promote-receipts", help="Promote strategy profiles from dry-run order receipts.")
     p_promote.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
@@ -6085,6 +6426,97 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if summary.status in {"STAGED", "SENT"} else 2
     if args.command == "generate-intents":
+        if args.consolidated_preflight_complete and not args.reuse_market_artifacts:
+            print(
+                json.dumps(
+                    {
+                        "error": (
+                            "--consolidated-preflight-complete requires --reuse-market-artifacts "
+                            "and the inherited live-cycle lock"
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        consolidated_preflight = _trusted_consolidated_intent_preflight(
+            bool(args.consolidated_preflight_complete)
+        )
+        if args.consolidated_preflight_complete and not consolidated_preflight:
+            print(
+                json.dumps(
+                    {
+                        "error": (
+                            "--consolidated-preflight-complete was not bound to the inherited "
+                            "live-cycle lock; refusing to skip pre-entry evidence work"
+                        )
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+
+        forecast_refresh: dict[str, Any] | None = None
+        telemetry_required = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() in {
+            "1", "true", "TRUE", "yes", "YES"
+        }
+        if consolidated_preflight:
+            preflight_skip = {
+                "status": "SKIPPED",
+                "reason": "consolidated_preflight_complete_under_inherited_live_lock",
+            }
+            execution_ledger_sync = dict(preflight_skip)
+            capture_economics_refresh = dict(preflight_skip)
+            projection_verification = dict(preflight_skip)
+        else:
+            # These reads can take longer than the strict M1/M5 freshness
+            # windows. Complete them before the final real chart acquisition;
+            # otherwise generate-intents recreates the stale-technical blocker
+            # inside an externally correct chart→matrix→snapshot sequence.
+            if not args.no_refresh_market_story:
+                _refresh_market_story_if_news_is_newer(
+                    profile_path=args.market_story_profile,
+                    report_path=args.market_story_report,
+                    news_dir=args.market_news_dir,
+                )
+            execution_ledger_sync = _pre_entry_execution_ledger_sync_if_required(
+                telemetry_required=telemetry_required,
+                snapshot_path=args.snapshot,
+            )
+            capture_economics_refresh = _pre_entry_capture_economics_refresh_if_required(
+                telemetry_required=telemetry_required,
+                execution_ledger_sync=execution_ledger_sync,
+            )
+            if (capture_economics_refresh or {}).get("status") == "REFRESH_FAILED":
+                print(
+                    json.dumps(
+                        {
+                            "error": capture_economics_refresh.get("error") or "capture_economics_refresh_failed",
+                            "capture_economics_refresh": capture_economics_refresh,
+                            "execution_ledger_sync": execution_ledger_sync,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            projection_verification = _pre_entry_projection_verification_if_required(
+                telemetry_required=telemetry_required,
+                snapshot_path=args.snapshot,
+                pair_charts_path=DEFAULT_PAIR_CHARTS,
+            )
+
+        reanchor_refresh: dict[str, Any] | None = None
+        if args.reuse_market_artifacts and not consolidated_preflight:
+            reanchor_refresh = _reanchor_reused_market_evidence_after_preflight(
+                label="generate-intents",
+                market_context_matrix_path=args.market_context_matrix,
+            )
         market_evidence_kwargs: dict[str, Any] = {
             "label": "generate-intents",
             "reuse_market_artifacts": bool(args.reuse_market_artifacts),
@@ -6097,10 +6529,29 @@ def main(argv: list[str] | None = None) -> int:
             # check because it consumes the existing intent packet.
             market_evidence_kwargs["validate_order_intents_freshness"] = False
         market_evidence_refresh = _auto_refresh_market_evidence_if_required(**market_evidence_kwargs)
+        if (reanchor_refresh or {}).get("status") == "REFRESHED":
+            market_evidence_refresh = {
+                **market_evidence_refresh,
+                **reanchor_refresh,
+                "reuse_validation_status": market_evidence_refresh.get("status"),
+            }
         snapshot_refresh = _refresh_snapshot_after_market_evidence_if_required(
             market_evidence_refresh=market_evidence_refresh,
             snapshot_path=args.snapshot,
         )
+        if (snapshot_refresh or {}).get("status") == "SNAPSHOT_REFRESH_FAILED":
+            print(
+                json.dumps(
+                    {
+                        "error": snapshot_refresh.get("error") or "snapshot_refresh_failed",
+                        "snapshot_refresh": snapshot_refresh,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         daily_target_refresh = _refresh_daily_target_after_snapshot_refresh_if_required(
             snapshot_refresh=snapshot_refresh,
             campaign_plan_path=args.campaign_plan,
@@ -6119,43 +6570,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 2
-        if not args.no_refresh_market_story:
-            _refresh_market_story_if_news_is_newer(
-                profile_path=args.market_story_profile,
-                report_path=args.market_story_report,
-                news_dir=args.market_news_dir,
-            )
-        forecast_refresh: dict[str, Any] | None = None
-        telemetry_required = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() in {
-            "1", "true", "TRUE", "yes", "YES"
-        }
-        execution_ledger_sync = _pre_entry_execution_ledger_sync_if_required(
-            telemetry_required=telemetry_required,
-            snapshot_path=args.snapshot,
-        )
-        capture_economics_refresh = _pre_entry_capture_economics_refresh_if_required(
-            telemetry_required=telemetry_required,
-            execution_ledger_sync=execution_ledger_sync,
-        )
-        if (capture_economics_refresh or {}).get("status") == "REFRESH_FAILED":
-            print(
-                json.dumps(
-                    {
-                        "error": capture_economics_refresh.get("error") or "capture_economics_refresh_failed",
-                        "capture_economics_refresh": capture_economics_refresh,
-                        "execution_ledger_sync": execution_ledger_sync,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
-            return 2
-        projection_verification = _pre_entry_projection_verification_if_required(
-            telemetry_required=telemetry_required,
-            snapshot_path=args.snapshot,
-            pair_charts_path=DEFAULT_PAIR_CHARTS,
-        )
         campaign_refresh = _auto_refresh_campaign_plan_if_required(
             campaign_plan_path=args.campaign_plan,
             strategy_profile_path=args.strategy_profile,
@@ -6178,6 +6592,60 @@ def main(argv: list[str] | None = None) -> int:
             telemetry_required=telemetry_required,
             snapshot_path=args.snapshot,
         )
+        if (pre_intent_snapshot_refresh or {}).get("status") == "SNAPSHOT_REFRESH_FAILED":
+            print(
+                json.dumps(
+                    {
+                        "error": pre_intent_snapshot_refresh.get("error") or "pre_intent_snapshot_refresh_failed",
+                        "pre_intent_snapshot_refresh": pre_intent_snapshot_refresh,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        if (pre_intent_snapshot_refresh or {}).get("status") == "REFRESHED":
+            # A final quote refresh changes sizing NAV and target lineage. Keep
+            # snapshot→target→campaign exact before handing control to the
+            # generator; otherwise a fresh quote packet is paired with an older
+            # risk budget or campaign plan.
+            daily_target_refresh = _refresh_daily_target_after_snapshot_refresh_if_required(
+                snapshot_refresh=pre_intent_snapshot_refresh,
+                campaign_plan_path=args.campaign_plan,
+                snapshot_path=args.snapshot,
+            )
+            if (daily_target_refresh or {}).get("status") == "REFRESH_FAILED":
+                print(
+                    json.dumps(
+                        {
+                            "error": daily_target_refresh.get("error") or daily_target_refresh.get("reason"),
+                            "daily_target_refresh": daily_target_refresh,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            campaign_refresh = _auto_refresh_campaign_plan_if_required(
+                campaign_plan_path=args.campaign_plan,
+                strategy_profile_path=args.strategy_profile,
+                market_story_profile_path=args.market_story_profile,
+            )
+            if campaign_refresh.get("status") == "REFRESH_FAILED":
+                print(
+                    json.dumps(
+                        {
+                            "error": campaign_refresh.get("error") or campaign_refresh.get("reason"),
+                            "campaign_refresh": campaign_refresh,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 2
         if (
             telemetry_required
             and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
@@ -6344,7 +6812,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "autotrade-cycle":
         # Bootstrap moved to top of main() for all commands; this branch
         # used to call it inline before the move.
+        live_lock = None
         try:
+            production_direct_cycle = not _running_under_test_harness()
+            if args.send or production_direct_cycle:
+                # The reusable-evidence SHA/coverage check is part of the send
+                # transaction boundary. Every production direct cycle acquires
+                # because its canonical artifacts must not race the scheduled
+                # wrapper, regardless of send or audit-tail settings. Acquire before
+                # validation and retain ownership through the entire direct
+                # sidecar repair pass. Legacy standalone writers that started
+                # before this lock still require a future gateway-side content
+                # digest/CAS; do not overstate this lock.
+                live_lock = _acquire_cycle_runtime_lock(
+                    "direct-autotrade-cycle-preflight"
+                )
             _auto_refresh_market_evidence_if_required(
                 label="autotrade-cycle",
                 reuse_market_artifacts=args.reuse_market_artifacts,
@@ -6376,10 +6858,18 @@ def main(argv: list[str] | None = None) -> int:
                 max_loss_pct=args.max_loss_pct,
                 risk_equity_jpy=args.risk_equity_jpy,
             ).run(send=args.send)
-            post_audit_digest = _run_direct_autotrade_audit_sidecars()
+            # A direct invocation retains its token through canonical artifact
+            # repair. Wrapper-inherited ownership yields token=None, so the
+            # direct sidecars remain skipped and the parent wrapper owns its
+            # canonical success/failure sidecar pass.
+            post_audit_digest = _run_direct_autotrade_audit_sidecars(
+                under_owned_lock=live_lock is not None,
+            )
         except (RuntimeError, OSError, ValueError, json.JSONDecodeError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
+        finally:
+            _release_cycle_runtime_lock(live_lock)
         decision_provenance = _decision_provenance_from_path(args.gpt_decision_response)
         payload = {
             "status": summary.status,
@@ -6575,15 +7065,60 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        generated_at = datetime.now(timezone.utc).isoformat()
         chart_payloads = [chart.to_dict() for chart in charts]
+        returned_pairs = [str(chart.get("pair") or "").strip().upper() for chart in chart_payloads]
+        requested_pair_set = set(pairs)
+        returned_pair_set = set(returned_pairs)
+        missing_pairs = sorted(requested_pair_set - returned_pair_set)
+        unexpected_pairs = sorted(returned_pair_set - requested_pair_set)
+        duplicate_pairs = sorted({pair for pair in returned_pairs if returned_pairs.count(pair) > 1})
+        incomplete = bool(
+            failures
+            or len(chart_payloads) != len(pairs)
+            or len(requested_pair_set) != len(pairs)
+            or missing_pairs
+            or unexpected_pairs
+            or duplicate_pairs
+        )
+        if args.require_complete and incomplete:
+            print(
+                json.dumps(
+                    {
+                        "error": "pair-charts requires complete exact pair coverage",
+                        "pairs_requested": len(pairs),
+                        "pairs_succeeded": len(chart_payloads),
+                        "pairs_failed": len(failures),
+                        "missing_pairs": missing_pairs,
+                        "unexpected_pairs": unexpected_pairs,
+                        "duplicate_pairs": duplicate_pairs,
+                        "workers": workers,
+                        "failures": failures,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+
+        generated_at = datetime.now(timezone.utc).isoformat()
+        cycle_id = str(os.environ.get("QR_CONSOLIDATED_CYCLE_ID") or "").strip()
+        cycle_lineage_status = str(
+            os.environ.get("QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS") or ""
+        ).strip()
         previous_pair_charts = None
         if args.output and args.output.exists():
             try:
                 previous_pair_charts = json.loads(args.output.read_text())
             except (OSError, json.JSONDecodeError, ValueError):
                 previous_pair_charts = None
-        attach_score_momentum(chart_payloads, previous_pair_charts, generated_at)
+        attach_score_momentum(
+            chart_payloads,
+            previous_pair_charts,
+            generated_at,
+            cycle_id=cycle_id or None,
+            cycle_lineage_status=cycle_lineage_status or None,
+        )
         chart_payloads.sort(key=lambda c: max(c["long_score"], c["short_score"]), reverse=True)
         output_payload = {
             "generated_at_utc": generated_at,
@@ -6597,6 +7132,10 @@ def main(argv: list[str] | None = None) -> int:
             "failures": failures,
             "charts": chart_payloads,
         }
+        if cycle_id:
+            output_payload["cycle_id"] = cycle_id
+        if cycle_lineage_status:
+            output_payload["cycle_lineage_status"] = cycle_lineage_status
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(output_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")

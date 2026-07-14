@@ -9159,6 +9159,15 @@ class AutoTradeCycleTest(unittest.TestCase):
                 calls.append("projection")
                 return {"status": "OK"}
 
+            def market_reanchor(_cycle: AutoTradeCycle) -> dict[str, object]:
+                calls.append("reanchor")
+                return {
+                    "status": "REFRESHED",
+                    "reason": "post_projection_intent_boundary",
+                    "pairs": 28,
+                    "market_context_pairs": 28,
+                }
+
             def campaign_refresh(_cycle: AutoTradeCycle, _target: object) -> None:
                 calls.append("campaign")
 
@@ -9191,6 +9200,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 "_verify_projection_preflight",
                 autospec=True,
                 side_effect=projection_preflight,
+            ), mock.patch.object(
+                AutoTradeCycle,
+                "_reanchor_market_evidence_before_intent_pricing",
+                autospec=True,
+                side_effect=market_reanchor,
             ), mock.patch.object(
                 AutoTradeCycle,
                 "_refresh_campaign_plan",
@@ -9242,8 +9256,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             report = (root / "report.md").read_text()
 
         self.assertEqual(summary.status, ACTION_NO_TRADE)
-        self.assertEqual(calls, ["snapshot", "projection", "snapshot", "campaign", "generator"])
+        self.assertEqual(
+            calls,
+            ["snapshot", "projection", "reanchor", "snapshot", "campaign", "generator"],
+        )
         self.assertEqual(len(client.snapshot_calls), 2)
+        self.assertIn("Intent market re-anchor: status=`REFRESHED`", report)
         self.assertIn("Pre-intent snapshot refresh: status=`REFRESHED`", report)
 
 

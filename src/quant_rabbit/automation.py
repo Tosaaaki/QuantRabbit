@@ -1566,6 +1566,7 @@ class AutoTradeCycle:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self._projection_preflight_summary: dict[str, Any] | None = None
+        self._intent_market_reanchor_summary: dict[str, Any] | None = None
         self._pre_intent_snapshot_refresh_summary: dict[str, Any] | None = None
         self._ai_test_bot_backtest_refreshed = False
         self._suppress_gateway_receipt_recording = False
@@ -1891,7 +1892,27 @@ class AutoTradeCycle:
         if self.reuse_market_artifacts:
             intent_summary = self._load_intent_summary_artifact()
         else:
-            refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
+            self._intent_market_reanchor_summary = (
+                self._reanchor_market_evidence_before_intent_pricing()
+            )
+            if self._intent_market_reanchor_summary.get("status") == "REFRESHED":
+                freshness_before_refresh = _snapshot_quote_freshness(snapshot)
+                refreshed_snapshot = self._refresh_snapshot(pairs)
+                self._pre_intent_snapshot_refresh_summary = {
+                    "status": "REFRESHED",
+                    "reason": "snapshot_reanchored_after_final_technical_packet",
+                    "snapshot_path": str(self.snapshot_path),
+                    "fetched_at_utc": refreshed_snapshot.fetched_at_utc.isoformat(),
+                    "positions": len(refreshed_snapshot.positions),
+                    "orders": len(refreshed_snapshot.orders),
+                    "quotes": len(refreshed_snapshot.quotes),
+                    "freshness_before_refresh": freshness_before_refresh,
+                }
+            else:
+                refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(
+                    snapshot,
+                    pairs,
+                )
             if refreshed_snapshot is not snapshot:
                 snapshot = refreshed_snapshot
                 target_summary = self._update_target_state(snapshot) or target_summary
@@ -3631,6 +3652,15 @@ class AutoTradeCycle:
                 f"counts=`{preflight.get('resolution_counts')}` "
                 f"error=`{preflight.get('error') or 'none'}`"
             )
+        if self._intent_market_reanchor_summary is not None:
+            reanchor = self._intent_market_reanchor_summary
+            lines.append(
+                "- Intent market re-anchor: "
+                f"status=`{reanchor.get('status')}` "
+                f"pairs=`{reanchor.get('pairs')}` "
+                f"matrix_pairs=`{reanchor.get('market_context_pairs')}` "
+                f"reason=`{reanchor.get('reason') or 'none'}`"
+            )
         if self._pre_intent_snapshot_refresh_summary is not None:
             refresh = self._pre_intent_snapshot_refresh_summary
             freshness = refresh.get("freshness_before_refresh") or refresh
@@ -3691,6 +3721,52 @@ class AutoTradeCycle:
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
+
+    def _reanchor_market_evidence_before_intent_pricing(self) -> dict[str, Any]:
+        """Reacquire chart-dependent evidence after slow cycle preflight."""
+
+        if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return {
+                "status": "SKIPPED",
+                "reason": "QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH",
+            }
+        if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+            return {"status": "SKIPPED", "reason": "test_harness"}
+
+        # The implementation is shared with CLI generate-intents so direct
+        # AutoTrade and consolidated paths enforce identical exact-coverage,
+        # real-candle, momentum-lineage, and matrix-binding semantics.
+        from quant_rabbit.cli import _refresh_pair_charts_and_matrix
+
+        candle_count = int(os.environ.get("QR_MARKET_EVIDENCE_CANDLE_COUNT", "200") or "200")
+        data_root = (
+            self.target_state_path.parent
+            if self.target_state_path is not None
+            else self.intents_path.parent
+        )
+        matrix_path = data_root / DEFAULT_MARKET_CONTEXT_MATRIX.name
+        pair_payload, matrix = _refresh_pair_charts_and_matrix(
+            client=self.client,
+            pairs=DEFAULT_TRADER_PAIRS,
+            candle_count=candle_count,
+            pair_charts_path=self.pair_charts_path,
+            market_context_matrix_path=matrix_path,
+            market_context_matrix_report_path=(
+                self.intent_report_path.parent / "market_context_matrix_report.md"
+            ),
+        )
+        return {
+            "status": "REFRESHED",
+            "reason": "post_projection_intent_boundary",
+            "pairs": len(pair_payload.get("charts") or []),
+            "pair_charts_generated_at_utc": pair_payload.get("generated_at_utc"),
+            "market_context_pairs": len(matrix.get("pairs") or {}),
+            "market_context_matrix_path": str(matrix_path),
+        }
 
     def _refresh_snapshot_before_intent_pricing_if_required(self, snapshot, pairs: tuple[str, ...]):
         freshness = _snapshot_quote_freshness(snapshot)

@@ -352,11 +352,15 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # daily-target-state → execution-ledger-sync → import-legacy → mine-strategy →
 # pair-charts → cross-asset/context/flow/strength/levels/calendar/COT/skew →
 # market-context-matrix → news-snapshot → mine-market-stories → news-health --strict →
-# daily-review → tp-rebalance → verify-projections → broker-snapshot →
-# daily-target-state → capture-economics → qr-trader-run-watchdog →
-# guardian-receipt-consumption → generate-intents --reuse-market-artifacts →
+# daily-review → broker-snapshot → daily-target-state → execution-ledger-sync →
+# tp-rebalance → execution-ledger-sync → predictive-scout-proof → broker-snapshot →
+# daily-target-state → verify-projections → broker-snapshot → daily-target-state →
+# capture-economics → execution-timing-audit →
+# qr-trader-run-watchdog → guardian-receipt-consumption → pair-charts --require-complete →
+# market-context-matrix → broker-snapshot → daily-target-state →
+# generate-intents --reuse-market-artifacts --consolidated-preflight-complete →
 # optimize-coverage → ai-attack-advice →
-# learning/execution-timing/manual-market-context/operator-precedent/verification audits →
+# learning/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → guardian-trigger-contract →
 # guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
@@ -388,7 +392,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # ms) instead of the default ~10s yield — 2026-06-11 telemetry showed ~25
 # empty polling turns per cycle, each re-sending the whole conversation
 # context, keeping the cycle at ~3.9M tokens despite the consolidation. The
-# required post-gateway `generate-intents --reuse-market-artifacts` step has a
+# required post-gateway `generate-intents --reuse-market-artifacts
+# --consolidated-preflight-complete` step has a
 # 900s bounded timeout because it must finish repricing current order_intents
 # before coverage, acceptance, and support can be trusted. One long wait
 # removes both empty-poll token spend and partial-stale sidecar reads.
@@ -414,6 +419,15 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # be shortened back to the module-default 168h window, and it must stay before
 # intent generation because TP_HARVEST_REPAIR exceptions read residual replay
 # groups before exposing a repair lane.
+# The first chart packet supports early review/TP work. Slow context, replay,
+# projection, watchdog, and receipt steps can outlive the M1/M5 forecast
+# windows, so every intent reprice reacquires real pair-chart candles, rebuilds
+# market-context-matrix, and then refreshes broker/target truth immediately
+# before generate-intents. Direct automatic refresh uses the bounded parallel
+# all-pair collector and fails on incomplete coverage. Never renew old candle
+# bytes by changing only an outer generated_at_utc timestamp. The rebuilt
+# matrix seals the exact pair-chart packet SHA-256/timestamp/coverage and reuse
+# rejects any chart↔matrix generation mismatch.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 
 # The refresh branch is not an end state: it must produce one current receipt
@@ -653,10 +667,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `broker-snapshot` and `daily-target-state`, then runs the
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then refreshes
-# `broker-snapshot` and `daily-target-state` again, syncs the execution ledger,
+# guardian trigger/event state, syncs the execution ledger, refreshes
+# `predictive-scout-proof`, `broker-snapshot`, and `daily-target-state`, then
 # refreshes `capture-economics`, `qr-trader-run-watchdog`, and
-# `guardian-receipt-consumption`, and only then reprices `order_intents`
-# with `generate-intents --reuse-market-artifacts`. It then
+# `guardian-receipt-consumption`, then reacquires `pair-charts --require-complete`, rebuilds
+# `market-context-matrix`, refreshes `broker-snapshot` / `daily-target-state`,
+# and only then reprices `order_intents` with
+# `generate-intents --reuse-market-artifacts --consolidated-preflight-complete`. It then
 # regenerates `optimize-coverage` and `ai-attack-advice` from that final intent
 # packet, and reruns read-only position evidence sidecars against the final
 # broker/intent packet before `guardian-trigger-contract` → `guardian-event-router` →
@@ -664,6 +681,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
+# `as-live-ready-evidence-loop` → `as-4x-proof-path` →
 # `trader-repair-orchestrator` → `trader-goal-loop-orchestrator` →
 # `active-trader-contract` → `active-opportunity-board` →
 # `non-eurusd-proof-lane-mapper` → `non-eurusd-live-grade-frontier` →
@@ -675,12 +693,51 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `trader-support-bot` → `trader-repair-orchestrator` →
 # `trader-goal-loop-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
+# Repeated pair-chart fetches inside one consolidated cycle are freshness
+# re-anchors, not independent momentum samples. For an immediate re-anchor,
+# carry and recompute from the verified prior-cycle score baseline; if that
+# lineage is missing, malformed, inconsistent, future, or stale, publish
+# unknown score momentum rather than a slope made from fetch-time jitter.
+# `_run_cycle_steps` binds every pair packet in the pass to one stable
+# `QR_CONSOLIDATED_CYCLE_ID`; exact id equality, not elapsed minutes, defines
+# consolidated re-anchors. Across the separate cycle-refresh → GPT → live
+# wrapper processes, `run-autotrade-live.sh --reuse-market-artifacts` resolves
+# lineage after handoff refresh and inherits that id only when one canonical
+# pair-chart byte read matches both path/size/SHA-256 source descriptors, the
+# packet's canonical material digest recomputes, and the selected decision
+# binds that exact digest. It then carries the
+# id through success/failure sidecars. A mismatch gets one `UNBOUND_WRAPPER`
+# id to coordinate writers, but that status publishes unknown momentum. The
+# 30-minute rule is legacy fallback only when both packets lack explicit cycle
+# identity; a one-sided id also publishes unknown momentum.
+# A direct `autotrade-cycle` invocation uses
+# `cli._direct_autotrade_audit_sidecar_steps`. Its marker-less
+# `generate-intents --reuse-market-artifacts` completes slow story/ledger/
+# capture/projection preflight first, then internally reacquires the complete
+# real chart packet, rebuilds and validates the bound matrix, aligns
+# snapshot→target→campaign, and invokes the generator. It intentionally has no
+# redundant outer five-step reprice. The remaining post-intent evidence,
+# acceptance/proof, active-board, and terminal guardian/support/repair chain is
+# canonical even though the live wrapper normally owns the fuller post-gateway
+# path.
+# A direct invocation that owns the live-runtime lock retains it through this
+# entire audit chain. It must not release after AutoTradeCycle and then rewrite
+# canonical chart/matrix/snapshot/target/intent artifacts unlocked. An
+# ordinary production direct dry-run takes the same lock even when its audit
+# tail is disabled, because AutoTradeCycle itself updates canonical evidence.
+#
+# inherited wrapper lock skips this direct chain; the wrapper owns its normal
+# success/failure sidecars and releases only after they finish.
+# Direct non-reuse `autotrade-cycle` also completes market-story/projection
+# preflight before its internal real chart→matrix re-anchor, then refreshes
+# snapshot→target→campaign immediately before `IntentGenerator`. Snapshot-only
+# refresh after slow projection is not a valid technical freshness boundary.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
 # diagnostics.
 #
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
-#   broker-snapshot → tp-rebalance → execution-ledger-sync → predictive-scout-proof → broker-snapshot
+#   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → daily-target-state → profit-partial-close → verify-projections
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution → guardian-trigger-contract
@@ -689,7 +746,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → capture-economics
 #   → qr-trader-run-watchdog
 #   → guardian-receipt-consumption
-#   → generate-intents --reuse-market-artifacts
+#   → pair-charts --require-complete → market-context-matrix → broker-snapshot → daily-target-state
+#   → generate-intents --reuse-market-artifacts --consolidated-preflight-complete
 #   → optimize-coverage → ai-attack-advice
 #   → position-thesis-check → thesis-evolution-check
 #   → forecast-persistence-check → position-management → guardian-trigger-contract
