@@ -575,6 +575,38 @@ def _run_dispatcher_once(
         _append_log(paths.log, result)
         return result
 
+    if _route_event_to_hourly_tuning(selected, env=environ):
+        # Closed-candle P2 tuning observations are valuable training input but
+        # are not time-critical trade decisions.  Waking GPT every 30 seconds
+        # for a NO_ACTION tuning row duplicates the hourly AI's role and can
+        # repeatedly spend model capacity when the durable tuning queue is
+        # already full.  Preserve the event for the hourly cycle while keeping
+        # entry/add and active-exposure events on the event-driven GPT path.
+        result = {
+            **result_base,
+            "status": "QUEUED_FOR_HOURLY_TUNING",
+            "wake_gpt": False,
+            "selected_event": selected,
+            "selection": selection,
+            "queued_for_hourly_tuning": True,
+            "reason": (
+                "NO_ACTION TUNING_REVIEW is owned by the hourly AI; "
+                "event-driven GPT is reserved for entry/add or active-exposure decisions"
+            ),
+            "receipt_written": False,
+            "action_receipt_path": None,
+        }
+        _remove_non_accepted_current_receipt(paths.action_receipt)
+        _write_action_review(
+            paths.action_review,
+            result,
+            action_receipt_path=paths.action_receipt,
+            now=clock,
+        )
+        _record_state(paths.dispatcher_state, dispatcher_state, result)
+        _append_log(paths.log, result)
+        return result
+
     if runtime_disk["status"] == "RUNTIME_DISK_P0":
         result = {
             **result_base,
@@ -1964,6 +1996,22 @@ def _event_is_active_or_material(event: dict[str, Any]) -> bool:
         or "FAMILY" in reason
         or "STRUCTURE" in reason
         for reason in reasons
+    )
+
+
+def _route_event_to_hourly_tuning(
+    event: dict[str, Any],
+    *,
+    env: dict[str, str],
+) -> bool:
+    if str(env.get("QR_GUARDIAN_WAKE_TUNING_MODE") or "EVENT_GPT").upper() != "HOURLY":
+        return False
+    return bool(
+        str(event.get("recommended_review_type") or "").upper()
+        == "TUNING_REVIEW"
+        and str(event.get("action_hint") or "").upper() == "NO_ACTION"
+        and str(event.get("severity") or "").upper() != "P0"
+        and not _event_has_open_exposure(event)
     )
 
 

@@ -43,6 +43,130 @@ FORECAST_LEARNING_FEATURES = (
 FORECAST_LEARNING_TECHNICAL_FEATURES = tuple(
     name for name in FORECAST_LEARNING_FEATURES if name.startswith("technical_")
 )
+FORECAST_LEARNING_EXECUTION_GEOMETRY_SCHEMA = (
+    "QR_FORECAST_LEARNING_EXECUTION_GEOMETRY_V1"
+)
+FORECAST_LEARNING_EXECUTION_GEOMETRY_BASIS = (
+    "ORIENTATION_RANK_TO_PASSIVE_LIMIT_TECHNICAL_VEHICLE"
+)
+FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD = {
+    "BREAKOUT_FAILURE": "failure_trader",
+    "RANGE_ROTATION": "range_trader",
+    "TREND_CONTINUATION": "trend_trader",
+}
+
+
+def forecast_learning_selected_method(receipt: Mapping[str, Any] | None) -> str | None:
+    """Return the point-in-time technical method bound into a learning decision.
+
+    A rank direction without an executable technical family is not silently
+    relabelled as a failed-break trade.  The caller may rank it for telemetry,
+    but it cannot mint a forward vehicle until the current technical context
+    names one of the supported entry families.
+    """
+
+    if not isinstance(receipt, Mapping):
+        return None
+    features = receipt.get("features")
+    if not isinstance(features, Mapping):
+        return None
+    method = str(features.get("technical_selected_method") or "").strip().upper()
+    return method if method in FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD else None
+
+
+def build_forecast_learning_execution_geometry(
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    entry: float,
+    take_profit: float,
+    stop_loss: float,
+    source_decision_sha256: str,
+    forecast_current_price: float | None,
+    forecast_target_price: float | None,
+    forecast_invalidation_price: float | None,
+) -> dict[str, Any]:
+    """Bind an orientation prediction to its exact passive LIMIT vehicle.
+
+    The directional learner ranks orientation only.  Original point-forecast
+    prices stay in this receipt for audit, while the executable target and
+    invalidation are the current technical TP/SL around the actual LIMIT entry.
+    This prevents a current-price forecast from being misread as geometry for a
+    later passive fill.
+    """
+
+    body: dict[str, Any] = {
+        "schema": FORECAST_LEARNING_EXECUTION_GEOMETRY_SCHEMA,
+        "basis": FORECAST_LEARNING_EXECUTION_GEOMETRY_BASIS,
+        "pair": str(pair).strip().upper(),
+        "side": str(side).strip().upper(),
+        "method": str(method).strip().upper(),
+        "source_decision_sha256": str(source_decision_sha256 or ""),
+        "forecast_origin_current_price": _finite_float(forecast_current_price),
+        "forecast_origin_target_price": _finite_float(forecast_target_price),
+        "forecast_origin_invalidation_price": _finite_float(
+            forecast_invalidation_price
+        ),
+        "execution_entry_price": _finite_float(entry),
+        "execution_target_price": _finite_float(take_profit),
+        "execution_invalidation_price": _finite_float(stop_loss),
+    }
+    return {**body, "binding_sha256": _digest(body)}
+
+
+def validate_forecast_learning_execution_geometry(
+    payload: Mapping[str, Any] | None,
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+    source_decision_sha256: str,
+) -> bool:
+    """Authenticate a learning-SCOUT execution receipt against the intent."""
+
+    if not isinstance(payload, Mapping):
+        return False
+    binding = str(payload.get("binding_sha256") or "")
+    body = {key: value for key, value in payload.items() if key != "binding_sha256"}
+    if not binding or binding != _digest(body):
+        return False
+    if (
+        str(payload.get("schema") or "")
+        != FORECAST_LEARNING_EXECUTION_GEOMETRY_SCHEMA
+        or str(payload.get("basis") or "")
+        != FORECAST_LEARNING_EXECUTION_GEOMETRY_BASIS
+        or str(payload.get("pair") or "").upper() != str(pair or "").upper()
+        or str(payload.get("side") or "").upper() != str(side or "").upper()
+        or str(payload.get("method") or "").upper() != str(method or "").upper()
+        or str(payload.get("source_decision_sha256") or "")
+        != str(source_decision_sha256 or "")
+    ):
+        return False
+    expected = (entry, take_profit, stop_loss)
+    actual = (
+        payload.get("execution_entry_price"),
+        payload.get("execution_target_price"),
+        payload.get("execution_invalidation_price"),
+    )
+    for actual_value, expected_value in zip(actual, expected):
+        parsed_actual = _finite_float(actual_value)
+        parsed_expected = _finite_float(expected_value)
+        if (
+            parsed_actual is None
+            or parsed_expected is None
+            or not math.isclose(
+                parsed_actual,
+                parsed_expected,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            return False
+    return True
 
 
 def train_forecast_orientation_model(
@@ -95,9 +219,9 @@ def train_forecast_orientation_model(
             examples=len(examples),
         )
 
-    split_at = min(
-        max(int(len(examples) * train_fraction), FORECAST_LEARNING_MIN_REPLAY_SAMPLES),
-        len(examples) - FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+    split_at, training_split_basis = _chronological_split_index(
+        examples,
+        train_fraction=train_fraction,
     )
     validation_start = examples[split_at]["timestamp"]
     training = [
@@ -171,6 +295,7 @@ def train_forecast_orientation_model(
         ),
         "feature_names": list(FORECAST_LEARNING_FEATURES),
         "minimum_replay_samples": FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+        "training_split_basis": training_split_basis,
         "training_from_utc": training[0]["timestamp"].isoformat(),
         "training_to_utc_exclusive": validation_start.isoformat(),
         "validation_from_utc": validation_start.isoformat(),
@@ -183,6 +308,62 @@ def train_forecast_orientation_model(
         "model": learned,
     }
     return {**body, "model_sha256": _digest(body)}
+
+
+def _chronological_split_index(
+    examples: Sequence[Mapping[str, Any]],
+    *,
+    train_fraction: float,
+) -> tuple[int, str]:
+    """Choose an untouched chronological holdout that can learn new context.
+
+    Legacy forecasts legitimately lack point-in-time technical context and may
+    never be backfilled from later charts. Once enough newly emitted rows carry
+    frozen context, a fixed fraction of the entire multi-month ledger can keep
+    every technical row on the validation side forever. Anchor the split to the
+    newer technical cohort instead: older rows remain training evidence, the
+    earlier chronological portion of the real context cohort warms the model,
+    and its later portion remains untouched holdout evidence.
+    """
+
+    default_split = min(
+        max(
+            int(len(examples) * train_fraction),
+            FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+        ),
+        len(examples) - FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+    )
+    technical_indexes = [
+        index
+        for index, item in enumerate(examples)
+        if _example_has_technical_context(item)
+    ]
+    if len(technical_indexes) < FORECAST_LEARNING_MIN_REPLAY_SAMPLES * 2:
+        return default_split, "FULL_HISTORY_CHRONOLOGICAL"
+    technical_train_count = min(
+        max(
+            int(len(technical_indexes) * train_fraction),
+            FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+        ),
+        len(technical_indexes) - FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+    )
+    split_at = technical_indexes[technical_train_count]
+    split_at = min(
+        max(split_at, FORECAST_LEARNING_MIN_REPLAY_SAMPLES),
+        len(examples) - FORECAST_LEARNING_MIN_REPLAY_SAMPLES,
+    )
+    return split_at, "TECHNICAL_CONTEXT_CHRONOLOGICAL_WARM_START"
+
+
+def _example_has_technical_context(item: Mapping[str, Any]) -> bool:
+    features = item.get("features")
+    return bool(
+        isinstance(features, Mapping)
+        and any(
+            _label(features.get(name)) != "MISSING"
+            for name in FORECAST_LEARNING_TECHNICAL_FEATURES
+        )
+    )
 
 
 def scored_row_feature_values(row: Mapping[str, Any]) -> dict[str, str]:

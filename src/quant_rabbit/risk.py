@@ -67,6 +67,11 @@ from .forecast_precision import (
     technical_harvest_negative_precision_issue,
     technical_harvest_precision_support,
 )
+from .forecast_learning import (
+    FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD,
+    forecast_learning_selected_method,
+    validate_forecast_learning_execution_geometry,
+)
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
 from .guardian_tuning_overrides import resolve_forecast_confidence_floor_state
@@ -1302,11 +1307,17 @@ def _forecast_learning_scout_forward_evidence_supported(
         or intent.sl is None
     ):
         return False
-    method = intent.market_context.method if intent.market_context is not None else None
-    if method != TradeMethod.BREAKOUT_FAILURE:
-        return False
     receipt = metadata.get("forecast_learning_v1")
     if not isinstance(receipt, dict):
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    selected_method = forecast_learning_selected_method(receipt)
+    if method is None or method.value != selected_method:
+        return False
+    if (
+        str(metadata.get("desk") or "").lower()
+        != FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD.get(selected_method)
+    ):
         return False
     rank_direction = str(receipt.get("rank_direction") or "").upper()
     expected_side = (
@@ -3694,6 +3705,54 @@ class RiskEngine:
         invalidation_floor = spread_pips * self.policy.min_stop_spread_multiple
 
         target_price = _to_float(metadata.get("forecast_target_price"))
+        invalidation_price = _to_float(metadata.get("forecast_invalidation_price"))
+        if (
+            str(metadata.get("predictive_scout_source") or "").upper()
+            == "FORECAST_ORIENTATION_LEARNING"
+        ):
+            receipt = metadata.get("forecast_learning_v1")
+            execution_geometry = metadata.get(
+                "forecast_learning_execution_geometry_v1"
+            )
+            method = (
+                intent.market_context.method.value
+                if intent.market_context is not None
+                else ""
+            )
+            decision_sha = (
+                str(receipt.get("decision_sha256") or "")
+                if isinstance(receipt, dict)
+                else ""
+            )
+            if not validate_forecast_learning_execution_geometry(
+                execution_geometry,
+                pair=intent.pair,
+                side=intent.side.value,
+                method=method,
+                entry=entry_price,
+                take_profit=_to_float(intent.tp),
+                stop_loss=_to_float(intent.sl),
+                source_decision_sha256=decision_sha,
+            ):
+                return [
+                    RiskIssue(
+                        "FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID",
+                        (
+                            f"{intent.pair} {intent.side.value} learning forecast is not bound "
+                            "to this exact passive LIMIT entry/TP/SL vehicle; regenerate the "
+                            "current technical execution receipt before live send."
+                        ),
+                        severity=severity,
+                    )
+                ]
+            assert isinstance(execution_geometry, dict)
+            target_price = _to_float(
+                execution_geometry.get("execution_target_price")
+            )
+            invalidation_price = _to_float(
+                execution_geometry.get("execution_invalidation_price")
+            )
+
         if target_price is not None and target_price > 0.0:
             if intent.side == Side.LONG:
                 target_pips = (target_price - entry_price) * spec.pip_factor
@@ -3722,7 +3781,6 @@ class RiskEngine:
                     )
                 )
 
-        invalidation_price = _to_float(metadata.get("forecast_invalidation_price"))
         if invalidation_price is not None and invalidation_price > 0.0:
             if intent.side == Side.LONG:
                 invalidation_pips = (entry_price - invalidation_price) * spec.pip_factor

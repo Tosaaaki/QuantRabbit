@@ -27,6 +27,10 @@ from quant_rabbit.forecast_precision import (
     technical_harvest_precision_geometry_candidate,
     technical_harvest_precision_support,
 )
+from quant_rabbit.forecast_learning import (
+    build_forecast_learning_execution_geometry,
+    forecast_learning_selected_method,
+)
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner
 from quant_rabbit.predictive_scout import (
@@ -3430,7 +3434,7 @@ def _forecast_learning_scout_seed_lanes(
     if FORECAST_LEARNING_SCOUT_MAX_SEEDS <= 0:
         return []
 
-    ranked: list[tuple[float, float, str, str, Any]] = []
+    ranked: list[tuple[float, float, str, str, str, Any]] = []
     for pair, forecast in forecasts_by_pair.items():
         receipt = getattr(forecast, "forecast_learning_v1", None)
         if not isinstance(receipt, dict):
@@ -3450,9 +3454,15 @@ def _forecast_learning_scout_seed_lanes(
             continue
         if _snapshot_has_operator_manual_pair_exposure(snapshot, pair):
             continue
+        method = forecast_learning_selected_method(receipt)
+        if method is None:
+            # Direction-only rank telemetry remains useful, but a live forward
+            # vehicle must preserve the method selected by the same point-in-time
+            # technical context.  Never replace NONE with BREAKOUT_FAILURE.
+            continue
         side = Side.LONG.value if rank_direction == "UP" else Side.SHORT.value
         confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
-        ranked.append((rank_probability, confidence, pair, side, forecast))
+        ranked.append((rank_probability, confidence, pair, side, method, forecast))
     if not ranked:
         return []
 
@@ -3461,7 +3471,7 @@ def _forecast_learning_scout_seed_lanes(
         reverse=True,
     )
     out: list[dict[str, Any]] = []
-    for _, _, pair, side, forecast in ranked[:FORECAST_LEARNING_SCOUT_MAX_SEEDS]:
+    for _, _, pair, side, method, forecast in ranked[:FORECAST_LEARNING_SCOUT_MAX_SEEDS]:
         source = (
             _source_lane_for_pair_side(existing_by_key, pair, side)
             or source_by_pair.get(pair)
@@ -3474,7 +3484,7 @@ def _forecast_learning_scout_seed_lanes(
             source,
             pair=pair,
             side=side,
-            method=TradeMethod.BREAKOUT_FAILURE.value,
+            method=method,
             forecast=forecast,
             cycle_id=cycle_id,
         )
@@ -3482,15 +3492,16 @@ def _forecast_learning_scout_seed_lanes(
         probability = _optional_float(receipt.get("selected_orientation_probability")) or 0.5
         lane.update(
             {
-                "desk": "failure_trader",
+                "desk": FORECAST_SEED_DESK_BY_METHOD[method],
                 "pair": pair,
                 "direction": side,
-                "method": TradeMethod.BREAKOUT_FAILURE.value,
+                "method": method,
                 "adoption": "TRIGGER_RECEIPT_REQUIRED",
                 "campaign_role": "FORECAST_LEARNING_SCOUT",
                 "reason": (
                     f"current historical-tick forecast rank: {pair} {side} "
-                    f"orientation={receipt.get('orientation')} rank={probability:.3f}; "
+                    f"orientation={receipt.get('orientation')} rank={probability:.3f} "
+                    f"technical_method={method}; "
                     "collect the next exact passive-fill outcome"
                 ),
                 "required_receipt": (
@@ -9944,12 +9955,18 @@ def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
         == FORECAST_LEARNING_SCOUT_SOURCE
     ):
         receipt = metadata.get("forecast_learning_v1")
+        selected_method = forecast_learning_selected_method(receipt)
+        method = intent.market_context.method if intent.market_context is not None else None
         return bool(
             isinstance(receipt, dict)
             and str(metadata.get("campaign_role") or "").upper()
             == "FORECAST_LEARNING_SCOUT"
             and str(receipt.get("rank_direction") or "").upper()
             == ("UP" if intent.side == Side.LONG else "DOWN")
+            and method is not None
+            and method.value == selected_method
+            and str(metadata.get("desk") or "").lower()
+            == FORECAST_SEED_DESK_BY_METHOD.get(selected_method)
         )
     method = intent.market_context.method if intent.market_context is not None else None
     return bool(_bidask_replay_precision_support_for_intent(intent, metadata, method))
@@ -10071,14 +10088,29 @@ def positive_rotation_proof_acquisition_contract(
             if probe.market_context is not None
             else None
         )
-        if method != TradeMethod.BREAKOUT_FAILURE:
-            failed_checks.append("predictive SCOUT method is not BREAKOUT_FAILURE")
-        if str(original.get("desk") or "").lower() != "failure_trader":
-            failed_checks.append("predictive SCOUT desk is not failure_trader")
         learning_scout = (
             str(original.get("predictive_scout_source") or "").upper()
             == FORECAST_LEARNING_SCOUT_SOURCE
         )
+        if learning_scout:
+            selected_method = forecast_learning_selected_method(
+                original.get("forecast_learning_v1")
+            )
+            if method is None or method.value != selected_method:
+                failed_checks.append(
+                    "forecast-learning SCOUT method does not match current technical selection"
+                )
+            if str(original.get("desk") or "").lower() != FORECAST_SEED_DESK_BY_METHOD.get(
+                selected_method
+            ):
+                failed_checks.append(
+                    "forecast-learning SCOUT desk does not match current technical method"
+                )
+        else:
+            if method != TradeMethod.BREAKOUT_FAILURE:
+                failed_checks.append("predictive SCOUT method is not BREAKOUT_FAILURE")
+            if str(original.get("desk") or "").lower() != "failure_trader":
+                failed_checks.append("predictive SCOUT desk is not failure_trader")
         expected_role = (
             "FORECAST_LEARNING_SCOUT"
             if learning_scout
@@ -10903,6 +10935,35 @@ def _intent_from_lane(
             effective_max_loss_jpy,
             4,
         )
+    forecast_learning_execution_metadata: dict[str, Any] = {}
+    learning_receipt = lane.get("forecast_learning_v1")
+    if (
+        str(lane.get("predictive_scout_source") or "").upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+        and isinstance(learning_receipt, dict)
+    ):
+        forecast_learning_execution_metadata[
+            "forecast_learning_execution_geometry_v1"
+        ] = build_forecast_learning_execution_geometry(
+            pair=pair,
+            side=side.value,
+            method=method.value,
+            entry=entry,
+            take_profit=tp,
+            stop_loss=sl,
+            source_decision_sha256=str(
+                learning_receipt.get("decision_sha256") or ""
+            ),
+            forecast_current_price=_optional_float(
+                lane.get("forecast_current_price")
+            ),
+            forecast_target_price=_optional_float(
+                lane.get("forecast_target_price")
+            ),
+            forecast_invalidation_price=_optional_float(
+                lane.get("forecast_invalidation_price")
+            ),
+        )
     geometry_metadata = (
         dict(recovery_geometry_metadata)
         if recovery_geometry_plan is not None
@@ -11144,6 +11205,7 @@ def _intent_from_lane(
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
             "forecast_component_scores": lane.get("forecast_component_scores"),
             "forecast_learning_v1": lane.get("forecast_learning_v1"),
+            **forecast_learning_execution_metadata,
             "forecast_m15_recovery_receipt": lane.get(
                 "forecast_m15_recovery_receipt"
             ),

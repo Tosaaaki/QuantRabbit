@@ -23,9 +23,13 @@
     <key>PYTHONPATH</key>
     <string>src</string>
     <key>QR_GUARDIAN_WAKE_GATEWAY_HANDOFF</key>
-    <string>0</string>
+    <string>1</string>
     <key>QR_GUARDIAN_ACTION_EXECUTE</key>
-    <string>0</string>
+    <string>1</string>
+    <key>QR_LIVE_ENABLED</key>
+    <string>1</string>
+    <key>QR_GUARDIAN_WAKE_TUNING_MODE</key>
+    <string>HOURLY</string>
     <key>QR_GUARDIAN_WAKE_CODEX_BIN</key>
     <string>/Applications/ChatGPT.app/Contents/Resources/codex</string>
     <key>QR_GUARDIAN_WAKE_CODEX_PREFLIGHT</key>

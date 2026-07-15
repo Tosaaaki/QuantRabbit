@@ -5,14 +5,71 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.forecast_learning import (
+    build_forecast_learning_execution_geometry,
+    forecast_learning_selected_method,
     forecast_orientation_decision,
     scored_row_feature_values,
     train_forecast_orientation_model,
+    validate_forecast_learning_execution_geometry,
     verify_forecast_orientation_model,
 )
 
 
 class ForecastLearningTest(unittest.TestCase):
+    def test_execution_method_and_geometry_preserve_current_technical_decision(self) -> None:
+        decision = {
+            "decision_sha256": "d" * 64,
+            "features": {"technical_selected_method": "TREND_CONTINUATION"},
+        }
+        self.assertEqual(
+            forecast_learning_selected_method(decision),
+            "TREND_CONTINUATION",
+        )
+        self.assertIsNone(
+            forecast_learning_selected_method(
+                {"features": {"technical_selected_method": "NONE"}}
+            )
+        )
+
+        geometry = build_forecast_learning_execution_geometry(
+            pair="EUR_USD",
+            side="LONG",
+            method="TREND_CONTINUATION",
+            entry=1.1730,
+            take_profit=1.1750,
+            stop_loss=1.1710,
+            source_decision_sha256="d" * 64,
+            forecast_current_price=1.1740,
+            forecast_target_price=1.1743,
+            forecast_invalidation_price=1.1737,
+        )
+        self.assertEqual(geometry["forecast_origin_target_price"], 1.1743)
+        self.assertEqual(geometry["execution_target_price"], 1.1750)
+        self.assertTrue(
+            validate_forecast_learning_execution_geometry(
+                geometry,
+                pair="EUR_USD",
+                side="LONG",
+                method="TREND_CONTINUATION",
+                entry=1.1730,
+                take_profit=1.1750,
+                stop_loss=1.1710,
+                source_decision_sha256="d" * 64,
+            )
+        )
+        self.assertFalse(
+            validate_forecast_learning_execution_geometry(
+                geometry,
+                pair="EUR_USD",
+                side="LONG",
+                method="TREND_CONTINUATION",
+                entry=1.1730,
+                take_profit=1.1751,
+                stop_loss=1.1710,
+                source_decision_sha256="d" * 64,
+            )
+        )
+
     def test_chronological_bidask_model_learns_keep_or_invert_without_no_trade(self) -> None:
         direct: list[dict[str, object]] = []
         inverse: list[dict[str, object]] = []
@@ -139,6 +196,65 @@ class ForecastLearningTest(unittest.TestCase):
             "MISSING_IN_LEGACY_FORECAST_HISTORY",
         )
         self.assertEqual(model["training_feature_coverage"]["technical_regime"], 0.0)
+
+    def test_late_point_in_time_technical_cohort_warms_training_before_holdout(self) -> None:
+        direct: list[dict[str, object]] = []
+        inverse: list[dict[str, object]] = []
+        started = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index in range(200):
+            row: dict[str, object] = {
+                "source_index": index,
+                "timestamp_utc": (started + timedelta(hours=index * 2)).isoformat(),
+                "pair": "USD_JPY",
+                "direction": "UP",
+                "confidence_bucket": "0.65-0.75",
+                "horizon_min": 60,
+                "final_pips": 1.0 if index % 2 == 0 else -1.0,
+            }
+            if index >= 120:
+                row.update(
+                    {
+                        "technical_regime": "TREND_WEAK",
+                        "technical_atr_band": "NORMAL",
+                        "technical_spread_band": "NORMAL",
+                        "technical_range_location_24h": "MIDDLE",
+                        "technical_structure_alignment": (
+                            "ALIGNED" if index % 2 == 0 else "OPPOSED"
+                        ),
+                        "technical_situation": "LONDON_TREND",
+                        "technical_selected_method": "TREND_CONTINUATION",
+                        "technical_family_direction_alignment": (
+                            "ALIGNED" if index % 2 == 0 else "CONTRADICTED"
+                        ),
+                    }
+                )
+            direct.append(row)
+            inverse.append(
+                {
+                    **row,
+                    "direction": "DOWN",
+                    "final_pips": -float(row["final_pips"]),
+                }
+            )
+
+        model = train_forecast_orientation_model(
+            direct,
+            inverse,
+            train_fraction=0.60,
+            source="unit",
+        )
+
+        self.assertTrue(verify_forecast_orientation_model(model))
+        self.assertEqual(
+            model["training_split_basis"],
+            "TECHNICAL_CONTEXT_CHRONOLOGICAL_WARM_START",
+        )
+        self.assertGreater(model["training_feature_coverage"]["technical_regime"], 0.0)
+        self.assertEqual(model["validation_feature_coverage"]["technical_regime"], 1.0)
+        self.assertGreaterEqual(
+            model["validation_metrics"]["n"],
+            30,
+        )
 
 
 if __name__ == "__main__":

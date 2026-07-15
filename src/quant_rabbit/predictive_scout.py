@@ -14,6 +14,11 @@ from quant_rabbit.forecast_precision import (
     bidask_replay_precision_rule_digest,
     canonical_bidask_replay_precision_rule,
 )
+from quant_rabbit.forecast_learning import (
+    FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD,
+    forecast_learning_selected_method,
+    validate_forecast_learning_execution_geometry,
+)
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Owner, Side, TradeMethod
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner
@@ -365,18 +370,37 @@ def predictive_scout_intent_issues(
     scout_method = (
         intent.market_context.method if intent.market_context is not None else None
     )
-    if scout_method != TradeMethod.BREAKOUT_FAILURE:
+    learning_receipt = metadata.get("forecast_learning_v1")
+    learning_method = forecast_learning_selected_method(learning_receipt)
+    expected_method = (
+        learning_method if learning_scout else TradeMethod.BREAKOUT_FAILURE.value
+    )
+    expected_desk = (
+        FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD.get(learning_method)
+        if learning_scout
+        else "failure_trader"
+    )
+    if scout_method is None or scout_method.value != expected_method:
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_METHOD_REQUIRED",
-                "predictive SCOUT must remain passive BREAKOUT_FAILURE so the forward vehicle waits for a retest instead of market-chasing",
+                (
+                    "forecast-learning SCOUT method must equal the method selected by "
+                    "its authenticated current technical context"
+                    if learning_scout
+                    else "predictive SCOUT must remain passive BREAKOUT_FAILURE so the forward vehicle waits for a retest instead of market-chasing"
+                ),
             )
         )
-    if str(metadata.get("desk") or "").strip().lower() != "failure_trader":
+    if str(metadata.get("desk") or "").strip().lower() != expected_desk:
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_DESK_REQUIRED",
-                "forecast-failure SCOUT must remain on failure_trader; desk relabeling cannot reset cooldown or quarantine",
+                (
+                    "forecast-learning SCOUT desk must match its authenticated current technical method"
+                    if learning_scout
+                    else "forecast-failure SCOUT must remain on failure_trader; desk relabeling cannot reset cooldown or quarantine"
+                ),
             )
         )
     expected_role = (
@@ -392,7 +416,7 @@ def predictive_scout_intent_issues(
             )
         )
     if learning_scout:
-        receipt = metadata.get("forecast_learning_v1")
+        receipt = learning_receipt
         rank_direction = (
             str(receipt.get("rank_direction") or "").upper()
             if isinstance(receipt, dict)
@@ -404,6 +428,27 @@ def predictive_scout_intent_issues(
                 _issue(
                     "PREDICTIVE_SCOUT_LEARNED_DIRECTION_MISMATCH",
                     "forecast-learning SCOUT side must equal the model's current rank direction",
+                )
+            )
+        decision_sha = (
+            str(receipt.get("decision_sha256") or "")
+            if isinstance(receipt, dict)
+            else ""
+        )
+        if not validate_forecast_learning_execution_geometry(
+            metadata.get("forecast_learning_execution_geometry_v1"),
+            pair=intent.pair,
+            side=intent.side.value,
+            method=scout_method.value if scout_method is not None else "",
+            entry=intent.entry,
+            take_profit=intent.tp,
+            stop_loss=intent.sl,
+            source_decision_sha256=decision_sha,
+        ):
+            issues.append(
+                _issue(
+                    "PREDICTIVE_SCOUT_EXECUTION_GEOMETRY_MISMATCH",
+                    "forecast-learning SCOUT must bind the original point forecast and the exact passive LIMIT entry/TP/SL in one content-addressed execution receipt",
                 )
             )
     if abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS:

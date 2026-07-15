@@ -250,6 +250,47 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(calls[0][1:3], ["exec", "-"])
             self.assertTrue(paths.action_receipt.exists())
 
+    def test_no_action_tuning_event_waits_for_hourly_ai_without_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            event = _technical_tuning_event(pair="CAD_CHF")
+            paths.events.write_text(json.dumps({"events": [event]}))
+            paths.event_state.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "events": {
+                            event["dedupe_key"]: {
+                                **event,
+                                "last_seen_at_utc": NOW.isoformat(),
+                            }
+                        },
+                    }
+                )
+            )
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "wake_gpt": True,
+                        "events_to_review": [event],
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={"QR_GUARDIAN_WAKE_TUNING_MODE": "HOURLY"},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "QUEUED_FOR_HOURLY_TUNING")
+            self.assertFalse(result["wake_gpt"])
+            self.assertTrue(result["queued_for_hourly_tuning"])
+            self.assertEqual(calls, [])
+            self.assertFalse(paths.action_receipt.exists())
+
     def test_runtime_disk_p0_queues_without_starting_codex_or_marking_reviewed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))

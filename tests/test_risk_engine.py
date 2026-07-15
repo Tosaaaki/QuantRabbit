@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_CODE
+from quant_rabbit.forecast_learning import build_forecast_learning_execution_geometry
 from quant_rabbit.month_scale_residual_gate import (
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
 )
@@ -2508,6 +2509,76 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("FORECAST_TARGET_TOO_THIN_FOR_SPREAD", codes)
         self.assertNotIn("FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD", codes)
 
+    def test_learning_scout_checks_bound_limit_vehicle_not_origin_point_prices(self) -> None:
+        decision_sha = "d" * 64
+        execution_geometry = build_forecast_learning_execution_geometry(
+            pair="EUR_USD",
+            side="LONG",
+            method="TREND_CONTINUATION",
+            entry=1.17250,
+            take_profit=1.17550,
+            stop_loss=1.17050,
+            source_decision_sha256=decision_sha,
+            forecast_current_price=1.17330,
+            forecast_target_price=1.17335,
+            forecast_invalidation_price=1.17305,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17250,
+            tp=1.17550,
+            sl=1.17050,
+            thesis="orientation rank bound to passive technical vehicle",
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="current technical trend continuation",
+                chart_story="passive pullback entry",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="bound technical stop",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_target_price": 1.17335,
+                "forecast_invalidation_price": 1.17305,
+                "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                "forecast_learning_v1": {"decision_sha256": decision_sha},
+                "forecast_learning_execution_geometry_v1": execution_geometry,
+            },
+        )
+        engine = _capped_engine(live_enabled=True)
+
+        issues = engine._forecast_geometry_issues(
+            intent,
+            entry_price=1.17250,
+            spec=engine._spec("EUR_USD"),
+            spread_pips=0.8,
+            for_live_send=True,
+        )
+
+        self.assertEqual(issues, [])
+        tampered_metadata = deepcopy(intent.metadata)
+        tampered_metadata["forecast_learning_execution_geometry_v1"][
+            "execution_target_price"
+        ] = 1.17600
+        tampered = replace(intent, metadata=tampered_metadata)
+        tampered_codes = {
+            issue.code
+            for issue in engine._forecast_geometry_issues(
+                tampered,
+                entry_price=1.17250,
+                spec=engine._spec("EUR_USD"),
+                spread_pips=0.8,
+                for_live_send=True,
+            )
+        }
+        self.assertEqual(
+            tampered_codes,
+            {"FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID"},
+        )
+
     def test_high_headline_forecast_timeout_drag_blocks_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
@@ -2976,7 +3047,13 @@ class RiskEngineTest(unittest.TestCase):
             "predictive_scout": True,
             "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
             "campaign_role": "FORECAST_LEARNING_SCOUT",
-            "forecast_learning_v1": {"rank_direction": "UP"},
+            "desk": "failure_trader",
+            "forecast_learning_v1": {
+                "rank_direction": "UP",
+                "features": {
+                    "technical_selected_method": "BREAKOUT_FAILURE"
+                },
+            },
         }
         learning_intent = OrderIntent(
             pair="AUD_JPY",

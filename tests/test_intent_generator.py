@@ -1144,6 +1144,9 @@ class IntentGeneratorTest(unittest.TestCase):
                     "rank_direction": rank_direction,
                     "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
                     "selected_orientation_probability": probability,
+                    "features": {
+                        "technical_selected_method": "TREND_CONTINUATION"
+                    },
                 },
             )
 
@@ -1191,6 +1194,8 @@ class IntentGeneratorTest(unittest.TestCase):
         assert seed is not None
         self.assertEqual(seed["pair"], "AUD_JPY")
         self.assertEqual(seed["direction"], "SHORT")
+        self.assertEqual(seed["method"], "TREND_CONTINUATION")
+        self.assertEqual(seed["desk"], "trend_trader")
         self.assertEqual(seed["campaign_role"], "FORECAST_LEARNING_SCOUT")
         self.assertEqual(seed["predictive_scout_source"], "FORECAST_ORIENTATION_LEARNING")
         self.assertEqual(seed["blockers"], [])
@@ -1199,7 +1204,11 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_forecast_learning_scout_keeps_ranked_fallback_pairs(self) -> None:
         now = datetime(2026, 7, 15, 1, 0, tzinfo=timezone.utc)
 
-        def forecast(probability: float, rank_direction: str) -> SimpleNamespace:
+        def forecast(
+            probability: float,
+            rank_direction: str,
+            method: str = "TREND_CONTINUATION",
+        ) -> SimpleNamespace:
             return SimpleNamespace(
                 direction="UP",
                 confidence=0.71,
@@ -1223,6 +1232,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     "rank_direction": rank_direction,
                     "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
                     "selected_orientation_probability": probability,
+                    "features": {"technical_selected_method": method},
                 },
             )
 
@@ -1241,6 +1251,7 @@ class IntentGeneratorTest(unittest.TestCase):
         )
         forecasts = {
             "EUR_USD": forecast(0.99, "DOWN"),
+            "GBP_USD": forecast(0.95, "UP", "NONE"),
             "GBP_CAD": forecast(0.88, "UP"),
             "AUD_JPY": forecast(0.79, "DOWN"),
             "NZD_USD": forecast(0.68, "UP"),

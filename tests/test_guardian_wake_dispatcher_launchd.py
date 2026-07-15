@@ -10,7 +10,7 @@ PLIST = ROOT / "scripts" / "guardian" / "com.quantrabbit.guardian-wake-dispatche
 
 
 class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
-    def test_plist_runs_live_dispatcher_with_read_only_safety_defaults(self) -> None:
+    def test_plist_routes_important_wakes_through_guarded_live_action_cycle(self) -> None:
         payload = plistlib.loads(PLIST.read_bytes())
 
         self.assertEqual(payload["Label"], "com.quantrabbit.guardian-wake-dispatcher")
@@ -35,8 +35,10 @@ class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
             "/Applications/ChatGPT.app/Contents/Resources/codex",
         )
         self.assertEqual(env["QR_GUARDIAN_WAKE_CODEX_PREFLIGHT"], "1")
-        self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "0")
-        self.assertEqual(env["QR_GUARDIAN_ACTION_EXECUTE"], "0")
+        self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "1")
+        self.assertEqual(env["QR_GUARDIAN_ACTION_EXECUTE"], "1")
+        self.assertEqual(env["QR_LIVE_ENABLED"], "1")
+        self.assertEqual(env["QR_GUARDIAN_WAKE_TUNING_MODE"], "HOURLY")
         self.assertEqual(env["CODEX_DISABLE_UPDATE_CHECK"], "1")
 
 
