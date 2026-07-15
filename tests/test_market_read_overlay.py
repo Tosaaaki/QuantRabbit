@@ -4897,6 +4897,174 @@ def _synthetic_execution_cost_floor(
     return {**material, "proof_sha256": canonical_json_sha256(material)}
 
 
+    def test_target_path_live_learning_is_bounded_edge_collection_not_positive_edge(self) -> None:
+        lane_id = "target-path:NZD_USD:LONG:RELOAD"
+        metadata = {
+            "target_path_live_mode": "LIVE_LEARNING",
+            "valid_as_target_path": "YES",
+            "daily_target_mode": "PACE_5",
+            "remaining_to_5pct_yen": 14_725.79,
+            "target_path_role": "RELOAD",
+            "path_board_available": True,
+            "five_pct_path_available": True,
+            "attack_stack_available": True,
+            "maps_to_attack_stack": True,
+            "attack_stack_slot": "RELOAD",
+            "conviction_grade": "B+",
+            "suggested_units": 1_000,
+            "risk_yen": 300.61,
+            "risk_pct": 0.1021,
+            "target_yen": 617.47,
+            "contribution_to_5pct": 617.47,
+            "exact_pretrade_passed": True,
+            "spread_guard_passed": True,
+            "pricing_probe_passed": True,
+            "fill_guard_passed": True,
+            "same_thesis_lost_recently": False,
+            "vehicle_unchanged_after_loss": False,
+        }
+        result = {
+            "lane_id": lane_id,
+            "status": "LIVE_READY",
+            "risk_allowed": True,
+            "live_blocker_codes": [],
+            "risk_metrics": {
+                "entry_price": 0.58070,
+                "loss_pips": 18.5,
+                "reward_pips": 38.0,
+                "risk_jpy": 300.61,
+                "reward_jpy": 617.47,
+                "reward_risk": 38.0 / 18.5,
+                "spread_pips": 1.5,
+                "jpy_per_pip": 16.2492,
+                "estimated_margin_jpy": 3_776.58,
+            },
+            "intent": {
+                "pair": "NZD_USD",
+                "side": "LONG",
+                "order_type": "LIMIT",
+                "units": 1_000,
+                "entry": 0.58070,
+                "tp": 0.58450,
+                "sl": 0.57885,
+                "market_context": {"method": "TREND_CONTINUATION"},
+                "metadata": metadata,
+            },
+        }
+        snapshot = {
+            "account": {"nav_jpy": 274_904.69},
+            "quotes": {"NZD_USD": {"bid": 0.58097, "ask": 0.58112}},
+            "home_conversions": {"USD": 162.492},
+        }
+
+        lane = market_read_overlay_module._capital_allocation_lane(
+            result,
+            account_nav_jpy=274_904.69,
+            broker_snapshot=snapshot,
+        )
+
+        assert lane is not None
+        self.assertTrue(lane["allocation_eligible"], lane)
+        self.assertFalse(lane["positive_edge_proven"])
+        self.assertTrue(lane["edge_collection_proven"])
+        self.assertEqual(
+            lane["edge_basis"],
+            "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION",
+        )
+        self.assertEqual(lane["allowed_size_multiples"], [1.0])
+        self.assertEqual(
+            lane["numeric_ceiling"]["reason"],
+            "TARGET_PATH_LIVE_LEARNING_PREBOUNDED_CONTRACT",
+        )
+
+        metadata["risk_pct"] = 0.16
+        blocked = market_read_overlay_module._capital_allocation_lane(
+            result,
+            account_nav_jpy=274_904.69,
+            broker_snapshot=snapshot,
+        )
+        assert blocked is not None
+        self.assertFalse(blocked["allocation_eligible"])
+        self.assertIn(
+            "TARGET_PATH_LIVE_LEARNING_RISK_CAP_EXCEEDED",
+            blocked["live_blocker_codes"],
+        )
+
+    def test_target_path_live_learning_context_survives_overlay_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            intents = json.loads(paths["intents"].read_text())
+            result = intents["results"][0]
+            intent = result["intent"]
+            intent.update(
+                {
+                    "order_type": "LIMIT",
+                    "units": 500,
+                    "entry": 1.0995,
+                    "tp": 1.1030,
+                    "sl": 1.0975,
+                }
+            )
+            intent["metadata"] = {
+                "target_path_live_mode": "LIVE_LEARNING",
+                "valid_as_target_path": "YES",
+                "daily_target_mode": "PACE_5",
+                "remaining_to_5pct_yen": 4_000.0,
+                "target_path_role": "RELOAD",
+                "path_board_available": True,
+                "five_pct_path_available": True,
+                "attack_stack_available": True,
+                "maps_to_attack_stack": True,
+                "attack_stack_slot": "RELOAD",
+                "conviction_grade": "B+",
+                "suggested_units": 500,
+                "risk_yen": 100.0,
+                "risk_pct": 0.1,
+                "target_yen": 175.0,
+                "contribution_to_5pct": 175.0,
+                "exact_pretrade_passed": True,
+                "spread_guard_passed": True,
+                "pricing_probe_passed": True,
+                "fill_guard_passed": True,
+                "same_thesis_lost_recently": False,
+                "vehicle_unchanged_after_loss": False,
+            }
+            result["risk_metrics"] = {
+                "entry_price": 1.0995,
+                "loss_pips": 20.0,
+                "reward_pips": 35.0,
+                "risk_jpy": 100.0,
+                "reward_jpy": 175.0,
+                "reward_risk": 1.75,
+                "spread_pips": 2.0,
+                "jpy_per_pip": 5.0,
+            }
+            paths["intents"].write_text(json.dumps(intents))
+            _reprepare(paths)
+
+            packet = json.loads(paths["packet"].read_text())
+            board = packet["capital_allocation_board"]
+            lane = board["selected_lane"]
+            self.assertEqual(
+                board["forecast_context_scope"],
+                "SELECTED_LANE_TARGET_PATH_LIVE_LEARNING",
+            )
+            self.assertTrue(lane["allocation_eligible"], lane)
+            self.assertEqual(lane["allowed_size_multiples"], [1.0])
+            self.assertFalse(lane["positive_edge_proven"])
+            self.assertTrue(lane["edge_collection_proven"])
+
+            _write_overlay(paths, size_multiple=1.0)
+            summary = _apply(paths)
+            self.assertEqual(summary.action, "TRADE")
+            output = json.loads(paths["output"].read_text())
+            self.assertEqual(
+                output["decision_provenance"]["capital_allocation_edge_basis"],
+                "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION",
+            )
+            self.assertEqual(output["capital_allocation"]["selected_units"], 500)
+
+
 def _prepared_paths(
     root: Path,
     *,

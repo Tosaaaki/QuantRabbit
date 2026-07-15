@@ -1694,6 +1694,125 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self.assertIsNotNone(blocked_issue)
         self.assertEqual(blocked_bound["status"], "BLOCKED")
 
+    def test_target_path_live_learning_binds_edge_path_and_numeric_geometry(self) -> None:
+        prior_target_live = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
+        os.environ["QR_TARGET_PATH_LIVE_ENABLED"] = "1"
+        try:
+            client = FakeExecutionClient()
+            snapshot = client.snapshot_value
+            metadata = _target_path_metadata(
+                grade="B+",
+                role="RELOAD",
+                slot="RELOAD",
+            )
+            metadata.update(
+                {
+                    "risk_yen": 125.6,
+                    "risk_pct": 0.0628,
+                    "target_yen": 266.9,
+                    "contribution_to_5pct": 266.9,
+                }
+            )
+            intent = OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                units=1000,
+                entry=1.17280,
+                tp=1.17450,
+                sl=1.17200,
+                thesis="bounded Codex target-path live-learning probe",
+                market_context=MarketContext(
+                    regime="TREND",
+                    narrative="higher-timeframe trend with passive reload",
+                    chart_story="limit reload below the current ask",
+                    method=TradeMethod.TREND_CONTINUATION,
+                    invalidation="below reload structure",
+                ),
+                metadata=metadata,
+            )
+            self.assertTrue(
+                execution_module._target_path_live_learning_allocation_claim(
+                    intent
+                )
+            )
+
+            path_proof = execution_module._forecast_s5_no_touch_proof(
+                client,
+                intent=intent,
+                snapshot=snapshot,
+            )
+            self.assertEqual(path_proof["status"], "BYPASSED")
+            self.assertEqual(
+                path_proof["reason"],
+                execution_module.TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON,
+            )
+
+            edge, edge_issue = (
+                execution_module._capital_allocation_edge_pre_post_recheck(
+                    intent,
+                    ledger_path=Path("not-read.db"),
+                    expected_edge_basis=(
+                        execution_module.TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS
+                    ),
+                )
+            )
+            self.assertIsNone(edge_issue)
+            self.assertEqual(edge["status"], "BYPASSED")
+
+            risk = SimpleNamespace(
+                metrics=execution_module.RiskMetrics(
+                    entry_price=float(intent.entry),
+                    loss_pips=8.0,
+                    reward_pips=17.0,
+                    risk_jpy=125.6,
+                    reward_jpy=266.9,
+                    reward_risk=2.125,
+                    spread_pips=0.8,
+                    jpy_per_pip=0.157,
+                ),
+                issues=(),
+            )
+            numeric, numeric_issue = (
+                execution_module._capital_allocation_numeric_pre_post_recheck(
+                    verified_intent=intent,
+                    final_intent=intent,
+                    fresh_snapshot=snapshot,
+                    fresh_base_risk=risk,
+                    required=True,
+                    forecast_s5_path_proof=path_proof,
+                )
+            )
+            self.assertIsNone(numeric_issue)
+            self.assertEqual(numeric["status"], "BYPASSED")
+            self.assertEqual(
+                numeric["numeric_ceiling"]["reason"],
+                execution_module.TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON,
+            )
+            self.assertTrue(
+                numeric["target_path_live_learning_geometry_frozen"]
+            )
+
+            mutated = replace(intent, tp=1.17460)
+            blocked, blocked_issue = (
+                execution_module._capital_allocation_numeric_pre_post_recheck(
+                    verified_intent=intent,
+                    final_intent=mutated,
+                    fresh_snapshot=snapshot,
+                    fresh_base_risk=risk,
+                    required=True,
+                    forecast_s5_path_proof=path_proof,
+                )
+            )
+            self.assertEqual(blocked["status"], "BLOCKED")
+            self.assertIsNotNone(blocked_issue)
+            self.assertEqual(
+                blocked_issue.code,
+                "PRE_POST_GPT_ALLOCATION_TARGET_PATH_GEOMETRY_MUTATED",
+            )
+        finally:
+            _restore_env("QR_TARGET_PATH_LIVE_ENABLED", prior_target_live)
+
     def test_m15_recovery_edge_recheck_preserves_collection_basis(self) -> None:
         from tests.test_risk_engine import _m15_recovery_fixture
 

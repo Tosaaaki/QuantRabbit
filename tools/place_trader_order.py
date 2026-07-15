@@ -13,10 +13,11 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from position_sizing import PositionSizingInput, size_position
+from position_sizing import PositionSizingInput, _pip_factor, size_position
 
 
 # Legacy unit bands, when present, are caps only. This branch had no existing
@@ -129,6 +130,33 @@ def _gateway_intent_requested(args: argparse.Namespace) -> bool:
 
 def _gateway_intent_guard_issues(args: argparse.Namespace, sizing: Any) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
+    if str(args.order_type or "").strip().upper() != "LIMIT":
+        issues.append(
+            {
+                "code": "TARGET_PATH_LIVE_LEARNING_LIMIT_ONLY",
+                "message": "LiveOrderGateway target-path learning intent emission requires a passive LIMIT vehicle",
+                "severity": "BLOCK",
+            }
+        )
+    stop_pips = sizing.diagnostics.get("stop_pips")
+    target_pips = sizing.diagnostics.get("target_pips")
+    reward_risk = (
+        float(target_pips) / float(stop_pips)
+        if isinstance(stop_pips, (int, float))
+        and not isinstance(stop_pips, bool)
+        and stop_pips > 0
+        and isinstance(target_pips, (int, float))
+        and not isinstance(target_pips, bool)
+        else 0.0
+    )
+    if reward_risk < 1.5:
+        issues.append(
+            {
+                "code": "TARGET_PATH_LIVE_LEARNING_REWARD_RISK_TOO_LOW",
+                "message": "LiveOrderGateway target-path learning intent emission requires reward/risk >= 1.5",
+                "severity": "BLOCK",
+            }
+        )
     if sizing.valid_as_target_path != "YES":
         issues.append(
             {
@@ -190,6 +218,34 @@ def _gateway_intent_payload(args: argparse.Namespace, sizing: Any) -> dict[str, 
     side = args.side.upper()
     role = str(args.target_path_role or "").strip().upper()
     lane_id = args.lane_id or f"target-path:{args.pair.upper()}:{side}:{role or 'UNMAPPED'}"
+    generated_at_utc = datetime.now(timezone.utc).isoformat()
+    pip_factor = _pip_factor(args.pair)
+    quote_to_jpy = sizing.diagnostics.get("quote_to_jpy")
+    jpy_per_pip = (
+        sizing.suggested_units * float(quote_to_jpy) / pip_factor
+        if isinstance(quote_to_jpy, (int, float))
+        and not isinstance(quote_to_jpy, bool)
+        and quote_to_jpy > 0
+        else None
+    )
+    stop_pips = sizing.diagnostics.get("stop_pips")
+    target_pips = sizing.diagnostics.get("target_pips")
+    reward_risk = (
+        float(target_pips) / float(stop_pips)
+        if isinstance(stop_pips, (int, float))
+        and not isinstance(stop_pips, bool)
+        and stop_pips > 0
+        and isinstance(target_pips, (int, float))
+        and not isinstance(target_pips, bool)
+        else None
+    )
+    estimated_margin_jpy = (
+        sizing.suggested_units * float(args.margin_per_unit_yen)
+        if isinstance(args.margin_per_unit_yen, (int, float))
+        and not isinstance(args.margin_per_unit_yen, bool)
+        and args.margin_per_unit_yen > 0
+        else None
+    )
     metadata = {
         "source_tool": "tools/place_trader_order.py",
         "daily_target_mode": str(args.mode or "").strip().upper(),
@@ -217,9 +273,12 @@ def _gateway_intent_payload(args: argparse.Namespace, sizing: Any) -> dict[str, 
         "same_thesis_lost_recently": bool(args.same_thesis_lost_recently),
         "vehicle_unchanged_after_loss": bool(args.vehicle_unchanged_after_loss),
         "target_path_live_mode": "LIVE_LEARNING",
+        "target_path_preflight_generated_at_utc": generated_at_utc,
+        "max_loss_jpy": sizing.risk_yen,
         "lane_id": lane_id,
     }
     return {
+        "generated_at_utc": generated_at_utc,
         "generated_by": "tools/place_trader_order.py",
         "status": "LIVE_READY",
         "results": [
@@ -227,6 +286,19 @@ def _gateway_intent_payload(args: argparse.Namespace, sizing: Any) -> dict[str, 
                 "lane_id": lane_id,
                 "status": "LIVE_READY",
                 "risk_allowed": True,
+                "live_blocker_codes": [],
+                "risk_metrics": {
+                    "entry_price": args.entry,
+                    "loss_pips": stop_pips,
+                    "reward_pips": target_pips,
+                    "risk_jpy": sizing.risk_yen,
+                    "reward_jpy": sizing.target_yen,
+                    "reward_risk": reward_risk,
+                    "spread_pips": args.spread_pips,
+                    "jpy_per_pip": jpy_per_pip,
+                    "estimated_margin_jpy": estimated_margin_jpy,
+                    "margin_available_jpy": args.margin_available_yen,
+                },
                 "intent": {
                     "pair": args.pair.upper(),
                     "side": side,
@@ -300,6 +372,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--open-risk-yen", type=float, default=0.0)
     parser.add_argument("--margin-available-yen", type=float)
     parser.add_argument("--margin-per-unit-yen", type=float)
+    parser.add_argument("--spread-pips", type=float)
     parser.add_argument("--unit-cap", type=int)
     parser.add_argument("--unit-band-cap", action="append", default=[])
     parser.add_argument("--target-path-role", default="")

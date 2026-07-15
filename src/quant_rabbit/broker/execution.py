@@ -138,6 +138,12 @@ FRESH_ENTRY_MAX_RISK_PCT_NAV = MACRO_EVENT_MAX_RISK_PCT_NAV
 CAPITAL_ALLOCATION_MIN_EXACT_TP_TRADES = 5
 M15_RECOVERY_EDGE_COLLECTION_BASIS = "M15_RECOVERY_EDGE_COLLECTION"
 M15_RECOVERY_PREBOUNDED_REASON = "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
+TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS = (
+    "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION"
+)
+TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON = (
+    "TARGET_PATH_LIVE_LEARNING_PREBOUNDED_CONTRACT"
+)
 FORECAST_S5_SECONDS = 5
 FORECAST_S5_MAX_WINDOW_SECONDS = 15 * 60
 PRE_ENTRY_FORECAST_CYCLE_RE = re.compile(
@@ -7415,17 +7421,22 @@ def _forecast_s5_no_touch_proof(
     metadata = dict(intent.metadata or {})
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
     scout = _numeric_predictive_scout_contract(intent)
+    target_path_live_learning = (
+        _target_path_live_learning_allocation_claim(intent)
+    )
     m15_recovery = bool(
         m15_recovery_prebounded
         and _m15_recovery_prebounded_intent_claim(intent)
     )
-    if hedge or scout or m15_recovery:
+    if hedge or scout or m15_recovery or target_path_live_learning:
         return finished(
             {
                 "status": "BYPASSED",
                 "reason": (
                     "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
                     if hedge
+                    else TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON
+                    if target_path_live_learning
                     else M15_RECOVERY_PREBOUNDED_REASON
                     if m15_recovery
                     else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
@@ -8785,6 +8796,9 @@ def _capital_allocation_numeric_pre_post_recheck(
     metadata = dict(verified_intent.metadata or {})
     predictive_scout = _numeric_predictive_scout_contract(verified_intent)
     hedge = str(metadata.get("position_intent") or "").strip().upper() == "HEDGE"
+    target_path_live_learning_claim = (
+        _target_path_live_learning_allocation_claim(verified_intent)
+    )
     range_tp_claim = _range_tp_proven_prebounded_intent_claim(
         verified_intent
     )
@@ -8811,6 +8825,18 @@ def _capital_allocation_numeric_pre_post_recheck(
     )
     m15_recovery_geometry_frozen = bool(
         not m15_recovery_claim
+        or (
+            final_intent.pair == verified_intent.pair
+            and final_intent.side == verified_intent.side
+            and final_intent.order_type == verified_intent.order_type
+            and final_intent.entry == verified_intent.entry
+            and final_intent.tp == verified_intent.tp
+            and final_intent.sl == verified_intent.sl
+            and 0 < abs(final_intent.units) <= abs(verified_intent.units)
+        )
+    )
+    target_path_live_learning_geometry_frozen = bool(
+        not target_path_live_learning_claim
         or (
             final_intent.pair == verified_intent.pair
             and final_intent.side == verified_intent.side
@@ -8880,17 +8906,23 @@ def _capital_allocation_numeric_pre_post_recheck(
         m15_recovery_prebounded=(
             m15_recovery_claim and m15_recovery_geometry_frozen
         ),
+        target_path_live_learning_prebounded=(
+            target_path_live_learning_claim
+            and target_path_live_learning_geometry_frozen
+        ),
     )
     proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
         "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
         "TP_PROVEN_RANGE_NONMARKET_PREBOUNDED_CONTRACT",
         M15_RECOVERY_PREBOUNDED_REASON,
+        TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON,
     }
     path_proof_is_bypass = str(numeric_ceiling.get("reason") or "") in {
         "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT",
         "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT",
         M15_RECOVERY_PREBOUNDED_REASON,
+        TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON,
     }
     path_proof = (
         dict(forecast_s5_path_proof)
@@ -8921,6 +8953,7 @@ def _capital_allocation_numeric_pre_post_recheck(
         and path_proof_passed
         and range_geometry_frozen
         and m15_recovery_geometry_frozen
+        and target_path_live_learning_geometry_frozen
     )
     fresh_unit_cap = (
         math.floor(base_units * float(fresh_max_multiple) + 1e-12)
@@ -8974,6 +9007,12 @@ def _capital_allocation_numeric_pre_post_recheck(
         "range_tp_fresh_edge_basis": range_economic_basis,
         "m15_recovery_prebounded_claimed": m15_recovery_claim,
         "m15_recovery_geometry_frozen": m15_recovery_geometry_frozen,
+        "target_path_live_learning_prebounded_claimed": (
+            target_path_live_learning_claim
+        ),
+        "target_path_live_learning_geometry_frozen": (
+            target_path_live_learning_geometry_frozen
+        ),
         "forecast_s5_path_proof": path_proof,
         "forecast_s5_path_proof_passed": path_proof_passed,
         "numeric_ceiling": numeric_ceiling,
@@ -8983,6 +9022,14 @@ def _capital_allocation_numeric_pre_post_recheck(
         "proof_sha256": _canonical_json_sha256(material),
     }
     if not numeric_inputs_passed:
+        if (
+            target_path_live_learning_claim
+            and not target_path_live_learning_geometry_frozen
+        ):
+            return evidence, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_TARGET_PATH_GEOMETRY_MUTATED",
+                "target-path live-learning pair/side/vehicle/entry/TP/SL or producer unit ceiling changed after the signed allocation",
+            )
         if m15_recovery_claim and not m15_recovery_geometry_frozen:
             return evidence, RiskIssue(
                 "PRE_POST_GPT_ALLOCATION_M15_RECOVERY_GEOMETRY_MUTATED",
@@ -9094,6 +9141,28 @@ def _capital_allocation_edge_pre_post_recheck(
             "unreadable provenance cannot adopt a later ledger proof",
         )
 
+    if _target_path_live_learning_allocation_claim(intent):
+        if expected_edge_basis not in {
+            None,
+            TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
+        }:
+            return {
+                "status": "BLOCKED",
+                "basis": TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
+                "expected_basis": expected_edge_basis,
+                "proof_key": list(exact_key),
+                "read_at_utc": read_at_utc,
+            }, RiskIssue(
+                "PRE_POST_GPT_ALLOCATION_EDGE_BASIS_MISMATCH",
+                "signed board edge basis does not match bounded target-path live learning",
+            )
+        return {
+            "status": "BYPASSED",
+            "basis": TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
+            "expected_basis": expected_edge_basis,
+            "proof_key": list(exact_key),
+            "read_at_utc": read_at_utc,
+        }, None
     if str(metadata.get("position_intent") or "").strip().upper() == "HEDGE":
         if expected_edge_basis not in {None, "HEDGE_RISK_REDUCTION"}:
             return {
@@ -11325,6 +11394,47 @@ def _target_path_live_send_issues(intent: OrderIntent, *, send: bool) -> list[di
                 )
             )
     return [issue.__dict__ for issue in issues]
+
+
+def _target_path_live_learning_allocation_claim(intent: OrderIntent) -> bool:
+    """Re-identify the signed micro-risk target-path collection route."""
+
+    metadata = dict(intent.metadata or {})
+    if (
+        str(metadata.get("target_path_live_mode") or "").strip().upper()
+        != "LIVE_LEARNING"
+        or str(metadata.get("valid_as_target_path") or "").strip().upper()
+        != "YES"
+        or intent.order_type != OrderType.LIMIT
+        or not 0 < abs(int(intent.units)) <= 1_000
+    ):
+        return False
+    risk_pct = _metadata_float(metadata, "risk_pct")
+    risk_yen = _metadata_float(metadata, "risk_yen")
+    target_yen = _metadata_float(metadata, "target_yen")
+    suggested_units = _metadata_int(metadata, "suggested_units")
+    if (
+        risk_pct is None
+        or risk_pct <= 0.0
+        or risk_pct > 0.15
+        or risk_yen is None
+        or risk_yen <= 0.0
+        or target_yen is None
+        or target_yen <= 0.0
+        or target_yen / risk_yen < 1.5
+        or suggested_units != abs(int(intent.units))
+    ):
+        return False
+    if intent.side == Side.LONG:
+        geometry_valid = intent.sl < intent.entry < intent.tp
+    else:
+        geometry_valid = intent.tp < intent.entry < intent.sl
+    if not geometry_valid:
+        return False
+    return not any(
+        str(issue.get("severity") or "BLOCK").upper() == "BLOCK"
+        for issue in _target_path_live_send_issues(intent, send=True)
+    )
 
 
 def _target_path_contract_present(metadata: dict[str, Any]) -> bool:

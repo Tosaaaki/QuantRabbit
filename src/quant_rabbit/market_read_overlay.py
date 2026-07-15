@@ -101,6 +101,33 @@ M15_RECOVERY_PROOF_COLLECTION_MODE = "TP_PROOF_COLLECTION_HARVEST"
 M15_RECOVERY_TP_PROVEN_MODE = "TP_PROVEN_HARVEST"
 M15_RECOVERY_PROOF_COLLECTION_MIN_TRADES = 5
 M15_RECOVERY_TP_PROVEN_MIN_TRADES = 20
+TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS = (
+    "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION"
+)
+TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON = (
+    "TARGET_PATH_LIVE_LEARNING_PREBOUNDED_CONTRACT"
+)
+TARGET_PATH_LIVE_LEARNING_MATERIAL_CONTRACT = (
+    "QR_TARGET_PATH_LIVE_LEARNING_ALLOCATION_MATERIAL_V1"
+)
+TARGET_PATH_LIVE_LEARNING_CONTEXT_CONTRACT = (
+    "QR_TARGET_PATH_LIVE_LEARNING_ALLOCATION_CONTEXT_V1"
+)
+TARGET_PATH_LIVE_LEARNING_CONTEXT_SCOPE = (
+    "SELECTED_LANE_TARGET_PATH_LIVE_LEARNING"
+)
+TARGET_PATH_LIVE_LEARNING_STATUS = "TARGET_PATH_LIVE_LEARNING_VERIFIED"
+TARGET_PATH_LIVE_LEARNING_MAX_UNITS = 1_000
+TARGET_PATH_LIVE_LEARNING_MAX_RISK_PCT_NAV = 0.15
+TARGET_PATH_LIVE_LEARNING_MIN_REWARD_RISK = 1.5
+TARGET_PATH_MAIN_ROLES = frozenset(
+    {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5", "PACE_5"}
+)
+TARGET_PATH_SUPPORT_ROLES = frozenset(
+    {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
+)
+TARGET_PATH_ATTACK_STACK_SLOTS = frozenset({"NOW", "RELOAD", "SECOND_SHOT"})
+TARGET_PATH_GRADE_RANK = {"C": 0, "B-": 1, "B0": 2, "B": 2, "B+": 3, "A": 4, "S": 5}
 
 OVERLAY_ALLOWED_FIELDS = frozenset(
     {
@@ -1445,7 +1472,7 @@ def _validated_capital_allocation(
         raise MarketReadOverlayError(
             "MARKET_READ_CAPITAL_ALLOCATION_EDGE_NOT_PROVEN",
             "selected lane is not LIVE_READY with current risk permission and either "
-            "positive edge proof or a separately labeled M15 recovery evidence-collection proof; "
+            "positive edge proof or a separately labeled bounded evidence-collection proof; "
             "use a non-trade disposition",
         )
     allowed_multiples = selected_lane.get("allowed_size_multiples")
@@ -1573,6 +1600,15 @@ def _selected_lane_forecast_context_binding_error(
         or str(board.get("selected_lane_id") or "") != lane_id
     ):
         return "capital-allocation board does not bind exactly one selected lane"
+    if (
+        board.get("forecast_context_scope")
+        == TARGET_PATH_LIVE_LEARNING_CONTEXT_SCOPE
+    ):
+        return _selected_lane_target_path_live_learning_context_binding_error(
+            board=board,
+            selected_lane=selected_lane,
+            lane_id=lane_id,
+        )
     if (
         board.get("forecast_context_scope")
         == M15_RECOVERY_ALLOCATION_CONTEXT_SCOPE
@@ -1719,6 +1755,81 @@ def _selected_lane_forecast_context_binding_error(
         "receipt_sha256"
     ]:
         return "selected regime-family receipt does not match scoped context"
+    return None
+
+
+def _selected_lane_target_path_live_learning_context_binding_error(
+    *,
+    board: Mapping[str, Any],
+    selected_lane: Mapping[str, Any],
+    lane_id: str,
+) -> str | None:
+    """Rebuild the bounded target-path evidence-collection binding."""
+
+    scoped = board.get("forecast_context")
+    expected_keys = {
+        "contract",
+        "status",
+        "pair",
+        "side",
+        "method",
+        "order_type",
+        "source_lane_id",
+        "source_generated_at_utc",
+        "edge_basis",
+        "allocation_material_sha256",
+        "historical_positive_edge_proven",
+        "context_sha256",
+    }
+    if not isinstance(scoped, Mapping) or set(scoped) != expected_keys:
+        return "selected target-path live-learning context has an unexpected schema"
+    if not _content_addressed_mapping_valid(scoped, digest_key="context_sha256"):
+        return "selected target-path live-learning context digest is invalid"
+    if (
+        scoped.get("contract") != TARGET_PATH_LIVE_LEARNING_CONTEXT_CONTRACT
+        or scoped.get("status") != TARGET_PATH_LIVE_LEARNING_STATUS
+        or scoped.get("source_lane_id") != lane_id
+        or scoped.get("source_generated_at_utc")
+        != board.get("order_intents_generated_at_utc")
+        or scoped.get("historical_positive_edge_proven") is not False
+    ):
+        return "selected target-path live-learning source binding is invalid"
+    target_path = selected_lane.get("target_path_live_learning")
+    if not isinstance(target_path, Mapping):
+        return "selected lane lacks target-path live-learning validation material"
+    material = target_path.get("material")
+    if (
+        target_path.get("claimed") is not True
+        or target_path.get("valid") is not True
+        or target_path.get("status") != TARGET_PATH_LIVE_LEARNING_STATUS
+        or not isinstance(material, Mapping)
+        or not _content_addressed_mapping_valid(
+            material,
+            digest_key="material_sha256",
+        )
+        or target_path.get("material_sha256")
+        != material.get("material_sha256")
+        or scoped.get("allocation_material_sha256")
+        != material.get("material_sha256")
+    ):
+        return "selected target-path live-learning material is missing or invalid"
+    expected = {
+        "pair": selected_lane.get("pair"),
+        "side": selected_lane.get("side"),
+        "method": selected_lane.get("method"),
+        "order_type": selected_lane.get("order_type"),
+        "edge_basis": TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
+    }
+    if any(scoped.get(key) != value for key, value in expected.items()):
+        return "selected target-path live-learning lane binding changed"
+    if (
+        selected_lane.get("edge_basis")
+        != TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS
+        or selected_lane.get("edge_collection_proven") is not True
+        or selected_lane.get("positive_edge_proven") is not False
+        or selected_lane.get("allowed_size_multiples") != [1.0]
+    ):
+        return "target-path live learning was mislabeled as proven edge"
     return None
 
 
@@ -2060,6 +2171,7 @@ def validate_codex_market_read_provenance(
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
         M15_RECOVERY_EDGE_COLLECTION_BASIS,
+        TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     }:
@@ -3532,8 +3644,10 @@ def _build_capital_allocation_board(
         "allocation_rule": (
             "ALLOCATE only the deterministic selected lane, never exceed base_units, "
             "and only when allocation_eligible is true with either positive_edge_proven "
-            "or the separately labeled M15 recovery edge_collection_proven route. "
+            "or a separately labeled bounded edge_collection_proven route. "
             "M15_RECOVERY_EDGE_COLLECTION is evidence collection, not positive edge proof; "
+            "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION is also bounded evidence collection, "
+            "not positive edge proof; "
             "use NO_TRADE when neither proof route passes or the numeric thesis is contradicted."
         ),
     }
@@ -3601,6 +3715,52 @@ def _allocation_board_forecast_context(
             if isinstance(recovery.get("material"), Mapping)
             else None
         )
+        target_path = (
+            selected_lane.get("target_path_live_learning")
+            if isinstance(selected_lane, Mapping)
+            and isinstance(
+                selected_lane.get("target_path_live_learning"), Mapping
+            )
+            else {}
+        )
+        target_path_material = (
+            target_path.get("material")
+            if isinstance(target_path.get("material"), Mapping)
+            else None
+        )
+        if (
+            target_path.get("claimed") is True
+            and target_path.get("valid") is True
+            and target_path.get("status")
+            == TARGET_PATH_LIVE_LEARNING_STATUS
+            and isinstance(target_path_material, Mapping)
+            and _content_addressed_mapping_valid(
+                target_path_material,
+                digest_key="material_sha256",
+            )
+            and target_path.get("material_sha256")
+            == target_path_material.get("material_sha256")
+        ):
+            scoped_body = {
+                "contract": TARGET_PATH_LIVE_LEARNING_CONTEXT_CONTRACT,
+                "status": TARGET_PATH_LIVE_LEARNING_STATUS,
+                "pair": selected_lane.get("pair"),
+                "side": selected_lane.get("side"),
+                "method": selected_lane.get("method"),
+                "order_type": selected_lane.get("order_type"),
+                "source_lane_id": str(selected_result.get("lane_id") or "")
+                or None,
+                "source_generated_at_utc": generated_at,
+                "edge_basis": selected_lane.get("edge_basis"),
+                "allocation_material_sha256": target_path.get(
+                    "material_sha256"
+                ),
+                "historical_positive_edge_proven": False,
+            }
+            return TARGET_PATH_LIVE_LEARNING_CONTEXT_SCOPE, {
+                **scoped_body,
+                "context_sha256": canonical_json_sha256(scoped_body),
+            }
         if (
             recovery.get("claimed") is True
             and recovery.get("valid") is True
@@ -5295,6 +5455,7 @@ def _capital_allocation_numeric_ceiling(
     execution_cost_floor: Mapping[str, Any] | None = None,
     market_entry_slippage_embedded: bool = False,
     m15_recovery_prebounded: bool = False,
+    target_path_live_learning_prebounded: bool = False,
 ) -> tuple[dict[str, Any], float]:
     """Return content-addressed numeric sizing evidence and its maximum multiple."""
 
@@ -6114,7 +6275,9 @@ def _capital_allocation_numeric_ceiling(
     )
 
     bypass_reason = (
-        "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
+        TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON
+        if target_path_live_learning_prebounded
+        else "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
         if m15_recovery_prebounded
         else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
         if predictive_scout
@@ -6125,6 +6288,9 @@ def _capital_allocation_numeric_ceiling(
     if not method_scope_consistent:
         reason = "METHOD_SCOPE_MISMATCH"
         max_multiple = 0.0
+    elif target_path_live_learning_prebounded:
+        reason = TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON
+        max_multiple = 1.0
     elif m15_recovery_prebounded:
         # Recovery direction, vehicle, TP proof and 999-unit cap are proved by
         # the separate M15 content-addressed chain. Do not coerce it into the
@@ -6236,6 +6402,9 @@ def _capital_allocation_numeric_ceiling(
             "side": side or None,
             "order_type": order_type or None,
             "units": units,
+            "target_path_live_learning_prebounded": bool(
+                target_path_live_learning_prebounded
+            ),
             "m15_recovery_prebounded": bool(m15_recovery_prebounded),
             "authoritative_market_context_method": (
                 None if cost_method == "UNKNOWN" else cost_method
@@ -6463,7 +6632,9 @@ def _capital_allocation_numeric_ceiling(
                 quarter_kelly_risk_nav_pct
             ),
             "decision_basis": (
-                "PREBOUNDED_M15_RECOVERY_BASE_UNITS"
+                "PREBOUNDED_TARGET_PATH_LIVE_LEARNING_BASE_UNITS"
+                if target_path_live_learning_prebounded
+                else "PREBOUNDED_M15_RECOVERY_BASE_UNITS"
                 if m15_recovery_prebounded
                 else "PREBOUNDED_EXACT_TP_HARVEST_BASE_UNITS"
                 if range_tp_contract_authorized
@@ -6511,6 +6682,254 @@ def _strict_positive_number(value: Any) -> float | None:
 
 def _rounded_evidence_number(value: float | None) -> float | None:
     return round(float(value), 12) if value is not None else None
+
+
+def _target_path_live_learning_allocation_contract(
+    *,
+    result: Mapping[str, Any],
+    intent: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    method: str,
+    base_units: int,
+    account_nav_jpy: float | None,
+    broker_snapshot: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate the explicit, micro-risk target-path learning exception.
+
+    This route is deliberately labeled evidence collection, never positive
+    historical edge. It exists so a current AI market read can collect a
+    bounded live outcome without masquerading as scheduled-forecaster proof.
+    """
+
+    claimed = bool(
+        str(metadata.get("target_path_live_mode") or "").strip().upper()
+        == "LIVE_LEARNING"
+        or str(metadata.get("valid_as_target_path") or "").strip().upper()
+        == "YES"
+    )
+    if not claimed:
+        return {
+            "claimed": False,
+            "valid": False,
+            "status": "NOT_CLAIMED",
+            "error_codes": [],
+            "material": None,
+            "material_sha256": None,
+        }
+
+    errors: list[str] = []
+
+    def require(condition: bool, code: str) -> None:
+        if not condition and code not in errors:
+            errors.append(code)
+
+    pair = str(intent.get("pair") or "").strip().upper()
+    side = str(intent.get("side") or "").strip().upper()
+    order_type = str(intent.get("order_type") or "").strip().upper()
+    entry = _strict_positive_number(intent.get("entry"))
+    tp = _strict_positive_number(intent.get("tp"))
+    sl = _strict_positive_number(intent.get("sl"))
+    grade = str(
+        metadata.get("conviction_grade")
+        or metadata.get("grade")
+        or metadata.get("allocation_band")
+        or ""
+    ).strip().upper().replace("_", "").replace(" ", "")
+    if grade == "B":
+        grade = "B0"
+    role = str(
+        metadata.get("target_path_role") or metadata.get("path_role") or ""
+    ).strip().upper()
+    slot = str(metadata.get("attack_stack_slot") or "").strip().upper()
+    risk_yen = _strict_positive_number(metadata.get("risk_yen"))
+    target_yen = _strict_positive_number(metadata.get("target_yen"))
+    risk_pct = _strict_positive_number(metadata.get("risk_pct"))
+    contribution = _strict_positive_number(metadata.get("contribution_to_5pct"))
+    suggested_units = _strict_nonnegative_int(metadata.get("suggested_units"))
+    nav_jpy = _strict_positive_number(account_nav_jpy)
+    price_reward_risk = (
+        (tp - entry) / (entry - sl)
+        if side == "LONG"
+        and None not in (entry, tp, sl)
+        and sl < entry < tp
+        else (entry - tp) / (sl - entry)
+        if side == "SHORT"
+        and None not in (entry, tp, sl)
+        and tp < entry < sl
+        else None
+    )
+    receipt_reward_risk = (
+        target_yen / risk_yen
+        if target_yen is not None and risk_yen is not None
+        else None
+    )
+    broker_bid, broker_ask = _broker_snapshot_bid_ask(
+        broker_snapshot or {},
+        pair=pair,
+    )
+    passive_limit = bool(
+        order_type == "LIMIT"
+        and entry is not None
+        and (
+            side == "LONG"
+            and broker_ask is not None
+            and entry < broker_ask
+            or side == "SHORT"
+            and broker_bid is not None
+            and entry > broker_bid
+        )
+    )
+
+    require(pair in DEFAULT_TRADER_PAIRS, "TARGET_PATH_PAIR_UNSUPPORTED")
+    require(side in {"LONG", "SHORT"}, "TARGET_PATH_SIDE_INVALID")
+    require(bool(method), "TARGET_PATH_METHOD_MISSING")
+    require(order_type == "LIMIT", "TARGET_PATH_LIVE_LEARNING_LIMIT_ONLY")
+    require(passive_limit, "TARGET_PATH_LIVE_LEARNING_LIMIT_NOT_PASSIVE")
+    require(
+        0 < base_units <= TARGET_PATH_LIVE_LEARNING_MAX_UNITS,
+        "TARGET_PATH_LIVE_LEARNING_UNIT_CAP_EXCEEDED",
+    )
+    require(
+        suggested_units == base_units,
+        "TARGET_PATH_LIVE_LEARNING_SIZING_UNBOUND",
+    )
+    require(
+        str(metadata.get("valid_as_target_path") or "").strip().upper()
+        == "YES",
+        "TARGET_PATH_SIZING_NOT_VALID",
+    )
+    require(
+        str(metadata.get("target_path_live_mode") or "").strip().upper()
+        == "LIVE_LEARNING",
+        "TARGET_PATH_LIVE_LEARNING_MODE_REQUIRED",
+    )
+    require(
+        TARGET_PATH_GRADE_RANK.get(grade, -1) >= TARGET_PATH_GRADE_RANK["B+"],
+        "TARGET_PATH_GRADE_TOO_LOW",
+    )
+    require(
+        grade != "B+" or role in TARGET_PATH_SUPPORT_ROLES,
+        "B_PLUS_NOT_SUPPORT_TARGET_PATH",
+    )
+    require(
+        role in TARGET_PATH_MAIN_ROLES or role in TARGET_PATH_SUPPORT_ROLES,
+        "TARGET_PATH_BOARD_MAPPING_MISSING",
+    )
+    require(
+        metadata.get("path_board_available") is True
+        and metadata.get("five_pct_path_available") is True,
+        "TARGET_PATH_BOARD_MAPPING_MISSING",
+    )
+    require(
+        metadata.get("attack_stack_available") is True
+        and metadata.get("maps_to_attack_stack") is True
+        and slot in TARGET_PATH_ATTACK_STACK_SLOTS,
+        "PATH_ATTACK_STACK_MAPPING_MISSING",
+    )
+    require(
+        all(
+            metadata.get(key) is True
+            for key in (
+                "exact_pretrade_passed",
+                "spread_guard_passed",
+                "pricing_probe_passed",
+                "fill_guard_passed",
+            )
+        ),
+        "TARGET_PATH_PREFLIGHT_PROOF_MISSING",
+    )
+    require(
+        not (
+            metadata.get("same_thesis_lost_recently") is True
+            and metadata.get("vehicle_unchanged_after_loss") is True
+        ),
+        "SAME_THESIS_LOST_RECENTLY",
+    )
+    require(
+        price_reward_risk is not None
+        and price_reward_risk >= TARGET_PATH_LIVE_LEARNING_MIN_REWARD_RISK,
+        "TARGET_PATH_LIVE_LEARNING_REWARD_RISK_TOO_LOW",
+    )
+    require(
+        receipt_reward_risk is not None
+        and price_reward_risk is not None
+        and math.isclose(
+            receipt_reward_risk,
+            price_reward_risk,
+            rel_tol=5e-3,
+            abs_tol=1e-6,
+        ),
+        "TARGET_PATH_LIVE_LEARNING_RECEIPT_GEOMETRY_MISMATCH",
+    )
+    require(
+        risk_pct is not None
+        and risk_pct <= TARGET_PATH_LIVE_LEARNING_MAX_RISK_PCT_NAV + 1e-12,
+        "TARGET_PATH_LIVE_LEARNING_RISK_CAP_EXCEEDED",
+    )
+    require(
+        risk_yen is not None
+        and nav_jpy is not None
+        and risk_yen
+        <= nav_jpy * TARGET_PATH_LIVE_LEARNING_MAX_RISK_PCT_NAV / 100.0
+        + 1e-9,
+        "TARGET_PATH_LIVE_LEARNING_NAV_RISK_CAP_EXCEEDED",
+    )
+    require(
+        target_yen is not None
+        and contribution is not None
+        and math.isclose(target_yen, contribution, rel_tol=0.0, abs_tol=1e-6),
+        "TARGET_PATH_LIVE_LEARNING_TARGET_CONTRIBUTION_MISMATCH",
+    )
+    require(
+        str(result.get("status") or "").strip().upper() == "LIVE_READY"
+        and result.get("risk_allowed") is True,
+        "TARGET_PATH_LIVE_LEARNING_RESULT_NOT_READY",
+    )
+
+    valid = not errors
+    material: dict[str, Any] | None = None
+    material_sha256: str | None = None
+    if valid:
+        material_body = {
+            "contract": TARGET_PATH_LIVE_LEARNING_MATERIAL_CONTRACT,
+            "status": TARGET_PATH_LIVE_LEARNING_STATUS,
+            "pair": pair,
+            "side": side,
+            "method": method,
+            "order_type": order_type,
+            "entry": entry,
+            "tp": tp,
+            "sl": sl,
+            "base_units": base_units,
+            "grade": grade,
+            "target_path_role": role,
+            "attack_stack_slot": slot,
+            "risk_yen": risk_yen,
+            "risk_pct": risk_pct,
+            "target_yen": target_yen,
+            "contribution_to_5pct": contribution,
+            "price_reward_risk": price_reward_risk,
+            "receipt_reward_risk": receipt_reward_risk,
+            "max_units": TARGET_PATH_LIVE_LEARNING_MAX_UNITS,
+            "max_risk_pct_nav": TARGET_PATH_LIVE_LEARNING_MAX_RISK_PCT_NAV,
+            "min_reward_risk": TARGET_PATH_LIVE_LEARNING_MIN_REWARD_RISK,
+            "historical_positive_edge_proven": False,
+            "live_permission": False,
+        }
+        material_sha256 = canonical_json_sha256(material_body)
+        material = {**material_body, "material_sha256": material_sha256}
+    return {
+        "claimed": True,
+        "valid": valid,
+        "status": (
+            TARGET_PATH_LIVE_LEARNING_STATUS
+            if valid
+            else "TARGET_PATH_LIVE_LEARNING_INVALID"
+        ),
+        "error_codes": errors,
+        "material": material,
+        "material_sha256": material_sha256,
+    }
 
 
 def _capital_allocation_lane(
@@ -6686,8 +7105,25 @@ def _capital_allocation_lane(
     )
     m15_recovery_claimed = m15_recovery["claimed"] is True
     m15_recovery_valid = m15_recovery["valid"] is True
+    target_path_live_learning = _target_path_live_learning_allocation_contract(
+        result=result,
+        intent=intent,
+        metadata=metadata,
+        method=method,
+        base_units=base_units,
+        account_nav_jpy=account_nav_jpy,
+        broker_snapshot=broker_snapshot,
+    )
+    target_path_live_learning_claimed = (
+        target_path_live_learning["claimed"] is True
+    )
+    target_path_live_learning_valid = (
+        target_path_live_learning["valid"] is True
+    )
     allocation_context_valid = (
-        m15_recovery_valid
+        target_path_live_learning_valid
+        if target_path_live_learning_claimed
+        else m15_recovery_valid
         if m15_recovery_claimed
         else technical_context_valid
     )
@@ -6711,12 +7147,18 @@ def _capital_allocation_lane(
         range_economic_basis=range_economic_basis,
         execution_cost_floor=execution_cost_floor,
         m15_recovery_prebounded=m15_recovery_valid,
+        target_path_live_learning_prebounded=(
+            target_path_live_learning_valid
+        ),
     )
     candidate_size_multiples = [
         multiple
         for multiple in (
             [1.0]
-            if predictive_scout or hedge or m15_recovery_valid
+            if predictive_scout
+            or hedge
+            or m15_recovery_valid
+            or target_path_live_learning_valid
             else list(CAPITAL_ALLOCATION_SIZE_MULTIPLES)
         )
         if multiple <= numeric_max_multiple + 1e-12
@@ -6739,7 +7181,12 @@ def _capital_allocation_lane(
         and _normalized_order_vehicle(intent.get("order_type"))
         in {"LIMIT", "STOP"}
     )
-    if m15_recovery_claimed:
+    if target_path_live_learning_claimed:
+        positive_edge_proven = False
+        edge_collection_proven = bool(
+            target_path_live_learning_valid and method_scope_consistent
+        )
+    elif m15_recovery_claimed:
         positive_edge_proven = bool(
             m15_recovery_valid
             and method_scope_consistent
@@ -6779,7 +7226,9 @@ def _capital_allocation_lane(
         for code in result.get("live_blocker_codes", []) or []
         if str(code)
     ]
-    if m15_recovery_claimed:
+    if target_path_live_learning_claimed:
+        live_blocker_codes.extend(target_path_live_learning["error_codes"])
+    elif m15_recovery_claimed:
         live_blocker_codes.extend(m15_recovery["error_codes"])
     else:
         if not technical_context_envelope_valid:
@@ -6883,7 +7332,11 @@ def _capital_allocation_lane(
         else "NO_POSITIVE_EDGE_PROOF"
     )
     edge_basis = (
-        m15_recovery["edge_basis"]
+        TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS
+        if target_path_live_learning_valid
+        else "TARGET_PATH_LIVE_LEARNING_ALLOCATION_INVALID"
+        if target_path_live_learning_claimed
+        else m15_recovery["edge_basis"]
         if m15_recovery_valid
         else "M15_RECOVERY_ALLOCATION_INVALID"
         if m15_recovery_claimed
@@ -6911,6 +7364,7 @@ def _capital_allocation_lane(
         "sl": _optional_float(intent.get("sl")),
         "allowed_size_multiples": allowed_size_multiples,
         "numeric_ceiling": numeric_ceiling,
+        "target_path_live_learning": target_path_live_learning,
         "m15_recovery": m15_recovery,
         "predictive_scout": predictive_scout,
         "predictive_scout_claimed": predictive_scout_claimed,

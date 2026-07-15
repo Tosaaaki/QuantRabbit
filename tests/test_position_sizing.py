@@ -227,7 +227,7 @@ class PositionSizingToolTest(unittest.TestCase):
                 "--entry",
                 "150",
                 "--tp",
-                "151",
+                "152",
                 "--sl",
                 "149",
                 "--grade",
@@ -250,6 +250,8 @@ class PositionSizingToolTest(unittest.TestCase):
                 "yes",
                 "--attack-stack-slot",
                 "NOW",
+                "--order-type",
+                "LIMIT",
                 "--exact-pretrade-ok",
                 "yes",
                 "--spread-ok",
@@ -289,6 +291,12 @@ class PositionSizingToolTest(unittest.TestCase):
         self.assertTrue(metadata["path_board_available"])
         self.assertTrue(metadata["maps_to_attack_stack"])
         self.assertEqual(metadata["target_path_live_mode"], "LIVE_LEARNING")
+        self.assertTrue(result.gateway_intent["generated_at_utc"])
+        self.assertEqual(emitted["live_blocker_codes"], [])
+        self.assertEqual(emitted["risk_metrics"]["entry_price"], 150.0)
+        self.assertEqual(emitted["risk_metrics"]["risk_jpy"], 250.0)
+        self.assertEqual(emitted["risk_metrics"]["reward_jpy"], 500.0)
+        self.assertEqual(emitted["risk_metrics"]["reward_risk"], 2.0)
 
     def test_place_trader_order_send_does_not_emit_gateway_intent(self) -> None:
         parser = place_trader_order._parser()
