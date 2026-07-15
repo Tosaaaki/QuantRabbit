@@ -25,6 +25,7 @@ from quant_rabbit.forecast_precision import hit_rate_wilson_lower
 from quant_rabbit.forecast_learning import (
     FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD,
     forecast_learning_selected_method,
+    validate_forecast_learning_execution_geometry,
 )
 from quant_rabbit.guardian_margin_contract import (
     P1_MARGIN_WARNING_CONTRACT as GUARDIAN_P1_MARGIN_WARNING_CONTRACT,
@@ -125,6 +126,16 @@ TARGET_PATH_LIVE_LEARNING_STATUS = "TARGET_PATH_LIVE_LEARNING_VERIFIED"
 TARGET_PATH_LIVE_LEARNING_MAX_UNITS = 1_000
 TARGET_PATH_LIVE_LEARNING_MAX_RISK_PCT_NAV = 0.15
 TARGET_PATH_LIVE_LEARNING_MIN_REWARD_RISK = 1.5
+FORECAST_LEARNING_ALLOCATION_CONTEXT_CONTRACT = (
+    "QR_FORECAST_LEARNING_ALLOCATION_CONTEXT_V1"
+)
+FORECAST_LEARNING_ALLOCATION_CONTEXT_SCOPE = (
+    "SELECTED_LANE_FORECAST_ORIENTATION_LEARNING"
+)
+FORECAST_LEARNING_ALLOCATION_STATUS = "FORECAST_ORIENTATION_LEARNING_VERIFIED"
+FORECAST_LEARNING_PREBOUNDED_REASON = (
+    "FORECAST_ORIENTATION_LEARNING_PREBOUNDED_CONTRACT"
+)
 TARGET_PATH_MAIN_ROLES = frozenset(
     {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5", "PACE_5"}
 )
@@ -1607,6 +1618,15 @@ def _selected_lane_forecast_context_binding_error(
         return "capital-allocation board does not bind exactly one selected lane"
     if (
         board.get("forecast_context_scope")
+        == FORECAST_LEARNING_ALLOCATION_CONTEXT_SCOPE
+    ):
+        return _selected_lane_forecast_learning_context_binding_error(
+            board=board,
+            selected_lane=selected_lane,
+            lane_id=lane_id,
+        )
+    if (
+        board.get("forecast_context_scope")
         == TARGET_PATH_LIVE_LEARNING_CONTEXT_SCOPE
     ):
         return _selected_lane_target_path_live_learning_context_binding_error(
@@ -1760,6 +1780,101 @@ def _selected_lane_forecast_context_binding_error(
         "receipt_sha256"
     ]:
         return "selected regime-family receipt does not match scoped context"
+    return None
+
+
+def _selected_lane_forecast_learning_context_binding_error(
+    *,
+    board: Mapping[str, Any],
+    selected_lane: Mapping[str, Any],
+    lane_id: str,
+) -> str | None:
+    """Rebuild the bounded orientation-learning allocation binding."""
+
+    scoped = board.get("forecast_context")
+    expected_keys = {
+        "contract",
+        "status",
+        "pair",
+        "side",
+        "direction",
+        "original_direction",
+        "orientation",
+        "method",
+        "order_type",
+        "source_lane_id",
+        "source_generated_at_utc",
+        "allocation_material_sha256",
+        "historical_positive_edge_proven",
+        "technical_context",
+        "context_sha256",
+    }
+    if not isinstance(scoped, Mapping) or set(scoped) != expected_keys:
+        return "selected forecast-learning context has an unexpected schema"
+    if not _content_addressed_mapping_valid(scoped, digest_key="context_sha256"):
+        return "selected forecast-learning context digest is invalid"
+    learning = selected_lane.get("forecast_learning")
+    if not isinstance(learning, Mapping):
+        return "selected lane lacks forecast-learning allocation material"
+    material = learning.get("material")
+    if (
+        learning.get("claimed") is not True
+        or learning.get("valid") is not True
+        or learning.get("status") != FORECAST_LEARNING_ALLOCATION_STATUS
+        or not isinstance(material, Mapping)
+        or not _content_addressed_mapping_valid(
+            material,
+            digest_key="material_sha256",
+        )
+        or learning.get("material_sha256") != material.get("material_sha256")
+        or scoped.get("allocation_material_sha256")
+        != material.get("material_sha256")
+    ):
+        return "selected forecast-learning allocation material is missing or invalid"
+    expected = {
+        "pair": material.get("pair"),
+        "side": material.get("side"),
+        "direction": material.get("rank_direction"),
+        "original_direction": material.get("original_direction"),
+        "orientation": material.get("orientation"),
+        "method": material.get("method"),
+        "order_type": material.get("order_type"),
+    }
+    if any(scoped.get(key) != value for key, value in expected.items()):
+        return "selected forecast-learning lane binding changed"
+    if (
+        scoped.get("contract") != FORECAST_LEARNING_ALLOCATION_CONTEXT_CONTRACT
+        or scoped.get("status") != FORECAST_LEARNING_ALLOCATION_STATUS
+        or scoped.get("source_lane_id") != lane_id
+        or scoped.get("source_generated_at_utc")
+        != board.get("order_intents_generated_at_utc")
+        or scoped.get("historical_positive_edge_proven") is not False
+        or selected_lane.get("allowed_size_multiples") != [1.0]
+    ):
+        return "selected forecast-learning context source binding is invalid"
+    forecast = selected_lane.get("forecast")
+    forecast = forecast if isinstance(forecast, Mapping) else {}
+    lane_evidence = normalize_forecast_technical_context_evidence(
+        forecast.get("technical_context"),
+        pair=str(selected_lane.get("pair") or "").strip().upper(),
+        current_price=forecast.get("current_price"),
+    )
+    scoped_evidence = normalize_forecast_technical_context_evidence(
+        scoped.get("technical_context"),
+        pair=str(selected_lane.get("pair") or "").strip().upper(),
+        current_price=forecast.get("current_price"),
+    )
+    context_sha = str(lane_evidence.get("context_sha256") or "")
+    if (
+        lane_evidence.get("status") != "VALID"
+        or scoped_evidence.get("status") != "VALID"
+        or lane_evidence.get("evidence_sha256")
+        != scoped_evidence.get("evidence_sha256")
+        or context_sha != scoped_evidence.get("context_sha256")
+        or context_sha != material.get("technical_context_sha256")
+        or context_sha != board.get("canonical_forecast_context_sha256")
+    ):
+        return "selected forecast-learning technical context binding changed"
     return None
 
 
@@ -2936,14 +3051,34 @@ def _projection_calibration_scopes_for_market_read(
         capital_allocation_board.get("forecast_context_scope") or ""
     ).strip().upper()
     baseline_action = str(baseline.get("action") or "").strip().upper()
-    if baseline_action == "TRADE" and scope_kind != "SELECTED_LANE":
+    if baseline_action == "TRADE" and scope_kind not in {
+        "SELECTED_LANE",
+        FORECAST_LEARNING_ALLOCATION_CONTEXT_SCOPE,
+    }:
         return []
     context = capital_allocation_board.get("forecast_context")
     context = context if isinstance(context, Mapping) else {}
     pair = str(context.get("pair") or "").strip().upper()
     direction = _forecast_direction_label(context.get("direction"))
     technical_context = context.get("technical_context")
-    if scope_kind == "SELECTED_LANE":
+    if scope_kind == FORECAST_LEARNING_ALLOCATION_CONTEXT_SCOPE:
+        lane = capital_allocation_board.get("selected_lane")
+        lane = lane if isinstance(lane, Mapping) else {}
+        learning = lane.get("forecast_learning")
+        learning = learning if isinstance(learning, Mapping) else {}
+        technical = (
+            technical_context
+            if isinstance(technical_context, Mapping)
+            else {}
+        )
+        if (
+            str(lane.get("pair") or "").strip().upper() != pair
+            or _forecast_direction_label(lane.get("side")) != direction
+            or learning.get("valid") is not True
+            or technical.get("status") != "VALID"
+        ):
+            return []
+    elif scope_kind == "SELECTED_LANE":
         lane = capital_allocation_board.get("selected_lane")
         lane = lane if isinstance(lane, Mapping) else {}
         forecast = lane.get("forecast")
@@ -3530,12 +3665,13 @@ def _rebuild_canonical_forecast_context(
             return None
         cycle_id = str(metadata.get("forecast_cycle_id") or "")
         cycle_binds_receipt = receipt_at.isoformat() in cycle_id
+        forecast_price_precision = 3 if instrument_pip_factor(pair) == 100 else 5
         price_bound = bool(
             forecast_price is not None
             and location_price is not None
             and math.isclose(
                 forecast_price,
-                location_price,
+                round(location_price, forecast_price_precision),
                 rel_tol=0.0,
                 abs_tol=1e-12,
             )
@@ -3562,7 +3698,12 @@ def _rebuild_canonical_forecast_context(
         ):
             return None
         point_in_time_inputs = (
-            float(forecast_price),
+            # The forecast row publishes instrument-rounded prices, while the
+            # technical-context receipt binds the exact emission-time mid.
+            # Rebuild from that exact context value after proving the rounded
+            # producer field agrees; otherwise a half-tick JPY mid can never
+            # reproduce its own content-addressed context.
+            float(location_price),
             float(risk_spread),
             receipt_at,
         )
@@ -3768,7 +3909,9 @@ def _build_capital_allocation_board(
             "or a separately labeled bounded edge_collection_proven route. "
             "M15_RECOVERY_EDGE_COLLECTION is evidence collection, not positive edge proof; "
             "TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION is also bounded evidence collection, "
-            "not positive edge proof; "
+            "not positive edge proof; authenticated FORECAST_ORIENTATION_LEARNING "
+            "SCOUT allocation uses only its exact 1.0 risk-capped vehicle and is likewise "
+            "forward evidence rather than positive-edge proof; "
             "use NO_TRADE when neither proof route passes or the numeric thesis is contradicted."
         ),
     }
@@ -3849,6 +3992,61 @@ def _allocation_board_forecast_context(
             if isinstance(target_path.get("material"), Mapping)
             else None
         )
+        forecast_learning = (
+            selected_lane.get("forecast_learning")
+            if isinstance(selected_lane, Mapping)
+            and isinstance(selected_lane.get("forecast_learning"), Mapping)
+            else {}
+        )
+        forecast_learning_material = (
+            forecast_learning.get("material")
+            if isinstance(forecast_learning.get("material"), Mapping)
+            else None
+        )
+        if (
+            forecast_learning.get("claimed") is True
+            and forecast_learning.get("valid") is True
+            and forecast_learning.get("status")
+            == FORECAST_LEARNING_ALLOCATION_STATUS
+            and isinstance(forecast_learning_material, Mapping)
+            and _content_addressed_mapping_valid(
+                forecast_learning_material,
+                digest_key="material_sha256",
+            )
+            and forecast_learning.get("material_sha256")
+            == forecast_learning_material.get("material_sha256")
+        ):
+            scoped_body = {
+                "contract": FORECAST_LEARNING_ALLOCATION_CONTEXT_CONTRACT,
+                "status": FORECAST_LEARNING_ALLOCATION_STATUS,
+                "pair": forecast_learning_material.get("pair"),
+                "side": forecast_learning_material.get("side"),
+                "direction": forecast_learning_material.get("rank_direction"),
+                "original_direction": forecast_learning_material.get(
+                    "original_direction"
+                ),
+                "orientation": forecast_learning_material.get("orientation"),
+                "method": forecast_learning_material.get("method"),
+                "order_type": forecast_learning_material.get("order_type"),
+                "source_lane_id": str(selected_result.get("lane_id") or "")
+                or None,
+                "source_generated_at_utc": generated_at,
+                "allocation_material_sha256": forecast_learning.get(
+                    "material_sha256"
+                ),
+                "historical_positive_edge_proven": False,
+                "technical_context": (
+                    (selected_lane.get("forecast") or {}).get(
+                        "technical_context"
+                    )
+                    if isinstance(selected_lane.get("forecast"), Mapping)
+                    else None
+                ),
+            }
+            return FORECAST_LEARNING_ALLOCATION_CONTEXT_SCOPE, {
+                **scoped_body,
+                "context_sha256": canonical_json_sha256(scoped_body),
+            }
         if (
             target_path.get("claimed") is True
             and target_path.get("valid") is True
@@ -5577,6 +5775,7 @@ def _capital_allocation_numeric_ceiling(
     market_entry_slippage_embedded: bool = False,
     m15_recovery_prebounded: bool = False,
     target_path_live_learning_prebounded: bool = False,
+    forecast_learning_prebounded: bool = False,
 ) -> tuple[dict[str, Any], float]:
     """Return content-addressed numeric sizing evidence and its maximum multiple."""
 
@@ -6400,6 +6599,8 @@ def _capital_allocation_numeric_ceiling(
         if target_path_live_learning_prebounded
         else "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
         if m15_recovery_prebounded
+        else FORECAST_LEARNING_PREBOUNDED_REASON
+        if forecast_learning_prebounded
         else "PREDICTIVE_SCOUT_PREBOUNDED_CONTRACT"
         if predictive_scout
         else "HEDGE_RISK_REDUCTION_PREBOUNDED_CONTRACT"
@@ -6417,6 +6618,15 @@ def _capital_allocation_numeric_ceiling(
         # the separate M15 content-addressed chain. Do not coerce it into the
         # ordinary calibration/market-probability contract here.
         reason = "M15_RECOVERY_MICRO_PREBOUNDED_CONTRACT"
+        max_multiple = 1.0
+    elif forecast_learning_prebounded:
+        # The forecast-learning allocation receipt authenticates the ranked
+        # DIRECT/INVERSE side and exact execution geometry.  The original
+        # point forecast remains immutable evidence, so it must not be reused
+        # here as a second directional veto against an authenticated inverse
+        # scout.  RiskEngine has already bounded the LIVE_READY base units;
+        # allocation can authorize that exact 1.0 vehicle only.
+        reason = FORECAST_LEARNING_PREBOUNDED_REASON
         max_multiple = 1.0
     elif not direction_side_aligned:
         reason = "FORECAST_DIRECTION_SIDE_MISMATCH"
@@ -6527,6 +6737,9 @@ def _capital_allocation_numeric_ceiling(
                 target_path_live_learning_prebounded
             ),
             "m15_recovery_prebounded": bool(m15_recovery_prebounded),
+            "forecast_learning_prebounded": bool(
+                forecast_learning_prebounded
+            ),
             "authoritative_market_context_method": (
                 None if cost_method == "UNKNOWN" else cost_method
             ),
@@ -6757,6 +6970,8 @@ def _capital_allocation_numeric_ceiling(
                 if target_path_live_learning_prebounded
                 else "PREBOUNDED_M15_RECOVERY_BASE_UNITS"
                 if m15_recovery_prebounded
+                else "PREBOUNDED_FORECAST_ORIENTATION_LEARNING_BASE_UNITS"
+                if forecast_learning_prebounded
                 else "PREBOUNDED_EXACT_TP_HARVEST_BASE_UNITS"
                 if range_tp_contract_authorized
                 else "NAV_PERCENT_RATIO"
@@ -7053,6 +7268,170 @@ def _target_path_live_learning_allocation_contract(
     }
 
 
+def _forecast_learning_allocation_contract(
+    *,
+    intent: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    method: str,
+    predictive_scout: bool,
+    technical_context: Mapping[str, Any],
+    regime_family_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Authenticate ranked DIRECT/INVERSE SCOUT allocation end to end."""
+
+    claimed = (
+        str(metadata.get("predictive_scout_source") or "").strip().upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+    )
+    if not claimed:
+        return {
+            "claimed": False,
+            "valid": False,
+            "status": "NOT_CLAIMED",
+            "error_codes": [],
+            "material": None,
+            "material_sha256": None,
+        }
+
+    errors: list[str] = []
+
+    def require(condition: bool, code: str) -> None:
+        if not condition:
+            errors.append(code)
+
+    receipt = (
+        metadata.get("forecast_learning_v1")
+        if isinstance(metadata.get("forecast_learning_v1"), Mapping)
+        else {}
+    )
+    pair = str(intent.get("pair") or "").strip().upper()
+    side = str(intent.get("side") or "").strip().upper()
+    side_direction = "UP" if side == "LONG" else "DOWN" if side == "SHORT" else None
+    original_direction = str(receipt.get("original_direction") or "").strip().upper()
+    rank_direction = str(receipt.get("rank_direction") or "").strip().upper()
+    forecast_direction = str(metadata.get("forecast_direction") or "").strip().upper()
+    expected_orientation = (
+        "DIRECT"
+        if original_direction in {"UP", "DOWN"} and rank_direction == original_direction
+        else "INVERSE"
+        if original_direction in {"UP", "DOWN"} and rank_direction in {"UP", "DOWN"}
+        else None
+    )
+    decision_sha = str(receipt.get("decision_sha256") or "")
+    geometry = metadata.get("forecast_learning_execution_geometry_v1")
+    geometry_binding_sha = (
+        str(geometry.get("binding_sha256") or "")
+        if isinstance(geometry, Mapping)
+        else ""
+    )
+    technical_context_sha = str(technical_context.get("context_sha256") or "")
+    family_direction = str(
+        regime_family_binding.get("family_direction") or ""
+    ).strip().upper()
+
+    require(predictive_scout, "FORECAST_LEARNING_SCOUT_AUTH_INVALID")
+    require(pair in DEFAULT_TRADER_PAIRS, "FORECAST_LEARNING_PAIR_INVALID")
+    require(
+        original_direction in {"UP", "DOWN"}
+        and original_direction == forecast_direction,
+        "FORECAST_LEARNING_ORIGINAL_DIRECTION_MISMATCH",
+    )
+    require(
+        rank_direction in {"UP", "DOWN"} and rank_direction == side_direction,
+        "FORECAST_LEARNING_RANK_SIDE_MISMATCH",
+    )
+    require(
+        str(receipt.get("orientation") or "").strip().upper()
+        == expected_orientation,
+        "FORECAST_LEARNING_ORIENTATION_MISMATCH",
+    )
+    require(
+        validate_forecast_learning_execution_geometry(
+            geometry if isinstance(geometry, Mapping) else None,
+            pair=pair,
+            side=side,
+            method=method,
+            entry=_optional_float(intent.get("entry")),
+            take_profit=_optional_float(intent.get("tp")),
+            stop_loss=_optional_float(intent.get("sl")),
+            source_decision_sha256=decision_sha,
+        ),
+        "FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID",
+    )
+    require(
+        technical_context.get("status") == "VALID",
+        "FORECAST_LEARNING_TECHNICAL_CONTEXT_INVALID",
+    )
+    for field, code in (
+        ("current_context_bound", "FORECAST_LEARNING_CONTEXT_NOT_CURRENT"),
+        (
+            "canonical_policy_sources_bound",
+            "FORECAST_LEARNING_POLICY_SOURCE_MISMATCH",
+        ),
+        (
+            "canonical_forecast_context_bound",
+            "FORECAST_LEARNING_CANONICAL_CONTEXT_MISMATCH",
+        ),
+        ("receipt_valid", "FORECAST_LEARNING_FAMILY_RECEIPT_INVALID"),
+        ("sha_bound", "FORECAST_LEARNING_FAMILY_RECEIPT_UNBOUND"),
+        ("selected_method_bound", "FORECAST_LEARNING_METHOD_MISMATCH"),
+        ("executable_method_bound", "FORECAST_LEARNING_METHOD_MISMATCH"),
+        ("family_direction_bound", "FORECAST_LEARNING_FAMILY_DIRECTION_UNBOUND"),
+        (
+            "direction_consistent",
+            "FORECAST_LEARNING_ORIGINAL_FAMILY_DIRECTION_CONTRADICTION",
+        ),
+    ):
+        require(regime_family_binding.get(field) is True, code)
+    require(
+        family_direction == original_direction
+        and _strict_positive_number(
+            regime_family_binding.get("directional_coverage_weight")
+        )
+        is not None,
+        "FORECAST_LEARNING_ORIGINAL_FAMILY_DIRECTION_NOT_ACTIONABLE",
+    )
+
+    errors = list(dict.fromkeys(errors))
+    valid = not errors
+    material: dict[str, Any] | None = None
+    material_sha256: str | None = None
+    if valid:
+        material_body = {
+            "contract": FORECAST_LEARNING_ALLOCATION_CONTEXT_CONTRACT,
+            "status": FORECAST_LEARNING_ALLOCATION_STATUS,
+            "pair": pair,
+            "side": side,
+            "method": method,
+            "order_type": str(intent.get("order_type") or "").strip().upper(),
+            "original_direction": original_direction,
+            "rank_direction": rank_direction,
+            "orientation": expected_orientation,
+            "decision_sha256": decision_sha,
+            "execution_geometry_binding_sha256": geometry_binding_sha,
+            "technical_context_sha256": technical_context_sha,
+            "regime_family_receipt_sha256": regime_family_binding.get(
+                "receipt_sha256"
+            ),
+            "historical_positive_edge_proven": False,
+            "live_permission": False,
+        }
+        material_sha256 = canonical_json_sha256(material_body)
+        material = {**material_body, "material_sha256": material_sha256}
+    return {
+        "claimed": True,
+        "valid": valid,
+        "status": (
+            FORECAST_LEARNING_ALLOCATION_STATUS
+            if valid
+            else "FORECAST_ORIENTATION_LEARNING_INVALID"
+        ),
+        "error_codes": errors,
+        "material": material,
+        "material_sha256": material_sha256,
+    }
+
+
 def _capital_allocation_lane(
     result: Mapping[str, Any] | None,
     *,
@@ -7236,8 +7615,20 @@ def _capital_allocation_lane(
             canonical_forecast_context_sha256
         ),
     )
+    forecast_learning_allocation = _forecast_learning_allocation_contract(
+        intent=intent,
+        metadata=metadata,
+        method=method,
+        predictive_scout=predictive_scout,
+        technical_context=technical_context,
+        regime_family_binding=regime_family_binding,
+    )
+    forecast_learning_claimed = forecast_learning_allocation["claimed"] is True
+    forecast_learning_valid = forecast_learning_allocation["valid"] is True
     technical_context_valid = bool(
-        technical_context_envelope_valid
+        forecast_learning_valid
+        if forecast_learning_claimed
+        else technical_context_envelope_valid
         and forecast_binding["direction_side_aligned"]
         and forecast_binding["calibration_identity_valid"]
         and regime_family_binding["passed"]
@@ -7272,6 +7663,8 @@ def _capital_allocation_lane(
         if target_path_live_learning_claimed
         else m15_recovery_valid
         if m15_recovery_claimed
+        else forecast_learning_valid
+        if forecast_learning_claimed
         else technical_context_valid
     )
     broker_bid, broker_ask = _broker_snapshot_bid_ask(
@@ -7297,6 +7690,7 @@ def _capital_allocation_lane(
         target_path_live_learning_prebounded=(
             target_path_live_learning_valid
         ),
+        forecast_learning_prebounded=forecast_learning_valid,
     )
     candidate_size_multiples = [
         multiple
@@ -7377,6 +7771,15 @@ def _capital_allocation_lane(
         live_blocker_codes.extend(target_path_live_learning["error_codes"])
     elif m15_recovery_claimed:
         live_blocker_codes.extend(m15_recovery["error_codes"])
+    elif forecast_learning_claimed:
+        live_blocker_codes.extend(forecast_learning_allocation["error_codes"])
+        # Preserve the long-standing generic telemetry code alongside the
+        # more precise forecast-learning diagnostic.  Operators and tests use
+        # this alias to recognize any content-addressed context rebuild drift.
+        if not regime_family_binding["canonical_forecast_context_bound"]:
+            live_blocker_codes.append(
+                "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH"
+            )
     else:
         if not technical_context_envelope_valid:
             live_blocker_codes.append(
@@ -7487,6 +7890,10 @@ def _capital_allocation_lane(
         if m15_recovery_valid
         else "M15_RECOVERY_ALLOCATION_INVALID"
         if m15_recovery_claimed
+        else "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
+        if forecast_learning_valid
+        else "FORECAST_ORIENTATION_LEARNING_ALLOCATION_INVALID"
+        if forecast_learning_claimed
         else standard_edge_basis
     )
     return {
@@ -7511,6 +7918,7 @@ def _capital_allocation_lane(
         "sl": _optional_float(intent.get("sl")),
         "allowed_size_multiples": allowed_size_multiples,
         "numeric_ceiling": numeric_ceiling,
+        "forecast_learning": forecast_learning_allocation,
         "target_path_live_learning": target_path_live_learning,
         "m15_recovery": m15_recovery,
         "predictive_scout": predictive_scout,

@@ -11,6 +11,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import quant_rabbit.market_read_overlay as market_read_overlay_module
+from quant_rabbit.forecast_learning import (
+    build_forecast_learning_execution_geometry,
+)
 from quant_rabbit.forecast_precision import (
     bidask_replay_precision_rule_digest,
     canonical_bidask_replay_precision_rule,
@@ -1634,11 +1637,29 @@ class MarketReadOverlayTest(unittest.TestCase):
                     "campaign_role": "FORECAST_LEARNING_SCOUT",
                     "desk": "trend_trader",
                     "forecast_learning_v1": {
+                        "decision_sha256": "direct-learning-decision",
+                        "original_direction": "UP",
+                        "rank_direction": "UP",
+                        "orientation": "DIRECT",
                         "features": {
                             "technical_selected_method": "TREND_CONTINUATION"
                         }
                     },
                 }
+            )
+            metadata["forecast_learning_execution_geometry_v1"] = (
+                build_forecast_learning_execution_geometry(
+                    pair="EUR_USD",
+                    side="LONG",
+                    method="TREND_CONTINUATION",
+                    entry=1.1002,
+                    take_profit=1.1040,
+                    stop_loss=1.0980,
+                    source_decision_sha256="direct-learning-decision",
+                    forecast_current_price=1.1001,
+                    forecast_target_price=1.1050,
+                    forecast_invalidation_price=1.0985,
+                )
             )
             paths["intents"].write_text(json.dumps(intents))
 
@@ -1658,6 +1679,130 @@ class MarketReadOverlayTest(unittest.TestCase):
                 "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
             )
             self.assertEqual(lane["allowed_size_multiples"], [1.0])
+
+    def test_inverse_forecast_learning_scout_allocates_ranked_side_not_original_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            intents = json.loads(paths["intents"].read_text())
+            result = intents["results"][0]
+            intent = result["intent"]
+            intent.update(
+                {
+                    "side": "SHORT",
+                    "order_type": "LIMIT",
+                    "entry": 1.1002,
+                    "tp": 1.0964,
+                    "sl": 1.1024,
+                }
+            )
+            metadata = intent["metadata"]
+            metadata.update(
+                {
+                    "predictive_scout": True,
+                    "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                    "predictive_scout_generated_at_utc": NOW.isoformat(),
+                    "forecast_cycle_id": (
+                        f"pre-entry-forecast-refresh:{NOW.isoformat()}:chart"
+                    ),
+                    "campaign_role": "FORECAST_LEARNING_SCOUT",
+                    "desk": "trend_trader",
+                    "forecast_learning_v1": {
+                        "decision_sha256": "inverse-learning-decision",
+                        "original_direction": "UP",
+                        "rank_direction": "DOWN",
+                        "orientation": "INVERSE",
+                        "features": {
+                            "technical_selected_method": "TREND_CONTINUATION"
+                        },
+                    },
+                }
+            )
+            metadata["forecast_learning_execution_geometry_v1"] = (
+                build_forecast_learning_execution_geometry(
+                    pair="EUR_USD",
+                    side="SHORT",
+                    method="TREND_CONTINUATION",
+                    entry=1.1002,
+                    take_profit=1.0964,
+                    stop_loss=1.1024,
+                    source_decision_sha256="inverse-learning-decision",
+                    forecast_current_price=1.1001,
+                    forecast_target_price=1.1050,
+                    forecast_invalidation_price=1.0985,
+                )
+            )
+            paths["intents"].write_text(json.dumps(intents))
+
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _reprepare(paths)
+
+            packet = json.loads(paths["packet"].read_text())
+            board = packet["capital_allocation_board"]
+            lane = board["selected_lane"]
+            self.assertTrue(lane["allocation_eligible"])
+            self.assertTrue(lane["forecast_learning"]["valid"])
+            self.assertEqual(lane["allowed_size_multiples"], [1.0])
+            self.assertEqual(
+                lane["edge_basis"],
+                "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+            )
+            self.assertEqual(
+                board["forecast_context_scope"],
+                "SELECTED_LANE_FORECAST_ORIENTATION_LEARNING",
+            )
+            self.assertEqual(board["forecast_context"]["direction"], "DOWN")
+            self.assertEqual(
+                board["forecast_context"]["original_direction"],
+                "UP",
+            )
+
+            short_read = _market_read()
+            short_read["naked_read"].update(
+                {
+                    "currency_bought": "USD",
+                    "currency_sold": "EUR",
+                    "what_price_is_trying_to_do_now": (
+                        "EUR_USD is trying to reject 1.1002 and rotate lower."
+                    ),
+                }
+            )
+            for key, target, invalidation in (
+                ("next_30m_prediction", "1.0985 to 1.0990", "1.1024"),
+                ("next_2h_prediction", "1.0964 to 1.0980", "1.1024"),
+            ):
+                short_read[key].update(
+                    {
+                        "direction": "SHORT",
+                        "expected_path": "Reject the passive entry and rotate lower.",
+                        "target_zone": target,
+                        "invalidation": invalidation,
+                    }
+                )
+            short_read["best_trade_if_forced"].update(
+                {
+                    "direction": "SHORT",
+                    "vehicle": "LIMIT",
+                    "entry": "1.1002",
+                    "tp": "1.0964",
+                    "sl": "1.1024",
+                }
+            )
+            _write_overlay(
+                paths,
+                size_multiple=1.0,
+                market_read=short_read,
+            )
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _apply(paths)
+            final = json.loads(paths["output"].read_text())
+            self.assertEqual(final["action"], "TRADE")
+            self.assertEqual(final["capital_allocation"]["selected_units"], 1200)
 
     def test_trade_allocation_is_bound_to_numeric_lane_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
