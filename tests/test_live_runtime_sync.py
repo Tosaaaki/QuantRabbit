@@ -726,6 +726,7 @@ def _current_trader_prompt_sentinel(
         "The deterministic draft is never the final AI decision.",
         "Write `data/trader_decision_baseline.json` and `data/market_read_evidence_packet.json` before the GPT market read.",
         "Author `data/codex_market_read_overlay.json`, run `trader-apply-market-read`, and never replace it downstream with deterministic output.",
+        "Run the locked handoff with QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1.",
         "Strict economics split must preserve lifetime, recent, prior, and historical results without claiming proof from a small sample.",
         "Every insufficient-evidence tuning review must include structured `evidence_acquisition`.",
         "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",

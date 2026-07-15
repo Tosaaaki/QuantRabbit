@@ -457,6 +457,136 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertNotIn("gpt-trader-decision", payload)
             self.assertIn("preserving Codex-authored market-read receipt", result.stderr)
 
+    def test_codex_market_read_is_finalized_verified_and_gated_under_one_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env["QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ"] = "1"
+            data = root / "data"
+            data.mkdir()
+            (data / "codex_trader_decision_response.json").write_text(
+                json.dumps(
+                    {
+                        "action": "TRADE",
+                        "decision_provenance": {"author_kind": "CODEX_MARKET_READ"},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertEqual(
+                _captured_cli_commands(payload)[:4],
+                [
+                    "trader-apply-market-read",
+                    "gpt-trader-decision",
+                    "autotrade-cycle",
+                    "cycle-sidecars",
+                ],
+            )
+            calls = _captured_cli_call_envs(payload)[:4]
+            self.assertEqual({call["QR_AUTOTRADE_LOCK_HELD"] for call in calls}, {"1"})
+            owner_tokens = {call["QR_AUTOTRADE_LOCK_OWNER_TOKEN"] for call in calls}
+            self.assertEqual(len(owner_tokens), 1)
+            self.assertNotEqual(owner_tokens, {""})
+            self.assertIn("finalizing the scheduled Codex market read under the live lock", result.stderr)
+
+    def test_codex_market_read_apply_failure_aborts_before_verifier_and_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1", market_read_apply_exit=23)
+            env["QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ"] = "1"
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertEqual(_captured_cli_commands(capture.read_text()), ["trader-apply-market-read"])
+            self.assertIn("aborting before verifier and gateway", result.stderr)
+
+    def test_codex_market_read_verifier_rejection_still_runs_gateway_maintenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1", gpt_verify_exit=2)
+            env["QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ"] = "1"
+            data = root / "data"
+            data.mkdir()
+            (data / "codex_trader_decision_response.json").write_text(
+                json.dumps(
+                    {
+                        "action": "WAIT",
+                        "decision_provenance": {"author_kind": "CODEX_MARKET_READ"},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                _captured_cli_commands(capture.read_text())[:4],
+                [
+                    "trader-apply-market-read",
+                    "gpt-trader-decision",
+                    "autotrade-cycle",
+                    "cycle-sidecars",
+                ],
+            )
+            self.assertIn("rejection blocks new risk without skipping position maintenance", result.stderr)
+
     def test_successful_cycle_refreshes_post_gateway_sidecars_under_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2589,6 +2719,8 @@ def _wrapper_env(
     live_enabled: str | None = None,
     sync_exit: int = 0,
     python_exit: int = 0,
+    market_read_apply_exit: int = 0,
+    gpt_verify_exit: int = 0,
     guardian_loaded: bool = True,
 ) -> dict[str, str]:
     env_file = root / "oanda.env"
@@ -2653,6 +2785,7 @@ def _wrapper_env(
                 "  printf 'QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_AUTOTRADE_LOCK_HELD=%s\\n' \"${QR_AUTOTRADE_LOCK_HELD:-}\"",
+                "  printf 'QR_AUTOTRADE_LOCK_OWNER_TOKEN=%s\\n' \"${QR_AUTOTRADE_LOCK_OWNER_TOKEN:-}\"",
                 "  printf 'QR_CONSOLIDATED_CYCLE_ID=%s\\n' \"${QR_CONSOLIDATED_CYCLE_ID:-}\"",
                 "  printf 'QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS=%s\\n' \"${QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS:-}\"",
                 "  printf 'PYTHONPATH=%s\\n' \"${PYTHONPATH:-}\"",
@@ -2663,6 +2796,14 @@ def _wrapper_env(
                 "for arg in \"$@\"; do",
                 "  if [[ \"$arg\" == \"trader-draft-decision\" && -n \"${QR_FAKE_TRADER_DRAFT_HOOK:-}\" ]]; then",
                 f'    "{sys.executable}" "$QR_FAKE_TRADER_DRAFT_HOOK"',
+                "  fi",
+                "done",
+                "for arg in \"$@\"; do",
+                "  if [[ \"$arg\" == \"trader-apply-market-read\" ]]; then",
+                f"    exit {market_read_apply_exit}",
+                "  fi",
+                "  if [[ \"$arg\" == \"gpt-trader-decision\" ]]; then",
+                f"    exit {gpt_verify_exit}",
                 "  fi",
                 "done",
                 "for arg in \"$@\"; do",

@@ -330,6 +330,7 @@ verify_automation() {
     'data/market_read_evidence_packet.json' \
     'data/codex_market_read_overlay.json' \
     'trader-apply-market-read' \
+    'QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1' \
     'the AI trader is this scheduled GPT-5.5/Codex role' \
     'The deterministic draft is never the final AI decision' \
     'never replace it downstream' \

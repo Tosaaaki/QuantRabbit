@@ -99,6 +99,17 @@ case "$QR_REQUIRE_POSITION_GUARDIAN_ACTIVE" in
     exit 2
     ;;
 esac
+# The scheduled Codex trader authors only the bounded market-read overlay.
+# When enabled, this wrapper publishes that overlay, verifies the merged
+# decision, and reaches the gateway while retaining one live-runtime lock.
+export QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ="${QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ:-0}"
+case "$QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=${QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_AUTOTRADE_LOCK_WAIT_SECONDS="${QR_AUTOTRADE_LOCK_WAIT_SECONDS:-180}"
@@ -514,6 +525,49 @@ refresh_gpt_handoff_if_needed() {
   fi
 }
 
+finalize_codex_market_read_handoff() {
+  if [[ "$QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$arg_count" -le 0 ]] \
+    || ! has_arg "--use-gpt-trader" "${args[@]}" \
+    || ! has_arg "--gpt-decision-response" "${args[@]}"; then
+    echo "[run-autotrade-live] Codex market-read finalization requires --use-gpt-trader and --gpt-decision-response." >&2
+    exit 2
+  fi
+
+  local response_path apply_status verify_status
+  response_path="$(arg_value "--gpt-decision-response" "${args[@]}" || true)"
+  if [[ -z "$response_path" ]]; then
+    echo "[run-autotrade-live] Codex market-read finalization requires a non-empty decision response path." >&2
+    exit 2
+  fi
+
+  echo "[run-autotrade-live] finalizing the scheduled Codex market read under the live lock." >&2
+  set +e
+  "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
+    --baseline data/trader_decision_baseline.json \
+    --packet data/market_read_evidence_packet.json \
+    --overlay data/codex_market_read_overlay.json \
+    --output "$response_path"
+  apply_status="$?"
+  set -e
+  if [[ "$apply_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] trader-apply-market-read failed with status=${apply_status}; aborting before verifier and gateway so an older receipt cannot be reused." >&2
+    exit "$apply_status"
+  fi
+
+  set +e
+  "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
+    --snapshot data/broker_snapshot.json \
+    --decision-response "$response_path"
+  verify_status="$?"
+  set -e
+  if [[ "$verify_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] gpt-trader-decision returned status=${verify_status}; continuing to autotrade-cycle under the same lock so rejection blocks new risk without skipping position maintenance." >&2
+  fi
+}
+
 refresh_position_guardian_send_status() {
   if [[ "$QR_LIVE_ENABLED" != "1" || "$arg_count" -le 0 || "$QR_REQUIRE_POSITION_GUARDIAN_ACTIVE" != "1" ]] \
     || ! has_arg "--send" "${args[@]}"; then
@@ -564,6 +618,7 @@ if [[ "$QR_LIVE_ENABLED" == "1" && "$arg_count" -gt 0 ]] \
 fi
 
 refresh_position_guardian_send_status
+finalize_codex_market_read_handoff
 refresh_gpt_handoff_if_needed
 initialize_consolidated_cycle_id
 
