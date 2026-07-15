@@ -394,7 +394,7 @@ class DispatcherPaths:
             escalation=root / "data" / "guardian_escalation.json",
             events=root / "data" / "guardian_events.json",
             event_state=root / "data" / "guardian_event_state.json",
-            broker_snapshot=root / "data" / "broker_snapshot.json",
+            broker_snapshot=root / "data" / "position_guardian_broker_snapshot.json",
             daily_target_state=root / "data" / "daily_target_state.json",
             event_report=root / "docs" / "guardian_event_report.md",
             prompt_template=root / "docs" / "guardian_wake_prompt.md",

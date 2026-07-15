@@ -4,12 +4,24 @@ import plistlib
 import unittest
 from pathlib import Path
 
+from tools import guardian_wake_dispatcher as dispatcher
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLIST = ROOT / "scripts" / "guardian" / "com.quantrabbit.guardian-wake-dispatcher.plist"
 
 
 class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
+    def test_default_snapshot_is_guardian_scoped_not_trader_routing_snapshot(self) -> None:
+        root = Path("/tmp/qr-guardian-dispatcher-test")
+
+        paths = dispatcher.DispatcherPaths.from_root(root, live_root=root)
+
+        self.assertEqual(
+            paths.broker_snapshot,
+            root / "data" / "position_guardian_broker_snapshot.json",
+        )
+
     def test_plist_routes_important_wakes_through_guarded_live_action_cycle(self) -> None:
         payload = plistlib.loads(PLIST.read_bytes())
 
