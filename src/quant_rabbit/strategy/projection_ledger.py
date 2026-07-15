@@ -90,7 +90,7 @@ _PROJECTION_KEY_CACHE: dict[
 ] = {}
 _HIT_RATE_CACHE: dict[
     tuple[str, int],
-    tuple[tuple[int, int], Dict[str, Dict[str, Dict[str, float]]]],
+    tuple[tuple[int, int, int, int], Dict[str, Dict[str, Dict[str, float]]]],
 ] = {}
 # (a) Immediate news/event follow-through signals fire after a catalyst is
 #     already in the tape, so their lead time is correctly 0 minutes.
@@ -1802,6 +1802,17 @@ def _compute_hit_rates_uncached(
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     if entries is None:
         entries = load_ledger(data_root)
+    from quant_rabbit.strategy.forecast_generation_receipts import (
+        aborted_forecast_generation_cycles,
+    )
+
+    aborted_cycles = aborted_forecast_generation_cycles(data_root)
+    if aborted_cycles:
+        entries = [
+            entry
+            for entry in entries
+            if not entry.cycle_id or entry.cycle_id not in aborted_cycles
+        ]
 
     # Ex-ante trial selection sees only forecasts that actually existed at the
     # packet clock.  Outcome observability is checked later so an unresolved
@@ -2106,12 +2117,24 @@ def _projection_file_cache_id(path: Path) -> str:
     return os.path.realpath(os.fspath(path))
 
 
-def _projection_file_cache_stat(path: Path) -> tuple[int, int]:
+def _projection_file_cache_stat(path: Path) -> tuple[int, int, int, int]:
     try:
         stat = path.stat()
     except OSError:
-        return (0, 0)
-    return (int(stat.st_size), int(stat.st_mtime_ns))
+        projection_token = (0, 0)
+    else:
+        projection_token = (int(stat.st_size), int(stat.st_mtime_ns))
+    receipt_path = path.parent / "forecast_generation_receipts.jsonl"
+    try:
+        receipt_stat = receipt_path.stat()
+    except OSError:
+        receipt_token = (0, 0)
+    else:
+        receipt_token = (
+            int(receipt_stat.st_size),
+            int(receipt_stat.st_mtime_ns),
+        )
+    return (*projection_token, *receipt_token)
 
 
 def _projection_open_file_token(stat: os.stat_result) -> tuple[int, int, int, int, int]:

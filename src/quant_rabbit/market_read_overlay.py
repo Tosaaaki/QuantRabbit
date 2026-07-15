@@ -50,6 +50,7 @@ from quant_rabbit.risk import (
 from quant_rabbit.strategy.forecast_technical_context import (
     CONFIDENCE_SEMANTICS,
     build_forecast_technical_context,
+    build_forecast_technical_context_evidence,
     forecast_pair_chart_row_sha256,
     forecast_technical_context_is_current_for_allocation,
     normalize_forecast_technical_context_evidence,
@@ -4077,6 +4078,85 @@ def _rebuild_canonical_forecast_context(
         return None
 
 
+def _build_forced_prediction_technical_context(
+    pair: str | None,
+    *,
+    pair_charts_path: Path | None,
+    calendar_path: Path | None,
+    strategy_profile_path: Path | None,
+    broker_snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Build read-only current context when the AI's best pair has no lane.
+
+    A naked market read must still see the technical stack even when the
+    deterministic producer did not emit the same pair/direction.  This bridge
+    deliberately creates no intent and grants no permission: it binds the
+    forced pair to the exact pair-chart row, current bid/ask mid and source
+    clock so the next producer cycle can explain and repair the opportunity
+    gap instead of reducing the read to ``UNKNOWN``.
+    """
+
+    pair_name = str(pair or "").strip().upper()
+    if pair_name not in DEFAULT_TRADER_PAIRS or pair_charts_path is None:
+        return None
+    try:
+        payload = json.loads(pair_charts_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    charts = payload.get("charts") if isinstance(payload, Mapping) else None
+    matches = [
+        chart
+        for chart in charts if isinstance(chart, Mapping)
+        and str(chart.get("pair") or "").strip().upper() == pair_name
+    ] if isinstance(charts, list) else []
+    if len(matches) != 1:
+        return None
+    canonical_chart = dict(matches[0])
+    if isinstance(payload, Mapping):
+        packet_generated_at = payload.get("generated_at_utc")
+        if packet_generated_at is not None:
+            canonical_chart.setdefault("generated_at_utc", packet_generated_at)
+
+    quotes = broker_snapshot.get("quotes")
+    quote = quotes.get(pair_name) if isinstance(quotes, Mapping) else None
+    if not isinstance(quote, Mapping):
+        return None
+    bid = _strict_positive_number(quote.get("bid"))
+    ask = _strict_positive_number(quote.get("ask"))
+    if bid is None or ask is None or ask <= bid:
+        return None
+    current_price = (bid + ask) / 2.0
+    spread_pips = (ask - bid) * float(instrument_pip_factor(pair_name))
+    try:
+        evaluated_at = _parse_utc(
+            broker_snapshot.get("fetched_at_utc"),
+            code="FORCED_PREDICTION_TECHNICAL_CONTEXT_CLOCK_INVALID",
+        )
+        context = build_forecast_technical_context(
+            canonical_chart,
+            pair=pair_name,
+            current_price=current_price,
+            spread_pips=spread_pips,
+            calendar_path=calendar_path,
+            strategy_profile_path=strategy_profile_path,
+            now_utc=evaluated_at,
+        )
+        evidence = build_forecast_technical_context_evidence(
+            context,
+            pair=pair_name,
+            current_price=current_price,
+        )
+    except (
+        MarketReadOverlayError,
+        OSError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ):
+        return None
+    return evidence if evidence.get("status") == "VALID" else None
+
+
 def _build_capital_allocation_board(
     *,
     baseline: Mapping[str, Any],
@@ -4174,6 +4254,23 @@ def _build_capital_allocation_board(
         if isinstance(canonical_forecast_context, Mapping)
         else None
     )
+    market_read = (
+        baseline.get("market_read_first")
+        if isinstance(baseline.get("market_read_first"), Mapping)
+        else {}
+    )
+    forced = (
+        market_read.get("best_trade_if_forced")
+        if isinstance(market_read.get("best_trade_if_forced"), Mapping)
+        else {}
+    )
+    forced_prediction_technical_context = _build_forced_prediction_technical_context(
+        str(forced.get("pair") or "").strip().upper() or None,
+        pair_charts_path=pair_charts_path,
+        calendar_path=calendar_path,
+        strategy_profile_path=strategy_profile_path,
+        broker_snapshot=broker_snapshot,
+    )
     lane = _capital_allocation_lane(
         selected_result,
         current_exact_vehicle_net_metrics=current_exact_net,
@@ -4204,6 +4301,7 @@ def _build_capital_allocation_board(
         selected_lane=lane,
         selected_lane_id=selected_lane_id,
         selected_lane_match_count=selected_lane_match_count,
+        forced_prediction_technical_context=forced_prediction_technical_context,
     )
     return {
         "schema_version": 2,
@@ -4256,6 +4354,7 @@ def _allocation_board_forecast_context(
     selected_lane: Mapping[str, Any] | None,
     selected_lane_id: str | None,
     selected_lane_match_count: int,
+    forced_prediction_technical_context: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Select one pair/direction-bound point-in-time forecast context.
 
@@ -4578,6 +4677,25 @@ def _allocation_board_forecast_context(
         for _lane_id, evidence in valid_candidates
         if evidence.get("context_sha256")
     }
+    if (
+        matching_count == 0
+        and invalid_count == 0
+        and isinstance(forced_prediction_technical_context, Mapping)
+        and forced_prediction_technical_context.get("status") == "VALID"
+    ):
+        return "FORCED_PREDICTION", {
+            "pair": pair,
+            "direction": direction,
+            "source_lane_id": None,
+            "source_generated_at_utc": generated_at,
+            "candidate_count": 0,
+            "valid_candidate_count": 0,
+            "invalid_candidate_count": 0,
+            "distinct_context_sha256_count": 0,
+            "technical_context_source": "CURRENT_PAIR_CHART_AND_BID_ASK",
+            "prediction_to_intent_bridge_required": True,
+            "technical_context": deepcopy(dict(forced_prediction_technical_context)),
+        }
     if invalid_count > 0 or len(distinct_shas) != 1:
         reason = (
             "FORECAST_TECHNICAL_CONTEXT_CANDIDATE_INVALID"
@@ -4597,6 +4715,8 @@ def _allocation_board_forecast_context(
             "valid_candidate_count": len(valid_candidates),
             "invalid_candidate_count": invalid_count,
             "distinct_context_sha256_count": len(distinct_shas),
+            "technical_context_source": "MATCHING_ORDER_INTENTS",
+            "prediction_to_intent_bridge_required": matching_count == 0,
             "technical_context": unknown_forecast_technical_context_evidence(reason),
         }
 
@@ -4611,6 +4731,8 @@ def _allocation_board_forecast_context(
         "valid_candidate_count": len(valid_candidates),
         "invalid_candidate_count": 0,
         "distinct_context_sha256_count": 1,
+        "technical_context_source": "MATCHING_ORDER_INTENTS",
+        "prediction_to_intent_bridge_required": False,
         "technical_context": evidence,
     }
 

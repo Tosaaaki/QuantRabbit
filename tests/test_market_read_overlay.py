@@ -2109,6 +2109,65 @@ class MarketReadOverlayTest(unittest.TestCase):
                     self.assertEqual(context["invalid_candidate_count"], 0)
                     self.assertEqual(context["distinct_context_sha256_count"], 2)
 
+    def test_forced_prediction_without_lane_keeps_current_technical_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=_baseline(action="REQUEST_EVIDENCE", lane_ids=[]),
+            )
+            intents = json.loads(paths["intents"].read_text())
+            intents["results"] = []
+            paths["intents"].write_text(json.dumps(intents))
+            _reprepare(paths)
+
+            board = json.loads(paths["packet"].read_text())[
+                "capital_allocation_board"
+            ]
+            context = board["forecast_context"]
+            technical = context["technical_context"]
+            self.assertEqual(board["forecast_context_scope"], "FORCED_PREDICTION")
+            self.assertEqual(context["pair"], "EUR_USD")
+            self.assertEqual(context["direction"], "UP")
+            self.assertEqual(context["candidate_count"], 0)
+            self.assertEqual(context["valid_candidate_count"], 0)
+            self.assertEqual(context["invalid_candidate_count"], 0)
+            self.assertEqual(
+                context["technical_context_source"],
+                "CURRENT_PAIR_CHART_AND_BID_ASK",
+            )
+            self.assertTrue(context["prediction_to_intent_bridge_required"])
+            self.assertEqual(technical["status"], "VALID")
+            self.assertEqual(
+                technical["technical_context_v1"]["identity"]["pair"],
+                "EUR_USD",
+            )
+            self.assertFalse(technical["live_permission"])
+
+    def test_invalid_matching_forced_lane_cannot_hide_behind_chart_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=_baseline(action="REQUEST_EVIDENCE", lane_ids=[]),
+            )
+            intents = json.loads(paths["intents"].read_text())
+            intents["results"][0]["intent"]["metadata"][
+                "forecast_technical_context"
+            ] = {"status": "VALID", "unverified": True}
+            paths["intents"].write_text(json.dumps(intents))
+            _reprepare(paths)
+
+            context = json.loads(paths["packet"].read_text())[
+                "capital_allocation_board"
+            ]["forecast_context"]
+            self.assertEqual(context["candidate_count"], 1)
+            self.assertEqual(context["invalid_candidate_count"], 1)
+            self.assertFalse(context["prediction_to_intent_bridge_required"])
+            self.assertEqual(context["technical_context"]["status"], "UNKNOWN")
+            self.assertEqual(
+                context["technical_context"]["reason"],
+                "FORECAST_TECHNICAL_CONTEXT_CANDIDATE_INVALID",
+            )
+
     def test_numeric_ceiling_fails_closed_on_missing_or_invalid_inputs(self) -> None:
         cases = (
             ("missing_economic_rate", "ECONOMIC_HIT_RATE_MISSING_OR_INVALID"),

@@ -101,6 +101,9 @@ def market_read_contract_payload() -> dict[str, Any]:
         },
         "unknown_aliases_are_not_accepted": True,
         "derived_plan_and_operator_summary_must_match_final_market_read": True,
+        "forced_prediction_current_technical_context_is_read_only": True,
+        "forced_prediction_without_lane_must_request_intent_bridge": True,
+        "forced_prediction_without_lane_may_grant_live_permission": False,
     }
 
 

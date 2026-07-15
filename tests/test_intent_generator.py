@@ -7075,6 +7075,83 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
 
+    def test_failed_intent_publication_receipts_forecast_cycle_as_aborted(self) -> None:
+        prior_telemetry = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    pair="EUR_USD",
+                    direction="RANGE",
+                    confidence=0.72,
+                    current_price=1.17326,
+                    target_price=None,
+                    invalidation_price=None,
+                    range_low_price=1.1724,
+                    range_high_price=1.1748,
+                    range_width_pips=24.0,
+                    horizon_min=60,
+                    rationale_summary="RANGE forecast for failed publication test",
+                    drivers_for=("M5 range rail holds",),
+                    drivers_against=("limited directional extension",),
+                )
+                with (
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator.record_range_vehicle_candidates",
+                        side_effect=ValueError("invalid candidate payload"),
+                    ),
+                    self.assertRaisesRegex(ValueError, "invalid candidate payload"),
+                ):
+                    IntentGenerator(
+                        campaign_plan=_range_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(
+                            root,
+                            status="CANDIDATE",
+                            direction="LONG",
+                        ),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.52,
+                            short_score=0.48,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                            m5_long_bias=0.58,
+                            m5_short_bias=0.22,
+                            regime_state="RANGE",
+                            adx=17.0,
+                            choppiness=65.0,
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        data_root=data_root,
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                receipts = [
+                    json.loads(line)
+                    for line in (
+                        data_root / "forecast_generation_receipts.jsonl"
+                    ).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                self.assertFalse(output.exists())
+                self.assertEqual(receipts[-1]["status"], "ABORTED")
+                self.assertFalse(receipts[-1]["learning_eligible"])
+                self.assertEqual(receipts[-1]["error_type"], "ValueError")
+                self.assertFalse(receipts[-1]["live_permission"])
+        finally:
+            if prior_telemetry is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_telemetry
+
     def test_range_target_floor_keeps_send_time_spread_cushion(self) -> None:
         target_pips = _minimum_range_target_pips(stop_pips=10.0, spread_pips=2.0)
 

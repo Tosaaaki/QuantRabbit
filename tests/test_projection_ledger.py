@@ -2502,6 +2502,82 @@ class HitRatesTest(unittest.TestCase):
             self.assertEqual(third["bb_squeeze"]["EUR_USD:TREND"]["samples"], 2)
             self.assertAlmostEqual(third["bb_squeeze"]["EUR_USD:TREND"]["hit_rate"], 0.5)
 
+    def test_aborted_generation_is_excluded_and_receipt_changes_invalidate_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.forecast_generation_receipts import (
+                record_forecast_generation_receipt,
+            )
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            def entry(status: str, cycle_id: str, minute: int) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc=(
+                        datetime(2026, 7, 15, tzinfo=timezone.utc)
+                        + timedelta(minutes=minute)
+                    ).isoformat(),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.8,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status=status,
+                    resolved_at_utc=(
+                        datetime(2026, 7, 15, 2, tzinfo=timezone.utc)
+                        + timedelta(minutes=minute)
+                    ).isoformat(),
+                    resolution_evidence="ordered target/invalidation outcome",
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                    raw_confidence=0.8,
+                    calibration_multiplier=1.0,
+                )
+
+            write_ledger(
+                [
+                    entry("HIT", "committed-cycle", 0),
+                    entry("MISS", "failed-cycle", 180),
+                ],
+                root,
+            )
+            output = root / "order_intents.json"
+            output.write_text("{}\n")
+            initial = compute_hit_rates(root)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(initial["samples"], 2)
+
+            record_forecast_generation_receipt(
+                data_root=root,
+                cycle_id="failed-cycle",
+                status="ABORTED",
+                expected_pairs=["EUR_USD"],
+                order_intents_path=output,
+                error_type="CandidatePayloadError",
+            )
+            filtered = compute_hit_rates(root)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(filtered["samples"], 1)
+            self.assertEqual(filtered["hit_rate"], 1.0)
+
+            record_forecast_generation_receipt(
+                data_root=root,
+                cycle_id="failed-cycle",
+                status="COMMITTED",
+                expected_pairs=["EUR_USD"],
+                order_intents_path=output,
+            )
+            restored = compute_hit_rates(root)["directional_forecast_up"][
+                "EUR_USD:TREND"
+            ]
+            self.assertEqual(restored["samples"], 2)
+            self.assertEqual(restored["hit_rate"], 0.5)
+
     def test_as_of_excludes_future_emissions_before_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

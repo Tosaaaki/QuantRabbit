@@ -5915,6 +5915,9 @@ class IntentGenerator:
         levels_snapshot = _load_levels_snapshot(self.levels_path)
         market_context_matrix = _load_market_context_matrix(self.market_context_matrix_path)
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
+        forecast_cycle_id: str | None = None
+        forecast_expected_pairs: list[str] = []
+        forecast_generation_receipt_required = False
         if snapshot is not None:
             range_seed_count = len(lanes)
             lanes = _append_current_range_phase_lanes(lanes, pair_charts)
@@ -5937,6 +5940,14 @@ class IntentGenerator:
             forecast_cycle_id = _pre_entry_forecast_cycle_id(
                 snapshot,
                 pair_charts_path=self.pair_charts_path,
+            )
+            forecast_generation_receipt_required = (
+                _require_telemetry_for_live_active()
+            )
+            forecast_expected_pairs = sorted(
+                pair
+                for pair in (pair_charts or {})
+                if snapshot.quotes.get(pair) is not None
             )
             lanes = _append_forecast_seed_lanes(
                 lanes,
@@ -6082,7 +6093,38 @@ class IntentGenerator:
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
-        self._write_output(results, generated_at, snapshot_path)
+        try:
+            self._write_output(results, generated_at, snapshot_path)
+        except Exception as exc:
+            if forecast_cycle_id and forecast_generation_receipt_required:
+                try:
+                    from quant_rabbit.strategy.forecast_generation_receipts import (
+                        record_forecast_generation_receipt,
+                    )
+
+                    record_forecast_generation_receipt(
+                        data_root=self.data_root,
+                        cycle_id=forecast_cycle_id,
+                        status="ABORTED",
+                        expected_pairs=forecast_expected_pairs,
+                        order_intents_path=self.output_path,
+                        error_type=type(exc).__name__,
+                    )
+                except Exception:
+                    pass
+            raise
+        if forecast_cycle_id and forecast_generation_receipt_required:
+            from quant_rabbit.strategy.forecast_generation_receipts import (
+                record_forecast_generation_receipt,
+            )
+
+            record_forecast_generation_receipt(
+                data_root=self.data_root,
+                cycle_id=forecast_cycle_id,
+                status="COMMITTED",
+                expected_pairs=forecast_expected_pairs,
+                order_intents_path=self.output_path,
+            )
         self._write_report(results, generated_at, snapshot_path)
         return IntentGenerationSummary(
             output_path=self.output_path,
