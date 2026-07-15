@@ -1125,6 +1125,9 @@ def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
     """
 
     metadata = intent.metadata or {}
+    source = str(
+        metadata.get("predictive_scout_source") or PREDICTIVE_SCOUT_SOURCE
+    ).upper()
     rule = (
         metadata.get("bidask_replay_precision_seed_rule")
         if isinstance(metadata.get("bidask_replay_precision_seed_rule"), dict)
@@ -1132,6 +1135,42 @@ def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
     )
     precision = 3 if intent.pair.endswith("_JPY") else 5
     entry = float(intent.entry or 0.0)
+    if source == FORECAST_LEARNING_SCOUT_SOURCE:
+        receipt = (
+            metadata.get("forecast_learning_v1")
+            if isinstance(metadata.get("forecast_learning_v1"), dict)
+            else {}
+        )
+        features = (
+            receipt.get("features")
+            if isinstance(receipt.get("features"), dict)
+            else {}
+        )
+        target_distance = abs(float(intent.tp or 0.0) - entry)
+        stop_distance = abs(entry - float(intent.sl or 0.0))
+        reward_risk = (
+            target_distance / stop_distance if stop_distance > 0.0 else 0.0
+        )
+        payload = {
+            "source": FORECAST_LEARNING_SCOUT_SOURCE,
+            "pair": intent.pair.upper(),
+            "side": intent.side.value,
+            "order_type": intent.order_type.value,
+            "method": (
+                intent.market_context.method.value
+                if intent.market_context is not None
+                else ""
+            ),
+            "horizon_bucket": str(features.get("horizon_bucket") or "MISSING"),
+            # Forward outcomes are normalized to initial R before they move a
+            # risk tier.  Bucket the TP/SL ratio so ATR-scaled price distances
+            # from consecutive cycles accumulate as one executable vehicle,
+            # while materially different payoff shapes retain separate loss
+            # memory.  The exact prices remain bound by the execution-geometry
+            # receipt, sizing digest, and signal claim.
+            "reward_risk_bucket": _reward_risk_bucket(reward_risk),
+        }
+        return "psv-" + _stable_digest(payload)[:24]
     payload = {
         "source": PREDICTIVE_SCOUT_SOURCE,
         "pair": intent.pair.upper(),
@@ -1149,6 +1188,20 @@ def predictive_scout_vehicle_id(intent: OrderIntent) -> str:
         "stop_distance": f"{abs(entry - float(intent.sl)):.{precision}f}",
     }
     return "psv-" + _stable_digest(payload)[:24]
+
+
+def _reward_risk_bucket(value: float) -> str:
+    if value < 0.5:
+        return "LT_0_50"
+    if value < 0.75:
+        return "0_50_TO_0_75"
+    if value < 1.0:
+        return "0_75_TO_1_00"
+    if value < 1.5:
+        return "1_00_TO_1_50"
+    if value < 2.0:
+        return "1_50_TO_2_00"
+    return "GE_2_00"
 
 
 def predictive_scout_sizing_digest(intent: OrderIntent) -> str:

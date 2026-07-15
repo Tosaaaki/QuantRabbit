@@ -667,6 +667,30 @@ class PredictiveScoutTest(unittest.TestCase):
             predictive_scout_experiment_id(large),
         )
 
+    def test_forecast_learning_vehicle_accumulates_atr_scaled_r_outcomes_without_source_collision(self) -> None:
+        replay_intent = self._intent(tp=1.3510, sl=1.3495)
+        metadata = dict(replay_intent.metadata)
+        metadata["predictive_scout_source"] = "FORECAST_ORIENTATION_LEARNING"
+        metadata["forecast_learning_v1"] = {
+            "features": {"horizon_bucket": "31-60m"}
+        }
+        first = replace(replay_intent, metadata=metadata)
+        scaled_same_r = replace(first, tp=1.3520, sl=1.3490)
+        different_payoff_shape = replace(first, tp=1.3504, sl=1.3493)
+
+        self.assertNotEqual(
+            predictive_scout_vehicle_id(replay_intent),
+            predictive_scout_vehicle_id(first),
+        )
+        self.assertEqual(
+            predictive_scout_vehicle_id(first),
+            predictive_scout_vehicle_id(scaled_same_r),
+        )
+        self.assertNotEqual(
+            predictive_scout_vehicle_id(first),
+            predictive_scout_vehicle_id(different_payoff_shape),
+        )
+
     def test_variable_units_are_valid_when_nav_risk_metadata_and_digest_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             issues = self._issues(
