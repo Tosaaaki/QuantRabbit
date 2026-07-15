@@ -3043,6 +3043,63 @@ def synthesize_forecast(
             entry_bid=entry_bid,
             entry_ask=entry_ask,
         )
+        contradiction_learning_receipt: dict[str, Any] = {}
+        if require_technical_candle_integrity and not m15_recovery_receipt:
+            # The ordinary forecast remains fail-closed below, but the ranked
+            # forward-SCOUT learner must still see the point-in-time detector
+            # thesis that the regime-family selector contradicted.  Returning
+            # before building this receipt made the most informative conflict
+            # cases invisible to the historical-tick learner and could erase
+            # every bounded fallback candidate in a cycle.
+            detector_candidates = sorted(
+                (
+                    ("UP", float(pre_family_detector_scores["UP"])),
+                    ("DOWN", float(pre_family_detector_scores["DOWN"])),
+                    ("RANGE", float(pre_family_detector_scores["RANGE"])),
+                ),
+                key=lambda item: -item[1],
+            )
+            detector_winner_score = detector_candidates[0][1]
+            detector_runner_up_score = detector_candidates[1][1]
+            detector_total = sum(pre_family_detector_scores.values())
+            detector_raw_confidence = min(
+                1.0,
+                (
+                    max(detector_winner_score - detector_runner_up_score, 0.0)
+                    / max(detector_total, 1.0)
+                )
+                + 0.3,
+            )
+            detector_confidence, _ = _calibrated_confidence(
+                pair=pair,
+                direction=contradicted_winner,
+                raw_confidence=detector_raw_confidence,
+                hit_rates=hit_rates,
+                regime=calibration_regime,
+            )
+            detector_horizon_min, _ = _forecast_horizon_for_direction(
+                pair_chart,
+                contradicted_winner,
+            )
+            contradiction_learning_receipt = _forecast_learning_receipt(
+                pair=pair,
+                direction=contradicted_winner,
+                confidence=detector_confidence,
+                raw_confidence=detector_raw_confidence,
+                up_score=float(pre_family_detector_scores["UP"]),
+                down_score=float(pre_family_detector_scores["DOWN"]),
+                range_score=float(pre_family_detector_scores["RANGE"]),
+                horizon_min=detector_horizon_min,
+                technical_context_v1=technical_context_v1,
+                now_utc=now_utc,
+                drivers_for=_top_reasons(
+                    contributions,
+                    direction=contradicted_winner,
+                ),
+                drivers_against=(
+                    family_adjustment_reason or "regime-family contradiction",
+                ),
+            )
         if winner == "UP":
             up_score = family_adjusted_score
         elif winner == "DOWN":
@@ -3086,6 +3143,7 @@ def synthesize_forecast(
                 "EITHER": either_score,
             },
             technical_context_v1=technical_context_v1,
+            forecast_learning_v1=contradiction_learning_receipt,
             m15_recovery_receipt=m15_recovery_receipt,
             regime_family_contradiction_shadow=contradiction_shadow,
         )

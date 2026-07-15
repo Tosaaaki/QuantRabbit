@@ -1432,18 +1432,23 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
         self.assertIsNone(reason)
 
     def test_opposite_receipt_vetoes_to_unclear_without_sort_direction_flip(self) -> None:
-        forecast = synthesize_forecast(
-            pair="EUR_USD",
-            pair_chart=self._chart(-1.0),
-            current_price=1.1000,
-            pattern_signals=[],
-            projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
-            correlation_signals=[],
-            paths=[],
-            spread_pips=0.2,
-            entry_bid=1.09999,
-            entry_ask=1.10001,
-        )
+        with patch(
+            "quant_rabbit.strategy.directional_forecaster."
+            "_technical_candle_integrity_forecast_blockers",
+            return_value=(),
+        ):
+            forecast = _synthesize_forecast(
+                pair="EUR_USD",
+                pair_chart=self._chart(-1.0),
+                current_price=1.1000,
+                pattern_signals=[],
+                projection_signals=[_Sig("UP", 100.0, 1.0, "strong up detector")],
+                correlation_signals=[],
+                paths=[],
+                spread_pips=0.2,
+                entry_bid=1.09999,
+                entry_ask=1.10001,
+            )
 
         self.assertEqual(forecast.direction, "UNCLEAR")
         self.assertEqual(forecast.confidence, 0.0)
@@ -1462,10 +1467,24 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
         self.assertTrue(shadow["read_only"])
         self.assertFalse(shadow["live_permission"])
         self.assertFalse(shadow["sizing_permission"])
+        learning = forecast.forecast_learning_v1
+        self.assertEqual(learning["model_status"], "RANK_ONLY")
+        self.assertEqual(learning["original_direction"], "UP")
+        self.assertIn(learning["rank_direction"], {"UP", "DOWN"})
+        self.assertTrue(learning["always_returns_direction"])
+        self.assertEqual(
+            learning["probability_semantics"],
+            "ORIENTATION_RANK_NOT_TRADE_WIN_PROBABILITY",
+        )
+        self.assertNotEqual(
+            learning["features"]["score_margin_bucket"],
+            "ZERO",
+        )
         self.assertNotIn(
             "regime_family_contradiction_shadow",
             forecast.to_dict(),
         )
+        self.assertIn("forecast_learning_v1", forecast.to_dict())
         from quant_rabbit.strategy.intent_generator import _forecast_context_payload
 
         self.assertNotIn(
