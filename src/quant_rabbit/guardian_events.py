@@ -2739,6 +2739,7 @@ def _forecast_persistence_events(payload: dict[str, Any], *, now: datetime) -> l
 def _market_context_matrix_events(payload: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
     pairs = payload.get("pairs") if isinstance(payload.get("pairs"), dict) else {}
+    source_generated_at_utc = payload.get("generated_at_utc")
     for pair_key, sides in pairs.items():
         pair = _pair(pair_key)
         if not pair or not isinstance(sides, dict):
@@ -2765,6 +2766,7 @@ def _market_context_matrix_events(payload: dict[str, Any], *, now: datetime) -> 
                             "support_count": row.get("support_count"),
                             "reject_count": row.get("reject_count"),
                             "evidence_ref": row.get("evidence_ref"),
+                            "source_generated_at_utc": source_generated_at_utc,
                         },
                     )
                 )
@@ -4254,6 +4256,19 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
                 reasons.append("TECHNICAL_FAMILY_STATE_CHANGE")
             if current_fingerprint.get("closed_structure") != prior_fingerprint.get("closed_structure"):
                 reasons.append("CLOSED_CANDLE_STRUCTURE_CHANGE")
+    if event.event_type == "THEME_CONFIRMATION" and prior is not None:
+        current_details = event.details if isinstance(event.details, dict) else {}
+        prior_details = prior.get("details") if isinstance(prior.get("details"), dict) else {}
+        current_source = _parse_utc(current_details.get("source_generated_at_utc"))
+        prior_source = _parse_utc(prior_details.get("source_generated_at_utc"))
+        # Theme identity stays stable while direction and thesis persist, but
+        # the hourly matrix is a new point-in-time technical observation. Keep
+        # the accepted receipt as baseline and reopen review for a newer matrix;
+        # the normal one-hour entry throttle still bounds 30-second GPT wakes.
+        if current_source is not None and (
+            prior_source is None or current_source > prior_source
+        ):
+            reasons.append("ENTRY_SIGNAL_SOURCE_REFRESH")
     return list(dict.fromkeys(reasons))
 
 

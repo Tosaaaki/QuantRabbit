@@ -1515,6 +1515,12 @@ class LaneScore:
     # unsigned aggregate/M1-M5 advice after `_score_lane` has already verified
     # the dedicated M15+ receipt.
     m15_recovery_verified: bool = False
+    # A LIVE_READY predictive SCOUT has already passed its dedicated
+    # point-in-time model/rule/geometry/risk contract in IntentGenerator. The
+    # automation prefilter uses this marker to avoid reapplying the ordinary
+    # directional-forecast confidence gate to an intentionally inverse,
+    # passive learning vehicle. Gateway validation remains authoritative.
+    predictive_scout: bool = False
 
 
 @dataclass(frozen=True)
@@ -2723,6 +2729,7 @@ class TraderBrain:
             estimated_margin_jpy=estimated_margin_jpy,
             hedge_recovery=metadata.get("hedge_recovery") is True,
             m15_recovery_verified=verified_m15_recovery,
+            predictive_scout=is_predictive_scout,
         )
 
     def _write(self, decision: TraderDecision) -> None:

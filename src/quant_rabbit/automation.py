@@ -395,6 +395,13 @@ def _is_hard_forecast_prefilter_blocker(text: str, *, score: LaneScore | None = 
     # forecast text is softened only for legacy RANGE_ROTATION LIMIT receipts:
     # new TraderBrain code no longer emits that blocker for executable rail
     # geometry, but stale artifacts may still carry it until the next refresh.
+    if score is not None and score.predictive_scout:
+        # Predictive SCOUT is explicitly an inverse-orientation learning lane.
+        # Reapplying the ordinary forecast direction/confidence gate after its
+        # dedicated LIVE_READY contract makes every valid inverse experiment
+        # impossible to execute. Structural, exposure and gateway gates remain
+        # hard; only the incompatible ordinary forecast prose is advisory here.
+        return False
     if "forecast confidence" in text:
         return not _is_low_confidence_range_rotation_legacy_blocker(score)
     if any(pattern in text for pattern in _PREFILTER_HARD_FORECAST_PATTERNS):

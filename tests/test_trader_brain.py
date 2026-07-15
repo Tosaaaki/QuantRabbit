@@ -874,6 +874,7 @@ class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
             decision = brain.run(_snapshot())
 
         self.assertEqual(decision.scores[0].size_multiple, 1.0)
+        self.assertTrue(decision.scores[0].predictive_scout)
         self.assertIn("pre-verifier NAV-risk units", " ".join(decision.scores[0].rationale))
 
     def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:

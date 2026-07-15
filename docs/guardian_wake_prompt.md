@@ -84,6 +84,11 @@ Rules:
   `HOLD` merely because certainty is imperfect. Use `HOLD` or `NO_ACTION` only
   when the supplied evidence names a concrete contradiction, missing proof, or
   invalidation; state that exact reason. Never upgrade a non-entry action hint.
+- `ENTRY_SIGNAL_SOURCE_REFRESH` means the hourly multi-pair matrix was rebuilt
+  after the last accepted review while the directional theme persisted. Treat
+  the supplied current charts, bid/ask, spread, thesis, and invalidation as a
+  fresh entry observation. It is not automatic permission to trade, but an old
+  `HOLD` is not a reason to repeat `HOLD` without a current contradiction.
 - `TRADE` and `ADD` require genuinely new information from the selected guardian
   event. A scheduled hour, stale duplicate, B/C churn, or pace pressure alone is
   not new information.

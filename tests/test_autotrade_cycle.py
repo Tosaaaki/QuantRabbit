@@ -3042,6 +3042,31 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         self.assertFalse(_passes_gpt_prefilter(score))
 
+    def test_live_ready_predictive_scout_uses_its_dedicated_forecast_contract(self) -> None:
+        score = LaneScore(
+            lane_id="failure_trader:GBP_NZD:SHORT:BREAKOUT_FAILURE:LIMIT",
+            pair="GBP_NZD",
+            direction="SHORT",
+            method="BREAKOUT_FAILURE",
+            order_type="LIMIT",
+            entry=2.31452,
+            tp=2.30795,
+            sl=2.32107,
+            status="LIVE_READY",
+            score=-86.39,
+            action=ACTION_NO_TRADE,
+            blockers=(
+                "forecast UP opposes SHORT; rationale: ordinary direct orientation",
+                "forecast confidence 0.00 < 0.55 threshold",
+            ),
+            rationale=("predictive SCOUT preserves its pre-verifier NAV-risk units",),
+            size_multiple=1.0,
+            estimated_margin_jpy=3_872.52,
+            predictive_scout=True,
+        )
+
+        self.assertTrue(_passes_gpt_prefilter(score))
+
     def test_live_ready_advisory_history_blockers_remain_gpt_prefilter_eligible(self) -> None:
         score = LaneScore(
             lane_id="trend_trader:NZD_CHF:LONG:TREND_CONTINUATION",

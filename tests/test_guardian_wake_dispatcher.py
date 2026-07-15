@@ -790,6 +790,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             "VOLATILITY_BUCKET_CHANGE",
             "FAMILY_DISAGREEMENT_STATE_CHANGE",
             "CLOSED_CANDLE_STRUCTURE_CHANGE",
+            "ENTRY_SIGNAL_SOURCE_REFRESH",
         )
         for reason in reasons:
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
@@ -968,6 +969,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     selection["suppressed"][0]["reason"],
                     "GUARDIAN_TECHNICAL_STATE_UNAVAILABLE",
                 )
+                self.assertEqual(selection["pending_events"], [entry])
 
     def test_multiple_review_events_are_durably_drained_across_router_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

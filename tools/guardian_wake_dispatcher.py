@@ -314,6 +314,7 @@ _EXPLICIT_DISPATCH_REASONS = {
     "MARGIN_RISK_THRESHOLD_CROSSED",
     "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE",
     "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE",
+    "ENTRY_SIGNAL_SOURCE_REFRESH",
     "PRICE_ENTERED_HARVEST_ZONE",
     "FAILED_DISPATCH_RETRY",
 }
@@ -1539,6 +1540,11 @@ def _select_dispatch_event(
                 ),
             )
         ):
+            # The fast guardian rotates the 28-pair universe, so a valid entry
+            # refresh can arrive between this pair's chart slots. Preserve the
+            # immutable observation and dispatch it as soon as that pair's
+            # bounded technical state is current instead of losing the chance.
+            pending_events.append(event)
             suppressed.append(
                 {
                     "event": event,

@@ -1921,6 +1921,61 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertFalse(second["wake_gpt"])
         self.assertEqual(second["suppressed_events"][0]["suppressed_reason"], "THROTTLED")
 
+    def test_new_hourly_theme_matrix_reopens_stable_entry_review(self) -> None:
+        def theme_events(source_generated_at: datetime):
+            return detect_guardian_events(
+                inputs={
+                    "snapshot": _snapshot(),
+                    "market_context_matrix": {
+                        "generated_at_utc": source_generated_at.isoformat(),
+                        "pairs": {
+                            "AUD_CHF": {
+                                "LONG": {
+                                    "theme_confirmation": True,
+                                    "support_count": 7,
+                                    "reject_count": 0,
+                                    "strongest_support": "stable long theme",
+                                    "evidence_ref": "matrix:AUD_CHF:LONG",
+                                }
+                            }
+                        },
+                    },
+                },
+                now=source_generated_at,
+            )
+
+        first_events = theme_events(NOW)
+        first, state = evaluate_guardian_escalation(
+            events=first_events,
+            previous_state={},
+            now=NOW,
+        )
+        same_source, _ = evaluate_guardian_escalation(
+            events=theme_events(NOW),
+            previous_state=state,
+            now=NOW + timedelta(hours=2),
+        )
+        refreshed_at = NOW + timedelta(hours=1)
+        refreshed, _ = evaluate_guardian_escalation(
+            events=theme_events(refreshed_at),
+            previous_state=state,
+            now=refreshed_at,
+        )
+
+        self.assertTrue(first["wake_gpt"])
+        self.assertFalse(same_source["wake_gpt"])
+        self.assertTrue(refreshed["wake_gpt"])
+        self.assertIn("ENTRY_SIGNAL_SOURCE_REFRESH", refreshed["wake_reason_codes"])
+        refreshed_theme = next(
+            event
+            for event in refreshed["events_to_review"]
+            if event["event_type"] == "THEME_CONFIRMATION"
+        )
+        self.assertEqual(
+            refreshed_theme["details"]["source_generated_at_utc"],
+            refreshed_at.isoformat(),
+        )
+
     def test_p2_duplicate_suppressed_only_when_price_zone_materially_unchanged(self) -> None:
         first_events = _events_from_chart(
             {
