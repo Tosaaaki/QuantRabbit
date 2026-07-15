@@ -4327,8 +4327,8 @@ class MarketReadOverlayTest(unittest.TestCase):
             )
             self.assertFalse(consumed["global_safety"])
             self.assertEqual(
-                consumed["time_state"]["expires_at_utc"],
-                "NOT_APPLICABLE_CONSUMED",
+                consumed["scope"],
+                "NO_RELEVANT_ACTIVE_RECEIPT",
             )
 
     def test_production_packet_uses_guardian_read_clock_after_mid_build_rotation(self) -> None:
@@ -4530,7 +4530,6 @@ class MarketReadOverlayTest(unittest.TestCase):
         for mutation in (
             "status",
             "receipt_status",
-            "receipt_lifecycle",
             "dispatcher_status",
             "block_issue",
             "unknown_event_type",
@@ -4549,8 +4548,6 @@ class MarketReadOverlayTest(unittest.TestCase):
                     receipt["status"] = "REJECTED"
                 elif mutation == "receipt_status":
                     receipt["receipt_status"] = "REJECTED"
-                elif mutation == "receipt_lifecycle":
-                    receipt["receipt_lifecycle"] = "EXPIRED"
                 elif mutation == "dispatcher_status":
                     receipt["dispatcher_status"] = "FAILED"
                 elif mutation == "block_issue":
@@ -4913,6 +4910,80 @@ class MarketReadOverlayTest(unittest.TestCase):
                 summary = _apply(paths)
 
             self.assertEqual(summary.action, "TRADE")
+
+    def test_predictive_limit_quote_nav_refresh_does_not_stale_ai_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _configure_forecast_learning_scout(paths)
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _reprepare(paths)
+                packet = json.loads(paths["packet"].read_text())
+                self.assertEqual(
+                    packet["sources"]["broker_snapshot"]["material_contract"],
+                    "QR_PREDICTIVE_LIMIT_BROKER_ROUTING_STATE_V1",
+                )
+                _write_overlay(paths, size_multiple=1.0)
+
+                snapshot = json.loads(paths["snapshot"].read_text())
+                observed_at = NOW + timedelta(seconds=30)
+                snapshot["fetched_at_utc"] = observed_at.isoformat()
+                snapshot["account"]["fetched_at_utc"] = observed_at.isoformat()
+                snapshot["account"]["nav_jpy"] = 99_123.45
+                snapshot["account"]["margin_available_jpy"] = 55_000.0
+                snapshot["home_conversions"]["USD"] = 100.25
+                snapshot["quotes"]["EUR_USD"].update(
+                    {
+                        "bid": 1.1003,
+                        "ask": 1.1005,
+                        "timestamp_utc": observed_at.isoformat(),
+                    }
+                )
+                paths["snapshot"].write_text(json.dumps(snapshot))
+
+                summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_predictive_limit_broker_transaction_or_position_change_stales(self) -> None:
+        for mutation in ("transaction", "position"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                _configure_forecast_learning_scout(paths)
+                snapshot = json.loads(paths["snapshot"].read_text())
+                snapshot["account"]["last_transaction_id"] = "100"
+                paths["snapshot"].write_text(json.dumps(snapshot))
+                with patch(
+                    "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                    return_value=True,
+                ):
+                    _reprepare(paths)
+                    _write_overlay(paths, size_multiple=1.0)
+                    snapshot = json.loads(paths["snapshot"].read_text())
+                    if mutation == "transaction":
+                        snapshot["account"]["last_transaction_id"] = "101"
+                    else:
+                        snapshot["positions"] = [
+                            {
+                                "trade_id": "new-trade",
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "units": 100,
+                                "owner": "system",
+                                "entry_price": 1.25,
+                                "take_profit": 1.26,
+                                "stop_loss": 1.24,
+                            }
+                        ]
+                    paths["snapshot"].write_text(json.dumps(snapshot))
+
+                    with self.assertRaisesRegex(
+                        MarketReadOverlayError,
+                        "changed_material=source:broker_snapshot",
+                    ):
+                        _apply(paths)
 
     def test_authenticated_predictive_limit_still_expires_with_overlay_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6176,6 +6247,53 @@ def _configure_m15_recovery_lane(
     ]
     paths["intents"].write_text(json.dumps(intents))
     _reprepare(paths)
+
+
+def _configure_forecast_learning_scout(
+    paths: dict[str, Path],
+    *,
+    observed_at: datetime = NOW,
+) -> None:
+    intents = json.loads(paths["intents"].read_text())
+    intent = intents["results"][0]["intent"]
+    intent["order_type"] = "LIMIT"
+    metadata = intent["metadata"]
+    metadata.update(
+        {
+            "predictive_scout": True,
+            "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+            "predictive_scout_generated_at_utc": observed_at.isoformat(),
+            "forecast_cycle_id": (
+                f"pre-entry-forecast-refresh:{observed_at.isoformat()}:chart"
+            ),
+            "campaign_role": "FORECAST_LEARNING_SCOUT",
+            "desk": "trend_trader",
+            "forecast_learning_v1": {
+                "decision_sha256": "stable-broker-learning-decision",
+                "original_direction": "UP",
+                "rank_direction": "UP",
+                "orientation": "DIRECT",
+                "features": {
+                    "technical_selected_method": "TREND_CONTINUATION"
+                },
+            },
+        }
+    )
+    metadata["forecast_learning_execution_geometry_v1"] = (
+        build_forecast_learning_execution_geometry(
+            pair="EUR_USD",
+            side="LONG",
+            method="TREND_CONTINUATION",
+            entry=1.1002,
+            take_profit=1.1040,
+            stop_loss=1.0980,
+            source_decision_sha256="stable-broker-learning-decision",
+            forecast_current_price=1.1001,
+            forecast_target_price=1.1050,
+            forecast_invalidation_price=1.0985,
+        )
+    )
+    paths["intents"].write_text(json.dumps(intents))
 
 
 def _reprepare(paths: dict[str, Path]) -> None:

@@ -205,7 +205,20 @@ WATCHDOG_MATERIAL_CONTRACT = "QR_TRADER_WATCHDOG_HEALTH_STATE_V2"
 GUARDIAN_ACTION_RECEIPT_MATERIAL_CONTRACT = (
     "QR_GUARDIAN_ACTION_RECEIPT_SCOPE_V1"
 )
+PREDICTIVE_LIMIT_BROKER_SCOPE_CONTRACT = (
+    "QR_PREDICTIVE_LIMIT_BROKER_ROUTING_STATE_V1"
+)
 MAX_GUARDIAN_ACTION_RECEIPT_BYTES = 1_000_000
+GUARDIAN_TERMINAL_RECEIPT_LIFECYCLES = frozenset(
+    {
+        "CONSUMED",
+        "SUPERSEDED",
+        "EXPIRED",
+        "STALE",
+        "REJECTED",
+        "HISTORICAL_ONLY",
+    }
+)
 GUARDIAN_HIGH_URGENCY_ACTIONS = frozenset(
     {"REDUCE", "HARVEST", "CANCEL_PENDING"}
 )
@@ -1039,16 +1052,32 @@ def apply_codex_market_read_overlay(
     # Only sources with an explicit semantic-material contract may ignore their
     # raw descriptor churn. Every other source descriptor remains body-bound so
     # packet metadata cannot be forged after the model reviewed it.
+    predictive_broker_scope_bound = all(
+        isinstance(body.get("sources"), Mapping)
+        and isinstance(body["sources"].get("broker_snapshot"), Mapping)
+        and body["sources"]["broker_snapshot"].get("material_contract")
+        == PREDICTIVE_LIMIT_BROKER_SCOPE_CONTRACT
+        for body in (stored_packet_body, rebuilt_packet_body)
+    )
     for body in (stored_packet_body, rebuilt_packet_body):
         raw_metadata = body.get("source_metadata")
         if not isinstance(raw_metadata, Mapping):
-            continue
-        stable_metadata = dict(raw_metadata)
-        stable_metadata.pop("qr_trader_run_watchdog", None)
-        stable_metadata.pop("guardian_action_receipt", None)
-        stable_metadata.pop("market_read_predictions", None)
-        stable_metadata.pop("projection_ledger", None)
-        body["source_metadata"] = stable_metadata
+            stable_metadata = None
+        else:
+            stable_metadata = dict(raw_metadata)
+            stable_metadata.pop("qr_trader_run_watchdog", None)
+            stable_metadata.pop("guardian_action_receipt", None)
+            stable_metadata.pop("market_read_predictions", None)
+            stable_metadata.pop("projection_ledger", None)
+            if predictive_broker_scope_bound:
+                stable_metadata.pop("broker_snapshot", None)
+            body["source_metadata"] = stable_metadata
+        if predictive_broker_scope_bound:
+            # The model reviewed the immutable predictive entry and rails.
+            # Current quotes are execution truth, not new thesis evidence; use
+            # them below for geometry and again in the gateway, without making
+            # a harmless tick rewrite the reviewed packet body.
+            body.pop("quote_basis_by_pair", None)
     if canonical_json_sha256(stored_packet_body) != canonical_json_sha256(
         rebuilt_packet_body
     ):
@@ -2832,6 +2861,139 @@ def _selected_trade_is_authenticated_predictive_limit(
     )
 
 
+def _selected_trade_uses_predictive_broker_scope(
+    *,
+    baseline: Mapping[str, Any],
+    evidence_sources: Mapping[str, Path],
+) -> bool:
+    """Use stable broker routing state only for forecast-learning LIMITs."""
+
+    if not _selected_trade_is_authenticated_predictive_limit(
+        baseline=baseline,
+        evidence_sources=evidence_sources,
+    ):
+        return False
+    selected_lane_id = str(baseline.get("selected_lane_id") or "").strip()
+    intents_path = evidence_sources.get("order_intents")
+    if not selected_lane_id or intents_path is None:
+        return False
+    try:
+        payload = _load_json_object(
+            _normalize_source_path(intents_path),
+            label="order intents",
+        )
+    except MarketReadOverlayError:
+        return False
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return False
+    matches = [
+        item
+        for item in results
+        if isinstance(item, Mapping)
+        and str(item.get("lane_id") or "").strip() == selected_lane_id
+    ]
+    if len(matches) != 1:
+        return False
+    intent = matches[0].get("intent")
+    metadata = intent.get("metadata") if isinstance(intent, Mapping) else None
+    return bool(
+        isinstance(metadata, Mapping)
+        and str(metadata.get("predictive_scout_source") or "").strip().upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+    )
+
+
+def _predictive_limit_broker_scope_material(
+    broker_snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind broker mutations, excluding quote/P&L observation churn.
+
+    Passive predictive LIMIT geometry is immutable and the gateway fetches
+    executable quotes, margin and capacity immediately before POST.  During a
+    slower AI read, only an actual account transaction, position mutation,
+    order mutation, or ownership/routing change invalidates the handoff.
+    """
+
+    account = broker_snapshot.get("account")
+    account = account if isinstance(account, Mapping) else {}
+    positions_value = broker_snapshot.get("positions", [])
+    orders_value = broker_snapshot.get("orders", [])
+    if not isinstance(positions_value, list) or not isinstance(orders_value, list):
+        return {"parse_status": "INVALID"}
+
+    positions: list[dict[str, Any]] = []
+    for item in positions_value:
+        if not isinstance(item, Mapping):
+            return {"parse_status": "INVALID"}
+        manual = item.get("operator_manual_position")
+        manual = manual if isinstance(manual, Mapping) else {}
+        positions.append(
+            {
+                **_mapping_fields(
+                    item,
+                    (
+                        "trade_id",
+                        "pair",
+                        "side",
+                        "units",
+                        "owner",
+                        "avg_entry",
+                        "entry_price",
+                        "take_profit",
+                        "stop_loss",
+                    ),
+                ),
+                "operator_manual_position": _mapping_fields(
+                    manual,
+                    (
+                        "operator_confirmed",
+                        "classification",
+                        "management_intent",
+                        "no_live_side_effects",
+                        "auto_sl_attach_allowed",
+                        "auto_tp_modify_allowed",
+                        "loss_side_auto_close_allowed",
+                        "same_theme_auto_add_allowed",
+                    ),
+                ),
+            }
+        )
+
+    orders: list[dict[str, Any]] = []
+    for item in orders_value:
+        if not isinstance(item, Mapping):
+            return {"parse_status": "INVALID"}
+        orders.append(
+            _mapping_fields(
+                item,
+                (
+                    "order_id",
+                    "order_type",
+                    "owner",
+                    "pair",
+                    "price",
+                    "state",
+                    "trade_id",
+                    "units",
+                ),
+            )
+        )
+
+    return {
+        "parse_status": "VALID",
+        "account": _mapping_fields(
+            account,
+            (
+                "last_transaction_id",
+                "hedging_enabled",
+            ),
+        ),
+        "positions": sorted(positions, key=canonical_json_sha256),
+        "orders": sorted(orders, key=canonical_json_sha256),
+    }
+
+
 def _build_evidence_packet(
     *,
     baseline: Mapping[str, Any],
@@ -2856,6 +3018,10 @@ def _build_evidence_packet(
     normalized_sources = {
         name: _normalize_source_path(path) for name, path in evidence_sources.items()
     }
+    predictive_broker_scope = _selected_trade_uses_predictive_broker_scope(
+        baseline=baseline,
+        evidence_sources=normalized_sources,
+    )
     sources: dict[str, dict[str, Any]] = {}
     for name in sorted(normalized_sources):
         path = normalized_sources[name]
@@ -2870,7 +3036,9 @@ def _build_evidence_packet(
                 "size_bytes": None,
                 "generated_at_utc": None,
             }
-        elif name in {"projection_ledger", "guardian_action_receipt"}:
+        elif name in {"projection_ledger", "guardian_action_receipt"} or (
+            name == "broker_snapshot" and predictive_broker_scope
+        ):
             # The 100MB+ append ledger is not a prompt artifact.  Bind the
             # selected semantic calibration evidence below instead of reading
             # and hashing every raw row a second time.  The frequently rotated
@@ -2968,6 +3136,18 @@ def _build_evidence_packet(
         if broker_path is not None
         else {}
     )
+    if predictive_broker_scope and broker_path is not None:
+        broker_source = sources.get("broker_snapshot")
+        broker_source = broker_source if isinstance(broker_source, Mapping) else {}
+        broker_scope_material = _predictive_limit_broker_scope_material(broker)
+        material_sources["broker_snapshot"] = {
+            "path": broker_source.get("path") or str(broker_path),
+            "exists": Path(broker_path).is_file(),
+            "material_contract": PREDICTIVE_LIMIT_BROKER_SCOPE_CONTRACT,
+            "routing_state_sha256": canonical_json_sha256(
+                broker_scope_material
+            ),
+        }
     capital_allocation_board = _build_capital_allocation_board(
         baseline=baseline,
         order_intents=order_intents,
@@ -7741,16 +7921,26 @@ def _capital_allocation_lane(
         broker_snapshot or {},
         pair=str(intent.get("pair") or "").strip().upper(),
     )
+    # Forecast-learning and other authenticated predictive scouts are already
+    # bounded to one immutable LIMIT vehicle by RiskEngine.  Live NAV, quote,
+    # conversion and spread observations are re-read by the gateway and must
+    # not make this explanatory allocation board churn while GPT reviews the
+    # point-in-time forecast.
+    predictive_prebounded = bool(predictive_scout)
     numeric_ceiling, numeric_max_multiple = _capital_allocation_numeric_ceiling(
         intent=intent,
         metadata=metadata,
         risk_metrics=risk_metrics,
-        account_nav_jpy=account_nav_jpy,
-        broker_bid=broker_bid,
-        broker_ask=broker_ask,
-        broker_quote_to_jpy=_broker_snapshot_quote_to_jpy(
-            broker_snapshot or {},
-            pair=str(intent.get("pair") or "").strip().upper(),
+        account_nav_jpy=(None if predictive_prebounded else account_nav_jpy),
+        broker_bid=(None if predictive_prebounded else broker_bid),
+        broker_ask=(None if predictive_prebounded else broker_ask),
+        broker_quote_to_jpy=(
+            None
+            if predictive_prebounded
+            else _broker_snapshot_quote_to_jpy(
+                broker_snapshot or {},
+                pair=str(intent.get("pair") or "").strip().upper(),
+            )
         ),
         predictive_scout=predictive_scout,
         hedge=hedge,
@@ -8327,6 +8517,69 @@ def guardian_action_receipt_scope_material(
     )
     receipt = raw.get("receipt")
     receipt = receipt if isinstance(receipt, Mapping) else {}
+    lifecycle = str(raw.get("receipt_lifecycle") or "").strip().upper()
+    if lifecycle in GUARDIAN_TERMINAL_RECEIPT_LIFECYCLES:
+        terminal_reasons: list[str] = []
+        producer_source = str(raw.get("source") or "").strip()
+        producer_model = str(raw.get("model") or "").strip()
+        if producer_source != "guardian_wake_dispatcher":
+            terminal_reasons.append(
+                f"PRODUCER_SOURCE_INVALID:{producer_source or 'MISSING'}"
+            )
+        if producer_model != "gpt-5.5":
+            terminal_reasons.append(
+                f"PRODUCER_MODEL_INVALID:{producer_model or 'MISSING'}"
+            )
+        for field, expected in (
+            ("status", "ACCEPTED"),
+            ("receipt_status", "ACCEPTED"),
+            ("dispatcher_status", "RECEIPT_WRITTEN"),
+        ):
+            actual = str(raw.get(field) or "").strip().upper()
+            if actual != expected:
+                terminal_reasons.append(
+                    f"RECEIPT_STATE_INVALID:{field}={actual or 'MISSING'}"
+                )
+        if raw.get("gateway_required") is not True:
+            terminal_reasons.append("GATEWAY_REQUIRED_CONTRACT_BROKEN")
+        if raw.get("no_direct_oanda") is not True:
+            terminal_reasons.append("NO_DIRECT_OANDA_CONTRACT_BROKEN")
+        terminal_boundary = raw.get("execution_boundary")
+        terminal_boundary = (
+            terminal_boundary
+            if isinstance(terminal_boundary, Mapping)
+            else {}
+        )
+        for field in (
+            "gpt_wake_never_calls_oanda_directly",
+            "guardian_never_trades",
+            "only_live_order_gateway_may_send_cancel_close",
+        ):
+            if terminal_boundary.get(field) is not True:
+                terminal_reasons.append(f"EXECUTION_BOUNDARY_BROKEN:{field}")
+        terminal_issues = raw.get("issues")
+        if not isinstance(terminal_issues, list):
+            terminal_reasons.append("ISSUES_CONTRACT_INVALID")
+        elif terminal_issues:
+            terminal_reasons.append("RECEIPT_ISSUES_PRESENT")
+        if terminal_reasons:
+            return {
+                "parse_status": "VALID",
+                "scope": "GLOBAL_SAFETY",
+                "global_safety": True,
+                "global_reasons": sorted(set(terminal_reasons)),
+                **common,
+            }
+        # Terminal receipts are acknowledged history, not current routing
+        # instructions.  Normalize every valid terminal lifecycle to the same
+        # no-active-receipt state so a consumed receipt being archived or a
+        # rejected unrelated wake cannot invalidate an in-flight AI read.
+        return {
+            "parse_status": "VALID",
+            "scope": "NO_RELEVANT_ACTIVE_RECEIPT",
+            "global_safety": False,
+            **common,
+        }
     event_pair = str(
         selected_event.get("pair") or receipt.get("pair") or ""
     ).strip().upper()
@@ -8419,7 +8672,6 @@ def guardian_action_receipt_scope_material(
         actual = str(raw.get(field) or "").strip().upper()
         if actual != expected:
             global_reasons.append(f"RECEIPT_STATE_INVALID:{field}={actual or 'MISSING'}")
-    lifecycle = str(raw.get("receipt_lifecycle") or "").strip().upper()
     if lifecycle not in {"ACTIVE", "CONSUMED"}:
         global_reasons.append(
             f"RECEIPT_STATE_INVALID:receipt_lifecycle={lifecycle or 'MISSING'}"
@@ -8696,7 +8948,7 @@ def guardian_action_receipt_scope_material(
     if routine_other_pair:
         return {
             "parse_status": "VALID",
-            "scope": "IRRELEVANT_PAIR_ROUTINE",
+            "scope": "NO_RELEVANT_ACTIVE_RECEIPT",
             "global_safety": False,
             **common,
         }
