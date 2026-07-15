@@ -22,6 +22,10 @@ from quant_rabbit.capture_economics import (
     read_exact_vehicle_allocation_surface,
 )
 from quant_rabbit.forecast_precision import hit_rate_wilson_lower
+from quant_rabbit.forecast_learning import (
+    FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD,
+    forecast_learning_selected_method,
+)
 from quant_rabbit.guardian_margin_contract import (
     P1_MARGIN_WARNING_CONTRACT as GUARDIAN_P1_MARGIN_WARNING_CONTRACT,
     exact_p1_margin_warning_source_event,
@@ -32,6 +36,7 @@ from quant_rabbit.market_read_contract import (
     market_read_missing_fields,
 )
 from quant_rabbit.predictive_scout import (
+    FORECAST_LEARNING_SCOUT_SOURCE,
     predictive_scout_geometry_claimed,
     predictive_scout_metadata_supported,
 )
@@ -3451,24 +3456,140 @@ def _rebuild_canonical_forecast_context(
                 "generated_at_utc",
                 packet_generated_at,
             )
-    quotes = broker_snapshot.get("quotes")
-    quote = quotes.get(pair) if isinstance(quotes, Mapping) else None
-    if not isinstance(quote, Mapping):
-        return None
-    bid = _strict_positive_number(quote.get("bid"))
-    ask = _strict_positive_number(quote.get("ask"))
-    if bid is None or ask is None or ask <= bid:
-        return None
+    metadata = (
+        intent.get("metadata")
+        if isinstance(intent.get("metadata"), Mapping)
+        else {}
+    )
+    technical_envelope = normalize_forecast_technical_context_evidence(
+        metadata.get("forecast_technical_context"),
+        pair=pair,
+        current_price=metadata.get("forecast_current_price"),
+    )
+    technical_body = (
+        technical_envelope.get("technical_context_v1")
+        if isinstance(technical_envelope.get("technical_context_v1"), Mapping)
+        else {}
+    )
+    source_context = (
+        technical_body.get("dynamic_tf_policy_source_context")
+        if isinstance(
+            technical_body.get("dynamic_tf_policy_source_context"), Mapping
+        )
+        else {}
+    )
+    context_location = (
+        technical_body.get("location")
+        if isinstance(technical_body.get("location"), Mapping)
+        else {}
+    )
+    context_execution = (
+        technical_body.get("execution")
+        if isinstance(technical_body.get("execution"), Mapping)
+        else {}
+    )
+    risk_metrics = (
+        result.get("risk_metrics")
+        if isinstance(result.get("risk_metrics"), Mapping)
+        else {}
+    )
+
+    # A predictive SCOUT is emitted from one immutable point-in-time forecast,
+    # while broker_snapshot is refreshed again before GPT allocation. Reusing
+    # that later quote here made an unchanged, valid forecast fail its own
+    # canonical rebuild whenever price moved during the AI read. Reconstruct
+    # the forecast from its independently repeated producer fields instead:
+    # current price in metadata/location, spread in risk/context, and the
+    # predictive receipt clock in both metadata/context/cycle identity.
+    predictive_context_claimed = (
+        str(metadata.get("predictive_scout_source") or "").strip().upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+    )
+    point_in_time_inputs: tuple[float, float, datetime] | None = None
+    if predictive_context_claimed:
+        forecast_price = _strict_positive_number(
+            metadata.get("forecast_current_price")
+        )
+        location_price = _strict_positive_number(
+            context_location.get("current_price")
+        )
+        risk_spread = _strict_nonnegative_number(risk_metrics.get("spread_pips"))
+        context_spread = _strict_nonnegative_number(
+            context_execution.get("spread_pips")
+        )
+        try:
+            receipt_at = _parse_utc(
+                metadata.get("predictive_scout_generated_at_utc"),
+                code="FORECAST_POINT_IN_TIME_CLOCK_INVALID",
+            )
+            context_at = _parse_utc(
+                source_context.get("evaluated_at_utc"),
+                code="FORECAST_POINT_IN_TIME_CLOCK_INVALID",
+            )
+        except MarketReadOverlayError:
+            return None
+        cycle_id = str(metadata.get("forecast_cycle_id") or "")
+        cycle_binds_receipt = receipt_at.isoformat() in cycle_id
+        price_bound = bool(
+            forecast_price is not None
+            and location_price is not None
+            and math.isclose(
+                forecast_price,
+                location_price,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        spread_bound = bool(
+            risk_spread is not None
+            and context_spread is not None
+            and math.isclose(
+                risk_spread,
+                context_spread,
+                rel_tol=0.0,
+                # RiskEngine preserves the raw bid/ask subtraction while the
+                # technical context rounds the same spread to stable evidence
+                # precision. Treat only that floating-point residue as equal.
+                abs_tol=1e-9,
+            )
+        )
+        if (
+            technical_envelope.get("status") != "VALID"
+            or not price_bound
+            or not spread_bound
+            or receipt_at != context_at
+            or not cycle_binds_receipt
+        ):
+            return None
+        point_in_time_inputs = (
+            float(forecast_price),
+            float(risk_spread),
+            receipt_at,
+        )
+
+    if point_in_time_inputs is None:
+        quotes = broker_snapshot.get("quotes")
+        quote = quotes.get(pair) if isinstance(quotes, Mapping) else None
+        if not isinstance(quote, Mapping):
+            return None
+        bid = _strict_positive_number(quote.get("bid"))
+        ask = _strict_positive_number(quote.get("ask"))
+        if bid is None or ask is None or ask <= bid:
+            return None
+        current_price = (bid + ask) / 2.0
+        spread_pips = (ask - bid) * float(instrument_pip_factor(pair))
+        evaluated_at_value = broker_snapshot.get("fetched_at_utc")
+    else:
+        current_price, spread_pips, evaluated_at_value = point_in_time_inputs
     try:
         evaluated_at = _parse_utc(
-            broker_snapshot.get("fetched_at_utc"),
+            evaluated_at_value,
             code="DYNAMIC_TF_POLICY_CANONICAL_CLOCK_INVALID",
         )
-        spread_pips = (ask - bid) * float(instrument_pip_factor(pair))
         return build_forecast_technical_context(
             canonical_chart,
             pair=pair,
-            current_price=(bid + ask) / 2.0,
+            current_price=current_price,
             spread_pips=spread_pips,
             calendar_path=calendar_path,
             strategy_profile_path=strategy_profile_path,
@@ -6982,15 +7103,41 @@ def _capital_allocation_lane(
         order_type=str(intent.get("order_type") or ""),
         method=method if method else None,
     )
+    predictive_scout_source = str(
+        metadata.get("predictive_scout_source") or ""
+    ).strip().upper()
+    forecast_learning_method = forecast_learning_selected_method(
+        metadata.get("forecast_learning_v1")
+    )
+    forecast_learning_scout = (
+        predictive_scout_source == FORECAST_LEARNING_SCOUT_SOURCE
+    )
+    predictive_scout_identity_bound = bool(
+        (
+            forecast_learning_scout
+            and str(metadata.get("campaign_role") or "").strip().upper()
+            == "FORECAST_LEARNING_SCOUT"
+            and method == forecast_learning_method
+            and str(metadata.get("desk") or "").strip().lower()
+            == FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD.get(
+                forecast_learning_method
+            )
+        )
+        or (
+            not forecast_learning_scout
+            and method == "BREAKOUT_FAILURE"
+            and str(metadata.get("desk") or "").strip().lower()
+            == "failure_trader"
+            and str(metadata.get("campaign_role") or "").strip().upper()
+            == "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+        )
+    )
     predictive_scout = bool(
         predictive_scout_claimed
         and predictive_scout_metadata_supported(dict(metadata))
         and str(intent.get("order_type") or "").strip().upper() == "LIMIT"
         and method_scope_consistent
-        and method == "BREAKOUT_FAILURE"
-        and str(metadata.get("desk") or "").strip().lower() == "failure_trader"
-        and str(metadata.get("campaign_role") or "").strip().upper()
-        == "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+        and predictive_scout_identity_bound
         and metadata.get("attach_take_profit_on_fill") is True
         and str(metadata.get("tp_execution_mode") or "").strip().upper()
         == "ATTACHED_TECHNICAL_TP"

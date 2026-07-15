@@ -1963,9 +1963,24 @@ def read_exact_vehicle_allocation_surface(ledger_path: Path) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="qr-ledger-allocation-surface-") as tmp:
             snapshot = Path(tmp) / "execution_ledger_snapshot.db"
             with closing(
-                sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            ) as source, closing(sqlite3.connect(snapshot)) as destination:
-                source.backup(destination)
+                sqlite3.connect(
+                    f"file:{path}?mode=ro",
+                    uri=True,
+                    timeout=30.0,
+                )
+            ) as source, closing(
+                sqlite3.connect(snapshot, timeout=30.0)
+            ) as destination:
+                # The Guardian and hourly trader may briefly commit to the WAL
+                # while the allocation packet takes its semantic snapshot. A
+                # five-second default timeout turned that ordinary overlap into
+                # parse_status=INVALID, then made the same untouched ledger
+                # VALID at apply time and invalidated the AI handoff. Wait for
+                # the bounded writer window; persistent lock/corruption still
+                # falls through to the fail-closed INVALID surface below.
+                source.execute("PRAGMA busy_timeout=30000")
+                destination.execute("PRAGMA busy_timeout=30000")
+                source.backup(destination, sleep=0.05)
             # `sqlite3_backup` preserves the source's WAL journal mode.  The
             # immutable temp snapshot has no pre-existing `-shm` file, so the
             # strict read-only readers below otherwise fail with "unable to

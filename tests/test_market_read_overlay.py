@@ -1529,6 +1529,136 @@ class MarketReadOverlayTest(unittest.TestCase):
                     lane["live_blocker_codes"],
                 )
 
+    def test_predictive_scout_rebuild_keeps_emission_quote_when_broker_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            intents = json.loads(paths["intents"].read_text())
+            metadata = intents["results"][0]["intent"]["metadata"]
+            metadata.update(
+                {
+                    "predictive_scout": True,
+                    "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                    "predictive_scout_generated_at_utc": NOW.isoformat(),
+                    "forecast_cycle_id": (
+                        f"pre-entry-forecast-refresh:{NOW.isoformat()}:chart"
+                    ),
+                }
+            )
+            paths["intents"].write_text(json.dumps(intents))
+            snapshot = json.loads(paths["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = (NOW + timedelta(minutes=2)).isoformat()
+            snapshot["quotes"]["EUR_USD"].update(
+                {
+                    "bid": 1.1010,
+                    "ask": 1.1012,
+                    "timestamp_utc": (NOW + timedelta(minutes=2)).isoformat(),
+                }
+            )
+            paths["snapshot"].write_text(json.dumps(snapshot))
+
+            _reprepare(paths)
+
+            board = json.loads(paths["packet"].read_text())[
+                "capital_allocation_board"
+            ]
+            lane = board["selected_lane"]
+            binding = lane["forecast"]["regime_family_binding"]
+            self.assertEqual(
+                board["canonical_forecast_context_sha256"],
+                metadata["forecast_technical_context"]["context_sha256"],
+            )
+            self.assertTrue(binding["canonical_forecast_context_bound"])
+            self.assertTrue(binding["passed"])
+            self.assertNotIn(
+                "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH",
+                lane["live_blocker_codes"],
+            )
+
+    def test_predictive_scout_point_in_time_inputs_must_all_bind(self) -> None:
+        for mutation in ("price", "spread", "clock", "cycle"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                paths = _prepared_paths(Path(tmp))
+                intents = json.loads(paths["intents"].read_text())
+                result = intents["results"][0]
+                metadata = result["intent"]["metadata"]
+                metadata.update(
+                    {
+                        "predictive_scout": True,
+                        "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                        "predictive_scout_generated_at_utc": NOW.isoformat(),
+                        "forecast_cycle_id": (
+                            f"pre-entry-forecast-refresh:{NOW.isoformat()}:chart"
+                        ),
+                    }
+                )
+                if mutation == "price":
+                    metadata["forecast_current_price"] = 1.1002
+                elif mutation == "spread":
+                    result["risk_metrics"]["spread_pips"] = 3.0
+                elif mutation == "clock":
+                    metadata["predictive_scout_generated_at_utc"] = (
+                        NOW + timedelta(seconds=1)
+                    ).isoformat()
+                else:
+                    metadata["forecast_cycle_id"] = "unbound-cycle"
+                paths["intents"].write_text(json.dumps(intents))
+
+                _reprepare(paths)
+
+                lane = json.loads(paths["packet"].read_text())[
+                    "capital_allocation_board"
+                ]["selected_lane"]
+                binding = lane["forecast"]["regime_family_binding"]
+                self.assertFalse(binding["canonical_forecast_context_bound"])
+                self.assertFalse(lane["allocation_eligible"])
+                self.assertIn(
+                    "FORECAST_TECHNICAL_CONTEXT_CANONICAL_REBUILD_MISMATCH",
+                    lane["live_blocker_codes"],
+                )
+
+    def test_forecast_learning_scout_is_an_allocatable_predictive_scout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            intents = json.loads(paths["intents"].read_text())
+            intent = intents["results"][0]["intent"]
+            intent["order_type"] = "LIMIT"
+            metadata = intent["metadata"]
+            metadata.update(
+                {
+                    "predictive_scout": True,
+                    "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                    "predictive_scout_generated_at_utc": NOW.isoformat(),
+                    "forecast_cycle_id": (
+                        f"pre-entry-forecast-refresh:{NOW.isoformat()}:chart"
+                    ),
+                    "campaign_role": "FORECAST_LEARNING_SCOUT",
+                    "desk": "trend_trader",
+                    "forecast_learning_v1": {
+                        "features": {
+                            "technical_selected_method": "TREND_CONTINUATION"
+                        }
+                    },
+                }
+            )
+            paths["intents"].write_text(json.dumps(intents))
+
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _reprepare(paths)
+
+            lane = json.loads(paths["packet"].read_text())[
+                "capital_allocation_board"
+            ]["selected_lane"]
+            self.assertTrue(lane["allocation_eligible"])
+            self.assertTrue(lane["positive_edge_proven"])
+            self.assertEqual(
+                lane["edge_basis"],
+                "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
+            )
+            self.assertEqual(lane["allowed_size_multiples"], [1.0])
+
     def test_trade_allocation_is_bound_to_numeric_lane_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
