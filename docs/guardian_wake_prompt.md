@@ -72,6 +72,18 @@ Hard boundaries:
 
 Rules:
 
+- The embedded `Authoritative Single Event` is the immutable dispatch snapshot.
+  The 30-second Guardian may publish a newer router file while you reason; do
+  not switch events, reread a newer identity, or reject this review merely
+  because another cycle may have started. Echo the selected identity exactly.
+  The action cycle and gateways independently recheck whether an entry event is
+  still current before any live write.
+- For a direction-bearing event whose `action_hint` is `TRADE` or `ADD`, make
+  an affirmative entry decision from the supplied multi-timeframe technical,
+  price-zone, spread, thesis, and invalidation evidence. Do not default to
+  `HOLD` merely because certainty is imperfect. Use `HOLD` or `NO_ACTION` only
+  when the supplied evidence names a concrete contradiction, missing proof, or
+  invalidation; state that exact reason. Never upgrade a non-entry action hint.
 - `TRADE` and `ADD` require genuinely new information from the selected guardian
   event. A scheduled hour, stale duplicate, B/C churn, or pace pressure alone is
   not new information.

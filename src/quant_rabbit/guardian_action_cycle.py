@@ -137,10 +137,31 @@ def run_guardian_action_cycle(
     receipt = _receipt_from_payload(receipt_payload)
     action = str(receipt.get("action") or "").upper()
     events = _events_from_payload(events_payload)
-    selected_event = {event.event_id: event for event in events}.get(str(receipt.get("event_id") or ""))
+    receipt_event_id = str(receipt.get("event_id") or "")
+    current_event_by_id = {event.event_id: event for event in events}
+    current_selected_event = current_event_by_id.get(receipt_event_id)
+    receipt_selected_event = _event_from_payload(receipt_payload.get("selected_event"))
+    selected_event = receipt_selected_event or current_selected_event
+    selected_event_source = (
+        "receipt_dispatch_snapshot"
+        if receipt_selected_event is not None
+        else "current_guardian_events"
+        if current_selected_event is not None
+        else None
+    )
+    verification_events = list(events)
+    if (
+        receipt_selected_event is not None
+        and receipt_selected_event.event_id not in current_event_by_id
+    ):
+        # The 30-second router may publish its next snapshot while GPT is still
+        # reviewing the immutable event selected by the dispatcher.  Preserve
+        # that causal event for receipt verification; entry execution remains
+        # fail-closed below unless the same event is also current.
+        verification_events.append(receipt_selected_event)
     verifier = review_guardian_action_receipt(
         receipt_payload,
-        events=events,
+        events=verification_events,
         previous_state=event_state_payload,
         selected_event=selected_event,
         now=clock,
@@ -153,6 +174,7 @@ def run_guardian_action_cycle(
         receipt=receipt,
         verifier=verifier,
         selected_event=selected_event,
+        selected_event_is_current=current_selected_event is not None,
         events_payload=events_payload,
         event_state_payload=event_state_payload,
         snapshot_payload=snapshot_payload,
@@ -272,6 +294,8 @@ def run_guardian_action_cycle(
         "input_receipt": receipt_payload,
         "receipt": receipt,
         "selected_event": selected_event.to_payload() if selected_event else None,
+        "selected_event_source": selected_event_source,
+        "selected_event_is_current": current_selected_event is not None,
         "verifier_result": verifier,
         "strict_receipt_issues": strict_issues,
         "manual_exposure_safety": manual_safety,
@@ -322,6 +346,7 @@ def _strict_receipt_issues(
     receipt: dict[str, Any],
     verifier: dict[str, Any],
     selected_event: GuardianEvent | None,
+    selected_event_is_current: bool,
     events_payload: dict[str, Any],
     event_state_payload: dict[str, Any],
     snapshot_payload: dict[str, Any],
@@ -402,7 +427,19 @@ def _strict_receipt_issues(
         issues.append(_issue("GUARDIAN_ACTION_VERIFIER_REJECTED", "guardian receipt verifier did not accept the receipt"))
 
     if not str(receipt.get("event_id") or "") or selected_event is None:
-        issues.append(_issue("GUARDIAN_ACTION_UNKNOWN_EVENT", "receipt event_id must match a current guardian event"))
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_EVENT_SNAPSHOT_MISSING",
+                "receipt event_id must match the dispatch snapshot or a current guardian event",
+            )
+        )
+    if action in ENTRY_ACTIONS and selected_event is not None and not selected_event_is_current:
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_EVENT_NOT_CURRENT",
+                "TRADE/ADD requires the dispatch event to remain present in current guardian events",
+            )
+        )
     dedupe = _receipt_dedupe_key(receipt_payload, receipt)
     if selected_event is not None and dedupe and dedupe != selected_event.dedupe_key:
         issues.append(_issue("GUARDIAN_ACTION_DEDUPE_MISMATCH", "receipt dedupe_key does not match current guardian event"))
@@ -1029,29 +1066,37 @@ def _pid_running(pid: int) -> bool:
 def _events_from_payload(payload: dict[str, Any]) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
     for item in payload.get("events", []) or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            events.append(
-                GuardianEvent(
-                    event_id=str(item.get("event_id") or ""),
-                    event_type=str(item.get("event_type") or ""),
-                    pair=str(item.get("pair") or ""),
-                    direction=item.get("direction"),
-                    thesis=str(item.get("thesis") or ""),
-                    price_zone=str(item.get("price_zone") or ""),
-                    severity=str(item.get("severity") or "P2"),
-                    recommended_review_type=str(item.get("recommended_review_type") or ""),
-                    dedupe_key=str(item.get("dedupe_key") or ""),
-                    action_hint=str(item.get("action_hint") or ""),
-                    thesis_state=str(item.get("thesis_state") or "UNKNOWN"),
-                    detected_at_utc=str(item.get("detected_at_utc") or ""),
-                    details=item.get("details") if isinstance(item.get("details"), dict) else {},
-                )
-            )
-        except TypeError:
-            continue
+        event = _event_from_payload(item)
+        if event is not None:
+            events.append(event)
     return events
+
+
+def _event_from_payload(payload: object) -> GuardianEvent | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return GuardianEvent(
+            event_id=str(payload.get("event_id") or ""),
+            event_type=str(payload.get("event_type") or ""),
+            pair=str(payload.get("pair") or ""),
+            direction=payload.get("direction"),
+            thesis=str(payload.get("thesis") or ""),
+            price_zone=str(payload.get("price_zone") or ""),
+            severity=str(payload.get("severity") or "P2"),
+            recommended_review_type=str(payload.get("recommended_review_type") or ""),
+            dedupe_key=str(payload.get("dedupe_key") or ""),
+            action_hint=str(payload.get("action_hint") or ""),
+            thesis_state=str(payload.get("thesis_state") or "UNKNOWN"),
+            detected_at_utc=str(payload.get("detected_at_utc") or ""),
+            details=(
+                payload.get("details")
+                if isinstance(payload.get("details"), dict)
+                else {}
+            ),
+        )
+    except TypeError:
+        return None
 
 
 def _intent_from_json(payload: dict[str, Any]) -> OrderIntent:

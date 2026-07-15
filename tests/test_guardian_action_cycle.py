@@ -878,6 +878,72 @@ class GuardianActionCycleTest(unittest.TestCase):
                 self.assertTrue(updated["consumed_by_trader"])
                 self.assertEqual(result["receipt_lifecycle_update"]["receipt_lifecycle"], "CONSUMED")
 
+    def test_router_rotation_preserves_non_executable_dispatch_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(
+                Path(tmp),
+                receipt_overrides={"action": "HOLD", "new_information": False, "lane_id": ""},
+            )
+            paths.events.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (NOW + timedelta(seconds=30)).isoformat(),
+                        "events": [],
+                    }
+                )
+            )
+
+            result = run_guardian_action_cycle(
+                paths=paths,
+                now=NOW + timedelta(seconds=50),
+                env={
+                    "QR_LIVE_ENABLED": "1",
+                    "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                    "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                },
+            )
+
+            self.assertEqual(result["status"], "VERIFIED_NO_ACTION")
+            self.assertEqual(result["strict_receipt_issues"], [])
+            self.assertEqual(result["selected_event_source"], "receipt_dispatch_snapshot")
+            self.assertFalse(result["selected_event_is_current"])
+            self.assertEqual(result["verifier_result"]["status"], "ACCEPTED")
+
+    def test_router_rotation_keeps_stale_entry_execution_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            paths.events.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (NOW + timedelta(seconds=30)).isoformat(),
+                        "events": [],
+                    }
+                )
+            )
+            calls: list[tuple[str, bool]] = []
+
+            with patch(
+                "quant_rabbit.guardian_action_cycle._risk_result",
+                return_value={"status": "ALLOWED", "allowed": True},
+            ):
+                result = run_guardian_action_cycle(
+                    paths=paths,
+                    now=NOW + timedelta(seconds=50),
+                    env={
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                    },
+                    command_runner=_command_ok,
+                    gateway_runner=_gateway(calls, status="SENT"),
+                )
+
+            codes = {issue["code"] for issue in result["strict_receipt_issues"]}
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertIn("GUARDIAN_ACTION_EVENT_NOT_CURRENT", codes)
+            self.assertNotIn("GUARDIAN_ACTION_VERIFIER_REJECTED", codes)
+            self.assertEqual(calls, [])
+
 
 def _fixture(
     root: Path,
