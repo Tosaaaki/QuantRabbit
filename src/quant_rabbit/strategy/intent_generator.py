@@ -778,6 +778,16 @@ POST_HARVEST_REENTRY_MAX_SEEDS = _env_int("QR_POST_HARVEST_REENTRY_MAX_SEEDS", 8
 # live permission by themselves; the generated LIMIT still has to pass the same
 # RiskEngine, strategy, spread, guardian, profitability, and gateway checks.
 BIDASK_REPLAY_PRECISION_MAX_SEEDS = _env_int("QR_BIDASK_REPLAY_PRECISION_MAX_SEEDS", 8, minimum=0)
+# Forecast learning is a ranked candidate surface, not a single winner-take-all
+# veto.  A top-ranked pair can be temporarily unusable because of spread,
+# passive-entry, target, or invalidation geometry.  Keep several independent
+# minimum-risk SCOUT lanes so downstream live-readiness can fall through to the
+# best currently executable vehicle instead of stopping at rank one.
+FORECAST_LEARNING_SCOUT_MAX_SEEDS = _env_int(
+    "QR_FORECAST_LEARNING_SCOUT_MAX_SEEDS",
+    8,
+    minimum=0,
+)
 # Matrix-supported repair seeding is a candidate-surface repair, not live
 # permission. A pair/side must have support from at least three independent
 # market-context layers so a repair lane cannot be born from a single spread
@@ -3321,7 +3331,7 @@ def _append_forecast_seed_lanes(
         )
         for lane in lanes
     ]
-    learning_seed = _forecast_learning_scout_seed_lane(
+    learning_seeds = _forecast_learning_scout_seed_lanes(
         lanes,
         snapshot,
         forecasts_by_pair,
@@ -3329,15 +3339,18 @@ def _append_forecast_seed_lanes(
         existing_by_key=existing_by_key,
         cycle_id=forecast_cycle_id,
     )
-    if learning_seed is not None:
-        learning_key = (
-            learning_seed.get("desk"),
-            learning_seed.get("pair"),
-            learning_seed.get("direction"),
-            learning_seed.get("method"),
+    learning_keys = {
+        (
+            lane.get("desk"),
+            lane.get("pair"),
+            lane.get("direction"),
+            lane.get("method"),
         )
+        for lane in learning_seeds
+    }
+    if learning_seeds:
         seeds = [
-            learning_seed,
+            *learning_seeds,
             *[
                 lane
                 for lane in seeds
@@ -3347,10 +3360,10 @@ def _append_forecast_seed_lanes(
                     lane.get("direction"),
                     lane.get("method"),
                 )
-                != learning_key
+                not in learning_keys
             ],
         ]
-        seeded_keys.add(learning_key)
+        seeded_keys.update(learning_keys)
     precision_seeds = _bidask_replay_precision_seed_lanes(
         lanes,
         charts,
@@ -3359,7 +3372,7 @@ def _append_forecast_seed_lanes(
         existing_by_key=existing_by_key,
         cycle_id=forecast_cycle_id,
     )
-    if learning_seed is not None:
+    if learning_seeds:
         precision_seeds = [
             lane
             for lane in precision_seeds
@@ -3369,7 +3382,7 @@ def _append_forecast_seed_lanes(
                 lane.get("direction"),
                 lane.get("method"),
             )
-            != learning_key
+            not in learning_keys
         ]
     if precision_seeds:
         precision_keys = {
@@ -3395,7 +3408,7 @@ def _append_forecast_seed_lanes(
     ]
 
 
-def _forecast_learning_scout_seed_lane(
+def _forecast_learning_scout_seed_lanes(
     lanes: list[dict[str, Any]],
     snapshot: BrokerSnapshot,
     forecasts_by_pair: dict[str, Any],
@@ -3403,15 +3416,19 @@ def _forecast_learning_scout_seed_lane(
     source_by_pair: dict[str, dict[str, Any]],
     existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
     cycle_id: str | None,
-) -> dict[str, Any] | None:
-    """Turn the current top learned direction into one bounded forward lane.
+) -> list[dict[str, Any]]:
+    """Turn ranked learned directions into bounded forward lanes.
 
     The learner always ranks DIRECT or INVERSE.  This selector therefore does
-    not create another confidence veto: it picks the strongest current rank,
-    while the exact order still has to pass broker freshness, passive LIMIT
-    geometry, attached TP/SL, NAV-risk, concurrency, and same-pair manual
-    ownership checks.
+    not create another confidence veto.  It preserves the strongest current
+    ranks so downstream live-readiness can reject an unusable first vehicle and
+    continue to the next pair.  Every exact order still has to pass broker
+    freshness, passive LIMIT geometry, attached TP/SL, NAV-risk, concurrency,
+    and same-pair manual ownership checks.
     """
+
+    if FORECAST_LEARNING_SCOUT_MAX_SEEDS <= 0:
+        return []
 
     ranked: list[tuple[float, float, str, str, Any]] = []
     for pair, forecast in forecasts_by_pair.items():
@@ -3437,61 +3454,86 @@ def _forecast_learning_scout_seed_lane(
         confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
         ranked.append((rank_probability, confidence, pair, side, forecast))
     if not ranked:
-        return None
+        return []
 
-    _, _, pair, side, forecast = max(
-        ranked,
+    ranked.sort(
         key=lambda item: (item[0], item[1], item[2], item[3]),
+        reverse=True,
     )
-    source = (
-        _source_lane_for_pair_side(existing_by_key, pair, side)
-        or source_by_pair.get(pair)
-        or next(
-            (lane for lane in lanes if str(lane.get("pair") or "") == pair),
-            None,
+    out: list[dict[str, Any]] = []
+    for _, _, pair, side, forecast in ranked[:FORECAST_LEARNING_SCOUT_MAX_SEEDS]:
+        source = (
+            _source_lane_for_pair_side(existing_by_key, pair, side)
+            or source_by_pair.get(pair)
+            or next(
+                (lane for lane in lanes if str(lane.get("pair") or "") == pair),
+                None,
+            )
         )
-    )
-    lane = _forecast_seed_lane(
-        source,
-        pair=pair,
-        side=side,
-        method=TradeMethod.BREAKOUT_FAILURE.value,
-        forecast=forecast,
+        lane = _forecast_seed_lane(
+            source,
+            pair=pair,
+            side=side,
+            method=TradeMethod.BREAKOUT_FAILURE.value,
+            forecast=forecast,
+            cycle_id=cycle_id,
+        )
+        receipt = dict(getattr(forecast, "forecast_learning_v1", {}) or {})
+        probability = _optional_float(receipt.get("selected_orientation_probability")) or 0.5
+        lane.update(
+            {
+                "desk": "failure_trader",
+                "pair": pair,
+                "direction": side,
+                "method": TradeMethod.BREAKOUT_FAILURE.value,
+                "adoption": "TRIGGER_RECEIPT_REQUIRED",
+                "campaign_role": "FORECAST_LEARNING_SCOUT",
+                "reason": (
+                    f"current historical-tick forecast rank: {pair} {side} "
+                    f"orientation={receipt.get('orientation')} rank={probability:.3f}; "
+                    "collect the next exact passive-fill outcome"
+                ),
+                "required_receipt": (
+                    "Current forecast-learning SCOUT: passive LIMIT retest only, with "
+                    "broker-attached technical TP and SL, DISCOVERY NAV risk, short GTD, "
+                    "no market chase, and no same-pair manual/operator exposure."
+                ),
+                "blockers": [],
+                "forecast_watch_only": False,
+                "forecast_learning_scout_seed": True,
+                "forecast_learning_limit_only": True,
+                "predictive_scout": True,
+                "predictive_scout_source": FORECAST_LEARNING_SCOUT_SOURCE,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "forecast_learning_v1": receipt,
+            }
+        )
+        out.append(lane)
+    return out
+
+
+def _forecast_learning_scout_seed_lane(
+    lanes: list[dict[str, Any]],
+    snapshot: BrokerSnapshot,
+    forecasts_by_pair: dict[str, Any],
+    *,
+    source_by_pair: dict[str, dict[str, Any]],
+    existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
+    cycle_id: str | None,
+) -> dict[str, Any] | None:
+    """Compatibility accessor for callers that only inspect the top rank."""
+
+    seeds = _forecast_learning_scout_seed_lanes(
+        lanes,
+        snapshot,
+        forecasts_by_pair,
+        source_by_pair=source_by_pair,
+        existing_by_key=existing_by_key,
         cycle_id=cycle_id,
     )
-    receipt = dict(getattr(forecast, "forecast_learning_v1", {}) or {})
-    probability = _optional_float(receipt.get("selected_orientation_probability")) or 0.5
-    lane.update(
-        {
-            "desk": "failure_trader",
-            "pair": pair,
-            "direction": side,
-            "method": TradeMethod.BREAKOUT_FAILURE.value,
-            "adoption": "TRIGGER_RECEIPT_REQUIRED",
-            "campaign_role": "FORECAST_LEARNING_SCOUT",
-            "reason": (
-                f"current top historical-tick forecast rank: {pair} {side} "
-                f"orientation={receipt.get('orientation')} rank={probability:.3f}; "
-                "collect the next exact passive-fill outcome"
-            ),
-            "required_receipt": (
-                "Current forecast-learning SCOUT: passive LIMIT retest only, with "
-                "broker-attached technical TP and SL, DISCOVERY NAV risk, short GTD, "
-                "no market chase, and no same-pair manual/operator exposure."
-            ),
-            "blockers": [],
-            "forecast_watch_only": False,
-            "forecast_learning_scout_seed": True,
-            "forecast_learning_limit_only": True,
-            "predictive_scout": True,
-            "predictive_scout_source": FORECAST_LEARNING_SCOUT_SOURCE,
-            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
-            "tp_target_intent": "HARVEST",
-            "opportunity_mode": "HARVEST",
-            "forecast_learning_v1": receipt,
-        }
-    )
-    return lane
+    return seeds[0] if seeds else None
 
 
 def _snapshot_has_operator_manual_pair_exposure(
@@ -13450,9 +13492,6 @@ def _forecast_live_readiness_issue(
     negative_technical_issue = _technical_harvest_negative_precision_issue_for_intent(intent, metadata, method)
     if negative_technical_issue is not None:
         return negative_technical_issue
-    negative_bidask_issue = _bidask_replay_negative_precision_issue_for_intent(intent, metadata, method)
-    if negative_bidask_issue is not None:
-        return negative_bidask_issue
     if (
         str(metadata.get("predictive_scout_source") or "").upper()
         == FORECAST_LEARNING_SCOUT_SOURCE
@@ -13462,6 +13501,9 @@ def _forecast_live_readiness_issue(
             "CURRENT_BIDASK_ORIENTATION_LEARNING_SCOUT"
         )
         return None
+    negative_bidask_issue = _bidask_replay_negative_precision_issue_for_intent(intent, metadata, method)
+    if negative_bidask_issue is not None:
+        return negative_bidask_issue
     if _technical_harvest_precision_support_for_intent(intent, metadata, method):
         return None
     if _bidask_replay_precision_support_for_intent(intent, metadata, method):

@@ -1003,10 +1003,13 @@ QR_LIVE_ENABLED=1 QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1 \
 #   holdout model is `RANK_ONLY` is not improved edge: the AI trader must cite
 #   its negative/weak validation and disclosed historical technical-feature
 #   coverage as counterevidence, perform a fresh numeric
-#   all-seven-frame market read, and accept the exact top candidate only when
-#   that present read independently supports its side and passive entry. A
-#   mismatch is a veto and requires a newly generated candidate; the overlay
-#   cannot substitute another pair or side. Live evidence collection is canonical-digest bound,
+#   all-seven-frame market read, and accept only the exact baseline-selected
+#   candidate when that present read independently supports its side and
+#   passive entry. The generator may expose up to eight orientation-ranked
+#   learning candidates so an unusable rank-one vehicle does not erase valid
+#   lower-ranked opportunities; selection remains deterministic before the
+#   overlay. A mismatch is a veto and requires a newly generated candidate;
+#   the overlay cannot substitute another pair or side. Live evidence collection is canonical-digest bound,
 #   LIMIT-only, current-NAV risk-sized positive integer units (including
 #   1-999u), GTD no later than forecast horizon (max 90m), actual attached
 #   TP+intent SL, canonical TP/SL distances, at most two active SCOUTs and 2%

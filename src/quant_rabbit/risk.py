@@ -1279,6 +1279,52 @@ def _technical_harvest_negative_precision_issue_for_intent(intent: OrderIntent) 
     )
 
 
+def _forecast_learning_scout_forward_evidence_supported(
+    intent: OrderIntent,
+) -> bool:
+    """Authenticate the one narrow broad-replay learning exception.
+
+    This does not grant live permission. It only prevents an aggregate
+    pair/direction replay bucket from making forward model learning
+    impossible. The intent must still pass the independent predictive-SCOUT,
+    strategy-profile, spread/geometry, RiskEngine, GPT, Guardian, and broker
+    gateway checks.
+    """
+
+    metadata = intent.metadata or {}
+    if (
+        str(metadata.get("predictive_scout_source") or "").upper()
+        != "FORECAST_ORIENTATION_LEARNING"
+        or intent.order_type != OrderType.LIMIT
+        or abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS
+        or intent.entry is None
+        or intent.tp is None
+        or intent.sl is None
+    ):
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method != TradeMethod.BREAKOUT_FAILURE:
+        return False
+    receipt = metadata.get("forecast_learning_v1")
+    if not isinstance(receipt, dict):
+        return False
+    rank_direction = str(receipt.get("rank_direction") or "").upper()
+    expected_side = (
+        Side.LONG
+        if rank_direction == "UP"
+        else Side.SHORT
+        if rank_direction == "DOWN"
+        else None
+    )
+    if intent.side != expected_side:
+        return False
+    # Local import avoids a module-load cycle: predictive_scout imports the
+    # broker production-lot compatibility constant from this module.
+    from .predictive_scout import predictive_scout_metadata_supported
+
+    return predictive_scout_metadata_supported(metadata)
+
+
 def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
     return support_signal_clears_live_precision(
         signal,
@@ -3569,6 +3615,15 @@ class RiskEngine:
         negative_issue = _technical_harvest_negative_precision_issue_for_intent(intent)
         if negative_issue is not None:
             return [negative_issue]
+        if _forecast_learning_scout_forward_evidence_supported(intent):
+            # Broad pair/direction replay is historical context, not exact
+            # technical-vehicle proof.  A canonical, content-addressed,
+            # minimum-risk learning SCOUT exists specifically to resolve that
+            # uncertainty forward.  Exact technical-negative evidence above
+            # still blocks, and the separate SCOUT/gateway validators still
+            # enforce LIMIT geometry, attached exits, risk, TTL, cooldown,
+            # concurrency, and manual-pair isolation.
+            return []
         negative_issue = _bidask_replay_negative_precision_issue_for_intent(intent)
         if negative_issue is not None:
             return [negative_issue]

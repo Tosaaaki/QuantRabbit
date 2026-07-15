@@ -2970,6 +2970,62 @@ class RiskEngineTest(unittest.TestCase):
             "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         )
 
+        learning_metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.87,
+            "predictive_scout": True,
+            "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+            "campaign_role": "FORECAST_LEARNING_SCOUT",
+            "forecast_learning_v1": {"rank_direction": "UP"},
+        }
+        learning_intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1,
+            entry=114.289,
+            tp=114.338,
+            sl=114.250,
+            thesis="canonical minimum-risk forecast-learning scout",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="collect the exact forward outcome",
+                chart_story="passive retest",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="technical stop",
+            ),
+            metadata=learning_metadata,
+        )
+        with bidask_rules_env(rules_path), patch(
+            "quant_rabbit.predictive_scout.predictive_scout_metadata_supported",
+            return_value=True,
+        ):
+            learning_issues = _capped_engine(
+                live_enabled=True
+            )._forecast_directional_live_readiness_issues(
+                learning_intent,
+                for_live_send=True,
+            )
+
+        self.assertEqual(learning_issues, [])
+
+        forged_market = replace(learning_intent, order_type=OrderType.MARKET)
+        with bidask_rules_env(rules_path), patch(
+            "quant_rabbit.predictive_scout.predictive_scout_metadata_supported",
+            return_value=True,
+        ):
+            forged_issues = _capped_engine(
+                live_enabled=True
+            )._forecast_directional_live_readiness_issues(
+                forged_market,
+                for_live_send=True,
+            )
+
+        self.assertEqual(
+            [issue.code for issue in forged_issues],
+            ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+        )
+
         contrarian_intent = OrderIntent(
             pair="AUD_JPY",
             side=Side.SHORT,

@@ -46,6 +46,7 @@ from quant_rabbit.strategy.intent_generator import (
     _exact_vehicle_take_profit_metrics,
     _forecast_context_payload,
     _forecast_learning_scout_seed_lane,
+    _forecast_learning_scout_seed_lanes,
     _forecast_live_readiness_issue,
     _forecast_watch_only_issue,
     _forecast_seed_lane,
@@ -1194,6 +1195,154 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["predictive_scout_source"], "FORECAST_ORIENTATION_LEARNING")
         self.assertEqual(seed["blockers"], [])
         self.assertEqual(_order_variants_for(seed), (OrderType.LIMIT,))
+
+    def test_forecast_learning_scout_keeps_ranked_fallback_pairs(self) -> None:
+        now = datetime(2026, 7, 15, 1, 0, tzinfo=timezone.utc)
+
+        def forecast(probability: float, rank_direction: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                direction="UP",
+                confidence=0.71,
+                raw_confidence=0.73,
+                calibration_multiplier=1.0,
+                current_price=1.0,
+                target_price=1.01,
+                invalidation_price=0.99,
+                range_low_price=None,
+                range_high_price=None,
+                range_width_pips=None,
+                horizon_min=60,
+                rationale_summary="current technical forecast",
+                drivers_for=[],
+                drivers_against=[],
+                component_scores={"UP": 70.0, "DOWN": 30.0, "RANGE": 20.0},
+                market_support={},
+                technical_context_v1={},
+                forecast_learning_v1={
+                    "model_status": "RANK_ONLY",
+                    "rank_direction": rank_direction,
+                    "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
+                    "selected_orientation_probability": probability,
+                },
+            )
+
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="manual-eurusd",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=1000,
+                    entry_price=1.17,
+                    owner=Owner.OPERATOR_MANUAL,
+                ),
+            ),
+        )
+        forecasts = {
+            "EUR_USD": forecast(0.99, "DOWN"),
+            "GBP_CAD": forecast(0.88, "UP"),
+            "AUD_JPY": forecast(0.79, "DOWN"),
+            "NZD_USD": forecast(0.68, "UP"),
+        }
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator.FORECAST_LEARNING_SCOUT_MAX_SEEDS",
+            2,
+        ):
+            seeds = _forecast_learning_scout_seed_lanes(
+                [],
+                snapshot,
+                forecasts,
+                source_by_pair={},
+                existing_by_key={},
+                cycle_id="learning-fallback-cycle",
+            )
+
+        self.assertEqual(
+            [(lane["pair"], lane["direction"]) for lane in seeds],
+            [("GBP_CAD", "LONG"), ("AUD_JPY", "SHORT")],
+        )
+        self.assertTrue(all(_order_variants_for(lane) == (OrderType.LIMIT,) for lane in seeds))
+
+    def test_forecast_learning_scout_bypasses_only_broad_replay_negative(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.70,
+            "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+        }
+        intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1,
+            entry=114.20,
+            tp=114.25,
+            sl=114.15,
+            thesis="bounded forecast-learning forward evidence",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE retest",
+                narrative="ranked historical-tick forecast",
+                chart_story="passive retest",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="technical stop",
+            ),
+            metadata=metadata,
+        )
+        broad_negative = {
+            "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+            "message": "broad pair-direction history is negative",
+            "severity": "BLOCK",
+        }
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator._require_forecast_for_live_active",
+            return_value=True,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._technical_harvest_negative_precision_issue_for_intent",
+            return_value=None,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._predictive_scout_forward_evidence_allowed",
+            return_value=True,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._bidask_replay_negative_precision_issue_for_intent",
+            return_value=broad_negative,
+        ) as broad_check:
+            issue = _forecast_live_readiness_issue(
+                intent,
+                metadata,
+                TradeMethod.BREAKOUT_FAILURE,
+            )
+
+        self.assertIsNone(issue)
+        broad_check.assert_not_called()
+        self.assertEqual(
+            metadata["forecast_precision_basis"],
+            "CURRENT_BIDASK_ORIENTATION_LEARNING_SCOUT",
+        )
+
+        technical_negative = {
+            "code": "TECHNICAL_HARVEST_NEGATIVE_BUCKET_FOR_LIVE",
+            "message": "exact technical state is negative",
+            "severity": "BLOCK",
+        }
+        with patch(
+            "quant_rabbit.strategy.intent_generator._require_forecast_for_live_active",
+            return_value=True,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._technical_harvest_negative_precision_issue_for_intent",
+            return_value=technical_negative,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._predictive_scout_forward_evidence_allowed",
+            return_value=True,
+        ):
+            issue = _forecast_live_readiness_issue(
+                intent,
+                metadata,
+                TradeMethod.BREAKOUT_FAILURE,
+            )
+
+        self.assertEqual(issue, technical_negative)
 
     def test_jsonl_dict_reader_streams_valid_dict_rows(self) -> None:
         from quant_rabbit.strategy.intent_generator import _iter_jsonl_dicts
