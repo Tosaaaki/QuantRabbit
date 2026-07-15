@@ -663,7 +663,18 @@ class RiskEngineTest(unittest.TestCase):
 
             negative_codes = {issue.code for issue in negative.issues}
             self.assertFalse(negative.allowed)
-            self.assertIn("REWARD_RISK_TOO_LOW", negative_codes)
+            self.assertIn(
+                "M15_RECOVERY_NEGATIVE_CURRENT_GEOMETRY_EXPECTANCY",
+                negative_codes,
+            )
+            negative_issue = next(
+                issue
+                for issue in negative.issues
+                if issue.code
+                == "M15_RECOVERY_NEGATIVE_CURRENT_GEOMETRY_EXPECTANCY"
+            )
+            self.assertIn("JPY <= 0", negative_issue.message)
+            self.assertIn("spread=", negative_issue.message)
             self.assertNotIn("M15_RECOVERY_EVIDENCE_WEIGHTED_RR", negative_codes)
 
     def test_m15_recovery_limit_vehicle_fails_common_binding_and_risk(self) -> None:

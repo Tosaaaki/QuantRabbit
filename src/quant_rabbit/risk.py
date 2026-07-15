@@ -3228,16 +3228,30 @@ class RiskEngine:
         )
         if (
             metrics.reward_risk < active_min_rr
-            and (
-                evidence_weighted_expectancy_jpy is None
-                or evidence_weighted_expectancy_jpy <= 0.0
-            )
+            and evidence_weighted_expectancy_jpy is None
         ):
             issues.append(
                 RiskIssue(
                     "REWARD_RISK_TOO_LOW",
                     f"planned reward/risk {metrics.reward_risk:.2f}x is below {active_min_rr:.2f}x"
                     + (f" (regime={regime_state})" if regime_state else ""),
+                )
+            )
+        elif (
+            metrics.reward_risk < active_min_rr
+            and evidence_weighted_expectancy_jpy <= 0.0
+        ):
+            issues.append(
+                RiskIssue(
+                    "M15_RECOVERY_NEGATIVE_CURRENT_GEOMETRY_EXPECTANCY",
+                    "verified exact-vehicle TP Wilson lower bound applied to "
+                    "the current TP/SL geometry is non-positive after charging "
+                    "the current spread on both paths: "
+                    f"{evidence_weighted_expectancy_jpy:.2f} JPY <= 0; "
+                    f"reward/risk={metrics.reward_risk:.2f}x, "
+                    f"reward={metrics.reward_jpy:.2f} JPY, "
+                    f"risk={metrics.risk_jpy:.2f} JPY, "
+                    f"spread={metrics.spread_pips:.2f}pip",
                 )
             )
         elif metrics.reward_risk < active_min_rr:

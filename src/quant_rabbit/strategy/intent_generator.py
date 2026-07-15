@@ -15628,15 +15628,23 @@ def _m15_recovery_geometry_plan(
         else quote.bid - trigger_offset_pips * pip
     )
     entry = _round_price(pair, entry)
-    stop_pips = max(
-        atr_pips * GEOMETRY_ATR_MULT,
-        spread_pips * GEOMETRY_SPREAD_FLOOR_MULT,
-    )
+    # The forecast binding already supplies the thesis invalidation.  Do not
+    # widen this bounded recovery stop with the process-wide ATR multiplier:
+    # production may intentionally run the ordinary strategies with a wide
+    # ``QR_GEOMETRY_ATR_MULT`` (5x on 2026-07-15), which turned a valid 8.2pip
+    # M15 invalidation into a 30.2pip stop while keeping the 6.8pip forecast
+    # target.  That silently changed a forecast contract into a low-payoff
+    # disaster stop.  Preserve the invalidation and widen only when it is
+    # inside the broker-spread safety floor.
+    spread_stop_floor_pips = spread_pips * GEOMETRY_SPREAD_FLOOR_MULT
     if side == Side.LONG:
         if not invalidation < entry < target:
             return None
         tp = _round_price(pair, target)
-        sl = _round_price(pair, min(entry - stop_pips * pip, invalidation))
+        sl = _round_price(
+            pair,
+            min(entry - spread_stop_floor_pips * pip, invalidation),
+        )
         if tp > target:
             tp = _round_price(pair, tp - pip)
         if sl > invalidation:
@@ -15646,7 +15654,10 @@ def _m15_recovery_geometry_plan(
         if not target < entry < invalidation:
             return None
         tp = _round_price(pair, target)
-        sl = _round_price(pair, max(entry + stop_pips * pip, invalidation))
+        sl = _round_price(
+            pair,
+            max(entry + spread_stop_floor_pips * pip, invalidation),
+        )
         if tp < target:
             tp = _round_price(pair, tp + pip)
         if sl < invalidation:

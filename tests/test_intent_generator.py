@@ -18723,6 +18723,44 @@ class M15RecoveryMicroIntentTest(unittest.TestCase):
                     False,
                 )
 
+    def test_recovery_stop_uses_forecast_invalidation_not_global_atr_floor(self) -> None:
+        now, chart, receipt, m15_view = self._evidence()
+        lane = self._lane(receipt)
+        snapshot = self._snapshot(now)
+        quote = snapshot.quotes["EUR_USD"]
+
+        with (
+            patch(
+                "quant_rabbit.strategy.intent_generator.GEOMETRY_ATR_MULT",
+                5.0,
+            ),
+            patch(
+                "quant_rabbit.strategy.intent_generator._risk_budgeted_units",
+                return_value=5,
+            ),
+        ):
+            intent = _intent_from_lane(
+                lane,
+                quote,
+                snapshot,
+                max_loss_jpy=500.0,
+                atr_pips=999.0,
+                range_indicators=m15_view["indicators"],
+                pair_chart=chart,
+                validation_time_utc=now,
+                m15_recovery_receipt=receipt,
+            )
+
+        self.assertEqual(intent.sl, 1.0995)
+        self.assertEqual(
+            intent.sl,
+            intent.metadata["geometry_forecast_invalidation_price"],
+        )
+        self.assertGreater(
+            (intent.entry - intent.sl) * 10_000,
+            0.8 * 5.0,
+        )
+
     def test_recovery_variant_generation_is_stop_entry_only(self) -> None:
         from quant_rabbit.strategy.intent_generator import _order_variants_for
 
