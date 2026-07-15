@@ -4810,7 +4810,7 @@ class MarketReadOverlayTest(unittest.TestCase):
             ):
                 _apply(paths)
 
-    def test_trade_source_uses_five_minute_ai_read_window_not_post_quote_window(self) -> None:
+    def test_immediate_trade_source_uses_five_minute_ai_read_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(
                 Path(tmp),
@@ -4822,7 +4822,7 @@ class MarketReadOverlayTest(unittest.TestCase):
 
             self.assertEqual(summary.action, "TRADE")
 
-    def test_trade_rejects_source_older_than_read_only_snapshot_window(self) -> None:
+    def test_immediate_trade_rejects_source_older_than_guardian_snapshot_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(
                 Path(tmp),
@@ -4832,6 +4832,148 @@ class MarketReadOverlayTest(unittest.TestCase):
 
             with self.assertRaisesRegex(MarketReadOverlayError, "MARKET_READ_SOURCE_STALE"):
                 _apply(paths)
+
+    def test_unauthenticated_limit_cannot_claim_overlay_freshness_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            observed_at = NOW - timedelta(minutes=5, seconds=1)
+            baseline = _baseline()
+            baseline["generated_at_utc"] = observed_at.isoformat()
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=baseline,
+                snapshot_at=observed_at,
+            )
+            intents = json.loads(paths["intents"].read_text())
+            intents["results"][0]["intent"]["order_type"] = "LIMIT"
+            paths["intents"].write_text(json.dumps(intents))
+            _reprepare(paths)
+            _write_overlay(paths)
+
+            with self.assertRaisesRegex(
+                MarketReadOverlayError,
+                "IMMEDIATE_TRADE_SOURCE",
+            ):
+                _apply(paths)
+
+    def test_authenticated_predictive_limit_uses_overlay_freshness_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            observed_at = NOW - timedelta(minutes=10)
+            baseline = _baseline()
+            baseline["generated_at_utc"] = observed_at.isoformat()
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=baseline,
+                snapshot_at=observed_at,
+            )
+            intents = json.loads(paths["intents"].read_text())
+            intent = intents["results"][0]["intent"]
+            intent["order_type"] = "LIMIT"
+            intent["metadata"].update(
+                {
+                    "predictive_scout": True,
+                    "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                    "predictive_scout_generated_at_utc": observed_at.isoformat(),
+                    "forecast_cycle_id": (
+                        f"pre-entry-forecast-refresh:{observed_at.isoformat()}:chart"
+                    ),
+                    "campaign_role": "FORECAST_LEARNING_SCOUT",
+                    "desk": "trend_trader",
+                    "forecast_learning_v1": {
+                        "decision_sha256": "freshness-learning-decision",
+                        "original_direction": "UP",
+                        "rank_direction": "UP",
+                        "orientation": "DIRECT",
+                        "features": {
+                            "technical_selected_method": "TREND_CONTINUATION"
+                        },
+                    },
+                }
+            )
+            intent["metadata"]["forecast_learning_execution_geometry_v1"] = (
+                build_forecast_learning_execution_geometry(
+                    pair="EUR_USD",
+                    side="LONG",
+                    method="TREND_CONTINUATION",
+                    entry=1.1002,
+                    take_profit=1.1040,
+                    stop_loss=1.0980,
+                    source_decision_sha256="freshness-learning-decision",
+                    forecast_current_price=1.1001,
+                    forecast_target_price=1.1050,
+                    forecast_invalidation_price=1.0985,
+                )
+            )
+            paths["intents"].write_text(json.dumps(intents))
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _reprepare(paths)
+                _write_overlay(paths, size_multiple=1.0)
+                summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
+
+    def test_authenticated_predictive_limit_still_expires_with_overlay_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            observed_at = NOW - timedelta(minutes=15, seconds=1)
+            baseline = _baseline()
+            baseline["generated_at_utc"] = observed_at.isoformat()
+            paths = _prepared_paths(
+                Path(tmp),
+                baseline=baseline,
+                snapshot_at=observed_at,
+            )
+            intents = json.loads(paths["intents"].read_text())
+            intent = intents["results"][0]["intent"]
+            intent["order_type"] = "LIMIT"
+            intent["metadata"].update(
+                {
+                    "predictive_scout": True,
+                    "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+                    "predictive_scout_generated_at_utc": observed_at.isoformat(),
+                    "forecast_cycle_id": (
+                        f"pre-entry-forecast-refresh:{observed_at.isoformat()}:chart"
+                    ),
+                    "campaign_role": "FORECAST_LEARNING_SCOUT",
+                    "desk": "trend_trader",
+                    "forecast_learning_v1": {
+                        "decision_sha256": "freshness-learning-decision",
+                        "original_direction": "UP",
+                        "rank_direction": "UP",
+                        "orientation": "DIRECT",
+                        "features": {
+                            "technical_selected_method": "TREND_CONTINUATION"
+                        },
+                    },
+                }
+            )
+            intent["metadata"]["forecast_learning_execution_geometry_v1"] = (
+                build_forecast_learning_execution_geometry(
+                    pair="EUR_USD",
+                    side="LONG",
+                    method="TREND_CONTINUATION",
+                    entry=1.1002,
+                    take_profit=1.1040,
+                    stop_loss=1.0980,
+                    source_decision_sha256="freshness-learning-decision",
+                    forecast_current_price=1.1001,
+                    forecast_target_price=1.1050,
+                    forecast_invalidation_price=1.0985,
+                )
+            )
+            paths["intents"].write_text(json.dumps(intents))
+            with patch(
+                "quant_rabbit.market_read_overlay.predictive_scout_metadata_supported",
+                return_value=True,
+            ):
+                _reprepare(paths)
+                _write_overlay(paths, size_multiple=1.0)
+                with self.assertRaisesRegex(
+                    MarketReadOverlayError,
+                    "AUTHENTICATED_PREDICTIVE_PASSIVE_LIMIT",
+                ):
+                    _apply(paths)
 
     def test_stale_trade_baseline_can_still_publish_a_nontrade_veto(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

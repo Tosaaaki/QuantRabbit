@@ -2696,13 +2696,24 @@ def _validate_trade_source_freshness(
 ) -> None:
     """Reject a final TRADE whose cited broker truth is already stale."""
 
-    # AI evidence may be older than the final POST quote without weakening the
-    # gateway.  Reuse the existing five-minute read-only guardian snapshot
-    # window here; RiskEngine still enforces its separate 20-second quote
-    # contract immediately before any broker send.
+    # A MARKET/STOP decision acts on the cited quote immediately, so it keeps
+    # the read-only Guardian's five-minute observation window.  An
+    # authenticated predictive SCOUT is different: it carries one immutable
+    # passive LIMIT entry plus signed creation/expiry geometry and is expressly
+    # forbidden from repricing after the trigger crosses.  Let that receipt use
+    # the same 15-minute window as the AI overlay.  The gateway still fetches a
+    # fresh broker snapshot, rechecks passivity/risk/margin/duplicates, rejects
+    # a crossed trigger, and checks the SCOUT TTL immediately before POST.
     from quant_rabbit.guardian_events import DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS
 
     max_age_seconds = float(DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS)
+    freshness_contract = "IMMEDIATE_TRADE_SOURCE"
+    if _selected_trade_is_authenticated_predictive_limit(
+        baseline=baseline,
+        evidence_sources=evidence_sources,
+    ):
+        max_age_seconds = float(DEFAULT_OVERLAY_MAX_AGE_SECONDS)
+        freshness_contract = "AUTHENTICATED_PREDICTIVE_PASSIVE_LIMIT"
 
     def require_fresh(value: Any, *, label: str) -> None:
         try:
@@ -2716,7 +2727,8 @@ def _validate_trade_source_freshness(
         if age_seconds < -60 or age_seconds > max_age_seconds:
             raise MarketReadOverlayError(
                 "MARKET_READ_SOURCE_STALE",
-                f"{label} age {age_seconds:.1f}s is outside -60..{max_age_seconds:.1f}s",
+                f"{label} age {age_seconds:.1f}s is outside -60..{max_age_seconds:.1f}s "
+                f"for {freshness_contract}",
             )
 
     require_fresh(baseline.get("generated_at_utc"), label="deterministic baseline")
@@ -2760,6 +2772,64 @@ def _validate_trade_source_freshness(
                 f"broker quote is missing for market-read pair {pair}",
             )
         require_fresh(quote.get("timestamp_utc"), label=f"{pair} quote")
+
+
+def _selected_trade_is_authenticated_predictive_limit(
+    *,
+    baseline: Mapping[str, Any],
+    evidence_sources: Mapping[str, Path],
+) -> bool:
+    """Recognize only the one content-bound passive experiment receipt.
+
+    A raw ``order_type=LIMIT`` string is insufficient.  The selected lane must
+    resolve uniquely in the named order-intent evidence and its predictive
+    metadata must validate against the current registered model/rule contract.
+    Any malformed or ambiguous source falls back to the stricter immediate
+    freshness window and is rejected by the normal packet checks as applicable.
+    """
+
+    selected_lane_id = str(baseline.get("selected_lane_id") or "").strip()
+    intents_path = evidence_sources.get("order_intents")
+    if not selected_lane_id or intents_path is None:
+        return False
+    try:
+        payload = _load_json_object(
+            _normalize_source_path(intents_path),
+            label="order intents",
+        )
+    except MarketReadOverlayError:
+        return False
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return False
+    matches = [
+        item
+        for item in results
+        if isinstance(item, Mapping)
+        and str(item.get("lane_id") or "").strip() == selected_lane_id
+    ]
+    if len(matches) != 1:
+        return False
+    selected = matches[0]
+    if str(selected.get("status") or "").strip().upper() != "LIVE_READY":
+        return False
+    intent = selected.get("intent")
+    if not isinstance(intent, Mapping):
+        return False
+    if str(intent.get("order_type") or "").strip().upper() != "LIMIT":
+        return False
+    try:
+        entry = float(intent.get("entry"))
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(entry) or entry <= 0.0:
+        return False
+    metadata = intent.get("metadata")
+    return bool(
+        isinstance(metadata, dict)
+        and metadata.get("predictive_scout") is True
+        and predictive_scout_metadata_supported(metadata)
+    )
 
 
 def _build_evidence_packet(
