@@ -9,9 +9,69 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SYNC = ROOT / "scripts" / "sync-live-runtime.sh"
+INSTALL_HOOKS = ROOT / "scripts" / "install-live-runtime-hooks.sh"
 
 
 class LiveRuntimeSyncTest(unittest.TestCase):
+    def test_installed_post_commit_hook_binds_current_worktree_as_sync_dev_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            linked = root / "linked"
+            live = root / "live"
+            _init_repo(repo)
+            scripts = repo / "scripts"
+            scripts.mkdir()
+            installer = scripts / "install-live-runtime-hooks.sh"
+            installer.write_text(INSTALL_HOOKS.read_text())
+            installer.chmod(0o755)
+            sync = scripts / "sync-live-runtime.sh"
+            sync.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$QR_SYNC_DEV_ROOT"\n')
+            sync.chmod(0o755)
+            _run(["git", "add", "scripts"], cwd=repo)
+            _run(["git", "commit", "-m", "install hook fixture"], cwd=repo)
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "feature", str(linked), "main"], cwd=repo)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_SYNC_DEV_ROOT": str(repo),
+                    "QR_SYNC_LIVE_ROOT": str(live),
+                }
+            )
+            install_result = subprocess.run(
+                ["bash", str(installer)],
+                cwd=repo,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(install_result.returncode, 0, install_result.stderr)
+
+            hook = Path(
+                _git(
+                    repo,
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "hooks/post-commit",
+                )
+            )
+            hook_result = subprocess.run(
+                ["bash", str(hook)],
+                cwd=linked,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(hook_result.returncode, 0, hook_result.stderr)
+            self.assertEqual(Path(hook_result.stdout.strip()).resolve(), linked.resolve())
+
     def test_promotes_from_clean_detached_linked_development_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

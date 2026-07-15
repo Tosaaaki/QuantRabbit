@@ -24,7 +24,7 @@ set -euo pipefail
 
 # QuantRabbit live runtime sync
 repo_root="$(git rev-parse --show-toplevel)"
-"${repo_root}/scripts/sync-live-runtime.sh"
+QR_SYNC_DEV_ROOT="${repo_root}" "${repo_root}/scripts/sync-live-runtime.sh"
 HOOK
 
 chmod +x "$POST_COMMIT_PATH"
@@ -88,7 +88,7 @@ done
 cat >&2 <<MSG
 
 Commit them on dev main instead:
-  cd /Users/tossaki/App/QuantRabbit
+  cd /Users/tossaki/App/QuantRabbit-worktrees/main
   # apply your change in dev main, then:
   git add <files> && git commit -m "..."
   # the next routine cycle's sync propagates to live automatically.
