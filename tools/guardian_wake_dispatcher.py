@@ -2039,10 +2039,15 @@ def _route_event_to_hourly_tuning(
 def _dispatch_priority(event: dict[str, Any]) -> tuple[Any, ...]:
     open_exposure = _event_has_open_exposure(event)
     p0 = str(event.get("severity") or "").upper() == "P0"
+    entry_or_add = str(event.get("action_hint") or "").upper() in {
+        "TRADE",
+        "ADD",
+    }
     active_or_material = _event_is_active_or_material(event)
     return (
         -int(open_exposure or p0),
         -int(open_exposure),
+        -int(entry_or_add),
         -_severity_rank(event.get("severity")),
         -int(active_or_material),
         str(event.get("pair") or ""),
@@ -2055,6 +2060,8 @@ def _dispatch_priority_evidence(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "open_exposure": _event_has_open_exposure(event),
         "p0": str(event.get("severity") or "").upper() == "P0",
+        "entry_or_add": str(event.get("action_hint") or "").upper()
+        in {"TRADE", "ADD"},
         "active_or_material": _event_is_active_or_material(event),
         "severity": event.get("severity"),
         "alphabetical_tiebreak": [event.get("pair"), event.get("event_type"), event.get("dedupe_key")],

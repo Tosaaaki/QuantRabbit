@@ -350,10 +350,10 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 subprocess_run=_fake_codex(calls, response),
             )
 
-            self.assertEqual(first["status"], "QUEUED_FOR_HOURLY_TUNING")
-            self.assertEqual(first["selected_event"]["event_id"], tuning["event_id"])
-            self.assertEqual(second["status"], "RECEIPT_WRITTEN")
-            self.assertEqual(second["selected_event"]["event_id"], entry["event_id"])
+            self.assertEqual(first["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(first["selected_event"]["event_id"], entry["event_id"])
+            self.assertEqual(second["status"], "QUEUED_FOR_HOURLY_TUNING")
+            self.assertEqual(second["selected_event"]["event_id"], tuning["event_id"])
             self.assertEqual(len(calls), 1)
 
     def test_runtime_disk_p0_queues_without_starting_codex_or_marking_reviewed(self) -> None:
