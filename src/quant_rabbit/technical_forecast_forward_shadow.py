@@ -23,6 +23,7 @@ from quant_rabbit.instruments import instrument_pip_factor
 
 FORWARD_SHADOW_CONTRACT = "QR_TECHNICAL_FORECAST_FORWARD_SHADOW_V1"
 FORWARD_CANDIDATE_CONTRACT = "QR_TECHNICAL_FORECAST_FORWARD_CANDIDATE_V1"
+FORWARD_EVALUATION_CONTRACT = "QR_TECHNICAL_FORECAST_FORWARD_EVALUATION_V1"
 
 
 def load_forward_candidate(path: Path) -> dict[str, Any]:
@@ -104,9 +105,63 @@ def validate_forward_candidate(value: object) -> tuple[str, ...]:
         for key, required in expected_vehicle.items():
             if vehicle.get(key) != required:
                 issues.append(f"vehicle.{key} must be {required!r}")
+    resolver = value.get("resolver")
+    if not isinstance(resolver, Mapping):
+        issues.append("resolver must be an object")
+    else:
+        expected_resolver = {
+            "truth_source": "OANDA_S5_BID_ASK",
+            "candle_interval_seconds": 5,
+            "truth_close_grace_seconds": 10,
+            "chunk_candle_limit": 4500,
+            "max_due_signals_per_run": 12,
+            "max_workers": 6,
+            "missing_no_tick_intervals_synthesized": False,
+            "ambiguous_exit_policy": "WORST_CASE_STOP",
+            "open_at_horizon_policy": "FULL_STOP_LOSS",
+            "unfilled_pips": 0.0,
+        }
+        for key, required in expected_resolver.items():
+            if resolver.get(key) != required:
+                issues.append(f"resolver.{key} must be {required!r}")
+    evaluation = value.get("forward_evaluation")
+    if not isinstance(evaluation, Mapping):
+        issues.append("forward_evaluation must be an object")
+    else:
+        expected_evaluation = {
+            "contract": FORWARD_EVALUATION_CONTRACT,
+            "cohort_selection": "FIRST_COMPLETE_DECISION_BATCH_REACHING_ALL_SAMPLE_FLOORS_OR_100_SIGNALS",
+            "minimum_mature_signals": 50,
+            "maximum_mature_signals": 100,
+            "minimum_mature_fills": 20,
+            "minimum_resolved_fill_fraction": 0.8,
+            "minimum_active_days": 8,
+            "minimum_fill_rate": 0.1,
+            "minimum_mean_conservative_pips_per_signal": 0.0,
+            "minimum_mean_conservative_pips_per_fill": 0.0,
+            "minimum_one_sided_95_student_t_lower_pips_per_fill": 0.0,
+            "minimum_profit_factor": 1.25,
+            "minimum_positive_day_rate": 0.6,
+            "minimum_one_sided_95_student_t_daily_lower_pips": 0.0,
+            "zero_threshold_comparison": "STRICT_GREATER_THAN",
+            "nonzero_threshold_comparison": "GREATER_THAN_OR_EQUAL",
+            "forward_evidence_can_enable_live_orders": False,
+            "live_promotion_requires_separate_contract": True,
+        }
+        for key, required in expected_evaluation.items():
+            if evaluation.get(key) != required:
+                issues.append(f"forward_evaluation.{key} must be {required!r}")
     blockers = value.get("promotion_blockers")
-    if not isinstance(blockers, list) or "NEW_FORWARD_COHORT_REQUIRED" not in blockers:
-        issues.append("NEW_FORWARD_COHORT_REQUIRED blocker is mandatory")
+    required_blockers = {
+        "NEW_FORWARD_COHORT_REQUIRED",
+        "MINIMUM_FORWARD_MATURE_SIGNALS_NOT_MET",
+        "MINIMUM_FORWARD_MATURE_FILLS_NOT_MET",
+        "FORWARD_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
+        "FORWARD_DAILY_STABILITY_NOT_PROVEN",
+        "NOT_CONNECTED_TO_ORDER_INTENT_OR_GATEWAY",
+    }
+    if not isinstance(blockers, list) or not required_blockers.issubset(blockers):
+        issues.append("all forward promotion blockers are mandatory")
     return tuple(issues)
 
 
@@ -237,12 +292,14 @@ def build_forward_shadow(
         return _seal({**common, "status": "PAIR_CHARTS_PREDATE_DECISION"})
 
     spread_cap = float(selector["spread_cap_pips"])
+    collection_closes_at = _parse_utc(window["collection_closes_at_utc"])
+    assert collection_closes_at is not None
     eligible = [
         row
         for row in rows
         if row["spread_pips"] <= spread_cap
         and row["quote_timestamp"] >= decision_at
-        and row["quote_timestamp"] <= observed + timedelta(seconds=60)
+        and row["quote_timestamp"] <= collection_closes_at
     ]
     if not eligible:
         return _seal({**common, "status": "NO_SPREAD_FRESH_ELIGIBLE_PAIRS"})
@@ -506,6 +563,7 @@ def _stable_digest(value: Any) -> str:
 
 __all__ = [
     "FORWARD_CANDIDATE_CONTRACT",
+    "FORWARD_EVALUATION_CONTRACT",
     "FORWARD_SHADOW_CONTRACT",
     "append_shadow_once",
     "build_forward_shadow",

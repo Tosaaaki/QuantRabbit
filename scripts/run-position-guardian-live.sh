@@ -1255,6 +1255,14 @@ case "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" in
     exit 2
     ;;
 esac
+export QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED="${QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED:-1}"
+case "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED=${QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
 guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
@@ -1310,6 +1318,24 @@ emit_technical_forecast_forward_shadow() {
   set -e
   if [[ "$shadow_status" -ne 0 ]]; then
     echo "[run-position-guardian-live] technical forecast forward-shadow refresh failed status=${shadow_status}; no shadow signal was admitted." >&2
+  fi
+}
+
+resolve_technical_forecast_forward_outcomes() {
+  if [[ "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/scripts/resolve_technical_forecast_forward_outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] technical forecast forward resolution failed status=${outcome_status}; live permission remains false." >&2
   fi
 }
 
@@ -1377,6 +1403,7 @@ if [[ -z "$trader_pairs" ]]; then
     "$monitor_pairs"
   run_guardian_event_router
   emit_technical_forecast_forward_shadow
+  resolve_technical_forecast_forward_outcomes
   echo "[run-position-guardian-live] no trader-owned open positions; completed read-only monitor scope pairs=${monitor_pairs:-none}." >&2
   exit 0
 fi
@@ -1403,3 +1430,4 @@ fi
 "$QR_PYTHON" -m quant_rabbit.cli "${pexec_args[@]}"
 run_guardian_event_router
 emit_technical_forecast_forward_shadow
+resolve_technical_forecast_forward_outcomes

@@ -99,6 +99,16 @@ case "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" in
     exit 2
     ;;
 esac
+# Mature shadow signals are resolved from read-only OANDA S5 bid/ask truth.
+# The scorecard remains non-live even when every preregistered gate passes.
+export QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED="${QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED:-1}"
+case "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED=${QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 # Entry sends need the fast position guardian alive so TP-progress profit can be
 # converted between full trader cycles. The gateway uses the status exported by
 # this wrapper to block new risk while still allowing position-management closes.
@@ -621,6 +631,25 @@ emit_technical_forecast_forward_shadow() {
   fi
 }
 
+resolve_technical_forecast_forward_outcomes() {
+  if [[ "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/scripts/resolve_technical_forecast_forward_outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo "[run-autotrade-live] technical forecast forward resolver missing: ${resolver}" >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] technical forecast forward resolution failed status=${outcome_status}; live permission remains false." >&2
+  fi
+}
+
 if [[ "$arg_count" -gt 0 ]] && has_arg "--send" "${args[@]}" && ! has_arg "--use-gpt-trader" "${args[@]}"; then
   gpt_args=("--use-gpt-trader")
   if ! has_arg "--reuse-market-artifacts" "${args[@]}"; then
@@ -679,6 +708,7 @@ fi
 
 if [[ "$cycle_exit" -eq 0 ]]; then
   emit_technical_forecast_forward_shadow
+  resolve_technical_forecast_forward_outcomes
 fi
 
 # Slack notifications are opt-in. User directive 2026-05-30:

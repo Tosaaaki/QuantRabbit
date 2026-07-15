@@ -2,8 +2,8 @@
   "contract": "QR_TECHNICAL_FORECAST_FORWARD_CANDIDATE_V1",
   "schema_version": 1,
   "status": "LOCKED_FORWARD_SHADOW",
-  "locked_at_utc": "2026-07-15T12:27:42+00:00",
-  "forward_evaluation_not_before_utc": "2026-07-15T12:27:42+00:00",
+  "locked_at_utc": "2026-07-15T13:06:06+00:00",
+  "forward_evaluation_not_before_utc": "2026-07-15T13:06:06+00:00",
   "shadow_enabled": true,
   "live_order_enabled": false,
   "promotion_allowed": false,
@@ -27,6 +27,38 @@
     "stop_loss_pips": 30,
     "market_entry_allowed": false,
     "time_close_allowed": false
+  },
+  "resolver": {
+    "truth_source": "OANDA_S5_BID_ASK",
+    "candle_interval_seconds": 5,
+    "truth_close_grace_seconds": 10,
+    "chunk_candle_limit": 4500,
+    "max_due_signals_per_run": 12,
+    "max_workers": 6,
+    "missing_no_tick_intervals_synthesized": false,
+    "ambiguous_exit_policy": "WORST_CASE_STOP",
+    "open_at_horizon_policy": "FULL_STOP_LOSS",
+    "unfilled_pips": 0.0
+  },
+  "forward_evaluation": {
+    "contract": "QR_TECHNICAL_FORECAST_FORWARD_EVALUATION_V1",
+    "cohort_selection": "FIRST_COMPLETE_DECISION_BATCH_REACHING_ALL_SAMPLE_FLOORS_OR_100_SIGNALS",
+    "minimum_mature_signals": 50,
+    "maximum_mature_signals": 100,
+    "minimum_mature_fills": 20,
+    "minimum_resolved_fill_fraction": 0.8,
+    "minimum_active_days": 8,
+    "minimum_fill_rate": 0.1,
+    "minimum_mean_conservative_pips_per_signal": 0.0,
+    "minimum_mean_conservative_pips_per_fill": 0.0,
+    "minimum_one_sided_95_student_t_lower_pips_per_fill": 0.0,
+    "minimum_profit_factor": 1.25,
+    "minimum_positive_day_rate": 0.6,
+    "minimum_one_sided_95_student_t_daily_lower_pips": 0.0,
+    "zero_threshold_comparison": "STRICT_GREATER_THAN",
+    "nonzero_threshold_comparison": "GREATER_THAN_OR_EQUAL",
+    "forward_evidence_can_enable_live_orders": false,
+    "live_promotion_requires_separate_contract": true
   },
   "selection_disclosure": {
     "initial_holdout_inspected_before_lock": true,
@@ -59,8 +91,10 @@
   },
   "promotion_blockers": [
     "NEW_FORWARD_COHORT_REQUIRED",
-    "MINIMUM_FORWARD_RESOLVED_FILLS_NOT_MET",
+    "MINIMUM_FORWARD_MATURE_SIGNALS_NOT_MET",
+    "MINIMUM_FORWARD_MATURE_FILLS_NOT_MET",
     "FORWARD_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
+    "FORWARD_DAILY_STABILITY_NOT_PROVEN",
     "NOT_CONNECTED_TO_ORDER_INTENT_OR_GATEWAY"
   ]
 }

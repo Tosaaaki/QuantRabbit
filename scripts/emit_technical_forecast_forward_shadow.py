@@ -93,12 +93,13 @@ def main() -> int:
             }
         )
     quotes = client.quotes(pairs)
+    captured_at = datetime.now(timezone.utc)
     shadow = build_forward_shadow(
         candidate,
         pair_charts,
         quotes,
         candidate_sha256=candidate_sha256,
-        observed_at_utc=observed,
+        observed_at_utc=captured_at,
     )
     write_shadow_atomic(args.output, shadow)
     appended = append_shadow_once(args.ledger, shadow)

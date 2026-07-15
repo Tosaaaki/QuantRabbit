@@ -35,6 +35,13 @@ class TechnicalForecastForwardShadowTest(unittest.TestCase):
         candidate["live_order_enabled"] = True
         self.assertIn("live_order_enabled must be false", validate_forward_candidate(candidate))
 
+        candidate = load_forward_candidate(CANDIDATE_PATH)
+        candidate["forward_evaluation"]["minimum_mature_fills"] = 1
+        self.assertIn(
+            "forward_evaluation.minimum_mature_fills must be 20",
+            validate_forward_candidate(candidate),
+        )
+
     def test_due_snapshot_selects_strongest_thirty_percent_with_fixed_geometry(self) -> None:
         candidate = load_forward_candidate(CANDIDATE_PATH)
         charts, quotes = _market(pair_count=10)
