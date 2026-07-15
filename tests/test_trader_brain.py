@@ -24,7 +24,7 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES,
     TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
 )
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, OANDA_SPREAD_CALIBRATION_V1
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.trader_brain import (
@@ -3747,6 +3747,14 @@ def _bind_clean_oanda_mba_integrity(
     generated_at = datetime.fromisoformat(generated_at_utc.replace("Z", "+00:00"))
     normal_spread_pips = NORMAL_SPREAD_PIPS[pair]
     max_spread_multiple = RiskPolicy().max_spread_multiple
+    execution_spread_cap_pips = round(
+        normal_spread_pips * max_spread_multiple,
+        6,
+    )
+    spread_cap_pips = round(
+        OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips,
+        6,
+    )
     requested_timeframes: list[str] = []
     timeframe_integrity: dict[str, dict] = {}
     views = chart["views"]
@@ -3826,13 +3834,12 @@ def _bind_clean_oanda_mba_integrity(
                 else TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE
             ),
             "evaluation_status": "PASS",
-            "policy_source": "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple",
+            "policy_source": "OANDA_SPREAD_CALIBRATION_V1.pairs.max_pips",
+            "spread_calibration_sha256": OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
             "normal_spread_pips": normal_spread_pips,
             "max_spread_multiple": max_spread_multiple,
-            "spread_cap_pips": round(
-                normal_spread_pips * max_spread_multiple,
-                6,
-            ),
+            "execution_spread_cap_pips": execution_spread_cap_pips,
+            "spread_cap_pips": spread_cap_pips,
             "requested_count": clean_count,
             "raw_entry_count": clean_count,
             "coverage_complete": True,

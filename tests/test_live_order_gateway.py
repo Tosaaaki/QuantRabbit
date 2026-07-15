@@ -12843,7 +12843,10 @@ def _write_predictive_scout_policy(root: Path) -> Path:
                 "schema_version": 2,
                 "enabled": True,
                 "mode": "FORWARD_EVIDENCE_ONLY",
-                "allowed_sources": ["BIDASK_REPLAY_PRECISION"],
+                "allowed_sources": [
+                    "BIDASK_REPLAY_PRECISION",
+                    "FORECAST_ORIENTATION_LEARNING",
+                ],
                 "order_types": ["LIMIT"],
                 "risk_tiers": {
                     "DISCOVERY": {"max_risk_pct_nav": 0.10},

@@ -39,7 +39,11 @@ from quant_rabbit.gpt_trader import (
     _decision_from_payload,
 )
 from quant_rabbit.execution_ledger import ExecutionLedger
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.instruments import (
+    NORMAL_SPREAD_PIPS,
+    OANDA_SPREAD_CALIBRATION_V1,
+    instrument_pip_factor,
+)
 from quant_rabbit.market_read_overlay import (
     CODEX_MARKET_READ_AUTHOR,
     apply_codex_market_read_overlay,
@@ -1002,6 +1006,8 @@ def _attach_test_oanda_mba_integrity(
             pip_factor=pip_factor,
             normal_spread_pips=float(normal_spread),
             max_spread_multiple=float(max_spread_multiple),
+            spread_anomaly_cap_pips=OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips,
+            spread_calibration_sha256=OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
         )
         if batch.integrity.get("forecast_blocking") is not False or len(batch.candles) != 30:
             raise AssertionError(

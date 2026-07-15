@@ -17,8 +17,8 @@ from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
 
 SUPPORTED_GRANULARITIES: frozenset[str] = frozenset({"M1", "M5", "M15", "M30", "H1", "H4", "D"})
-TECHNICAL_CANDLE_INTEGRITY_SCHEMA = "QR_TECHNICAL_CANDLE_INTEGRITY_V1"
-PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA = "QR_PAIR_TECHNICAL_CANDLE_INTEGRITY_V1"
+TECHNICAL_CANDLE_INTEGRITY_SCHEMA = "QR_TECHNICAL_CANDLE_INTEGRITY_V2"
+PAIR_TECHNICAL_CANDLE_INTEGRITY_SCHEMA = "QR_PAIR_TECHNICAL_CANDLE_INTEGRITY_V2"
 TECHNICAL_CANDLE_SPREAD_CONTAMINATED = "TECHNICAL_CANDLE_SPREAD_CONTAMINATED"
 TECHNICAL_CANDLE_PROVENANCE_INVALID = "TECHNICAL_CANDLE_PROVENANCE_INVALID"
 TECHNICAL_CANDLE_SPREAD_EXECUTION_MODE = "EXECUTION_ENDPOINT_CAP"
@@ -149,11 +149,13 @@ def fetch_technical_candles_via_client(
     """Fetch one OANDA MBA packet and quarantine spread-distorted MID bars.
 
     The indicator series remains MID-based. M1/M5 endpoint BID/ASK widths are
-    checked against the same base cap as ``RiskEngine``:
-    ``NORMAL_SPREAD_PIPS[pair] * RiskPolicy.max_spread_multiple``. Higher-TF
-    MBA remains strict provenance, but its independently aggregated window
-    extrema do not masquerade as an executable spread. One MBA request avoids
-    cross-request timestamp drift and never substitutes BID for MID.
+    checked against the observed maximum in the pinned spread-calibration
+    cohort. This is deliberately separate from ``RiskEngine``'s current-quote
+    cap, whose P95-derived value is an execution-cost boundary rather than a
+    historical-data corruption threshold. Higher-TF MBA remains strict
+    provenance, but its independently aggregated window extrema do not
+    masquerade as an executable spread. One MBA request avoids cross-request
+    timestamp drift and never substitutes BID for MID.
     """
 
     if granularity not in SUPPORTED_GRANULARITIES:
@@ -163,16 +165,24 @@ def fetch_technical_candles_via_client(
             f"{TECHNICAL_CANDLE_PROVENANCE_INVALID}: count must be an exact integer in "
             f"[1, {OANDA_CANDLE_COUNT_MAX}]"
         )
-    from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+    from quant_rabbit.instruments import (
+        NORMAL_SPREAD_PIPS,
+        OANDA_SPREAD_CALIBRATION_V1,
+        instrument_pip_factor,
+    )
     from quant_rabbit.risk import RiskPolicy
 
     pair_key = pair.upper()
     normal_spread_pips = NORMAL_SPREAD_PIPS.get(pair_key)
+    spread_calibration = OANDA_SPREAD_CALIBRATION_V1.pairs.get(pair_key)
     max_spread_multiple = RiskPolicy().max_spread_multiple
     if (
         normal_spread_pips is None
+        or spread_calibration is None
         or not math.isfinite(float(normal_spread_pips))
         or float(normal_spread_pips) <= 0.0
+        or not math.isfinite(float(spread_calibration.max_pips))
+        or float(spread_calibration.max_pips) <= 0.0
         or not math.isfinite(float(max_spread_multiple))
         or float(max_spread_multiple) <= 0.0
     ):
@@ -189,6 +199,8 @@ def fetch_technical_candles_via_client(
         pip_factor=instrument_pip_factor(pair_key),
         normal_spread_pips=float(normal_spread_pips),
         max_spread_multiple=float(max_spread_multiple),
+        spread_anomaly_cap_pips=float(spread_calibration.max_pips),
+        spread_calibration_sha256=OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
     )
 
 
@@ -201,6 +213,8 @@ def _technical_candles_from_payload(
     pip_factor: int,
     normal_spread_pips: float,
     max_spread_multiple: float,
+    spread_anomaly_cap_pips: float,
+    spread_calibration_sha256: str,
 ) -> TechnicalCandleBatch:
     """Parse strict OANDA MBA provenance and return only uncontaminated MID."""
 
@@ -224,7 +238,16 @@ def _technical_candles_from_payload(
         else 1
     )
     price_decimal_places = 3 if pip_factor == 100 else 5
-    cap_pips = normal_spread_pips * max_spread_multiple
+    if (
+        not math.isfinite(spread_anomaly_cap_pips)
+        or spread_anomaly_cap_pips <= 0.0
+        or not isinstance(spread_calibration_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", spread_calibration_sha256)
+    ):
+        raise ValueError(
+            f"{TECHNICAL_CANDLE_PROVENANCE_INVALID}: spread anomaly calibration invalid"
+        )
+    cap_pips = spread_anomaly_cap_pips
     raw_payload_instrument = payload.get("instrument") if payload.__class__ is dict else None
     raw_payload_granularity = payload.get("granularity") if payload.__class__ is dict else None
     entries = payload.get("candles") if payload.__class__ is dict else None
@@ -252,6 +275,7 @@ def _technical_candles_from_payload(
                 normal_spread_pips=normal_spread_pips,
                 max_spread_multiple=max_spread_multiple,
                 cap_pips=cap_pips,
+                spread_calibration_sha256=spread_calibration_sha256,
                 recent_tail_state="PROVENANCE_INVALID",
                 latest_complete_timestamp_utc=None,
                 latest_clean_timestamp_utc=None,
@@ -281,6 +305,7 @@ def _technical_candles_from_payload(
                 normal_spread_pips=normal_spread_pips,
                 max_spread_multiple=max_spread_multiple,
                 cap_pips=cap_pips,
+                spread_calibration_sha256=spread_calibration_sha256,
                 recent_tail_state="PROVENANCE_INVALID",
                 latest_complete_timestamp_utc=None,
                 latest_clean_timestamp_utc=None,
@@ -473,6 +498,7 @@ def _technical_candles_from_payload(
             normal_spread_pips=normal_spread_pips,
             max_spread_multiple=max_spread_multiple,
             cap_pips=cap_pips,
+            spread_calibration_sha256=spread_calibration_sha256,
             recent_tail_state=recent_tail_state,
             latest_complete_timestamp_utc=latest_complete_timestamp,
             latest_clean_timestamp_utc=latest_clean_timestamp,
@@ -665,6 +691,7 @@ def _technical_candle_integrity(
     normal_spread_pips: float,
     max_spread_multiple: float,
     cap_pips: float,
+    spread_calibration_sha256: str,
     recent_tail_state: str | None,
     latest_complete_timestamp_utc: datetime | None,
     latest_clean_timestamp_utc: datetime | None,
@@ -752,9 +779,14 @@ def _technical_candle_integrity(
         "requested_price": "MBA",
         "spread_evaluation_mode": _spread_evaluation_mode(granularity),
         "evaluation_status": evaluation_status,
-        "policy_source": "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple",
+        "policy_source": "OANDA_SPREAD_CALIBRATION_V1.pairs.max_pips",
+        "spread_calibration_sha256": spread_calibration_sha256,
         "normal_spread_pips": round(normal_spread_pips, 6),
         "max_spread_multiple": round(max_spread_multiple, 6),
+        "execution_spread_cap_pips": round(
+            normal_spread_pips * max_spread_multiple,
+            6,
+        ),
         "spread_cap_pips": round(cap_pips, 6),
         "requested_count": requested_count,
         "raw_entry_count": raw_entry_count,

@@ -331,7 +331,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(candles.get("EUR_USD"), [])
         self.assertEqual(stats["history_conflicting_candles"], 1)
 
-    def test_truth_window_rejects_internal_candle_gap(self) -> None:
+    def test_truth_window_accepts_whole_cadence_no_tick_gap(self) -> None:
         window = [
             _candle(
                 "2026-07-01T00:00:00",
@@ -357,9 +357,28 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             ),
         ]
 
-        self.assertFalse(replay._truth_window_complete(window, candle_delta=timedelta(minutes=5)))
+        self.assertTrue(replay._truth_window_complete(window, candle_delta=timedelta(minutes=5)))
 
-    def test_truth_window_rejects_missing_leading_or_trailing_candle(self) -> None:
+        misaligned = list(window)
+        misaligned[1] = _candle(
+            "2026-07-01T00:09:00",
+            bid_o=1.1,
+            bid_h=1.1,
+            bid_l=1.1,
+            bid_c=1.1,
+            ask_o=1.1002,
+            ask_h=1.1002,
+            ask_l=1.1002,
+            ask_c=1.1002,
+        )
+        self.assertFalse(
+            replay._truth_window_complete(
+                misaligned,
+                candle_delta=timedelta(minutes=5),
+            )
+        )
+
+    def test_truth_window_accepts_leading_and_trailing_no_tick_runs(self) -> None:
         complete = [
             _candle(
                 f"2026-07-01T00:{minute:02d}:00",
@@ -385,7 +404,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
                 window_end=end,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             replay._truth_window_complete(
                 complete[1:],
                 candle_delta=timedelta(minutes=5),
@@ -393,7 +412,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
                 window_end=end,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             replay._truth_window_complete(
                 complete[:-1],
                 candle_delta=timedelta(minutes=5),
@@ -1191,7 +1210,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(first["schema_version"], 2)
         self.assertEqual(
             first["semantics"]["version"],
-            "oanda-bidask-situation-technical-independent-v4",
+            "oanda-bidask-situation-technical-no-tick-gaps-v5",
         )
         self.assertIn(
             "regime_family_weighting",

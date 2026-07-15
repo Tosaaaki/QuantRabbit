@@ -129,7 +129,8 @@ export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # Predictive SCOUT is a double gate. This env flag alone grants nothing;
-# config/predictive_scout_policy.json, canonical digest, current bucket,
+# config/predictive_scout_policy.json, canonical replay/model/decision digest,
+# current forecast and technical-context binding,
 # LIMIT/GTD/attached TP+SL, current-NAV risk sizing to positive integer units
 # (including 1-999u), atomic signal claim, concurrency and loss quarantine must pass.
 export QR_PREDICTIVE_SCOUT_LIVE_ENABLED="${QR_PREDICTIVE_SCOUT_LIVE_ENABLED:-1}"
@@ -995,8 +996,15 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   It never grants live order, SCOUT, gateway, cancel/close, launchd, gate
 #   relaxation, lot-backsolve, secret-disclosure, or inferred operator approval.
 # - predictive-scout-proof is read-only and runs after execution-ledger-sync.
-#   The S5 contrarian replay is a forecast-failure hypothesis, not proof of the
-#   passive LIMIT retest. Live evidence collection is canonical-digest bound,
+#   The S5 contrarian replay and forecast-orientation learner are hypotheses,
+#   not proof of the passive LIMIT retest. A `FORECAST_LEARNING_SCOUT` whose
+#   holdout model is `RANK_ONLY` is not improved edge: the AI trader must cite
+#   its negative/weak validation and disclosed historical technical-feature
+#   coverage as counterevidence, perform a fresh numeric
+#   all-seven-frame market read, and accept the exact top candidate only when
+#   that present read independently supports its side and passive entry. A
+#   mismatch is a veto and requires a newly generated candidate; the overlay
+#   cannot substitute another pair or side. Live evidence collection is canonical-digest bound,
 #   LIMIT-only, current-NAV risk-sized positive integer units (including
 #   1-999u), GTD no later than forecast horizon (max 90m), actual attached
 #   TP+intent SL, canonical TP/SL distances, at most two active SCOUTs and 2%

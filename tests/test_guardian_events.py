@@ -21,7 +21,11 @@ from quant_rabbit.guardian_events import (
     write_guardian_trigger_contract_report,
 )
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.instruments import (
+    NORMAL_SPREAD_PIPS,
+    OANDA_SPREAD_CALIBRATION_V1,
+    instrument_pip_factor,
+)
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -4029,6 +4033,8 @@ def _canonical_integrity_chart_payload(
             pip_factor=factor,
             normal_spread_pips=normal_spread_pips,
             max_spread_multiple=RiskPolicy().max_spread_multiple,
+            spread_anomaly_cap_pips=OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips,
+            spread_calibration_sha256=OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
         )
         integrity = dict(batch.integrity)
         clean_tail_count = integrity["recent_clean_tail_count"]

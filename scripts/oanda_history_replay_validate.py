@@ -1543,22 +1543,32 @@ def _truth_window_complete(
         return False
     if window_start is not None:
         leading_gap = (window[0].timestamp_utc - window_start).total_seconds()
-        # The first executable candle may start after an unaligned forecast,
-        # but it must be the immediately following candle. A full interval or
-        # more means the leading truth candle is missing.
-        if leading_gap < 0 or leading_gap >= expected:
+        # OANDA omits an S5 row when no price update occurred in that bucket.
+        # The first executable quote may therefore arrive several whole
+        # buckets after emission. It is still the first observable entry; do
+        # not fabricate flat candles or call a genuine no-tick run missing.
+        if leading_gap < 0 or (
+            window_end is not None
+            and window[0].timestamp_utc >= window_end
+        ):
             return False
     if window_end is not None:
         last_close = window[-1].timestamp_utc + candle_delta
         trailing_gap = (window_end - last_close).total_seconds()
-        # Only fully closed candles are scored. Less than one residual candle
-        # is expected for an unaligned horizon; a full interval means trailing
-        # truth is missing.
-        if trailing_gap < 0 or trailing_gap >= expected:
+        # A final no-tick run means the last executable quote persisted to the
+        # horizon. The file is produced from successful bounded OANDA fetches,
+        # so absence of a row is no observed quote, not hidden price action.
+        if trailing_gap < 0:
             return False
     for previous, current in zip(window, window[1:]):
         gap = (current.timestamp_utc - previous.timestamp_utc).total_seconds()
-        if abs(gap - expected) > 1e-6:
+        # Every observed candle must still lie on the declared cadence and be
+        # strictly ordered. Whole-cadence gaps are genuine no-tick intervals.
+        cadence_multiple = gap / expected
+        if (
+            gap < expected
+            or abs(cadence_multiple - round(cadence_multiple)) > 1e-6
+        ):
             return False
     return True
 
@@ -3916,10 +3926,13 @@ def _experiment_identity(
     candle_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     semantics = {
-        "version": "oanda-bidask-situation-technical-independent-v4",
+        "version": "oanda-bidask-situation-technical-no-tick-gaps-v5",
         "entry": "first complete candle at_or_after forecast; UP ask open; DOWN bid open",
         "exit": "last fully closed candle inside signal horizon; UP bid close; DOWN ask close",
-        "truth_completeness": "leading, internal, and trailing candle intervals required",
+        "truth_completeness": (
+            "observed OANDA candles must be strictly ordered on whole declared-cadence "
+            "multiples; omitted no-tick buckets remain absent and are not fabricated"
+        ),
         "same_bar_tp_sl": "stop_first",
         "non_overlap": "per_pair timestamp >= previous timestamp+horizon",
         "filter_order": "canonical_dedupe,policy_filters,confidence,non_overlap,truth,score",

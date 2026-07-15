@@ -2723,7 +2723,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.analysis.candles import _technical_candles_from_payload
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.instruments import (
+    NORMAL_SPREAD_PIPS,
+    OANDA_SPREAD_CALIBRATION_V1,
+    instrument_pip_factor,
+)
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -2749,7 +2753,7 @@ def integrity_blocked_view(pair, timeframe, now, chart_mode):
     factor = instrument_pip_factor(pair)
     decimals = 3 if factor == 100 else 5
     base = 100.0 if factor == 100 else 1.0
-    cap_pips = NORMAL_SPREAD_PIPS[pair] * RiskPolicy().max_spread_multiple
+    cap_pips = OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips
     clean_spread_pips = NORMAL_SPREAD_PIPS[pair]
     if chart_mode == "INTEGRITY_BLOCKED_PROVENANCE_INVALID":
         contaminated_index = count - 6
@@ -2786,6 +2790,8 @@ def integrity_blocked_view(pair, timeframe, now, chart_mode):
         pip_factor=factor,
         normal_spread_pips=NORMAL_SPREAD_PIPS[pair],
         max_spread_multiple=RiskPolicy().max_spread_multiple,
+        spread_anomaly_cap_pips=OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips,
+        spread_calibration_sha256=OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
     )
     integrity = dict(batch.integrity)
     tail_count = integrity["recent_clean_tail_count"]

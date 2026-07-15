@@ -74,6 +74,7 @@ from quant_rabbit.analysis.candles import (
     _technical_candle_cadence_valid,
 )
 from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.paths import ROOT
 from quant_rabbit.strategy.forecast_technical_context import build_forecast_technical_context
 from quant_rabbit.strategy.regime_family_weighting import forecast_direction_consistency
 from quant_rabbit.strategy.price_action import structural_tp_target
@@ -186,6 +187,9 @@ M15_RECOVERY_MICRO_MAX_UNITS = 999
 M15_RECOVERY_SOURCE_TIMEFRAME = "M15"
 M15_RECOVERY_M15_MAX_AGE_SECONDS = 30 * 60
 M15_RECOVERY_FORECAST_CONTRACT = "QR_M15_RECOVERY_FORECAST_V1"
+DEFAULT_FORECAST_ORIENTATION_MODEL = (
+    ROOT / "config" / "forecast_orientation_model_v1.json"
+)
 
 
 @dataclass(frozen=True)
@@ -210,6 +214,7 @@ class DirectionalForecast:
     range_high_price: Optional[float] = None
     range_width_pips: Optional[float] = None
     technical_context_v1: dict[str, Any] = field(default_factory=dict)
+    forecast_learning_v1: dict[str, Any] = field(default_factory=dict)
     m15_recovery_receipt: dict[str, Any] = field(default_factory=dict)
     m15_recovery_forecast_evidence: dict[str, Any] = field(default_factory=dict)
     # Evaluation-only counterfactual evidence.  This field is deliberately
@@ -245,6 +250,8 @@ class DirectionalForecast:
             payload["range_width_pips"] = round(self.range_width_pips, 3)
         if self.technical_context_v1:
             payload["technical_context_v1"] = self.technical_context_v1
+        if self.forecast_learning_v1:
+            payload["forecast_learning_v1"] = self.forecast_learning_v1
         if self.m15_recovery_receipt:
             payload["m15_recovery_receipt"] = self.m15_recovery_receipt
         if self.m15_recovery_forecast_evidence:
@@ -1042,23 +1049,47 @@ def _valid_mba_integrity(
 
     normal = _strict_finite_number(item.get("normal_spread_pips"))
     multiple = _strict_finite_number(item.get("max_spread_multiple"))
+    execution_cap = _strict_finite_number(item.get("execution_spread_cap_pips"))
     cap = _strict_finite_number(item.get("spread_cap_pips"))
     if (
         item.get("requested_price") != "MBA"
-        or item.get("policy_source") != "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple"
-        or normal is None or multiple is None or cap is None
-        or not all(value > 0.0 for value in (normal, multiple, cap))
+        or item.get("policy_source")
+        != "OANDA_SPREAD_CALIBRATION_V1.pairs.max_pips"
+        or normal is None
+        or multiple is None
+        or execution_cap is None
+        or cap is None
+        or not all(
+            value > 0.0 for value in (normal, multiple, execution_cap, cap)
+        )
     ):
         return False
-    from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+    from quant_rabbit.instruments import (
+        NORMAL_SPREAD_PIPS,
+        OANDA_SPREAD_CALIBRATION_V1,
+    )
     from quant_rabbit.risk import RiskPolicy
 
     canonical_normal = _strict_finite_number(NORMAL_SPREAD_PIPS.get(item.get("pair")))
     canonical_multiple = _strict_finite_number(RiskPolicy().max_spread_multiple)
     if canonical_normal is None or canonical_multiple is None:
         return False
-    canonical_cap = round(canonical_normal * canonical_multiple, 6)
-    if normal != canonical_normal or multiple != canonical_multiple or cap != canonical_cap:
+    calibration = OANDA_SPREAD_CALIBRATION_V1.pairs.get(str(item.get("pair") or ""))
+    calibration_sha256 = str(item.get("spread_calibration_sha256") or "")
+    canonical_execution_cap = round(canonical_normal * canonical_multiple, 6)
+    canonical_cap = (
+        round(float(calibration.max_pips), 6)
+        if calibration is not None
+        else None
+    )
+    if (
+        normal != canonical_normal
+        or multiple != canonical_multiple
+        or execution_cap != canonical_execution_cap
+        or canonical_cap is None
+        or cap != canonical_cap
+        or calibration_sha256 != OANDA_SPREAD_CALIBRATION_V1.calibration_sha256
+    ):
         return False
 
     state = item.get("recent_tail_state")
@@ -2561,6 +2592,92 @@ def _calibrated_confidence(
     return min(1.0, raw_confidence * cal_mult), cal_mult
 
 
+def _forecast_learning_receipt(
+    *,
+    pair: str,
+    direction: str,
+    confidence: float,
+    raw_confidence: float,
+    up_score: float,
+    down_score: float,
+    range_score: float,
+    technical_context_v1: dict[str, Any],
+    now_utc: datetime | None,
+    drivers_for: tuple[str, ...],
+    drivers_against: tuple[str, ...],
+) -> dict[str, Any]:
+    """Return one content-addressed keep/invert prediction, never no-trade."""
+
+    if direction not in {"UP", "DOWN"}:
+        return {}
+    from quant_rabbit.forecast_learning import (
+        forecast_feature_values,
+        forecast_orientation_decision,
+        load_forecast_orientation_model,
+    )
+
+    model = load_forecast_orientation_model(DEFAULT_FORECAST_ORIENTATION_MODEL)
+    if not model:
+        return {}
+    timestamp = _aware_utc_datetime(now_utc) or datetime.now(timezone.utc)
+    features = forecast_feature_values(
+        pair=pair,
+        direction=direction,
+        confidence=confidence,
+        raw_confidence=raw_confidence,
+        up_score=up_score,
+        down_score=down_score,
+        range_score=range_score,
+        technical_context=technical_context_v1,
+        timestamp_utc=timestamp,
+        drivers_for=drivers_for,
+        drivers_against=drivers_against,
+    )
+    decision = forecast_orientation_decision(
+        model,
+        original_direction=direction,
+        features=features,
+    )
+    feature_sha256 = hashlib.sha256(
+        json.dumps(
+            features,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    body = {
+        "schema": "QR_FORECAST_LEARNING_DECISION_V1",
+        "model_sha256": decision.get("model_sha256"),
+        "model_status": decision.get("model_status"),
+        "original_direction": direction,
+        "forecast_direction": decision.get("direction"),
+        "rank_direction": decision.get("rank_direction"),
+        "orientation": decision.get("orientation"),
+        "direct_orientation_probability": decision.get("direct_probability"),
+        "selected_orientation_probability": decision.get("selected_probability"),
+        "ordinary_correction_applied": decision.get(
+            "ordinary_correction_applied"
+        )
+        is True,
+        "always_returns_direction": True,
+        "probability_semantics": "ORIENTATION_RANK_NOT_TRADE_WIN_PROBABILITY",
+        "features": features,
+        "feature_sha256": feature_sha256,
+    }
+    return {
+        **body,
+        "decision_sha256": hashlib.sha256(
+            json.dumps(
+                body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
 def _projection_signal_calibration_multiplier(
     *,
     signal: Any,
@@ -3113,6 +3230,44 @@ def synthesize_forecast(
         hit_rates=hit_rates,
         regime=calibration_regime,
     )
+    forecast_learning_v1: dict[str, Any] = {}
+    if require_technical_candle_integrity and not m15_recovery_receipt:
+        original_winner = winner
+        forecast_learning_v1 = _forecast_learning_receipt(
+            pair=pair,
+            direction=original_winner,
+            confidence=calibrated_confidence,
+            raw_confidence=raw_confidence,
+            up_score=up_score,
+            down_score=down_score,
+            range_score=range_score,
+            technical_context_v1=technical_context_v1,
+            now_utc=now_utc,
+            drivers_for=_top_reasons(contributions, direction=original_winner),
+            drivers_against=_top_reasons(
+                contributions,
+                direction="DOWN" if original_winner == "UP" else "UP",
+            ),
+        )
+        learned_direction = str(
+            forecast_learning_v1.get("forecast_direction") or ""
+        ).upper()
+        if (
+            forecast_learning_v1.get("ordinary_correction_applied") is True
+            and learned_direction in {"UP", "DOWN"}
+            and learned_direction != original_winner
+        ):
+            winner = learned_direction
+            learning_reason = (
+                f"S5 bid/ask walk-forward model inverted {original_winner} to "
+                f"{winner} (orientation rank="
+                f"{forecast_learning_v1.get('selected_orientation_probability')})"
+            )
+            adjustment_reason = (
+                f"{adjustment_reason}; {learning_reason}"
+                if adjustment_reason
+                else learning_reason
+            )
 
     weak_directional_range_confidence = (
         None
@@ -3261,6 +3416,7 @@ def synthesize_forecast(
         range_high_price=range_phase.range_high_price if winner == "RANGE" else None,
         range_width_pips=range_phase.range_width_pips if winner == "RANGE" else None,
         technical_context_v1=technical_context_v1,
+        forecast_learning_v1=forecast_learning_v1,
         m15_recovery_receipt=m15_recovery_receipt,
         m15_recovery_forecast_evidence=recovery_forecast_evidence,
     )

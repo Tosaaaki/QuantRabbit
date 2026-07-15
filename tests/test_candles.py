@@ -13,7 +13,10 @@ from quant_rabbit.analysis.candles import (
     _technical_candles_from_payload,
     fetch_technical_candles_via_client,
 )
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+from quant_rabbit.instruments import (
+    NORMAL_SPREAD_PIPS,
+    OANDA_SPREAD_CALIBRATION_V1,
+)
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -65,11 +68,15 @@ def _parse_technical_payload(
         pip_factor=10000,
         normal_spread_pips=normal_spread_pips,
         max_spread_multiple=max_spread_multiple,
+        spread_anomaly_cap_pips=OANDA_SPREAD_CALIBRATION_V1.pairs[
+            "EUR_USD"
+        ].max_pips,
+        spread_calibration_sha256=OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
     )
 
 
 def _eur_usd_spread_cap_pips() -> float:
-    return NORMAL_SPREAD_PIPS["EUR_USD"] * RiskPolicy().max_spread_multiple
+    return OANDA_SPREAD_CALIBRATION_V1.pairs["EUR_USD"].max_pips
 
 
 def _above_cap_ask_widening(*, extra_pips: float = 1.0) -> float:

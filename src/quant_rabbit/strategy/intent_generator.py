@@ -28,7 +28,9 @@ from quant_rabbit.forecast_precision import (
     technical_harvest_precision_support,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner
 from quant_rabbit.predictive_scout import (
+    FORECAST_LEARNING_SCOUT_SOURCE,
     PREDICTIVE_SCOUT_SOURCE,
     predictive_scout_intent_issues,
     predictive_scout_metadata_supported,
@@ -3319,6 +3321,36 @@ def _append_forecast_seed_lanes(
         )
         for lane in lanes
     ]
+    learning_seed = _forecast_learning_scout_seed_lane(
+        lanes,
+        snapshot,
+        forecasts_by_pair,
+        source_by_pair=source_by_pair,
+        existing_by_key=existing_by_key,
+        cycle_id=forecast_cycle_id,
+    )
+    if learning_seed is not None:
+        learning_key = (
+            learning_seed.get("desk"),
+            learning_seed.get("pair"),
+            learning_seed.get("direction"),
+            learning_seed.get("method"),
+        )
+        seeds = [
+            learning_seed,
+            *[
+                lane
+                for lane in seeds
+                if (
+                    lane.get("desk"),
+                    lane.get("pair"),
+                    lane.get("direction"),
+                    lane.get("method"),
+                )
+                != learning_key
+            ],
+        ]
+        seeded_keys.add(learning_key)
     precision_seeds = _bidask_replay_precision_seed_lanes(
         lanes,
         charts,
@@ -3327,6 +3359,18 @@ def _append_forecast_seed_lanes(
         existing_by_key=existing_by_key,
         cycle_id=forecast_cycle_id,
     )
+    if learning_seed is not None:
+        precision_seeds = [
+            lane
+            for lane in precision_seeds
+            if (
+                lane.get("desk"),
+                lane.get("pair"),
+                lane.get("direction"),
+                lane.get("method"),
+            )
+            != learning_key
+        ]
     if precision_seeds:
         precision_keys = {
             (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
@@ -3349,6 +3393,125 @@ def _append_forecast_seed_lanes(
         for lane in lanes
         if (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) not in seeded_keys
     ]
+
+
+def _forecast_learning_scout_seed_lane(
+    lanes: list[dict[str, Any]],
+    snapshot: BrokerSnapshot,
+    forecasts_by_pair: dict[str, Any],
+    *,
+    source_by_pair: dict[str, dict[str, Any]],
+    existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
+    cycle_id: str | None,
+) -> dict[str, Any] | None:
+    """Turn the current top learned direction into one bounded forward lane.
+
+    The learner always ranks DIRECT or INVERSE.  This selector therefore does
+    not create another confidence veto: it picks the strongest current rank,
+    while the exact order still has to pass broker freshness, passive LIMIT
+    geometry, attached TP/SL, NAV-risk, concurrency, and same-pair manual
+    ownership checks.
+    """
+
+    ranked: list[tuple[float, float, str, str, Any]] = []
+    for pair, forecast in forecasts_by_pair.items():
+        receipt = getattr(forecast, "forecast_learning_v1", None)
+        if not isinstance(receipt, dict):
+            continue
+        if str(receipt.get("model_status") or "").upper() not in {
+            "ENABLED",
+            "RANK_ONLY",
+        }:
+            continue
+        rank_direction = str(receipt.get("rank_direction") or "").upper()
+        if rank_direction not in {"UP", "DOWN"}:
+            continue
+        rank_probability = _optional_float(
+            receipt.get("selected_orientation_probability")
+        )
+        if rank_probability is None or rank_probability < 0.5:
+            continue
+        if _snapshot_has_operator_manual_pair_exposure(snapshot, pair):
+            continue
+        side = Side.LONG.value if rank_direction == "UP" else Side.SHORT.value
+        confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
+        ranked.append((rank_probability, confidence, pair, side, forecast))
+    if not ranked:
+        return None
+
+    _, _, pair, side, forecast = max(
+        ranked,
+        key=lambda item: (item[0], item[1], item[2], item[3]),
+    )
+    source = (
+        _source_lane_for_pair_side(existing_by_key, pair, side)
+        or source_by_pair.get(pair)
+        or next(
+            (lane for lane in lanes if str(lane.get("pair") or "") == pair),
+            None,
+        )
+    )
+    lane = _forecast_seed_lane(
+        source,
+        pair=pair,
+        side=side,
+        method=TradeMethod.BREAKOUT_FAILURE.value,
+        forecast=forecast,
+        cycle_id=cycle_id,
+    )
+    receipt = dict(getattr(forecast, "forecast_learning_v1", {}) or {})
+    probability = _optional_float(receipt.get("selected_orientation_probability")) or 0.5
+    lane.update(
+        {
+            "desk": "failure_trader",
+            "pair": pair,
+            "direction": side,
+            "method": TradeMethod.BREAKOUT_FAILURE.value,
+            "adoption": "TRIGGER_RECEIPT_REQUIRED",
+            "campaign_role": "FORECAST_LEARNING_SCOUT",
+            "reason": (
+                f"current top historical-tick forecast rank: {pair} {side} "
+                f"orientation={receipt.get('orientation')} rank={probability:.3f}; "
+                "collect the next exact passive-fill outcome"
+            ),
+            "required_receipt": (
+                "Current forecast-learning SCOUT: passive LIMIT retest only, with "
+                "broker-attached technical TP and SL, DISCOVERY NAV risk, short GTD, "
+                "no market chase, and no same-pair manual/operator exposure."
+            ),
+            "blockers": [],
+            "forecast_watch_only": False,
+            "forecast_learning_scout_seed": True,
+            "forecast_learning_limit_only": True,
+            "predictive_scout": True,
+            "predictive_scout_source": FORECAST_LEARNING_SCOUT_SOURCE,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "forecast_learning_v1": receipt,
+        }
+    )
+    return lane
+
+
+def _snapshot_has_operator_manual_pair_exposure(
+    snapshot: BrokerSnapshot,
+    pair: str,
+) -> bool:
+    normalized = str(pair or "").upper()
+    return bool(
+        any(
+            str(position.pair or "").upper() == normalized
+            and is_operator_managed_manual_owner(position.owner)
+            for position in snapshot.positions
+        )
+        or any(
+            str(order.pair or "").upper() == normalized
+            and not order.trade_id
+            and is_operator_managed_manual_owner(order.owner)
+            for order in snapshot.orders
+        )
+    )
 
 
 def _bidask_replay_precision_seed_lanes(
@@ -3492,11 +3655,23 @@ def _predictive_scout_runtime_metadata(
     rule = lane.get("bidask_replay_precision_seed_rule")
     rule_name = str(rule.get("name") or "") if isinstance(rule, dict) else ""
     rule_digest = bidask_replay_precision_rule_digest(rule) if isinstance(rule, dict) else ""
+    source = str(
+        lane.get("predictive_scout_source") or PREDICTIVE_SCOUT_SOURCE
+    ).upper()
+    learning_scout = source == FORECAST_LEARNING_SCOUT_SOURCE
+    learning = lane.get("forecast_learning_v1")
+    if learning_scout and isinstance(learning, dict):
+        rule_name = f"forecast-orientation:{str(learning.get('model_sha256') or '')[:16]}"
+        rule_digest = str(learning.get("decision_sha256") or "")
     return {
         "predictive_scout": True,
-        "predictive_scout_source": PREDICTIVE_SCOUT_SOURCE,
+        "predictive_scout_source": source,
         "predictive_scout_mode": "FORWARD_EVIDENCE_ONLY",
-        "predictive_scout_hypothesis": "REPRODUCIBLE_FORECAST_FAILURE_CONTRARIAN",
+        "predictive_scout_hypothesis": (
+            "CURRENT_TECHNICAL_FORECAST_FORWARD_LEARNING"
+            if learning_scout
+            else "REPRODUCIBLE_FORECAST_FAILURE_CONTRARIAN"
+        ),
         "predictive_scout_vehicle_proof_status": "UNPROVEN_PASSIVE_LIMIT",
         "predictive_scout_rule_is_vehicle_proof": False,
         "predictive_scout_rule_name": rule_name,
@@ -3536,6 +3711,7 @@ def _predictive_scout_nav_risk_metadata(
         "bidask_replay_precision_seed_rule": lane.get(
             "bidask_replay_precision_seed_rule"
         ),
+        "forecast_learning_v1": lane.get("forecast_learning_v1"),
         "forecast_cycle_id": lane.get("forecast_cycle_id"),
         "forecast_direction": lane.get("forecast_direction"),
         "forecast_confidence": lane.get("forecast_confidence"),
@@ -5041,6 +5217,9 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
     component_scores = getattr(forecast, "component_scores", None)
     if not isinstance(component_scores, dict):
         component_scores = {}
+    forecast_learning = getattr(forecast, "forecast_learning_v1", None)
+    if not isinstance(forecast_learning, dict):
+        forecast_learning = {}
     recovery_receipt = getattr(forecast, "m15_recovery_receipt", None)
     if not isinstance(recovery_receipt, dict):
         recovery_receipt = {}
@@ -5085,6 +5264,7 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
             for key, value in component_scores.items()
             if _optional_float(value) is not None
         },
+        "forecast_learning_v1": dict(forecast_learning),
         "forecast_m15_recovery_receipt": dict(recovery_receipt),
         "forecast_m15_recovery_mode": (
             recovery_receipt.get("mode") if recovery_receipt else None
@@ -6956,7 +7136,9 @@ def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
         # sibling from the same recovery receipt; ordinary failed-break and
         # RANGE lanes keep their existing LIMIT variants below.
         return (OrderType.STOP_ENTRY,)
-    if lane.get("bidask_replay_precision_limit_only"):
+    if lane.get("bidask_replay_precision_limit_only") or lane.get(
+        "forecast_learning_limit_only"
+    ):
         return (OrderType.LIMIT,)
     base = _order_type_for(method)
     variants: list[OrderType] = []
@@ -9715,6 +9897,18 @@ def _predictive_scout_forward_evidence_allowed(intent: OrderIntent) -> bool:
         return False
     if not _non_market_attached_harvest_shape(intent):
         return False
+    if (
+        str(metadata.get("predictive_scout_source") or "").upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+    ):
+        receipt = metadata.get("forecast_learning_v1")
+        return bool(
+            isinstance(receipt, dict)
+            and str(metadata.get("campaign_role") or "").upper()
+            == "FORECAST_LEARNING_SCOUT"
+            and str(receipt.get("rank_direction") or "").upper()
+            == ("UP" if intent.side == Side.LONG else "DOWN")
+        )
     method = intent.market_context.method if intent.market_context is not None else None
     return bool(_bidask_replay_precision_support_for_intent(intent, metadata, method))
 
@@ -9839,19 +10033,32 @@ def positive_rotation_proof_acquisition_contract(
             failed_checks.append("predictive SCOUT method is not BREAKOUT_FAILURE")
         if str(original.get("desk") or "").lower() != "failure_trader":
             failed_checks.append("predictive SCOUT desk is not failure_trader")
-        if (
-            str(original.get("campaign_role") or "").upper()
-            != "BIDASK_REPLAY_CONTRARIAN_SCOUT"
-        ):
+        learning_scout = (
+            str(original.get("predictive_scout_source") or "").upper()
+            == FORECAST_LEARNING_SCOUT_SOURCE
+        )
+        expected_role = (
+            "FORECAST_LEARNING_SCOUT"
+            if learning_scout
+            else "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+        )
+        if str(original.get("campaign_role") or "").upper() != expected_role:
             failed_checks.append(
-                "predictive SCOUT campaign role is not the canonical contrarian role"
+                f"predictive SCOUT campaign role is not {expected_role}"
             )
         if str(original.get("broker_stop_loss_mode") or "").upper() != "INTENT_SL":
             failed_checks.append("predictive SCOUT broker stop-loss mode is not INTENT_SL")
         if original.get("predictive_scout_promotion_allowed") is not False:
             failed_checks.append("predictive SCOUT auto-promotion is not exact false")
-        if original.get("bidask_replay_precision_seed") is not True:
+        if (
+            not learning_scout
+            and original.get("bidask_replay_precision_seed") is not True
+        ):
             failed_checks.append("bidask_replay_precision_seed is not exact true")
+        if learning_scout and not isinstance(
+            original.get("forecast_learning_v1"), dict
+        ):
+            failed_checks.append("forecast-learning SCOUT decision is missing")
         if original.get("positive_rotation_live_ready") is not False:
             failed_checks.append("predictive SCOUT live-ready is not exact false")
 
@@ -10894,6 +11101,7 @@ def _intent_from_lane(
             "forecast_drivers_for": lane.get("forecast_drivers_for"),
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
             "forecast_component_scores": lane.get("forecast_component_scores"),
+            "forecast_learning_v1": lane.get("forecast_learning_v1"),
             "forecast_m15_recovery_receipt": lane.get(
                 "forecast_m15_recovery_receipt"
             ),
@@ -13245,6 +13453,15 @@ def _forecast_live_readiness_issue(
     negative_bidask_issue = _bidask_replay_negative_precision_issue_for_intent(intent, metadata, method)
     if negative_bidask_issue is not None:
         return negative_bidask_issue
+    if (
+        str(metadata.get("predictive_scout_source") or "").upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+        and _predictive_scout_forward_evidence_allowed(intent)
+    ):
+        metadata["forecast_precision_basis"] = (
+            "CURRENT_BIDASK_ORIENTATION_LEARNING_SCOUT"
+        )
+        return None
     if _technical_harvest_precision_support_for_intent(intent, metadata, method):
         return None
     if _bidask_replay_precision_support_for_intent(intent, metadata, method):

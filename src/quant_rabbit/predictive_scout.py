@@ -23,6 +23,7 @@ from quant_rabbit.risk import MIN_PRODUCTION_LOT_UNITS
 
 DEFAULT_PREDICTIVE_SCOUT_POLICY = ROOT / "config" / "predictive_scout_policy.json"
 PREDICTIVE_SCOUT_SOURCE = "BIDASK_REPLAY_PRECISION"
+FORECAST_LEARNING_SCOUT_SOURCE = "FORECAST_ORIENTATION_LEARNING"
 PREDICTIVE_SCOUT_LIVE_ENV = "QR_PREDICTIVE_SCOUT_LIVE_ENABLED"
 PREDICTIVE_SCOUT_MAX_TTL_MINUTES = 90
 PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY = 30
@@ -85,6 +86,7 @@ def predictive_scout_claimed(metadata: dict[str, Any] | None) -> bool:
     if role in {
         "BIDASK_REPLAY_CONTRARIAN_SCOUT",
         "BIDASK_REPLAY_PRECISION_SCOUT",
+        "FORECAST_LEARNING_SCOUT",
     }:
         return True
     rule = metadata.get("bidask_replay_precision_seed_rule")
@@ -138,7 +140,10 @@ def predictive_scout_broker_raw_claimed(raw: Any) -> bool:
 def predictive_scout_metadata_supported(metadata: dict[str, Any]) -> bool:
     if metadata.get("predictive_scout") is not True:
         return False
-    if str(metadata.get("predictive_scout_source") or "").upper() != PREDICTIVE_SCOUT_SOURCE:
+    source = str(metadata.get("predictive_scout_source") or "").upper()
+    if source == FORECAST_LEARNING_SCOUT_SOURCE:
+        return _forecast_learning_scout_metadata_supported(metadata)
+    if source != PREDICTIVE_SCOUT_SOURCE:
         return False
     rule = metadata.get("bidask_replay_precision_seed_rule")
     if not isinstance(rule, dict):
@@ -168,6 +173,77 @@ def predictive_scout_metadata_supported(metadata: dict[str, Any]) -> bool:
     )
 
 
+def _forecast_learning_scout_metadata_supported(
+    metadata: dict[str, Any],
+) -> bool:
+    from quant_rabbit.forecast_learning import (
+        FORECAST_LEARNING_FEATURES,
+        forecast_orientation_decision,
+        load_forecast_orientation_model,
+    )
+
+    receipt = metadata.get("forecast_learning_v1")
+    if not isinstance(receipt, dict):
+        return False
+    decision_sha = str(receipt.get("decision_sha256") or "")
+    body = {key: value for key, value in receipt.items() if key != "decision_sha256"}
+    if decision_sha != _stable_digest(body):
+        return False
+    features = receipt.get("features")
+    if not isinstance(features, dict) or set(features) != set(
+        FORECAST_LEARNING_FEATURES
+    ):
+        return False
+    feature_sha = hashlib.sha256(
+        json.dumps(
+            features,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if str(receipt.get("feature_sha256") or "") != feature_sha:
+        return False
+    model = load_forecast_orientation_model(
+        ROOT / "config" / "forecast_orientation_model_v1.json"
+    )
+    if not model or str(receipt.get("model_sha256") or "") != str(
+        model.get("model_sha256") or ""
+    ):
+        return False
+    original_direction = str(receipt.get("original_direction") or "").upper()
+    rank_direction = str(receipt.get("rank_direction") or "").upper()
+    if original_direction not in {"UP", "DOWN"} or rank_direction not in {
+        "UP",
+        "DOWN",
+    }:
+        return False
+    expected = forecast_orientation_decision(
+        model,
+        original_direction=original_direction,
+        features=features,
+    )
+    return bool(
+        str(metadata.get("campaign_role") or "").upper()
+        == "FORECAST_LEARNING_SCOUT"
+        and str(metadata.get("predictive_scout_hypothesis") or "").upper()
+        == "CURRENT_TECHNICAL_FORECAST_FORWARD_LEARNING"
+        and str(metadata.get("predictive_scout_vehicle_proof_status") or "").upper()
+        == "UNPROVEN_PASSIVE_LIMIT"
+        and metadata.get("predictive_scout_rule_is_vehicle_proof") is False
+        and receipt.get("always_returns_direction") is True
+        and receipt.get("probability_semantics")
+        == "ORIENTATION_RANK_NOT_TRADE_WIN_PROBABILITY"
+        and receipt.get("model_status") in {"ENABLED", "RANK_ONLY"}
+        and rank_direction == str(expected.get("rank_direction") or "").upper()
+        and receipt.get("orientation") == expected.get("orientation")
+        and receipt.get("direct_orientation_probability")
+        == expected.get("direct_probability")
+        and receipt.get("selected_orientation_probability")
+        == expected.get("selected_probability")
+    )
+
+
 def predictive_scout_intent_issues(
     intent: OrderIntent,
     *,
@@ -188,6 +264,8 @@ def predictive_scout_intent_issues(
     policy = predictive_scout_policy(policy_path or data_root.parent / "config" / "predictive_scout_policy.json")
     ledger_path = execution_ledger_db_path or (data_root / "execution_ledger.db")
     issues: list[dict[str, str]] = []
+    source = str(metadata.get("predictive_scout_source") or "").upper()
+    learning_scout = source == FORECAST_LEARNING_SCOUT_SOURCE
 
     manual_pair_exposure = bool(
         snapshot is not None
@@ -234,7 +312,12 @@ def predictive_scout_intent_issues(
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_RULE_NOT_LIVE_GRADE",
-                "SCOUT requires one pre-registered, daily-stable contrarian failure hypothesis; its passive LIMIT vehicle remains unproven until forward exits resolve",
+                (
+                    "forecast-learning SCOUT requires the current content-addressed "
+                    "bid/ask orientation model and exact rank decision"
+                    if learning_scout
+                    else "SCOUT requires one pre-registered, daily-stable contrarian failure hypothesis; its passive LIMIT vehicle remains unproven until forward exits resolve"
+                ),
             )
         )
         if metadata.get("predictive_scout") is not True:
@@ -244,7 +327,7 @@ def predictive_scout_intent_issues(
                     "canonical contrarian SCOUT metadata cannot be downgraded by removing predictive_scout=true",
                 )
             )
-    else:
+    elif not learning_scout:
         method = intent.market_context.method.value if intent.market_context is not None else None
         canonical_candidate = bidask_replay_precision_geometry_candidate(
             metadata,
@@ -286,7 +369,7 @@ def predictive_scout_intent_issues(
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_METHOD_REQUIRED",
-                "forecast-failure SCOUT must remain BREAKOUT_FAILURE; relabeling the same selector cannot mint a new failure-memory vehicle",
+                "predictive SCOUT must remain passive BREAKOUT_FAILURE so the forward vehicle waits for a retest instead of market-chasing",
             )
         )
     if str(metadata.get("desk") or "").strip().lower() != "failure_trader":
@@ -296,13 +379,33 @@ def predictive_scout_intent_issues(
                 "forecast-failure SCOUT must remain on failure_trader; desk relabeling cannot reset cooldown or quarantine",
             )
         )
-    if str(metadata.get("campaign_role") or "").upper() != "BIDASK_REPLAY_CONTRARIAN_SCOUT":
+    expected_role = (
+        "FORECAST_LEARNING_SCOUT"
+        if learning_scout
+        else "BIDASK_REPLAY_CONTRARIAN_SCOUT"
+    )
+    if str(metadata.get("campaign_role") or "").upper() != expected_role:
         issues.append(
             _issue(
                 "PREDICTIVE_SCOUT_ROLE_REQUIRED",
-                "SCOUT must carry campaign_role=BIDASK_REPLAY_CONTRARIAN_SCOUT so broker truth can enforce the one-active cap",
+                f"SCOUT must carry campaign_role={expected_role} so broker truth can enforce the one-active cap",
             )
         )
+    if learning_scout:
+        receipt = metadata.get("forecast_learning_v1")
+        rank_direction = (
+            str(receipt.get("rank_direction") or "").upper()
+            if isinstance(receipt, dict)
+            else ""
+        )
+        expected_side = "LONG" if rank_direction == "UP" else "SHORT" if rank_direction == "DOWN" else ""
+        if intent.side.value != expected_side:
+            issues.append(
+                _issue(
+                    "PREDICTIVE_SCOUT_LEARNED_DIRECTION_MISMATCH",
+                    "forecast-learning SCOUT side must equal the model's current rank direction",
+                )
+            )
     if abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS:
         issues.append(
             _issue(
@@ -2222,7 +2325,8 @@ def _policy_contract_valid(policy: dict[str, Any]) -> bool:
         and 0 < max_daily <= PREDICTIVE_SCOUT_MAX_SENT_PER_CAMPAIGN_DAY
         and 0 < max_ttl <= PREDICTIVE_SCOUT_MAX_TTL_MINUTES
         and order_types == {OrderType.LIMIT.value}
-        and allowed_sources == {PREDICTIVE_SCOUT_SOURCE}
+        and allowed_sources
+        == {PREDICTIVE_SCOUT_SOURCE, FORECAST_LEARNING_SCOUT_SOURCE}
         and minimum_samples >= PREDICTIVE_SCOUT_MIN_REPLAY_SAMPLES
         and minimum_active_days >= PREDICTIVE_SCOUT_MIN_ACTIVE_DAYS
         and minimum_profit_factor >= PREDICTIVE_SCOUT_MIN_PROFIT_FACTOR
@@ -2396,7 +2500,11 @@ def _raw_has_scout_role(raw: Any) -> bool:
         if not isinstance(extension, dict):
             continue
         comment = str(extension.get("comment") or "").upper()
-        if "ROLE=BIDASK_REPLAY_CONTRARIAN_SCOUT" in comment or "ROLE=BIDASK_REPLAY_PRECISION_SCOUT" in comment:
+        if (
+            "ROLE=BIDASK_REPLAY_CONTRARIAN_SCOUT" in comment
+            or "ROLE=BIDASK_REPLAY_PRECISION_SCOUT" in comment
+            or "ROLE=FORECAST_LEARNING_SCOUT" in comment
+        ):
             return True
     return False
 

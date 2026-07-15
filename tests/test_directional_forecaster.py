@@ -22,7 +22,10 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_SPREAD_PROVENANCE_ONLY_MODE,
     TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
 )
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
+from quant_rabbit.instruments import (
+    NORMAL_SPREAD_PIPS,
+    OANDA_SPREAD_CALIBRATION_V1,
+)
 from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.directional_forecaster import (
     FORECAST_D_ANCHOR_HORIZON_MIN,
@@ -67,7 +70,14 @@ class _NamedSig:
 def _production_mba_integrity(*, recovered: bool) -> dict[str, object]:
     normal_spread_pips = NORMAL_SPREAD_PIPS["EUR_USD"]
     max_spread_multiple = RiskPolicy().max_spread_multiple
-    spread_cap_pips = round(normal_spread_pips * max_spread_multiple, 6)
+    execution_spread_cap_pips = round(
+        normal_spread_pips * max_spread_multiple,
+        6,
+    )
+    spread_cap_pips = round(
+        OANDA_SPREAD_CALIBRATION_V1.pairs["EUR_USD"].max_pips,
+        6,
+    )
     blocking_codes = [] if recovered else [TECHNICAL_CANDLE_SPREAD_CONTAMINATED]
     latest_complete = "2026-07-14T00:43:00+00:00" if recovered else "2026-07-14T00:44:00+00:00"
     latest_clean = "2026-07-14T00:43:00+00:00"
@@ -87,9 +97,11 @@ def _production_mba_integrity(*, recovered: bool) -> dict[str, object]:
         "requested_price": "MBA",
         "spread_evaluation_mode": "EXECUTION_ENDPOINT_CAP",
         "evaluation_status": "DEGRADED" if recovered else "BLOCKED",
-        "policy_source": "NORMAL_SPREAD_PIPS*RiskPolicy.max_spread_multiple",
+        "policy_source": "OANDA_SPREAD_CALIBRATION_V1.pairs.max_pips",
+        "spread_calibration_sha256": OANDA_SPREAD_CALIBRATION_V1.calibration_sha256,
         "normal_spread_pips": normal_spread_pips,
         "max_spread_multiple": max_spread_multiple,
+        "execution_spread_cap_pips": execution_spread_cap_pips,
         "spread_cap_pips": spread_cap_pips,
         "requested_count": requested_count,
         "raw_entry_count": requested_count,

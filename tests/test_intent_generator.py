@@ -15,6 +15,7 @@ from quant_rabbit.market_close_leak_gate import MARKET_CLOSE_LEAK_FAMILY_BLOCK_C
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.models import (
     AccountSummary,
+    BrokerPosition,
     BrokerSnapshot,
     MarketContext,
     OrderIntent,
@@ -44,6 +45,7 @@ from quant_rabbit.strategy.intent_generator import (
     _exact_vehicle_net_metrics,
     _exact_vehicle_take_profit_metrics,
     _forecast_context_payload,
+    _forecast_learning_scout_seed_lane,
     _forecast_live_readiness_issue,
     _forecast_watch_only_issue,
     _forecast_seed_lane,
@@ -57,6 +59,7 @@ from quant_rabbit.strategy.intent_generator import (
     _oanda_campaign_firepower_shape_matches_method,
     _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
+    _order_variants_for,
     _predictive_scout_nav_risk_metadata,
     _profitability_acceptance_month_residual_issue,
     _range_rail_limit_watch_only_metadata_can_trade,
@@ -1111,6 +1114,86 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(forecast_for_pair.call_count, 2)
             for call in forecast_for_pair.call_args_list:
                 self.assertIs(call.kwargs["hit_rates"], hit_rates)
+
+    def test_forecast_learning_scout_selects_top_non_manual_pair_and_limit_only(self) -> None:
+        now = datetime(2026, 7, 15, 1, 0, tzinfo=timezone.utc)
+
+        def forecast(pair: str, probability: float, rank_direction: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                pair=pair,
+                direction="UP",
+                confidence=0.71,
+                raw_confidence=0.73,
+                calibration_multiplier=1.0,
+                current_price=1.0,
+                target_price=1.01,
+                invalidation_price=0.99,
+                range_low_price=None,
+                range_high_price=None,
+                range_width_pips=None,
+                horizon_min=60,
+                rationale_summary="current technical forecast",
+                drivers_for=[],
+                drivers_against=[],
+                component_scores={"UP": 70.0, "DOWN": 30.0, "RANGE": 20.0},
+                market_support={},
+                technical_context_v1={},
+                forecast_learning_v1={
+                    "model_status": "RANK_ONLY",
+                    "rank_direction": rank_direction,
+                    "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
+                    "selected_orientation_probability": probability,
+                },
+            )
+
+        source = {
+            "desk": "trend_trader",
+            "pair": "AUD_JPY",
+            "direction": "LONG",
+            "method": TradeMethod.TREND_CONTINUATION.value,
+            "reason": "source context",
+            "blockers": ["stale source blocker"],
+        }
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="manual-eurusd",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=1000,
+                    entry_price=1.17,
+                    owner=Owner.OPERATOR_MANUAL,
+                ),
+            ),
+        )
+        seed = _forecast_learning_scout_seed_lane(
+            [source],
+            snapshot,
+            {
+                "EUR_USD": forecast("EUR_USD", 0.99, "DOWN"),
+                "AUD_JPY": forecast("AUD_JPY", 0.74, "DOWN"),
+            },
+            source_by_pair={"AUD_JPY": source},
+            existing_by_key={
+                (
+                    source["desk"],
+                    source["pair"],
+                    source["direction"],
+                    source["method"],
+                ): source
+            },
+            cycle_id="learning-cycle",
+        )
+
+        self.assertIsNotNone(seed)
+        assert seed is not None
+        self.assertEqual(seed["pair"], "AUD_JPY")
+        self.assertEqual(seed["direction"], "SHORT")
+        self.assertEqual(seed["campaign_role"], "FORECAST_LEARNING_SCOUT")
+        self.assertEqual(seed["predictive_scout_source"], "FORECAST_ORIENTATION_LEARNING")
+        self.assertEqual(seed["blockers"], [])
+        self.assertEqual(_order_variants_for(seed), (OrderType.LIMIT,))
 
     def test_jsonl_dict_reader_streams_valid_dict_rows(self) -> None:
         from quant_rabbit.strategy.intent_generator import _iter_jsonl_dicts
