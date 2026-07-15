@@ -1333,7 +1333,21 @@ def _forecast_learning_scout_forward_evidence_supported(
     # broker production-lot compatibility constant from this module.
     from .predictive_scout import predictive_scout_metadata_supported
 
-    return predictive_scout_metadata_supported(metadata)
+    execution_geometry = metadata.get("forecast_learning_execution_geometry_v1")
+    decision_sha = str(receipt.get("decision_sha256") or "")
+    return bool(
+        predictive_scout_metadata_supported(metadata)
+        and validate_forecast_learning_execution_geometry(
+            execution_geometry,
+            pair=intent.pair,
+            side=intent.side.value,
+            method=method.value,
+            entry=intent.entry,
+            take_profit=intent.tp,
+            stop_loss=intent.sl,
+            source_decision_sha256=decision_sha,
+        )
+    )
 
 
 def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
@@ -3548,6 +3562,15 @@ class RiskEngine:
         forecast_side = Side.LONG if direction == "UP" else Side.SHORT
         if intent.side == forecast_side:
             return []
+        if _forecast_learning_scout_forward_evidence_supported(intent):
+            # The authenticated orientation learner explicitly ranks DIRECT
+            # versus INVERSE.  Applying the ordinary point-forecast conflict
+            # gate to an INVERSE SCOUT makes that bounded forward-learning
+            # route impossible by construction.  The exception is limited to
+            # the content-addressed rank decision and its exact passive LIMIT
+            # entry/TP/SL binding; all other SCOUT, strategy, spread, margin,
+            # Guardian, GPT, and gateway checks still run independently.
+            return []
         if _bidask_replay_precision_support_for_intent(intent) is not None:
             return []
         confidence = _to_float(metadata.get("forecast_confidence"))
@@ -3695,8 +3718,12 @@ class RiskEngine:
         direction = str(metadata.get("forecast_direction") or "").upper()
         if direction not in {"UP", "DOWN"}:
             return []
+        learning_scout = (
+            str(metadata.get("predictive_scout_source") or "").upper()
+            == "FORECAST_ORIENTATION_LEARNING"
+        )
         forecast_side = Side.LONG if direction == "UP" else Side.SHORT
-        if intent.side != forecast_side:
+        if intent.side != forecast_side and not learning_scout:
             return []
 
         severity = "BLOCK" if for_live_send else "WARN"
@@ -3706,10 +3733,7 @@ class RiskEngine:
 
         target_price = _to_float(metadata.get("forecast_target_price"))
         invalidation_price = _to_float(metadata.get("forecast_invalidation_price"))
-        if (
-            str(metadata.get("predictive_scout_source") or "").upper()
-            == "FORECAST_ORIENTATION_LEARNING"
-        ):
+        if learning_scout:
             receipt = metadata.get("forecast_learning_v1")
             execution_geometry = metadata.get(
                 "forecast_learning_execution_geometry_v1"

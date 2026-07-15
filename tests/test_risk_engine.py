@@ -2579,6 +2579,142 @@ class RiskEngineTest(unittest.TestCase):
             {"FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID"},
         )
 
+    def test_inverse_learning_scout_uses_authenticated_rank_instead_of_original_forecast_veto(self) -> None:
+        from quant_rabbit.strategy.directional_forecaster import (
+            _forecast_learning_receipt,
+        )
+
+        technical_context = {
+            "regime": {"primary": "TREND_WEAK"},
+            "volatility": {"primary_atr_band": "NORMAL"},
+            "execution": {"spread_band": "NORMAL"},
+            "location": {"range_location_24h": "UPPER"},
+            "structure": {"primary_direction": "UP"},
+            "regime_family_weighting": {
+                "source_identity": {
+                    "situation": "LONDON_TREND",
+                    "selected_method": "TREND_CONTINUATION",
+                },
+                "aggregate": {"direction": "UP"},
+            },
+        }
+        learning_receipt = _forecast_learning_receipt(
+            pair="CHF_JPY",
+            direction="UP",
+            confidence=0.5752,
+            raw_confidence=0.8808,
+            up_score=75.0,
+            down_score=11.55,
+            range_score=13.65,
+            technical_context_v1=technical_context,
+            now_utc=datetime(2026, 7, 15, 7, 42, tzinfo=timezone.utc),
+            drivers_for=(
+                "H1 CHOCH_DOWN fresh wick-only rejection trap fade UP",
+            ),
+            drivers_against=("M30 shooting star upper wick DOWN",),
+        )
+        self.assertEqual(learning_receipt["orientation"], "INVERSE")
+        self.assertEqual(learning_receipt["rank_direction"], "DOWN")
+        execution_geometry = build_forecast_learning_execution_geometry(
+            pair="CHF_JPY",
+            side="SHORT",
+            method="TREND_CONTINUATION",
+            entry=200.482,
+            take_profit=198.758,
+            stop_loss=201.120,
+            source_decision_sha256=learning_receipt["decision_sha256"],
+            forecast_current_price=200.387,
+            forecast_target_price=200.446,
+            forecast_invalidation_price=200.324,
+        )
+        metadata = {
+            "desk": "trend_trader",
+            "campaign_role": "FORECAST_LEARNING_SCOUT",
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.5752,
+            "forecast_raw_confidence": 0.8808,
+            "forecast_target_price": 200.446,
+            "forecast_invalidation_price": 200.324,
+            "forecast_directional_samples": 0,
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "UP",
+                "aligned_projection_count": 0,
+            },
+            "predictive_scout": True,
+            "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+            "predictive_scout_hypothesis": (
+                "CURRENT_TECHNICAL_FORECAST_FORWARD_LEARNING"
+            ),
+            "predictive_scout_vehicle_proof_status": "UNPROVEN_PASSIVE_LIMIT",
+            "predictive_scout_rule_is_vehicle_proof": False,
+            "forecast_learning_v1": learning_receipt,
+            "forecast_learning_execution_geometry_v1": execution_geometry,
+        }
+        intent = OrderIntent(
+            pair="CHF_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=441,
+            entry=200.482,
+            tp=198.758,
+            sl=201.120,
+            thesis="bounded inverse orientation learning scout",
+            market_context=MarketContext(
+                regime="FAILURE_RISK",
+                narrative="historical tick model ranks the inverse direction",
+                chart_story="passive short retest",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="bound technical stop",
+            ),
+            metadata=metadata,
+        )
+        engine = _capped_engine(live_enabled=True)
+
+        self.assertEqual(
+            engine._forecast_direction_issues(intent, for_live_send=True),
+            [],
+        )
+        self.assertEqual(
+            engine._forecast_geometry_issues(
+                intent,
+                entry_price=200.482,
+                spec=engine._spec("CHF_JPY"),
+                spread_pips=3.8,
+                for_live_send=True,
+            ),
+            [],
+        )
+
+        tampered_metadata = deepcopy(metadata)
+        tampered_metadata["forecast_learning_execution_geometry_v1"][
+            "execution_target_price"
+        ] = 198.700
+        tampered = replace(intent, metadata=tampered_metadata)
+        self.assertIn(
+            "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+            {
+                issue.code
+                for issue in engine._forecast_direction_issues(
+                    tampered,
+                    for_live_send=True,
+                )
+            },
+        )
+        self.assertEqual(
+            {
+                issue.code
+                for issue in engine._forecast_geometry_issues(
+                    tampered,
+                    entry_price=200.482,
+                    spec=engine._spec("CHF_JPY"),
+                    spread_pips=3.8,
+                    for_live_send=True,
+                )
+            },
+            {"FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID"},
+        )
+
     def test_high_headline_forecast_timeout_drag_blocks_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
@@ -3049,12 +3185,27 @@ class RiskEngineTest(unittest.TestCase):
             "campaign_role": "FORECAST_LEARNING_SCOUT",
             "desk": "failure_trader",
             "forecast_learning_v1": {
+                "decision_sha256": "test-forecast-learning-decision",
                 "rank_direction": "UP",
                 "features": {
                     "technical_selected_method": "BREAKOUT_FAILURE"
                 },
             },
         }
+        learning_metadata["forecast_learning_execution_geometry_v1"] = (
+            build_forecast_learning_execution_geometry(
+                pair="AUD_JPY",
+                side="LONG",
+                method="BREAKOUT_FAILURE",
+                entry=114.289,
+                take_profit=114.338,
+                stop_loss=114.250,
+                source_decision_sha256="test-forecast-learning-decision",
+                forecast_current_price=114.289,
+                forecast_target_price=114.338,
+                forecast_invalidation_price=114.250,
+            )
+        )
         learning_intent = OrderIntent(
             pair="AUD_JPY",
             side=Side.LONG,
