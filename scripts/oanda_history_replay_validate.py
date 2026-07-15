@@ -1448,6 +1448,14 @@ def _score_forecasts(
     incomplete_truth_rows: list[ForecastRow] = []
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     candle_delta = _granularity_delta(granularity)
+    # Candle arrays are immutable for the whole scoring pass. Building the
+    # same timestamp list once per forecast made multi-horizon replay
+    # O(forecasts × pair-candles) before even reaching bisect. Index once per
+    # pair so every forecast window lookup remains logarithmic.
+    times_by_pair = {
+        pair: [candle.timestamp_utc for candle in candles]
+        for pair, candles in candles_by_pair.items()
+    }
     for row in rows:
         if _forecast_truth_end(row) > now:
             pending_future_truth.append(row)
@@ -1460,7 +1468,7 @@ def _score_forecasts(
             skipped_no_pair += 1
             missing_windows.append(row)
             continue
-        times = [c.timestamp_utc for c in candles]
+        times = times_by_pair[row.pair]
         start = bisect.bisect_left(times, row.timestamp_utc)
         last_complete_open = _forecast_truth_end(row) - candle_delta
         end = bisect.bisect_right(times, last_complete_open)

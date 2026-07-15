@@ -2606,6 +2606,7 @@ class RiskEngineTest(unittest.TestCase):
             up_score=75.0,
             down_score=11.55,
             range_score=13.65,
+            horizon_min=60.0,
             technical_context_v1=technical_context,
             now_utc=datetime(2026, 7, 15, 7, 42, tzinfo=timezone.utc),
             drivers_for=(

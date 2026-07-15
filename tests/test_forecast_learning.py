@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.forecast_learning import (
     build_forecast_learning_execution_geometry,
+    forecast_feature_values,
     forecast_learning_selected_method,
     forecast_orientation_decision,
     scored_row_feature_values,
@@ -16,6 +17,27 @@ from quant_rabbit.forecast_learning import (
 
 
 class ForecastLearningTest(unittest.TestCase):
+    def test_live_features_bind_the_prediction_horizon(self) -> None:
+        common = {
+            "pair": "EUR_USD",
+            "direction": "UP",
+            "confidence": 0.7,
+            "raw_confidence": 0.7,
+            "up_score": 70.0,
+            "down_score": 20.0,
+            "range_score": 10.0,
+            "technical_context": None,
+            "timestamp_utc": datetime(2026, 7, 1, tzinfo=timezone.utc),
+        }
+
+        short = forecast_feature_values(**common, horizon_min=15.0)
+        hourly = forecast_feature_values(**common, horizon_min=60.0)
+        long = forecast_feature_values(**common, horizon_min=240.0)
+
+        self.assertEqual(short["horizon_bucket"], "<=15m")
+        self.assertEqual(hourly["horizon_bucket"], "31-60m")
+        self.assertEqual(long["horizon_bucket"], "61-240m")
+
     def test_execution_method_and_geometry_preserve_current_technical_decision(self) -> None:
         decision = {
             "decision_sha256": "d" * 64,

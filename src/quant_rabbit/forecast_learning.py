@@ -28,6 +28,7 @@ FORECAST_LEARNING_FEATURES = (
     "raw_confidence_bucket",
     "score_margin_bucket",
     "range_competition",
+    "horizon_bucket",
     "utc_session_bucket",
     "primary_driver_family",
     "primary_against_driver_family",
@@ -382,6 +383,7 @@ def forecast_feature_values(
     up_score: float | None,
     down_score: float | None,
     range_score: float | None,
+    horizon_min: float | None,
     technical_context: Mapping[str, Any] | None,
     timestamp_utc: datetime,
     drivers_for: Sequence[str] = (),
@@ -423,6 +425,7 @@ def forecast_feature_values(
         "raw_confidence_bucket": _confidence_bucket(raw_confidence),
         "score_margin_bucket": _score_margin_bucket(margin),
         "range_competition": _range_competition(up_score, down_score, range_score),
+        "horizon_bucket": _horizon_bucket(horizon_min),
         "utc_session_bucket": _utc_session_bucket(timestamp_utc),
         "primary_driver_family": _driver_family(drivers_for[0] if drivers_for else ""),
         "primary_against_driver_family": _driver_family(
@@ -767,6 +770,21 @@ def _utc_session_bucket(value: datetime) -> str:
     if hour < 22:
         return "UTC_17_22"
     return "UTC_22_24"
+
+
+def _horizon_bucket(value: float | None) -> str:
+    parsed = _positive_float(value)
+    if parsed is None:
+        return "MISSING"
+    if parsed <= 15.0:
+        return "<=15m"
+    if parsed <= 30.0:
+        return "16-30m"
+    if parsed <= 60.0:
+        return "31-60m"
+    if parsed <= 240.0:
+        return "61-240m"
+    return ">240m"
 
 
 def _driver_family(value: str) -> str:

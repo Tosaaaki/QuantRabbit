@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-15
+
+- Added causal technical reconstruction for legacy forecast learning. Complete local OANDA bid/ask candles are downsampled to M1 and joined only when each candle closed no later than the forecast timestamp; signed point-in-time context is never overwritten, reconstruction remains a separately labelled training source, and the model/report bind the forecast file path/hash plus forecast-row, price-truth, technical-truth, and evaluator hashes. Full S5 replay raised usable legacy technical coverage from 0% to 78.6%, but the untouched validation remained negative, so the candidate was not promoted.
+- Bound the forecast horizon into orientation learning and moved horizon selection before the learning receipt. The old model mixed 60/180/240/1,440-minute outcomes without telling the selector which horizon it was predicting. A fixed-horizon comparison now evaluates predeclared 5/15/30/60/240-minute labels with separate non-overlapping chronological cohorts and explicitly blocks promotion after multi-horizon selection until a new forward holdout.
+- Indexed replay candle timestamps once per pair instead of rebuilding the full pair index for every forecast. This removes the forecasts-by-pair-history quadratic lookup cost exposed by multi-horizon evaluation while preserving the same complete-window and bid/ask scoring semantics.
+
 ## 2026-07-14
 
 - Fixed the shared live-runtime lock so a completed zombie shell cannot be mistaken for a still-running guardian during a full-suite or launchd timing race. A persistent Git-ignored OS-backed generation guard now serializes shell and direct-Python acquire/reap/release transitions, and exact owner tokens prevent an old stale-reap decision from deleting a new lock generation. The full wrapper waits from the canonical persisted guardian label even when `ps` is generic; shell and Python use the same whitespace-normalized process-birth identity plus zombie/PID-reuse/initialization-grace inspection; multiline, NUL-bearing, malformed, legacy, or unavailable birth identity for a live PID fails closed; and a bare or mismatched inherited `QR_AUTOTRADE_LOCK_HELD=1` can no longer bypass a different owner.

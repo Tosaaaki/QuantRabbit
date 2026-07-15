@@ -2601,6 +2601,7 @@ def _forecast_learning_receipt(
     up_score: float,
     down_score: float,
     range_score: float,
+    horizon_min: float,
     technical_context_v1: dict[str, Any],
     now_utc: datetime | None,
     drivers_for: tuple[str, ...],
@@ -2628,6 +2629,7 @@ def _forecast_learning_receipt(
         up_score=up_score,
         down_score=down_score,
         range_score=range_score,
+        horizon_min=horizon_min,
         technical_context=technical_context_v1,
         timestamp_utc=timestamp,
         drivers_for=drivers_for,
@@ -3230,6 +3232,14 @@ def synthesize_forecast(
         hit_rates=hit_rates,
         regime=calibration_regime,
     )
+    if winner == "RANGE":
+        horizon_min = FORECAST_RANGE_HORIZON_MIN
+        horizon_reason = None
+    else:
+        horizon_min, horizon_reason = _forecast_horizon_for_direction(
+            pair_chart,
+            winner,
+        )
     forecast_learning_v1: dict[str, Any] = {}
     if require_technical_candle_integrity and not m15_recovery_receipt:
         original_winner = winner
@@ -3241,6 +3251,7 @@ def synthesize_forecast(
             up_score=up_score,
             down_score=down_score,
             range_score=range_score,
+            horizon_min=horizon_min,
             technical_context_v1=technical_context_v1,
             now_utc=now_utc,
             drivers_for=_top_reasons(contributions, direction=original_winner),
@@ -3258,6 +3269,10 @@ def synthesize_forecast(
             and learned_direction != original_winner
         ):
             winner = learned_direction
+            horizon_min, horizon_reason = _forecast_horizon_for_direction(
+                pair_chart,
+                winner,
+            )
             learning_reason = (
                 f"S5 bid/ask walk-forward model inverted {original_winner} to "
                 f"{winner} (orientation rank="
@@ -3349,12 +3364,6 @@ def synthesize_forecast(
             f"; robust forecast geometry missing {'/'.join(missing)} "
             f"→ confidence ×{FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT:.2f}"
         )
-
-    horizon_reason = None
-    if winner == "RANGE":
-        horizon_min = FORECAST_RANGE_HORIZON_MIN
-    else:
-        horizon_min, horizon_reason = _forecast_horizon_for_direction(pair_chart, winner)
 
     rationale_summary = (
         f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} EITHER={either_score:.1f} → "
