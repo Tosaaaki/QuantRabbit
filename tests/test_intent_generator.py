@@ -1132,7 +1132,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 range_low_price=None,
                 range_high_price=None,
                 range_width_pips=None,
-                horizon_min=60,
+                horizon_min=0,
                 rationale_summary="current technical forecast",
                 drivers_for=[],
                 drivers_against=[],
@@ -1145,6 +1145,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     "rank_direction": rank_direction,
                     "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
                     "selected_orientation_probability": probability,
+                    "ranking_horizon_min": 180,
                     "features": {
                         "technical_selected_method": "TREND_CONTINUATION",
                         "technical_family_direction_alignment": (
@@ -1202,6 +1203,7 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["desk"], "trend_trader")
         self.assertEqual(seed["campaign_role"], "FORECAST_LEARNING_SCOUT")
         self.assertEqual(seed["predictive_scout_source"], "FORECAST_ORIENTATION_LEARNING")
+        self.assertEqual(seed["forecast_horizon_min"], 180)
         self.assertEqual(seed["blockers"], [])
         self.assertEqual(_order_variants_for(seed), (OrderType.LIMIT,))
 
@@ -8008,6 +8010,76 @@ class IntentGeneratorTest(unittest.TestCase):
             }
 
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", codes)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
+
+    def test_learning_scout_telemetry_accepts_same_cycle_unclear_source(self) -> None:
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _telemetry_live_readiness_issues
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        now = datetime(2026, 7, 15, 17, 30, tzinfo=timezone.utc)
+        metadata = {
+            "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+            "forecast_direction": "UNCLEAR",
+            "forecast_confidence": 0.0,
+            "forecast_cycle_id": "contradiction-cycle",
+        }
+        intent = OrderIntent(
+            pair="CAD_JPY",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=313,
+            entry=117.10,
+            tp=117.20,
+            sl=117.00,
+            thesis="bounded contradiction learning scout",
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+        source_row = {
+            "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+            "direction": "UNCLEAR",
+            "confidence": 0.0,
+            "cycle_id": "contradiction-cycle",
+        }
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator."
+            "_predictive_scout_forward_evidence_allowed",
+            return_value=True,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._forecast_history_for_pair_cycle",
+            return_value=source_row,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._latest_forecast_history_for_pair",
+            return_value=source_row,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._expired_pending_projection_count",
+            return_value=0,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._execution_ledger_sync_live_issue",
+            return_value=None,
+        ):
+            codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    metadata,
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={"CAD_JPY": Quote("CAD_JPY", 117.10, 117.12, now)},
+                    ),
+                    now,
+                )
+            }
+
+        self.assertNotIn("TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE", codes)
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
 
     def test_stale_quote_skips_forecast_history_mismatch_checks(self) -> None:

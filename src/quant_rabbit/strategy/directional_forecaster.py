@@ -2662,6 +2662,7 @@ def _forecast_learning_receipt(
             "ordinary_correction_applied"
         )
         is True,
+        "ranking_horizon_min": int(horizon_min),
         "always_returns_direction": True,
         "probability_semantics": "ORIENTATION_RANK_NOT_TRADE_WIN_PROBABILITY",
         "features": features,

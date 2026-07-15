@@ -1476,6 +1476,7 @@ class RegimeFamilyForecastGateTest(unittest.TestCase):
             learning["probability_semantics"],
             "ORIENTATION_RANK_NOT_TRADE_WIN_PROBABILITY",
         )
+        self.assertGreater(learning["ranking_horizon_min"], 0)
         self.assertNotEqual(
             learning["features"]["score_margin_bucket"],
             "ZERO",

@@ -3498,6 +3498,7 @@ def _forecast_learning_scout_seed_lanes(
         )
         receipt = dict(getattr(forecast, "forecast_learning_v1", {}) or {})
         probability = _optional_float(receipt.get("selected_orientation_probability")) or 0.5
+        ranking_horizon_min = _optional_float(receipt.get("ranking_horizon_min"))
         lane.update(
             {
                 "desk": FORECAST_SEED_DESK_BY_METHOD[method],
@@ -3527,6 +3528,17 @@ def _forecast_learning_scout_seed_lanes(
                 "tp_target_intent": "HARVEST",
                 "opportunity_mode": "HARVEST",
                 "forecast_learning_v1": receipt,
+                # A contradiction-vetoed ordinary forecast correctly exposes
+                # horizon=0, but its bounded learning rank was calculated from
+                # the pre-veto directional thesis. Preserve that authenticated
+                # ranking horizon for SCOUT TTL/telemetry without changing the
+                # ordinary forecast's fail-closed horizon.
+                "forecast_horizon_min": (
+                    int(ranking_horizon_min)
+                    if ranking_horizon_min is not None
+                    and ranking_horizon_min > 0.0
+                    else int(_optional_float(getattr(forecast, "horizon_min", 0)) or 0)
+                ),
             }
         )
         out.append(lane)
@@ -14921,10 +14933,16 @@ def _telemetry_live_readiness_issues(
         metadata,
         min_confidence=_forecast_live_min_confidence(metadata),
     )
+    forecast_learning_scout = (
+        str(metadata.get("predictive_scout_source") or "").upper()
+        == FORECAST_LEARNING_SCOUT_SOURCE
+        and _predictive_scout_forward_evidence_allowed(intent)
+    )
     if (
         direction not in {"UP", "DOWN", "RANGE"}
         and not recovery_reversal_override
         and not forecast_support_override
+        and not forecast_learning_scout
     ):
         if direction:
             issues.append(
@@ -15040,7 +15058,10 @@ def _telemetry_live_readiness_issues(
             latest_is_current = True
 
         latest_direction = str(audit_forecast.get("direction") or "").upper()
-        if direction in {"UP", "DOWN", "RANGE"} and latest_direction != direction:
+        direction_must_match_history = (
+            direction in {"UP", "DOWN", "RANGE"} or forecast_learning_scout
+        )
+        if direction_must_match_history and latest_direction != direction:
             latest_is_current = False
             issues.append(
                 _telemetry_issue(
@@ -15054,7 +15075,7 @@ def _telemetry_live_readiness_issues(
             )
         latest_confidence = _optional_float(audit_forecast.get("confidence"))
         if (
-            direction in {"UP", "DOWN", "RANGE"}
+            direction_must_match_history
             and confidence is not None
             and latest_confidence is not None
             and not _forecast_confidence_matches(latest_confidence, confidence)
@@ -15079,7 +15100,7 @@ def _telemetry_live_readiness_issues(
             latest_row_ts = _parse_telemetry_time(latest.get("timestamp_utc"))
             if latest_row_ts is not None and latest_ts is not None and latest_row_ts > latest_ts:
                 later_direction = str(latest.get("direction") or "").upper()
-                if direction in {"UP", "DOWN", "RANGE"} and later_direction != direction:
+                if direction_must_match_history and later_direction != direction:
                     latest_is_current = False
                     issues.append(
                         _telemetry_issue(
@@ -15093,7 +15114,7 @@ def _telemetry_live_readiness_issues(
                     )
                 later_confidence = _optional_float(latest.get("confidence"))
                 if (
-                    direction in {"UP", "DOWN", "RANGE"}
+                    direction_must_match_history
                     and confidence is not None
                     and later_confidence is not None
                     and not _forecast_confidence_matches(later_confidence, confidence)
