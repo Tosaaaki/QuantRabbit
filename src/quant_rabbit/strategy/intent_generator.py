@@ -29,6 +29,7 @@ from quant_rabbit.forecast_precision import (
 )
 from quant_rabbit.forecast_learning import (
     build_forecast_learning_execution_geometry,
+    forecast_learning_rank_matches_technical_method,
     forecast_learning_selected_method,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
@@ -3459,6 +3460,13 @@ def _forecast_learning_scout_seed_lanes(
             # Direction-only rank telemetry remains useful, but a live forward
             # vehicle must preserve the method selected by the same point-in-time
             # technical context.  Never replace NONE with BREAKOUT_FAILURE.
+            continue
+        if not forecast_learning_rank_matches_technical_method(receipt):
+            # The keep/invert learner ranks direction only.  Do not attach an
+            # inverse side to a technical family whose point-in-time direction
+            # says the opposite trade (for example, SHORT TREND_CONTINUATION
+            # while the bound trend family is UP).  Continue to the next pair
+            # instead of letting the top unusable rank monopolize the scout.
             continue
         side = Side.LONG.value if rank_direction == "UP" else Side.SHORT.value
         confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0

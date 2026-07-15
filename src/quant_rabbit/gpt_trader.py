@@ -2415,7 +2415,17 @@ class GPTTraderBrain:
 
     def run(self, *, snapshot_path: Path) -> GPTTraderSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
-        packet = self._input_packet(snapshot_path)
+        # Measurement refresh belongs to the draft/packet-preparation phase.
+        # Re-running it here can resolve a previously pending 30m/2h forecast
+        # while the model is authoring its overlay.  That mutates the very
+        # prediction ledger bound into the prepared evidence packet and makes
+        # the verifier reject its own current decision as stale.  Verify the
+        # frozen packet first; the next draft cycle will ingest newly due
+        # outcomes before asking the model for another prediction.
+        packet = self._input_packet(
+            snapshot_path,
+            refresh_market_read_measurement=False,
+        )
         if self.provider is None:
             raise RuntimeError("Codex GPT verifier requires a decision response JSON")
         raw_decision = self.provider.decide(packet, GPT_TRADER_SCHEMA)
@@ -2575,7 +2585,12 @@ class GPTTraderBrain:
             "may_grant_gateway_permission": False,
         }
 
-    def _input_packet(self, snapshot_path: Path) -> dict[str, Any]:
+    def _input_packet(
+        self,
+        snapshot_path: Path,
+        *,
+        refresh_market_read_measurement: bool = True,
+    ) -> dict[str, Any]:
         snapshot = _load_json(snapshot_path)
         intents = _load_json(self.intents_path)
         campaign = _load_json(self.campaign_plan_path)
@@ -2606,12 +2621,20 @@ class GPTTraderBrain:
         active_opportunity_board = _load_optional_json(self.active_opportunity_board_path)
         non_eurusd_frontier = _load_optional_json(self.non_eurusd_live_grade_frontier_path)
         range_rail_geometry_repair = _load_optional_json(self.range_rail_geometry_repair_path)
-        market_read_measurement_refresh = refresh_market_read_measurements(
-            predictions_path=self.market_read_predictions_path,
-            report_path=self.market_read_score_report_path,
-            pair_charts_path=self.pair_charts_path,
-            execution_ledger_path=self.execution_ledger_path,
-        )
+        if refresh_market_read_measurement:
+            market_read_measurement_refresh = refresh_market_read_measurements(
+                predictions_path=self.market_read_predictions_path,
+                report_path=self.market_read_score_report_path,
+                pair_charts_path=self.pair_charts_path,
+                execution_ledger_path=self.execution_ledger_path,
+            )
+        else:
+            market_read_measurement_refresh = {
+                "status": "DEFERRED_UNTIL_NEXT_DRAFT",
+                "read_only_measurement": True,
+                "live_permission": False,
+                "may_change_execution_permission": False,
+            }
         market_read_feedback = market_read_feedback_summary(self.market_read_predictions_path)
         market_read_feedback["measurement_refresh"] = market_read_measurement_refresh
         active_path = _active_path_packet(

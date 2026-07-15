@@ -183,6 +183,7 @@ def _forecast_learning_scout_metadata_supported(
 ) -> bool:
     from quant_rabbit.forecast_learning import (
         FORECAST_LEARNING_FEATURES,
+        forecast_learning_rank_matches_technical_method,
         forecast_orientation_decision,
         load_forecast_orientation_model,
     )
@@ -246,6 +247,7 @@ def _forecast_learning_scout_metadata_supported(
         == expected.get("direct_probability")
         and receipt.get("selected_orientation_probability")
         == expected.get("selected_probability")
+        and forecast_learning_rank_matches_technical_method(receipt)
     )
 
 

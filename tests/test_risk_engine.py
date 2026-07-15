@@ -2656,7 +2656,7 @@ class RiskEngineTest(unittest.TestCase):
             {"FORECAST_LEARNING_EXECUTION_GEOMETRY_INVALID"},
         )
 
-    def test_inverse_learning_scout_uses_authenticated_rank_instead_of_original_forecast_veto(self) -> None:
+    def test_inverse_learning_scout_cannot_relabel_aligned_trend_as_countertrend(self) -> None:
         from quant_rabbit.strategy.directional_forecaster import (
             _forecast_learning_receipt,
         )
@@ -2749,10 +2749,14 @@ class RiskEngineTest(unittest.TestCase):
         )
         engine = _capped_engine(live_enabled=True)
 
-        self.assertEqual(
-            engine._forecast_direction_issues(intent, for_live_send=True),
-            [],
-        )
+        direction_codes = {
+            issue.code
+            for issue in engine._forecast_direction_issues(
+                intent,
+                for_live_send=True,
+            )
+        }
+        self.assertTrue(direction_codes)
         self.assertEqual(
             engine._forecast_geometry_issues(
                 intent,

@@ -1166,9 +1166,13 @@ class GPTTraderBrainTest(unittest.TestCase):
             files = _fixtures(root)
             brain = _brain(root, files, _trade_decision())
 
-            summary = brain.run(snapshot_path=files["snapshot"])
+            with patch(
+                "quant_rabbit.gpt_trader.refresh_market_read_measurements"
+            ) as refresh_measurements:
+                summary = brain.run(snapshot_path=files["snapshot"])
 
             self.assertEqual(summary.status, "ACCEPTED")
+            refresh_measurements.assert_not_called()
             rows = [
                 json.loads(line)
                 for line in (root / "market_read_predictions.jsonl").read_text().splitlines()

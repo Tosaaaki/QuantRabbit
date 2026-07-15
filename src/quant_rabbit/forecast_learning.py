@@ -75,6 +75,46 @@ def forecast_learning_selected_method(receipt: Mapping[str, Any] | None) -> str 
     return method if method in FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD else None
 
 
+def forecast_learning_rank_matches_technical_method(
+    receipt: Mapping[str, Any] | None,
+) -> bool:
+    """Reject a learned side that contradicts its bound technical method.
+
+    The orientation model ranks keep versus invert; it does not relabel the
+    point-in-time entry family.  In particular, an inverse rank cannot be sent
+    as TREND_CONTINUATION when the same receipt says the original forecast was
+    aligned with the trend family.  That combination is a counter-trend trade
+    wearing a trend label, so its geometry and historical evidence no longer
+    describe the order being proposed.
+    """
+
+    if not isinstance(receipt, Mapping):
+        return False
+    method = forecast_learning_selected_method(receipt)
+    if method is None:
+        return False
+    if method != "TREND_CONTINUATION":
+        return True
+    features = receipt.get("features")
+    if not isinstance(features, Mapping):
+        return False
+    original_direction = _label(receipt.get("original_direction"))
+    rank_direction = _label(receipt.get("rank_direction"))
+    family_alignment = _label(
+        features.get("technical_family_direction_alignment")
+    )
+    if original_direction not in {"UP", "DOWN"} or rank_direction not in {
+        "UP",
+        "DOWN",
+    }:
+        return False
+    if family_alignment == "ALIGNED":
+        return rank_direction == original_direction
+    if family_alignment == "CONTRADICTED":
+        return rank_direction == _opposite(original_direction)
+    return False
+
+
 def build_forecast_learning_execution_geometry(
     *,
     pair: str,

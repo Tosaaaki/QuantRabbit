@@ -1141,11 +1141,15 @@ class IntentGeneratorTest(unittest.TestCase):
                 technical_context_v1={},
                 forecast_learning_v1={
                     "model_status": "RANK_ONLY",
+                    "original_direction": "UP",
                     "rank_direction": rank_direction,
                     "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
                     "selected_orientation_probability": probability,
                     "features": {
-                        "technical_selected_method": "TREND_CONTINUATION"
+                        "technical_selected_method": "TREND_CONTINUATION",
+                        "technical_family_direction_alignment": (
+                            "ALIGNED" if rank_direction == "UP" else "CONTRADICTED"
+                        ),
                     },
                 },
             )
@@ -1229,10 +1233,16 @@ class IntentGeneratorTest(unittest.TestCase):
                 technical_context_v1={},
                 forecast_learning_v1={
                     "model_status": "RANK_ONLY",
+                    "original_direction": "UP",
                     "rank_direction": rank_direction,
                     "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
                     "selected_orientation_probability": probability,
-                    "features": {"technical_selected_method": method},
+                    "features": {
+                        "technical_selected_method": method,
+                        "technical_family_direction_alignment": (
+                            "ALIGNED" if rank_direction == "UP" else "CONTRADICTED"
+                        ),
+                    },
                 },
             )
 
@@ -1275,6 +1285,69 @@ class IntentGeneratorTest(unittest.TestCase):
             [("GBP_CAD", "LONG"), ("AUD_JPY", "SHORT")],
         )
         self.assertTrue(all(_order_variants_for(lane) == (OrderType.LIMIT,) for lane in seeds))
+
+    def test_forecast_learning_scout_skips_inverse_rank_that_contradicts_trend_method(self) -> None:
+        now = datetime(2026, 7, 15, 1, 0, tzinfo=timezone.utc)
+
+        def forecast(
+            pair: str,
+            probability: float,
+            rank_direction: str,
+            family_alignment: str,
+        ) -> SimpleNamespace:
+            return SimpleNamespace(
+                pair=pair,
+                direction="UP",
+                confidence=0.71,
+                raw_confidence=0.73,
+                calibration_multiplier=1.0,
+                current_price=1.0,
+                target_price=1.01,
+                invalidation_price=0.99,
+                range_low_price=None,
+                range_high_price=None,
+                range_width_pips=None,
+                horizon_min=60,
+                rationale_summary="current technical forecast",
+                drivers_for=[],
+                drivers_against=[],
+                component_scores={"UP": 70.0, "DOWN": 30.0, "RANGE": 20.0},
+                market_support={},
+                technical_context_v1={},
+                forecast_learning_v1={
+                    "model_status": "RANK_ONLY",
+                    "original_direction": "UP",
+                    "rank_direction": rank_direction,
+                    "orientation": "DIRECT" if rank_direction == "UP" else "INVERSE",
+                    "selected_orientation_probability": probability,
+                    "features": {
+                        "technical_selected_method": "TREND_CONTINUATION",
+                        "technical_family_direction_alignment": family_alignment,
+                    },
+                },
+            )
+
+        snapshot = BrokerSnapshot(fetched_at_utc=now)
+        with patch(
+            "quant_rabbit.strategy.intent_generator.FORECAST_LEARNING_SCOUT_MAX_SEEDS",
+            1,
+        ):
+            seeds = _forecast_learning_scout_seed_lanes(
+                [],
+                snapshot,
+                {
+                    "GBP_AUD": forecast("GBP_AUD", 0.91, "DOWN", "ALIGNED"),
+                    "AUD_JPY": forecast("AUD_JPY", 0.72, "UP", "ALIGNED"),
+                },
+                source_by_pair={},
+                existing_by_key={},
+                cycle_id="learning-method-compatibility-cycle",
+            )
+
+        self.assertEqual(
+            [(lane["pair"], lane["direction"], lane["method"]) for lane in seeds],
+            [("AUD_JPY", "LONG", "TREND_CONTINUATION")],
+        )
 
     def test_forecast_learning_scout_bypasses_only_broad_replay_negative(self) -> None:
         metadata = {

@@ -69,6 +69,7 @@ from .forecast_precision import (
 )
 from .forecast_learning import (
     FORECAST_LEARNING_EXECUTION_DESK_BY_METHOD,
+    forecast_learning_rank_matches_technical_method,
     forecast_learning_selected_method,
     validate_forecast_learning_execution_geometry,
 )
@@ -1370,6 +1371,8 @@ def _forecast_learning_scout_forward_evidence_supported(
     method = intent.market_context.method if intent.market_context is not None else None
     selected_method = forecast_learning_selected_method(receipt)
     if method is None or method.value != selected_method:
+        return False
+    if not forecast_learning_rank_matches_technical_method(receipt):
         return False
     if (
         str(metadata.get("desk") or "").lower()
