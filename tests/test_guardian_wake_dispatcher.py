@@ -4277,7 +4277,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 json.loads(paths.dispatcher_state.read_text())["reviewed_events"],
             )
 
-    def test_full_tuning_queue_is_retried_without_dropping_pending_work(self) -> None:
+    def test_base_tuning_queue_preserves_reserved_action_capacity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
             for index in range(dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS):
@@ -4309,18 +4309,51 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 subprocess_run=_fake_codex(calls, _valid_receipt(tuning_review=True)),
             )
 
-            self.assertEqual(result["status"], "TUNING_HANDOFF_FAILED")
-            self.assertEqual(result["tuning_handoff"]["status"], "WORK_ORDER_QUEUE_FULL")
-            self.assertEqual(paths.tuning_work_order.read_text(), before)
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["tuning_handoff"]["status"], "WORK_ORDER_WRITTEN")
+            self.assertNotEqual(paths.tuning_work_order.read_text(), before)
+            self.assertEqual(
+                json.loads(paths.tuning_work_order.read_text())["pending_count"],
+                dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS + 1,
+            )
             state = json.loads(paths.dispatcher_state.read_text())
             selected_key = _event(severity="P1")["dedupe_key"]
-            self.assertNotIn(selected_key, state.get("reviewed_events", {}))
-            self.assertIn(selected_key, state["dispatch_attempts"])
+            self.assertIn(selected_key, state.get("reviewed_events", {}))
+            self.assertNotIn(selected_key, state.get("dispatch_attempts", {}))
+
+    def test_base_tuning_queue_preserves_reserved_active_exposure_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
+            _fill_tuning_queue(paths.tuning_work_order)
+            event = {
+                **_event(
+                    severity="P2",
+                    event_id="active-exposure-review",
+                    pair="EUR_USD",
+                    dedupe_key="EUR_USD|active-exposure|FAILED_ACCEPTANCE|HOLD",
+                ),
+                "action_hint": "HOLD",
+                "details": {"trade_id": "12345", "units": 1000},
+                "wake_reason_codes": ["REGIME_STATE_CHANGE"],
+            }
+
+            result = dispatcher_module._maybe_write_tuning_work_order(
+                path=paths.tuning_work_order,
+                selected_event=event,
+                receipt={"bot_tuning_review": _valid_tuning_review("EUR_USD")},
+                now=NOW + timedelta(minutes=1),
+            )
+
+            self.assertEqual(result["status"], "WORK_ORDER_WRITTEN")
+            self.assertEqual(
+                json.loads(paths.tuning_work_order.read_text())["pending_count"],
+                dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS + 1,
+            )
 
     def test_queue_full_newer_same_dedupe_preserves_exact_pending_and_retry_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
-            _fill_tuning_queue(paths.tuning_work_order)
+            _fill_tuning_queue(paths.tuning_work_order, include_action_reserve=True)
             calls: list[list[str]] = []
             original = _event(severity="P1")
 
@@ -4486,7 +4519,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
     def test_queue_slot_recovery_releases_exhausted_retry_and_preserves_terminal_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
-            _fill_tuning_queue(paths.tuning_work_order)
+            _fill_tuning_queue(paths.tuning_work_order, include_action_reserve=True)
             calls: list[list[str]] = []
             failed = run_dispatcher(
                 paths=paths,
@@ -4542,7 +4575,10 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 recovered["tuning_queue_recovery"]["status"],
                 "WORK_ORDER_QUEUE_CAPACITY_RECOVERED",
             )
-            self.assertEqual(payload["pending_count"], dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS)
+            self.assertEqual(
+                payload["pending_count"],
+                dispatcher_module.MAX_TOTAL_PENDING_TUNING_WORK_ORDERS,
+            )
             self.assertTrue(
                 any(
                     item.get("experiment_id") == "slot-release-experiment"
@@ -4550,7 +4586,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 )
             )
 
-    def test_queue_full_skips_enabled_gateway_action_cycle(self) -> None:
+    def test_base_queue_full_still_runs_enabled_gateway_action_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
             _fill_tuning_queue(paths.tuning_work_order)
@@ -4573,9 +4609,10 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     subprocess_run=_fake_codex(codex_calls, _valid_receipt(tuning_review=True)),
                 )
 
-            self.assertEqual(result["status"], "TUNING_HANDOFF_FAILED")
-            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_TUNING_HANDOFF_FAILED")
-            self.assertEqual(action_calls, [])
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["tuning_handoff"]["status"], "WORK_ORDER_WRITTEN")
+            self.assertEqual(result["gateway_handoff"]["status"], "ACTION_CYCLE_CALLED")
+            self.assertEqual(len(action_calls), 1)
 
     def test_corrupt_tuning_queue_never_releases_budget_or_overwrites_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4697,7 +4734,18 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             def too_many_work_orders(payload: dict) -> None:
                 payload["work_orders"] = [
                     {**payload["work_orders"][0], "work_order_id": f"work-{index}"}
-                    for index in range(dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS + 1)
+                    for index in range(
+                        dispatcher_module.MAX_TOTAL_PENDING_TUNING_WORK_ORDERS + 1
+                    )
+                ]
+                payload["pending_count"] = len(payload["work_orders"])
+
+            def ordinary_work_orders_consume_action_reserve(payload: dict) -> None:
+                payload["work_orders"] = [
+                    {**payload["work_orders"][0], "work_order_id": f"ordinary-{index}"}
+                    for index in range(
+                        dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS + 1
+                    )
                 ]
                 payload["pending_count"] = len(payload["work_orders"])
 
@@ -4737,6 +4785,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             mutations = (
                 ("work_orders", too_many_work_orders),
+                ("reserved action capacity", ordinary_work_orders_consume_action_reserve),
                 ("terminal_history", too_much_terminal_history),
                 ("observations", too_many_observations),
                 ("stale_prepared_experiment_contracts", too_many_stale_contracts),
@@ -6938,7 +6987,7 @@ def _technical_tuning_event(
     }
 
 
-def _fill_tuning_queue(path: Path) -> None:
+def _fill_tuning_queue(path: Path, *, include_action_reserve: bool = False) -> None:
     for index in range(dispatcher_module.MAX_PENDING_TUNING_WORK_ORDERS):
         pair = f"PAIR_{index:02d}"
         event = {
@@ -6955,6 +7004,27 @@ def _fill_tuning_queue(path: Path) -> None:
             selected_event=event,
             receipt={"bot_tuning_review": _valid_tuning_review(pair)},
             now=NOW + timedelta(seconds=index),
+        )
+        if result["status"] != "WORK_ORDER_WRITTEN":
+            raise AssertionError(result)
+    if not include_action_reserve:
+        return
+    for index in range(dispatcher_module.MAX_RESERVED_ACTION_TUNING_WORK_ORDERS):
+        pair = f"URGENT_{index:02d}"
+        event = {
+            **_event(
+                severity="P1",
+                event_id=f"urgent-{index}",
+                pair=pair,
+                dedupe_key=f"{pair}|urgent|FAILED_ACCEPTANCE|TRADE",
+            ),
+            "wake_reason_codes": ["REGIME_STATE_CHANGE"],
+        }
+        result = dispatcher_module._maybe_write_tuning_work_order(
+            path=path,
+            selected_event=event,
+            receipt={"bot_tuning_review": _valid_tuning_review(pair)},
+            now=NOW + timedelta(minutes=1, seconds=index),
         )
         if result["status"] != "WORK_ORDER_WRITTEN":
             raise AssertionError(result)

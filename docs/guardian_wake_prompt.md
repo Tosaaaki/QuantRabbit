@@ -105,6 +105,12 @@ Rules:
 - A tuning review is a hypothesis handoff only. It must name only the selected
   pair, must keep every existing blocker, and must not claim that a proposed
   adjustment is already proved or live-ready.
+- Tuning-queue occupancy is research bookkeeping, not market evidence. Never
+  change an otherwise supported `TRADE`, `ADD`, `HARVEST`, `REDUCE`, or
+  `CANCEL_PENDING` receipt to `HOLD`/`NO_ACTION` because ordinary tuning work is
+  backlogged; the dispatcher reserves bounded action/active-exposure slots and
+  the later RiskEngine/LiveOrderGateway still decide whether execution is
+  allowed.
 - Version 1 can evaluate only the `forecast` family's recorded
   `forecast_confidence_floor`. If that is not the affected surface, use
   `NO_CHANGE_INSUFFICIENT_EVIDENCE` and name the missing pre-entry signal log;

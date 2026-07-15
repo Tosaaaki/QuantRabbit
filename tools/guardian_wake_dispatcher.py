@@ -111,6 +111,14 @@ MAX_PENDING_SUCCESSORS_PER_DEDUPE = 8
 # bounded headroom for exact-lane obligations without turning the queue into an
 # unbounded evidence store.
 MAX_PENDING_TUNING_WORK_ORDERS = 48
+# Tuning research must not consume the last capacity needed to persist an
+# event-driven action review.  Keep a small, bounded reserve for P0/P1 or
+# execution-facing Guardian events.  This does not grant execution authority:
+# the accepted receipt, RiskEngine, and LiveOrderGateway remain mandatory.
+MAX_RESERVED_ACTION_TUNING_WORK_ORDERS = 8
+MAX_TOTAL_PENDING_TUNING_WORK_ORDERS = (
+    MAX_PENDING_TUNING_WORK_ORDERS + MAX_RESERVED_ACTION_TUNING_WORK_ORDERS
+)
 TUNING_SEMANTIC_IDENTITY_VERSION = 2
 TUNING_REVIEW_BATCH_ITEM_FIELDS = frozenset(
     {"work_order_id", "expected_observation_id", "review"}
@@ -1328,12 +1336,11 @@ def _release_recovered_tuning_queue_backoffs(
             "released_count": 0,
         }
     pending, _ = _normalized_tuning_work_order_queue(tuning_work_order)
-    if len(pending) >= MAX_PENDING_TUNING_WORK_ORDERS:
-        return state, None
     attempts = state.get("dispatch_attempts")
     if not isinstance(attempts, dict) or not attempts:
         return state, None
     released: list[str] = []
+    released_capacities: list[int] = []
     normalized: dict[str, Any] = {}
     for dedupe_key, value in attempts.items():
         if not isinstance(value, dict):
@@ -1343,14 +1350,21 @@ def _release_recovered_tuning_queue_backoffs(
         if str(record.get("last_error") or "").upper() != "WORK_ORDER_QUEUE_FULL":
             normalized[str(dedupe_key)] = record
             continue
+        attempted_event = record.get("event") if isinstance(record.get("event"), dict) else {}
+        event_capacity = _tuning_queue_capacity_for_event(attempted_event)
+        if len(pending) >= event_capacity:
+            normalized[str(dedupe_key)] = record
+            continue
         record["attempt_count"] = 0
         record["retry_after_utc"] = now.isoformat()
         record["retry_budget_exhausted"] = False
         record["last_status"] = "WORK_ORDER_QUEUE_CAPACITY_RECOVERED"
         record["queue_capacity_recovered_at_utc"] = now.isoformat()
         record["queue_pending_count_at_recovery"] = len(pending)
+        record["queue_capacity_at_recovery"] = event_capacity
         normalized[str(dedupe_key)] = record
         released.append(str(dedupe_key))
+        released_capacities.append(event_capacity)
     if not released:
         return state, None
     state["dispatch_attempts"] = normalized
@@ -1359,7 +1373,10 @@ def _release_recovered_tuning_queue_backoffs(
         "status": "WORK_ORDER_QUEUE_CAPACITY_RECOVERED",
         "observed_at_utc": now.isoformat(),
         "pending_count": len(pending),
-        "max_pending_count": MAX_PENDING_TUNING_WORK_ORDERS,
+        "max_pending_count": max(
+            released_capacities,
+            default=MAX_PENDING_TUNING_WORK_ORDERS,
+        ),
         "released_count": len(released),
         "released_dedupe_keys": released,
     }
@@ -2142,6 +2159,20 @@ def _route_event_to_hourly_tuning(
         and str(event.get("severity") or "").upper() != "P0"
         and not _event_has_open_exposure(event)
     )
+
+
+def _tuning_queue_capacity_for_event(event: dict[str, Any]) -> int:
+    """Reserve bounded tuning slots for time-sensitive Guardian actions."""
+
+    severity = str(event.get("severity") or "").strip().upper()
+    action_hint = str(event.get("action_hint") or "").strip().upper()
+    if (
+        severity in {"P0", "P1"}
+        or action_hint in ACTIONABLE_ACTIONS
+        or _event_has_open_exposure(event)
+    ):
+        return MAX_TOTAL_PENDING_TUNING_WORK_ORDERS
+    return MAX_PENDING_TUNING_WORK_ORDERS
 
 
 def _dispatch_priority(event: dict[str, Any]) -> tuple[Any, ...]:
@@ -4009,12 +4040,12 @@ def enrich_tuning_work_order_reviews_batch(
         structured: list[dict[str, Any]] = []
         if not isinstance(reviews, list) or not reviews:
             structural_failures.append({"code": "MANIFEST_REVIEWS_REQUIRED"})
-        elif len(reviews) > MAX_PENDING_TUNING_WORK_ORDERS:
+        elif len(reviews) > MAX_TOTAL_PENDING_TUNING_WORK_ORDERS:
             structural_failures.append(
                 {
                     "code": "MANIFEST_REVIEW_COUNT_EXCEEDED",
                     "review_count": len(reviews),
-                    "max_review_count": MAX_PENDING_TUNING_WORK_ORDERS,
+                    "max_review_count": MAX_TOTAL_PENDING_TUNING_WORK_ORDERS,
                 }
             )
         normalized_reviewer = str(reviewed_by or "").strip()
@@ -6689,7 +6720,8 @@ def _maybe_write_tuning_work_order_locked(
             "observation_id": observation_id,
             "pending_count": len(pending_existing),
         }
-    if len(pending_existing) >= MAX_PENDING_TUNING_WORK_ORDERS:
+    event_queue_capacity = _tuning_queue_capacity_for_event(selected_event)
+    if len(pending_existing) >= event_queue_capacity:
         if normalization_required:
             payload = _tuning_queue_payload(
                 primary=pending_existing[0],
@@ -6722,7 +6754,9 @@ def _maybe_write_tuning_work_order_locked(
             "semantic_state_id": semantic_state_id,
             "observation_id": observation_id,
             "pending_count": len(pending_existing),
-            "max_pending_count": MAX_PENDING_TUNING_WORK_ORDERS,
+            "max_pending_count": event_queue_capacity,
+            "base_pending_count": MAX_PENDING_TUNING_WORK_ORDERS,
+            "reserved_action_slots": MAX_RESERVED_ACTION_TUNING_WORK_ORDERS,
             "retry_required": True,
         }
     observation = _tuning_observation_record(
@@ -9526,7 +9560,7 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
         if not isinstance(value, list):
             return f"{key} must be a list"
         maximum = (
-            MAX_PENDING_TUNING_WORK_ORDERS
+            MAX_TOTAL_PENDING_TUNING_WORK_ORDERS
             if key == "work_orders"
             else MAX_TUNING_TERMINAL_HISTORY
         )
@@ -9575,6 +9609,21 @@ def _tuning_queue_structure_error(payload: dict[str, Any]) -> str | None:
                 terminal_error = terminal_contract_error(item, f"{key}[{index}]")
                 if terminal_error is not None:
                     return terminal_error
+    work_orders = payload.get("work_orders")
+    if isinstance(work_orders, list):
+        ordinary_count = sum(
+            1
+            for item in work_orders
+            if isinstance(item, dict)
+            and _tuning_queue_capacity_for_event(
+                item.get("selected_event")
+                if isinstance(item.get("selected_event"), dict)
+                else {}
+            )
+            == MAX_PENDING_TUNING_WORK_ORDERS
+        )
+        if ordinary_count > MAX_PENDING_TUNING_WORK_ORDERS:
+            return "work_orders ordinary entries consume reserved action capacity"
     if isinstance(payload.get("work_orders"), list) and payload.get("pending_count") is not None:
         if payload.get("pending_count") != len(payload["work_orders"]):
             return "pending_count must equal work_orders length"
