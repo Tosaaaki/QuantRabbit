@@ -1882,6 +1882,107 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(state["parse_failures"], {})
             self.assertIn(_event(severity="P1")["dedupe_key"], state["reviewed_events"])
 
+    def test_repaired_trigger_contract_retires_obsolete_failed_wake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            contract_event = {
+                **_event(
+                    severity="P0",
+                    event_id="stale-contract-event",
+                    pair="PORTFOLIO",
+                    direction="",
+                    dedupe_key=(
+                        "PORTFOLIO|GUARDIAN_TRIGGER_CONTRACT_STALE_OR_MISSING_"
+                        "WHILE_EXPOSURE_EXISTS|CONTRACT_STALE|HOLD"
+                    ),
+                ),
+                "event_type": "CONTRACT_STALE",
+                "action_hint": "HOLD",
+                "recommended_review_type": "EMERGENCY_RISK_REVIEW",
+            }
+            paths.events.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "events": [contract_event],
+                        "trigger_contract": {
+                            "status": "INVALID",
+                            "stale": True,
+                        },
+                    }
+                )
+            )
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "wake_gpt": True,
+                        "wake_reason_codes": ["NEW_EVENT"],
+                        "events_to_review": [
+                            {**contract_event, "wake_reason_codes": ["NEW_EVENT"]}
+                        ],
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(
+                    calls,
+                    ["not json", "still not json"],
+                ),
+            )
+
+            repaired_at = NOW + timedelta(seconds=61)
+            paths.events.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": repaired_at.isoformat(),
+                        "events": [],
+                        "trigger_contract": {
+                            "status": "VALID",
+                            "stale": False,
+                        },
+                    }
+                )
+            )
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": repaired_at.isoformat(),
+                        "wake_gpt": False,
+                        "events_to_review": [],
+                    }
+                )
+            )
+            recovered = run_dispatcher(
+                paths=paths,
+                now=repaired_at,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(first["status"], "PARSE_FAILED")
+            self.assertEqual(recovered["status"], "NO_WAKE")
+            self.assertEqual(len(calls), 2)
+            retired = recovered["recovered_contract_obligations"]
+            self.assertEqual(
+                retired["status"],
+                "RECOVERED_CONTRACT_STALE_OBLIGATIONS_RETIRED",
+            )
+            self.assertEqual(retired["retired_count"], 2)
+            self.assertEqual(
+                set(retired["retired"]),
+                {"dispatch_attempts", "pending_dispatches"},
+            )
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertNotIn(
+                contract_event["dedupe_key"],
+                state.get("dispatch_attempts", {}),
+            )
+
     def test_retry_budget_waits_for_ttl_before_opening_fresh_series(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))

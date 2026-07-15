@@ -487,6 +487,14 @@ def _run_dispatcher_once(
         now=clock,
         env=environ,
     )
+    dispatcher_state, recovered_contract_obligations = (
+        _retire_recovered_contract_stale_obligations(
+            dispatcher_state,
+            events_payload=events_payload,
+            now=clock,
+            env=environ,
+        )
+    )
     dispatcher_state, usage_limit_recovery = _release_recovered_usage_limit_backoffs(
         dispatcher_state,
         now=clock,
@@ -528,6 +536,10 @@ def _run_dispatcher_once(
         result_base["pending_injection"] = pending_injection
     if usage_limit_reclassification:
         result_base["usage_limit_reclassification"] = usage_limit_reclassification
+    if recovered_contract_obligations:
+        result_base["recovered_contract_obligations"] = (
+            recovered_contract_obligations
+        )
     if usage_limit_recovery:
         result_base["usage_limit_recovery"] = usage_limit_recovery
     if tuning_queue_recovery:
@@ -1046,6 +1058,96 @@ def _inject_due_failed_attempts(
         "status": "DUE_FAILED_ATTEMPTS_INJECTED",
         "event_ids": [event.get("event_id") for event in due],
         "count": len(due),
+    }
+
+
+def _retire_recovered_contract_stale_obligations(
+    dispatcher_state: dict[str, Any],
+    *,
+    events_payload: dict[str, Any],
+    now: datetime,
+    env: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Drop obsolete CONTRACT_STALE wake obligations after source repair.
+
+    Failed observations are ordinarily immutable retry obligations. A trigger
+    contract safety event is different: once a fresh guardian-events packet
+    proves the contract VALID/non-stale and no current CONTRACT_STALE event
+    remains, replaying the old P0 HOLD observation only consumes GPT capacity
+    and can mask current entry/position events.
+    """
+
+    generated_at = _parse_utc(events_payload.get("generated_at_utc"))
+    max_age_seconds = max(
+        1,
+        int(
+            env.get(
+                "QR_GUARDIAN_EVENT_STATE_MAX_AGE_SECONDS",
+                GUARDIAN_EVENT_STATE_MAX_AGE_SECONDS,
+            )
+        ),
+    )
+    if generated_at is None:
+        return dispatcher_state, None
+    age_seconds = (now - generated_at).total_seconds()
+    if age_seconds < -60 or age_seconds > max_age_seconds:
+        return dispatcher_state, None
+
+    trigger_contract = events_payload.get("trigger_contract")
+    if not isinstance(trigger_contract, dict):
+        return dispatcher_state, None
+    if (
+        str(trigger_contract.get("status") or "").strip().upper() != "VALID"
+        or trigger_contract.get("stale") is not False
+    ):
+        return dispatcher_state, None
+
+    current_contract_stale_keys = {
+        str(event.get("dedupe_key") or "").strip()
+        for event in events_payload.get("events", []) or []
+        if isinstance(event, dict)
+        and str(event.get("event_type") or "").strip().upper()
+        == "CONTRACT_STALE"
+        and str(event.get("dedupe_key") or "").strip()
+    }
+    state = dict(dispatcher_state) if isinstance(dispatcher_state, dict) else {}
+    retired: dict[str, list[dict[str, Any]]] = {}
+    for bucket in ("dispatch_attempts", "pending_dispatches"):
+        raw_records = state.get(bucket)
+        if not isinstance(raw_records, dict):
+            continue
+        records = dict(raw_records)
+        removed: list[dict[str, Any]] = []
+        for dedupe_key, record in list(records.items()):
+            if not isinstance(record, dict):
+                continue
+            event = record.get("event")
+            event = event if isinstance(event, dict) else {}
+            if (
+                str(event.get("event_type") or "").strip().upper()
+                != "CONTRACT_STALE"
+                or str(dedupe_key).strip() in current_contract_stale_keys
+            ):
+                continue
+            removed.append(
+                {
+                    "dedupe_key": str(dedupe_key),
+                    "event_id": event.get("event_id") or record.get("event_id"),
+                }
+            )
+            records.pop(dedupe_key, None)
+        if removed:
+            state[bucket] = records
+            retired[bucket] = removed
+
+    if not retired:
+        return state, None
+    return state, {
+        "status": "RECOVERED_CONTRACT_STALE_OBLIGATIONS_RETIRED",
+        "source_generated_at_utc": generated_at.isoformat(),
+        "trigger_contract_status": "VALID",
+        "retired": retired,
+        "retired_count": sum(len(rows) for rows in retired.values()),
     }
 
 
