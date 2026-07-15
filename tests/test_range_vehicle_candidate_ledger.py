@@ -286,6 +286,78 @@ class RangeVehicleCandidateLedgerTest(unittest.TestCase):
                 "ADAPTIVE_TRADER_GUARDIAN_AND_BROKER_BARRIERS",
             )
 
+    def test_records_zero_unit_non_live_candidate_without_granting_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result, kwargs = self._fixture(Path(tmp))
+            result["intent"]["units"] = 0
+            for key in ledger.IDENTITY_METADATA_FIELDS:
+                result["intent"]["metadata"].pop(key, None)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_DISABLE_AUTO_TP": "0",
+                    "QR_NEW_ENTRY_INITIAL_SL": "0",
+                    "QR_TRADER_DISABLE_SL_REPAIR": "1",
+                },
+            ):
+                ledger.bind_range_vehicle_candidate_ids(
+                    [result], generated_at_utc=kwargs["generated_at_utc"]
+                )
+                kwargs["order_intents_serialized"] = (
+                    json.dumps(
+                        {
+                            "generated_at_utc": kwargs["generated_at_utc"],
+                            "results": [result],
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                ).encode()
+                self.assertEqual(
+                    ledger.record_range_vehicle_candidates([result], **kwargs), 1
+                )
+
+            path = kwargs["order_intents_path"].with_name(ledger.LEDGER_FILENAME)
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+            payload = receipt["payload"]
+            self.assertEqual(payload["vehicle"]["units"], 0)
+            self.assertEqual(payload["candidate"]["status"], "DRY_RUN_BLOCKED")
+            self.assertFalse(payload["live_permission_allowed"])
+            self.assertTrue(ledger._candidate_payload_integrity_valid(payload))
+
+    def test_zero_unit_live_ready_candidate_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result, kwargs = self._fixture(Path(tmp))
+            result["intent"]["units"] = 0
+            self._make_live_ready(result, kwargs)
+            for key in ledger.IDENTITY_METADATA_FIELDS:
+                result["intent"]["metadata"].pop(key, None)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_DISABLE_AUTO_TP": "0",
+                    "QR_NEW_ENTRY_INITIAL_SL": "0",
+                    "QR_TRADER_DISABLE_SL_REPAIR": "1",
+                },
+            ):
+                ledger.bind_range_vehicle_candidate_ids(
+                    [result], generated_at_utc=kwargs["generated_at_utc"]
+                )
+                kwargs["order_intents_serialized"] = (
+                    json.dumps(
+                        {
+                            "generated_at_utc": kwargs["generated_at_utc"],
+                            "results": [result],
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                ).encode()
+                with self.assertRaisesRegex(
+                    ValueError, "RANGE_VEHICLE_CANDIDATE_UNITS_INVALID"
+                ):
+                    ledger.record_range_vehicle_candidates([result], **kwargs)
+
     def test_predictive_scout_projects_gtd_and_exact_intent_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result, kwargs = self._fixture(Path(tmp), scout=True)

@@ -47,8 +47,11 @@ at ~3.9M tokens despite the consolidated commands.
 Digest semantics:
 
 - `steps_failed` lists failed steps with stderr tails. A failed REQUIRED
-  step aborts the rest and exits 2 — repair the named step, then rerun
-  `cycle-refresh` once. Optional-step failures (for example `news-health
+  step aborts the rest and exits 2. Treat `order_intents.json` and every
+  downstream decision/gateway artifact as prior-cycle state until a complete
+  refresh publishes new intents; never combine the failed refresh's newer
+  broker/market artifacts with those old intents. Name the producer error,
+  repair the named step, then rerun `cycle-refresh` once. Optional-step failures (for example `news-health
   --strict` during a stale-news window) do not stop evidence generation;
   treat them as named blockers in the decision receipt exactly as before.
 - `tp-rebalance` already ran inside the refresh, even when the later

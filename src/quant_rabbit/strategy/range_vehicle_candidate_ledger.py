@@ -299,6 +299,14 @@ def _candidate_payload(
         raise ValueError("RANGE_VEHICLE_CANDIDATE_GEOMETRY_INVALID")
     candidate_status = str(result.get("status") or "")
     live_blocker_codes = list(result.get("live_blocker_codes") or [])
+    units = intent.get("units")
+    if (
+        not isinstance(units, int)
+        or isinstance(units, bool)
+        or units < 0
+        or (candidate_status == "LIVE_READY" and units == 0)
+    ):
+        raise ValueError("RANGE_VEHICLE_CANDIDATE_UNITS_INVALID")
     if candidate_status == "LIVE_READY" and (
         result.get("risk_allowed") is not True or live_blocker_codes
     ):
@@ -912,6 +920,7 @@ def _candidate_payload_integrity_valid(payload: Mapping[str, Any]) -> bool:
             "range_vehicle_shape_sha256": shape_sha,
         }
         units = shape.get("units")
+        candidate_status = candidate.get("status")
         side = str(shape.get("side") or "")
         entry = _finite_positive(shape.get("entry"), label="entry")
         take_profit = _finite_positive(
@@ -1014,7 +1023,8 @@ def _candidate_payload_integrity_valid(payload: Mapping[str, Any]) -> bool:
             and shape.get("gateway_contract_projection") == gateway_projection
             and isinstance(units, int)
             and not isinstance(units, bool)
-            and units > 0
+            and units >= 0
+            and (candidate_status != "LIVE_READY" or units > 0)
             and vehicle.get("units") == shape.get("units")
             and vehicle.get("pair") == shape.get("pair")
             and vehicle.get("side") == shape.get("side")
