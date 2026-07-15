@@ -498,7 +498,14 @@ class LiveOrderGateway:
             _predictive_scout_built_order_issues(intent, order_request)
         )
         strategy_issues = tuple(
-            issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
+            issue.__dict__
+            for issue in _strategy_profile_live_send_issues(
+                intent,
+                StrategyProfile.load(self.strategy_profile).validate(
+                    intent,
+                    for_live_send=True,
+                ),
+            )
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
         risk_issues.extend(
@@ -1408,7 +1415,14 @@ class LiveOrderGateway:
             _predictive_scout_built_order_issues(intent, order_request)
         )
         strategy_issues = tuple(
-            issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
+            issue.__dict__
+            for issue in _strategy_profile_live_send_issues(
+                intent,
+                StrategyProfile.load(self.strategy_profile).validate(
+                    intent,
+                    for_live_send=True,
+                ),
+            )
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
         risk_issues.extend(
@@ -6720,6 +6734,7 @@ def _freeze_verified_decision_receipt(
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
         M15_RECOVERY_EDGE_COLLECTION_BASIS,
+        TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     }:
@@ -6914,6 +6929,7 @@ def _verified_capital_allocation_edge_basis(
         "EXACT_VEHICLE_ALL_EXIT_NET",
         "EXACT_VEHICLE_TAKE_PROFIT",
         M15_RECOVERY_EDGE_COLLECTION_BASIS,
+        TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
         "PREDICTIVE_SCOUT_FORWARD_EVIDENCE",
         "HEDGE_RISK_REDUCTION",
     } else None
@@ -10937,13 +10953,23 @@ def _codex_capital_allocation_live_send_issues(
     m15_recovery_collection_intent = (
         _m15_recovery_edge_collection_prebounded_intent_claim(intent)
     )
+    target_path_live_learning_intent = (
+        isinstance(intent, OrderIntent)
+        and _target_path_live_learning_allocation_claim(intent)
+    )
     edge_basis_allowed = bool(
         (
             claimed_edge_basis == M15_RECOVERY_EDGE_COLLECTION_BASIS
             and m15_recovery_collection_intent
         )
         or (
+            claimed_edge_basis
+            == TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS
+            and target_path_live_learning_intent
+        )
+        or (
             not m15_recovery_collection_intent
+            and not target_path_live_learning_intent
             and claimed_edge_basis
             in {
                 "EXACT_VEHICLE_ALL_EXIT_NET",
@@ -11434,6 +11460,31 @@ def _target_path_live_learning_allocation_claim(intent: OrderIntent) -> bool:
     return not any(
         str(issue.get("severity") or "BLOCK").upper() == "BLOCK"
         for issue in _target_path_live_send_issues(intent, send=True)
+    )
+
+
+def _strategy_profile_live_send_issues(
+    intent: OrderIntent,
+    issues: tuple[Any, ...] | list[Any],
+) -> tuple[Any, ...]:
+    """Apply the profile gate without undoing the signed micro-learning path.
+
+    A valid target-path live-learning intent is deliberately bounded to a
+    passive LIMIT, at most 1,000 units, at most 0.15% NAV risk, and at least
+    1.5 reward/risk.  Its purpose is to collect the exact execution evidence
+    needed to move a WATCH_ONLY profile forward.  Reapplying only the generic
+    WATCH_ONLY ``STRATEGY_NOT_ELIGIBLE`` result after that contract validates
+    makes the evidence-collection route impossible.  Every other profile
+    issue remains intact.
+    """
+
+    normalized = tuple(issues)
+    if not _target_path_live_learning_allocation_claim(intent):
+        return normalized
+    return tuple(
+        issue
+        for issue in normalized
+        if str(getattr(issue, "code", "")) != "STRATEGY_NOT_ELIGIBLE"
     )
 
 

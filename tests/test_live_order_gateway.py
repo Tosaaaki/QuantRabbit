@@ -1737,6 +1737,114 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 )
             )
 
+            lane_id = "ai-trader:EUR_USD:LONG:TREND_CONTINUATION:LIMIT"
+            allocation = {
+                "decision": "ALLOCATE",
+                "lane_id": lane_id,
+                "size_multiple": 1.0,
+                "selected_units": 1000,
+                "allocation_board_sha256": "e" * 64,
+                "rationale": (
+                    "Bounded target-path live-learning evidence collection."
+                ),
+            }
+            allocation_sha = execution_module._canonical_json_sha256(
+                allocation
+            )
+            decision = {
+                "action": "TRADE",
+                "selected_lane_id": lane_id,
+                "selected_lane_ids": [lane_id],
+                "capital_allocation": allocation,
+                "decision_provenance": {
+                    "schema_version": 2,
+                    "author_kind": "CODEX_MARKET_READ",
+                    "capital_allocation_edge_basis": (
+                        execution_module.TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS
+                    ),
+                    "capital_allocation_sha256": allocation_sha,
+                    "capital_allocation_board_sha256": "e" * 64,
+                    "authorized_size_multiple": 1.0,
+                    "authorized_units": 1000,
+                },
+            }
+            allocation_issues = (
+                execution_module._codex_capital_allocation_live_send_issues(
+                    decision=decision,
+                    selected_lane_id=lane_id,
+                    base_units=1000,
+                    authorized_size_multiple=1.0,
+                    authorized_units=1000,
+                    final_units=1000,
+                    order_request={"units": "1000"},
+                    intent=intent,
+                )
+            )
+            self.assertEqual(allocation_issues, [])
+
+            with tempfile.TemporaryDirectory() as receipt_tmp:
+                receipt_path = Path(receipt_tmp) / "gpt_decision.json"
+                receipt_path.write_text(
+                    json.dumps({"decision": decision}) + "\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    execution_module._verified_capital_allocation_edge_basis(
+                        receipt_path
+                    ),
+                    execution_module.TARGET_PATH_LIVE_LEARNING_EDGE_COLLECTION_BASIS,
+                )
+
+            profile_issues = (
+                SimpleNamespace(code="STRATEGY_NOT_ELIGIBLE"),
+                SimpleNamespace(code="EXACT_PROFILE_BLOCK"),
+            )
+            filtered_profile_issues = (
+                execution_module._strategy_profile_live_send_issues(
+                    intent,
+                    profile_issues,
+                )
+            )
+            self.assertEqual(
+                [issue.code for issue in filtered_profile_issues],
+                ["EXACT_PROFILE_BLOCK"],
+            )
+
+            ordinary_intent = replace(
+                intent,
+                metadata={
+                    key: value
+                    for key, value in intent.metadata.items()
+                    if key != "target_path_live_mode"
+                },
+            )
+            ordinary_allocation_issues = (
+                execution_module._codex_capital_allocation_live_send_issues(
+                    decision=decision,
+                    selected_lane_id=lane_id,
+                    base_units=1000,
+                    authorized_size_multiple=1.0,
+                    authorized_units=1000,
+                    final_units=1000,
+                    order_request={"units": "1000"},
+                    intent=ordinary_intent,
+                )
+            )
+            self.assertIn(
+                "GPT_CAPITAL_ALLOCATION_EDGE_BASIS_MISSING",
+                {issue.code for issue in ordinary_allocation_issues},
+            )
+            self.assertEqual(
+                [
+                    issue.code
+                    for issue in execution_module._strategy_profile_live_send_issues(
+                        ordinary_intent,
+                        profile_issues,
+                    )
+                ],
+                ["STRATEGY_NOT_ELIGIBLE", "EXACT_PROFILE_BLOCK"],
+            )
+
             path_proof = execution_module._forecast_s5_no_touch_proof(
                 client,
                 intent=intent,
