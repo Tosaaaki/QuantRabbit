@@ -3286,6 +3286,48 @@ class MarketReadOverlayTest(unittest.TestCase):
             self.assertTrue(provenance["risk_envelope_not_expanded"])
             self.assertFalse(provenance["live_permission_granted"])
 
+    def test_apply_rebuilds_plan_and_summary_from_final_market_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline = _baseline()
+            baseline["twenty_minute_plan"] = {
+                "horizon_minutes": 60,
+                "primary_path": (
+                    "MARKET READ FIRST next 30m EUR_USD SHORT; next 2h "
+                    "EUR_USD SHORT. Stale baseline direction."
+                ),
+                "failure_path": "Current evidence invalidates the path.",
+                "entry_or_hold_trigger": "Use the selected intent only.",
+                "invalidation_or_cancel_trigger": "Cancel on invalidation.",
+                "counterargument": "The move can fail.",
+                "next_cycle_check": "Refresh broker truth.",
+                "evidence_refs": [f"intent:{LANE_ID}", "broker:snapshot"],
+            }
+            baseline["operator_summary"] = (
+                "MARKET READ FIRST next 30m EUR_USD SHORT; stale baseline summary."
+            )
+            paths = _prepared_paths(Path(tmp), baseline=baseline)
+            _write_overlay(paths, disposition="ACCEPT_BASELINE")
+
+            _apply(paths)
+
+            final = json.loads(paths["output"].read_text())
+            expected = (
+                "MARKET READ FIRST next 30m EUR_USD LONG toward 1.1020 to "
+                "1.1030; next 2h EUR_USD LONG toward 1.1040 to 1.1050."
+            )
+            self.assertIn(
+                expected,
+                final["twenty_minute_plan"]["primary_path"],
+            )
+            self.assertIn(expected, final["operator_summary"])
+            self.assertNotIn("EUR_USD SHORT", final["twenty_minute_plan"]["primary_path"])
+            self.assertNotIn("EUR_USD SHORT", final["operator_summary"])
+            prepared_baseline = json.loads(paths["baseline"].read_text())
+            self.assertEqual(final["selected_lane_id"], prepared_baseline["selected_lane_id"])
+            self.assertEqual(final["cancel_order_ids"], prepared_baseline["cancel_order_ids"])
+            self.assertEqual(final["risk_notes"], prepared_baseline["risk_notes"])
+            self.assertTrue(final["decision_provenance"]["execution_fields_preserved"])
+
     def test_veto_can_only_downgrade_trade_and_clears_selected_lanes(self) -> None:
         for disposition, expected_action in (
             ("VETO_WAIT", "WAIT"),

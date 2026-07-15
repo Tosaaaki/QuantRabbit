@@ -25,7 +25,10 @@ from quant_rabbit.market_read_ledger import (
     record_market_read_prediction,
     refresh_market_read_measurements,
 )
-from quant_rabbit.market_read_contract import market_read_missing_fields
+from quant_rabbit.market_read_contract import (
+    market_read_missing_fields,
+    market_read_prediction_summary as _market_read_prediction_summary,
+)
 from quant_rabbit.close_discipline import (
     thesis_evolution_reason_has_hard_close_evidence,
 )
@@ -2894,6 +2897,7 @@ class GPTTraderBrain:
                 "- Active `USER_ALPHA` / `OPERATOR_ALPHA` continuation must cite `user_alpha:continuation` and either continue the same pair/side as RELOAD / SECOND_SHOT / 5% path-board candidate, or name an exact blocker plus next trigger.",
                 "- `TRADE` must cite current chart evidence plus `news:health` and `news:items` or `news:current`; blocked news-health is a no-trade gate.",
                 f"- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan` with `horizon_minutes={TRADER_DECISION_HORIZON_MINUTES}`: the next-cycle primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
+                "- `twenty_minute_plan.primary_path` and `operator_summary` must restate the final `market_read_first` next-30m and next-2h pair/direction. A GPT overlay may replace the baseline read, so retaining its old direction in either derived field is a blocking contradiction.",
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
@@ -4146,6 +4150,31 @@ class DecisionVerifier:
                     )
                 )
 
+        provenance = (
+            decision.decision_provenance
+            if isinstance(decision.decision_provenance, dict)
+            else {}
+        )
+        if provenance.get("author_kind") == CODEX_MARKET_READ_AUTHOR:
+            final_market_summary = _market_read_prediction_summary(
+                decision.market_read_first
+            )
+            stale_fields: list[str] = []
+            if final_market_summary not in str(plan.get("primary_path") or ""):
+                stale_fields.append("twenty_minute_plan.primary_path")
+            if final_market_summary not in decision.operator_summary:
+                stale_fields.append("operator_summary")
+            if stale_fields:
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_DERIVED_PROSE_STALE",
+                        "Final CODEX_MARKET_READ receipts must rebuild the plan "
+                        "and operator summary from the applied next-30m/next-2h "
+                        "forecast; stale or contradictory baseline prose remains "
+                        "in: " + ", ".join(stale_fields),
+                    )
+                )
+
     def _verify_close_trade_ids(
         self,
         decision: GPTTraderDecision,
@@ -4884,7 +4913,14 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "rejected_alternatives": {"type": "array", "items": {"type": "string"}},
         "risk_notes": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": {"type": "array", "items": {"type": "string"}},
-        "operator_summary": {"type": "string"},
+        "operator_summary": {
+            "type": "string",
+            "description": (
+                "Restate the final market_read_first next-30m and next-2h "
+                "pair/direction before the execution conclusion; never retain "
+                "a superseded baseline direction."
+            ),
+        },
         "twenty_minute_plan": {
             "type": ["object", "null"],
             "additionalProperties": False,
@@ -4900,7 +4936,13 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
             ],
             "properties": {
                 "horizon_minutes": {"type": "number"},
-                "primary_path": {"type": "string"},
+                "primary_path": {
+                    "type": "string",
+                    "description": (
+                        "Begin with the final market_read_first next-30m and "
+                        "next-2h pair/direction; stale baseline direction is invalid."
+                    ),
+                },
                 "failure_path": {"type": "string"},
                 "entry_or_hold_trigger": {"type": "string"},
                 "invalidation_or_cancel_trigger": {"type": "string"},
@@ -6350,19 +6392,6 @@ def _market_read_forced_trade_reason(
     context = _market_read_chart_story(packet, pair)
     return (
         f"Forced trade is only hypothetical: {context}. Execution still requires a refreshed LIVE_READY lane."
-    )
-
-
-def _market_read_prediction_summary(market_read: dict[str, Any]) -> str:
-    next_30m = market_read.get("next_30m_prediction") if isinstance(market_read.get("next_30m_prediction"), dict) else {}
-    next_2h = market_read.get("next_2h_prediction") if isinstance(market_read.get("next_2h_prediction"), dict) else {}
-    if not next_30m and not next_2h:
-        return "MARKET READ FIRST next 30m/next 2h prediction is unavailable in this draft."
-    return (
-        f"MARKET READ FIRST next 30m {next_30m.get('pair') or 'UNKNOWN_PAIR'} "
-        f"{next_30m.get('direction') or 'UNKNOWN'} toward {next_30m.get('target_zone') or 'unknown'}; "
-        f"next 2h {next_2h.get('pair') or 'UNKNOWN_PAIR'} {next_2h.get('direction') or 'UNKNOWN'} "
-        f"toward {next_2h.get('target_zone') or 'unknown'}."
     )
 
 

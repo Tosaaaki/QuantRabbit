@@ -35,6 +35,7 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.market_read_contract import (
     market_read_contract_payload,
     market_read_missing_fields,
+    market_read_prediction_summary,
 )
 from quant_rabbit.predictive_scout import (
     FORECAST_LEARNING_SCOUT_SOURCE,
@@ -195,6 +196,15 @@ MUTABLE_MARKET_READ_FIELDS = frozenset(
         "market_read_veto_reason",
         "market_read_vetoed_lane_ids",
         "decision_provenance",
+    }
+)
+# These fields are not authored by the overlay and never grant execution
+# permission. The apply step rebuilds them from the final market read so a
+# replaced direction cannot leave stale deterministic prose in the receipt.
+DERIVED_MARKET_READ_FIELDS = frozenset(
+    {
+        "operator_summary",
+        "twenty_minute_plan",
     }
 )
 
@@ -785,7 +795,9 @@ def _projection_bucket_scope(key: str) -> str:
 
 def baseline_core_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     core = dict(payload)
-    for key in MUTABLE_MARKET_READ_FIELDS - {"market_read_first"}:
+    for key in (
+        MUTABLE_MARKET_READ_FIELDS | DERIVED_MARKET_READ_FIELDS
+    ) - {"market_read_first"}:
         core.pop(key, None)
     return core
 
@@ -794,7 +806,7 @@ def execution_envelope_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: deepcopy(value)
         for key, value in payload.items()
-        if key not in MUTABLE_MARKET_READ_FIELDS
+        if key not in MUTABLE_MARKET_READ_FIELDS | DERIVED_MARKET_READ_FIELDS
     }
 
 
@@ -1274,6 +1286,7 @@ def apply_codex_market_read_overlay(
         merged["action"] = "REQUEST_EVIDENCE"
         merged["selected_lane_id"] = None
         merged["selected_lane_ids"] = []
+    _rebuild_market_read_derived_prose(merged)
     after_envelope = execution_envelope_payload(merged)
     baseline_immutable = _immutable_risk_envelope(before_envelope)
     merged_immutable = _immutable_risk_envelope(after_envelope)
@@ -1374,6 +1387,57 @@ def apply_codex_market_read_overlay(
         action=str(merged.get("action") or ""),
         selected_lane_ids=tuple(str(item) for item in lane_ids if item),
     )
+
+
+def _rebuild_market_read_derived_prose(payload: dict[str, Any]) -> None:
+    """Bind human-facing final instructions to the applied AI forecast.
+
+    This deliberately changes only non-execution prose. Orders, units,
+    selected lanes, TP/SL, evidence refs, and every risk field remain owned by
+    the deterministic baseline and the bounded allocation verifier.
+    """
+
+    market_read = payload.get("market_read_first")
+    market_read = market_read if isinstance(market_read, Mapping) else {}
+    summary = market_read_prediction_summary(market_read)
+    action = str(payload.get("action") or "").strip().upper()
+    forced = market_read.get("best_trade_if_forced")
+    forced = forced if isinstance(forced, Mapping) else {}
+    pair = str(forced.get("pair") or "UNKNOWN_PAIR").strip() or "UNKNOWN_PAIR"
+    direction = (
+        str(forced.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN"
+    )
+
+    raw_plan = payload.get("twenty_minute_plan")
+    if isinstance(raw_plan, Mapping):
+        plan = deepcopy(dict(raw_plan))
+        if action == "TRADE":
+            plan["primary_path"] = (
+                f"{summary} {pair} {direction} should respect the selected "
+                "LIVE_READY trigger before the next scheduled cycle."
+            )
+        elif action in {"WAIT", "REQUEST_EVIDENCE"}:
+            plan["primary_path"] = (
+                f"{summary} Refresh the named blocker(s) and keep broker-truth "
+                "maintenance active before new risk."
+            )
+        payload["twenty_minute_plan"] = plan
+
+    if action == "TRADE":
+        payload["operator_summary"] = (
+            f"{summary} Final AI market read accepted the immutable {pair} "
+            f"{direction} lane; gateway validation remains final."
+        )
+    elif action in {"WAIT", "REQUEST_EVIDENCE"}:
+        payload["operator_summary"] = (
+            f"{summary} Final AI market read left new entry unauthorized; "
+            "refresh named blockers and broker truth before new risk."
+        )
+    elif action == "CLOSE":
+        payload["operator_summary"] = (
+            f"{summary} Final AI market read accepted only the immutable close "
+            "scope; refresh broker truth before any separate entry decision."
+        )
 
 
 def _validated_capital_allocation(

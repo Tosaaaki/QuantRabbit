@@ -100,4 +100,32 @@ def market_read_contract_payload() -> dict[str, Any]:
             "best_trade_if_forced.vehicle": sorted(MARKET_READ_VEHICLES),
         },
         "unknown_aliases_are_not_accepted": True,
+        "derived_plan_and_operator_summary_must_match_final_market_read": True,
     }
+
+
+def market_read_prediction_summary(market_read: Mapping[str, Any]) -> str:
+    """Render the canonical forecast sentence used by final receipt prose.
+
+    The deterministic draft and the later GPT market-read overlay both use
+    this one renderer. That prevents the final action plan from retaining a
+    superseded baseline direction after the overlay replaces MARKET_READ_FIRST.
+    """
+
+    next_30m = market_read.get("next_30m_prediction")
+    next_30m = next_30m if isinstance(next_30m, Mapping) else {}
+    next_2h = market_read.get("next_2h_prediction")
+    next_2h = next_2h if isinstance(next_2h, Mapping) else {}
+    if not next_30m and not next_2h:
+        return (
+            "MARKET READ FIRST next 30m/next 2h prediction is unavailable "
+            "in this draft."
+        )
+    return (
+        f"MARKET READ FIRST next 30m {next_30m.get('pair') or 'UNKNOWN_PAIR'} "
+        f"{next_30m.get('direction') or 'UNKNOWN'} toward "
+        f"{next_30m.get('target_zone') or 'unknown'}; next 2h "
+        f"{next_2h.get('pair') or 'UNKNOWN_PAIR'} "
+        f"{next_2h.get('direction') or 'UNKNOWN'} toward "
+        f"{next_2h.get('target_zone') or 'unknown'}."
+    )

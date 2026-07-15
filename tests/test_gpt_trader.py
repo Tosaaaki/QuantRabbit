@@ -29,6 +29,7 @@ from quant_rabbit.market_read_overlay import (
     prepare_market_read_baseline,
     projection_calibration_scopes_from_lanes,
 )
+from quant_rabbit.market_read_contract import market_read_prediction_summary
 from quant_rabbit.month_scale_residual_gate import (
     MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
 )
@@ -2716,6 +2717,28 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("SHALLOW_DECISION_HORIZON", codes)
+
+    def test_rejects_codex_receipt_with_stale_plan_and_operator_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            _stamp_codex_market_read(decision)
+            decision["twenty_minute_plan"]["primary_path"] = (
+                "MARKET READ FIRST next 30m EUR_USD SHORT and next 2h "
+                "EUR_USD SHORT; use the old baseline path."
+            )
+            decision["operator_summary"] = (
+                "MARKET READ FIRST next 30m EUR_USD SHORT; accept the old direction."
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_DERIVED_PROSE_STALE", codes)
 
     def test_input_packet_includes_predictive_limit_timing_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8166,6 +8189,19 @@ def _stamp_codex_market_read(
     baseline_lane_ids: list[str] | None = None,
 ) -> None:
     applied_at = datetime.now(timezone.utc).isoformat()
+    market_summary = market_read_prediction_summary(
+        decision.get("market_read_first")
+        if isinstance(decision.get("market_read_first"), dict)
+        else {}
+    )
+    plan = decision.get("twenty_minute_plan")
+    if isinstance(plan, dict):
+        plan["primary_path"] = (
+            f"{market_summary} {str(plan.get('primary_path') or '').strip()}"
+        ).strip()
+    decision["operator_summary"] = (
+        f"{market_summary} {str(decision.get('operator_summary') or '').strip()}"
+    ).strip()
     lane_ids = baseline_lane_ids
     if lane_ids is None:
         lane_ids = list(decision.get("selected_lane_ids") or [])
