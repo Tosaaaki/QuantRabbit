@@ -9875,6 +9875,16 @@ def _no_live_ready_next_action(
                 "then rerun coverage/self-improvement before building new strategy or "
                 "TP-proof routes."
             )
+        if _tp_routes_blocked_by_sizing_contract(live_readiness_breakdown):
+            return (
+                "REPAIR_TP_PROOF_ACQUISITION_SIZING_CONTRACT: every trusted TP-proof "
+                "acquisition candidate is fail-closed before proof creation because "
+                "its intent units, minimum-lot, margin, or sizing receipt contract "
+                "cannot produce a positive broker-valid acquisition order. Inspect "
+                "RiskEngine sizing/allocation and order_intents for the named lanes; "
+                "regenerate a risk-resized dry-run receipt instead of weakening the "
+                "negative-expectancy TP-proof gate."
+            )
         return (
             "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE: every named candidate still "
             "requires TP proof but exposes no self-consistent route that can create it. "
@@ -9958,6 +9968,21 @@ def _candidate_tp_proof_acquisition_route_unreachable(
 _TP_ROUTE_SIZING_SNAPSHOT_MISMATCH_TEXT = (
     "sizing conversion receipt does not match independent broker snapshot"
 )
+_TP_ROUTE_SIZING_CONTRACT_TEXTS = (
+    "intent units are not a signed-64-bit positive integer",
+    "sizing_actual_units does not match intent units",
+    "raw intent units are not bound to the sizing receipt",
+    "risk_metrics.jpy_per_pip is not bound to intent units",
+    "risk_metrics.estimated_margin_jpy is not bound to incremental broker margin units",
+)
+_TP_ROUTE_SIZING_CONTRACT_BLOCKERS = frozenset(
+    {
+        "BAD_UNITS",
+        "MARGIN_TOO_THIN_FOR_MIN_LOT",
+        "MARGIN_UTILIZATION_CAP_REACHED",
+        "PREDICTIVE_SCOUT_MIN_LOT_REQUIRED",
+    }
+)
 
 
 def _candidate_tp_proof_route_snapshot_mismatch(candidate: dict[str, Any]) -> bool:
@@ -9970,6 +9995,40 @@ def _candidate_tp_proof_route_snapshot_mismatch(candidate: dict[str, Any]) -> bo
 def _tp_routes_blocked_by_sizing_snapshot_mismatch(
     live_readiness_breakdown: dict[str, Any],
 ) -> bool:
+    trusted_required = _trusted_required_tp_route_candidates(live_readiness_breakdown)
+    if not trusted_required:
+        return False
+    if any(
+        candidate.get("tp_proof_acquisition_route_reachable") is True
+        for candidate in trusted_required
+    ):
+        return False
+    return all(
+        _candidate_tp_proof_route_snapshot_mismatch(candidate)
+        for candidate in trusted_required
+    )
+
+
+def _tp_routes_blocked_by_sizing_contract(
+    live_readiness_breakdown: dict[str, Any],
+) -> bool:
+    trusted_required = _trusted_required_tp_route_candidates(live_readiness_breakdown)
+    if not trusted_required:
+        return False
+    if any(
+        candidate.get("tp_proof_acquisition_route_reachable") is True
+        for candidate in trusted_required
+    ):
+        return False
+    return all(
+        _candidate_tp_proof_route_sizing_contract_blocked(candidate)
+        for candidate in trusted_required
+    )
+
+
+def _trusted_required_tp_route_candidates(
+    live_readiness_breakdown: dict[str, Any],
+) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     families = live_readiness_breakdown.get("families")
     if isinstance(families, list):
@@ -9992,23 +10051,41 @@ def _tp_routes_blocked_by_sizing_snapshot_mismatch(
         raw = live_readiness_breakdown.get(key)
         if isinstance(raw, list):
             candidates.extend(item for item in raw if isinstance(item, dict))
-    trusted_required = [
+    return [
         candidate
         for candidate in candidates
         if candidate.get("candidate_contract_valid") is not False
         and candidate.get("tp_proof_acquisition_required") is True
     ]
-    if not trusted_required:
+
+
+def _candidate_tp_proof_route_sizing_contract_blocked(candidate: dict[str, Any]) -> bool:
+    if not _candidate_tp_proof_acquisition_route_unreachable(candidate):
         return False
-    if any(
-        candidate.get("tp_proof_acquisition_route_reachable") is True
-        for candidate in trusted_required
-    ):
+    reason = str(candidate.get("tp_proof_acquisition_route_reason") or "")
+    codes = {
+        str(code).strip().upper()
+        for key in ("authoritative_live_blocker_codes", "structured_live_blocker_codes")
+        for code in (candidate.get(key) if isinstance(candidate.get(key), list) else [])
+        if str(code).strip()
+    }
+    blockers = candidate.get("blockers")
+    if isinstance(blockers, list):
+        for blocker in blockers:
+            if isinstance(blocker, dict):
+                code = str(blocker.get("code") or "").strip().upper()
+                if code:
+                    codes.add(code)
+    if not codes & _TP_ROUTE_SIZING_CONTRACT_BLOCKERS:
         return False
-    return all(
-        _candidate_tp_proof_route_snapshot_mismatch(candidate)
-        for candidate in trusted_required
+    if any(text in reason for text in _TP_ROUTE_SIZING_CONTRACT_TEXTS):
+        return True
+    reason_lower = reason.lower()
+    reason_mentions_sizing = any(
+        token in reason_lower
+        for token in ("unit", "margin", "sizing", "minimum", "min-lot")
     )
+    return reason_mentions_sizing
 
 
 def _finding_tp_routes_blocked_by_sizing_snapshot_mismatch(

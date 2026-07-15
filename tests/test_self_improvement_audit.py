@@ -1996,6 +1996,40 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("REFRESH_INTENT_SIZING_BROKER_SNAPSHOT", action)
         self.assertNotIn("Build or validate one exact non-market", action)
 
+    def test_no_live_ready_positive_rotation_bad_units_routes_to_sizing_repair(self) -> None:
+        result = _tp_acquisition_route_result(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            metadata=_valid_tp_collection_metadata(),
+            blocker_codes=[
+                _NEGATIVE_TP_ROTATION_BLOCKER,
+                "BAD_UNITS",
+                "MARGIN_TOO_THIN_FOR_MIN_LOT",
+            ],
+        )
+        intent = result["intent"]
+        self.assertIsInstance(intent, dict)
+        intent["units"] = 0
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents([result]),
+            broker_snapshot=_tp_acquisition_broker_snapshot(),
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "intent units are not a signed-64-bit positive integer",
+            candidate["tp_proof_acquisition_route_reason"],
+        )
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("REPAIR_TP_PROOF_ACQUISITION_SIZING_CONTRACT", action)
+        self.assertIn("RiskEngine sizing/allocation", action)
+        self.assertNotIn("Build or validate one exact non-market", action)
+
     def test_root_cause_focus_treats_tp_route_snapshot_mismatch_as_data_freshness(self) -> None:
         broker_snapshot = _tp_acquisition_broker_snapshot()
         broker_snapshot["home_conversions"] = {"USD": 101.0, "CAD": 100.0}
