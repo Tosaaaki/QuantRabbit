@@ -138,7 +138,7 @@ def format_full_trader_board(metrics: DailyTargetMetrics) -> str:
     )
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Print session-start QuantRabbit data.")
     parser.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT_PATH)
     parser.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
@@ -149,8 +149,13 @@ def main() -> int:
         "--extension-gate",
         choices=("yes", "no"),
         default="no",
-        help="Explicit favorable-market extension gate for +10% mode.",
+        help="Explicit favorable-market extension gate for +10%% mode.",
     )
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
     args = parser.parse_args()
 
     metrics = compute_daily_target(

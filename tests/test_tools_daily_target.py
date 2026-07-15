@@ -44,6 +44,11 @@ session_data = _load_session_data_module()
 
 
 class DailyTargetToolTest(unittest.TestCase):
+    def test_session_data_help_renders_literal_percent(self) -> None:
+        help_text = session_data._build_parser().format_help()
+
+        self.assertIn("+10% mode", " ".join(help_text.split()))
+
     def test_uses_utc_day_boundary_and_protects_after_five_without_extension_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
