@@ -290,6 +290,71 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertTrue(result["queued_for_hourly_tuning"])
             self.assertEqual(calls, [])
             self.assertFalse(paths.action_receipt.exists())
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertIn(event["dedupe_key"], state["hourly_routed_events"])
+            self.assertEqual(state.get("pending_dispatches"), {})
+
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=30),
+                env={"QR_GUARDIAN_WAKE_TUNING_MODE": "HOURLY"},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(second["status"], "SUPPRESSED")
+            self.assertEqual(calls, [])
+
+    def test_hourly_tuning_row_does_not_starve_entry_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            tuning = _technical_tuning_event(pair="CAD_CHF")
+            entry = _event(
+                severity="P2",
+                event_id="entry-after-tuning",
+                pair="EUR_USD",
+                direction="LONG",
+            )
+            paths.events.write_text(
+                json.dumps({"events": [tuning, entry]})
+            )
+            _write_technical_state(paths, "CAD_CHF", "EUR_USD")
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "wake_gpt": True,
+                        "events_to_review": [
+                            tuning,
+                            {**entry, "wake_reason_codes": ["NEW_EVENT"]},
+                        ],
+                    }
+                )
+            )
+            calls: list[list[str]] = []
+            response = _valid_receipt(
+                event_id=entry["event_id"],
+                pair=entry["pair"],
+                side=entry["direction"],
+                dedupe_key=entry["dedupe_key"],
+            )
+
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={"QR_GUARDIAN_WAKE_TUNING_MODE": "HOURLY"},
+                subprocess_run=_fake_codex(calls, response),
+            )
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(seconds=30),
+                env={"QR_GUARDIAN_WAKE_TUNING_MODE": "HOURLY"},
+                subprocess_run=_fake_codex(calls, response),
+            )
+
+            self.assertEqual(first["status"], "QUEUED_FOR_HOURLY_TUNING")
+            self.assertEqual(first["selected_event"]["event_id"], tuning["event_id"])
+            self.assertEqual(second["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(second["selected_event"]["event_id"], entry["event_id"])
+            self.assertEqual(len(calls), 1)
 
     def test_runtime_disk_p0_queues_without_starting_codex_or_marking_reviewed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

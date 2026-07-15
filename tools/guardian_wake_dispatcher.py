@@ -603,7 +603,13 @@ def _run_dispatcher_once(
             action_receipt_path=paths.action_receipt,
             now=clock,
         )
-        _record_state(paths.dispatcher_state, dispatcher_state, result)
+        _record_state(
+            paths.dispatcher_state,
+            dispatcher_state,
+            result,
+            routed_hourly_event=selected,
+            env=environ,
+        )
         _append_log(paths.log, result)
         return result
 
@@ -1484,6 +1490,9 @@ def _select_dispatch_event(
         return None, {"status": "NO_EVENTS_TO_REVIEW"}
 
     reviewed = _accepted_review_records(dispatcher_state.get("reviewed_events"))
+    hourly_routed = _hourly_routed_records(
+        dispatcher_state.get("hourly_routed_events")
+    )
     attempts = (
         dispatcher_state.get("dispatch_attempts")
         if isinstance(dispatcher_state.get("dispatch_attempts"), dict)
@@ -1556,6 +1565,8 @@ def _select_dispatch_event(
             suppressed.append({"event": event, **retry_suppression})
             continue
         record = reviewed.get(dedupe_key) if isinstance(reviewed, dict) else None
+        if record is None and _route_event_to_hourly_tuning(event, env=env):
+            record = hourly_routed.get(dedupe_key)
         throttle = _dispatch_throttle_seconds(event, env)
         if isinstance(record, dict):
             previous_severity = _severity_rank(record.get("severity"))
@@ -1692,6 +1703,16 @@ def _accepted_review_records(value: Any) -> dict[str, dict[str, Any]]:
         str(key): record
         for key, record in value.items()
         if isinstance(record, dict) and record.get("receipt_written") is True
+    }
+
+
+def _hourly_routed_records(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): record
+        for key, record in value.items()
+        if isinstance(record, dict) and record.get("routed_hourly") is True
     }
 
 
@@ -8478,6 +8499,7 @@ def _record_state(
     result: dict[str, Any],
     *,
     reviewed_event: dict[str, Any] | None = None,
+    routed_hourly_event: dict[str, Any] | None = None,
     attempted_event: dict[str, Any] | None = None,
     env: dict[str, str] | None = None,
 ) -> None:
@@ -8485,6 +8507,10 @@ def _record_state(
     state = dict(previous_state) if isinstance(previous_state, dict) else {}
     if "reviewed_events" in state:
         state["reviewed_events"] = _accepted_review_records(state.get("reviewed_events"))
+    if "hourly_routed_events" in state:
+        state["hourly_routed_events"] = _hourly_routed_records(
+            state.get("hourly_routed_events")
+        )
     state["generated_at_utc"] = result.get("generated_at_utc")
     state["last_status"] = result.get("status")
     result_time = _parse_utc(result.get("generated_at_utc")) or datetime.now(timezone.utc)
@@ -8643,6 +8669,71 @@ def _record_state(
             failures = state.get("parse_failures") if isinstance(state.get("parse_failures"), dict) else {}
             failures.pop(dedupe_key, None)
             state["parse_failures"] = failures
+            hourly_routed = _hourly_routed_records(
+                state.get("hourly_routed_events")
+            )
+            hourly_routed.pop(dedupe_key, None)
+            state["hourly_routed_events"] = hourly_routed
+    elif routed_hourly_event is not None:
+        # A non-executable tuning observation was durably handed to the hourly
+        # AI. Record that disposition separately from GPT-accepted receipts so
+        # the same P2 row cannot win every 30-second selection and starve a
+        # later entry/add event. A materially new observation still compares
+        # unequal and may be routed again after the normal tuning throttle.
+        dedupe_key = str(routed_hourly_event.get("dedupe_key") or "")
+        if dedupe_key:
+            hourly_routed = _hourly_routed_records(
+                state.get("hourly_routed_events")
+            )
+            hourly_routed[dedupe_key] = {
+                "event_id": routed_hourly_event.get("event_id"),
+                "price_zone": routed_hourly_event.get("price_zone"),
+                "details": (
+                    routed_hourly_event.get("details")
+                    if isinstance(routed_hourly_event.get("details"), dict)
+                    else {}
+                ),
+                "material_fingerprint": _event_material_fingerprint(
+                    routed_hourly_event
+                ),
+                "severity": routed_hourly_event.get("severity"),
+                "last_reviewed_at_utc": result.get("generated_at_utc"),
+                "last_routed_at_utc": result.get("generated_at_utc"),
+                "last_status": result.get("status"),
+                "routed_hourly": True,
+            }
+            state["hourly_routed_events"] = dict(
+                sorted(
+                    hourly_routed.items(),
+                    key=lambda item: str(
+                        item[1].get("last_routed_at_utc") or ""
+                    ),
+                    reverse=True,
+                )[:MAX_PENDING_TUNING_WORK_ORDERS]
+            )
+            pending_record = pending_dispatches.get(dedupe_key)
+            promoted = (
+                _promote_pending_dispatch_successor(
+                    pending_record,
+                    now=result_time,
+                )
+                if isinstance(pending_record, dict)
+                else None
+            )
+            if promoted is None:
+                pending_dispatches.pop(dedupe_key, None)
+            else:
+                pending_dispatches[dedupe_key] = promoted
+                state["last_result"]["promoted_successor"] = {
+                    "dedupe_key": dedupe_key,
+                    "event_id": promoted.get("event_id"),
+                    "material_fingerprint": promoted.get(
+                        "material_fingerprint"
+                    ),
+                    "remaining_successor_count": len(
+                        promoted.get("successors") or []
+                    ),
+                }
     elif attempted_event is not None:
         failure_code = _failed_attempt_code(result)
         dedupe_key = str(attempted_event.get("dedupe_key") or "")
