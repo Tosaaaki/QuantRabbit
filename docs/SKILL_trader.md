@@ -520,6 +520,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
 # structured routing-health issues, and the no-write boundary remain bound.
 # Any rejection means refresh/re-author; never copy fields by hand around the
 # failed merge.
+# The apply step rebuilds `narrative`, `thesis`, `twenty_minute_plan.primary_path`,
+# and `operator_summary` from the final MARKET_READ_FIRST. None may retain a
+# superseded baseline pair, direction, target, or invalidation after the AI
+# overlay replaces the draft read; these fields remain non-execution prose and
+# never widen the deterministic lane/risk envelope.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
   --baseline data/trader_decision_baseline.json \
   --packet data/market_read_evidence_packet.json \

@@ -4,6 +4,13 @@ This file is the **single source of truth** for both Codex and Claude. The repo'
 
 If you are an automation reading this for runtime, also read `docs/SKILL_trader.md` for the executable cycle.
 
+`trader-apply-market-read` must rebuild `narrative`, `thesis`,
+`twenty_minute_plan.primary_path`, and `operator_summary` from the final
+GPT-authored `market_read_first`. These derived prose fields may not retain a
+superseded deterministic-draft pair, direction, target, or invalidation. They
+are outside the immutable execution envelope and never change selected lanes,
+units, TP/SL, broker actions, or live permission.
+
 ---
 
 ## 1. Document Map (導線)

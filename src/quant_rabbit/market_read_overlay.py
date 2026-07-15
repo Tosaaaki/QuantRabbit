@@ -203,7 +203,9 @@ MUTABLE_MARKET_READ_FIELDS = frozenset(
 # replaced direction cannot leave stale deterministic prose in the receipt.
 DERIVED_MARKET_READ_FIELDS = frozenset(
     {
+        "narrative",
         "operator_summary",
+        "thesis",
         "twenty_minute_plan",
     }
 )
@@ -1408,6 +1410,30 @@ def _rebuild_market_read_derived_prose(payload: dict[str, Any]) -> None:
         str(forced.get("direction") or "UNKNOWN").strip().upper() or "UNKNOWN"
     )
 
+    if action == "TRADE":
+        final_instruction = (
+            f"Final AI market read accepted the immutable {pair} {direction} "
+            "lane; gateway validation remains final."
+        )
+    elif action in {"WAIT", "REQUEST_EVIDENCE"}:
+        final_instruction = (
+            "Final AI market read left new entry unauthorized; refresh named "
+            "blockers and broker truth before new risk."
+        )
+    elif action == "CLOSE":
+        final_instruction = (
+            "Final AI market read accepted only the immutable close scope; "
+            "it creates no separate entry authority."
+        )
+    else:
+        final_instruction = (
+            f"Final AI market read accompanies {action or 'UNKNOWN_ACTION'}; "
+            "execution authority remains bound to deterministic receipt fields."
+        )
+
+    payload["narrative"] = f"{summary} {final_instruction}"
+    payload["thesis"] = f"{summary} {final_instruction}"
+
     raw_plan = payload.get("twenty_minute_plan")
     if isinstance(raw_plan, Mapping):
         plan = deepcopy(dict(raw_plan))
@@ -1424,20 +1450,11 @@ def _rebuild_market_read_derived_prose(payload: dict[str, Any]) -> None:
         payload["twenty_minute_plan"] = plan
 
     if action == "TRADE":
-        payload["operator_summary"] = (
-            f"{summary} Final AI market read accepted the immutable {pair} "
-            f"{direction} lane; gateway validation remains final."
-        )
+        payload["operator_summary"] = f"{summary} {final_instruction}"
     elif action in {"WAIT", "REQUEST_EVIDENCE"}:
-        payload["operator_summary"] = (
-            f"{summary} Final AI market read left new entry unauthorized; "
-            "refresh named blockers and broker truth before new risk."
-        )
+        payload["operator_summary"] = f"{summary} {final_instruction}"
     elif action == "CLOSE":
-        payload["operator_summary"] = (
-            f"{summary} Final AI market read accepted only the immutable close "
-            "scope; refresh broker truth before any separate entry decision."
-        )
+        payload["operator_summary"] = f"{summary} {final_instruction}"
 
 
 def _validated_capital_allocation(

@@ -3305,6 +3305,12 @@ class MarketReadOverlayTest(unittest.TestCase):
             baseline["operator_summary"] = (
                 "MARKET READ FIRST next 30m EUR_USD SHORT; stale baseline summary."
             )
+            baseline["narrative"] = (
+                "MARKET READ FIRST next 30m EUR_USD SHORT toward 1.0800; stale narrative."
+            )
+            baseline["thesis"] = (
+                "MARKET READ FIRST next 30m EUR_USD SHORT toward 1.0800; stale thesis."
+            )
             paths = _prepared_paths(Path(tmp), baseline=baseline)
             _write_overlay(paths, disposition="ACCEPT_BASELINE")
 
@@ -3320,8 +3326,12 @@ class MarketReadOverlayTest(unittest.TestCase):
                 final["twenty_minute_plan"]["primary_path"],
             )
             self.assertIn(expected, final["operator_summary"])
+            self.assertIn(expected, final["narrative"])
+            self.assertIn(expected, final["thesis"])
             self.assertNotIn("EUR_USD SHORT", final["twenty_minute_plan"]["primary_path"])
             self.assertNotIn("EUR_USD SHORT", final["operator_summary"])
+            self.assertNotIn("EUR_USD SHORT", final["narrative"])
+            self.assertNotIn("EUR_USD SHORT", final["thesis"])
             prepared_baseline = json.loads(paths["baseline"].read_text())
             self.assertEqual(final["selected_lane_id"], prepared_baseline["selected_lane_id"])
             self.assertEqual(final["cancel_order_ids"], prepared_baseline["cancel_order_ids"])
