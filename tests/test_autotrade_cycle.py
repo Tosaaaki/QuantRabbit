@@ -8172,6 +8172,24 @@ class AutoTradeCycleTest(unittest.TestCase):
                 self.assertIsNotNone(reusable)
                 self.assertEqual(reusable.action, action)
 
+                # The wrapper has already verified these exact immutable
+                # artifacts under one lock. A concurrent 30-second Guardian
+                # publication may make ordinary deep revalidation false
+                # before autotrade-cycle starts, but must not erase that one
+                # accepted verifier result.
+                with mock.patch.object(
+                    cycle,
+                    "_same_lock_verified_gpt_handoff_attested",
+                    return_value=True,
+                ), mock.patch.object(
+                    cycle,
+                    "_verified_gpt_trade_artifacts_still_current",
+                    return_value=False,
+                ):
+                    same_lock_reusable = cycle._load_reusable_verified_gpt_handoff()
+                self.assertIsNotNone(same_lock_reusable)
+                self.assertEqual(same_lock_reusable.action, action)
+
                 baseline_bytes = brain.market_read_baseline_path.read_bytes()
                 mutated_baseline = json.loads(baseline_bytes)
                 mutated_baseline["risk_notes"] = [
@@ -8209,6 +8227,69 @@ class AutoTradeCycleTest(unittest.TestCase):
                 legacy_reusable = cycle._load_reusable_verified_gpt_handoff()
                 self.assertIsNotNone(legacy_reusable)
                 self.assertEqual(legacy_reusable.action, action)
+
+    def test_same_lock_gpt_attestation_binds_every_immutable_handoff_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = {
+                "source": root / "codex_trader_decision_response.json",
+                "decision": root / "gpt_trader_decision.json",
+                "baseline": root / "trader_decision_baseline.json",
+                "packet": root / "market_read_evidence_packet.json",
+                "overlay": root / "codex_market_read_overlay.json",
+            }
+            for name, path in paths.items():
+                path.write_text(json.dumps({"name": name}) + "\n")
+            cycle = object.__new__(AutoTradeCycle)
+            cycle.gpt_decision_path = paths["decision"]
+            brain = SimpleNamespace(
+                market_read_baseline_path=paths["baseline"],
+                market_read_evidence_packet_path=paths["packet"],
+                market_read_overlay_path=paths["overlay"],
+            )
+            token = "same-lock-owner"
+            env = {
+                "QR_AUTOTRADE_LOCK_HELD": "1",
+                "QR_AUTOTRADE_LOCK_OWNER_TOKEN": token,
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN": token,
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS": str(
+                    int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+                ),
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256": hashlib.sha256(
+                    paths["source"].read_bytes()
+                ).hexdigest(),
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256": hashlib.sha256(
+                    paths["decision"].read_bytes()
+                ).hexdigest(),
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_BASELINE_SHA256": hashlib.sha256(
+                    paths["baseline"].read_bytes()
+                ).hexdigest(),
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_PACKET_SHA256": hashlib.sha256(
+                    paths["packet"].read_bytes()
+                ).hexdigest(),
+                "QR_AUTOTRADE_VERIFIED_HANDOFF_OVERLAY_SHA256": hashlib.sha256(
+                    paths["overlay"].read_bytes()
+                ).hexdigest(),
+            }
+            with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+                cycle,
+                "_gpt_brain",
+                return_value=brain,
+            ), mock.patch(
+                "quant_rabbit.automation.inherited_live_lock_is_valid",
+                return_value=True,
+            ):
+                self.assertTrue(
+                    cycle._same_lock_verified_gpt_handoff_attested(
+                        source_path=paths["source"],
+                    )
+                )
+                paths["baseline"].write_text('{"changed":true}\n')
+                self.assertFalse(
+                    cycle._same_lock_verified_gpt_handoff_attested(
+                        source_path=paths["source"],
+                    )
+                )
 
     def test_gpt_decision_response_older_than_snapshot_requires_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

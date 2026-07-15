@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -130,6 +131,7 @@ from quant_rabbit.verification_ledger import VerificationLedger
 
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
+SAME_LOCK_GPT_ATTESTATION_MAX_AGE_SECONDS = 120
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 ACCEPTED_GPT_GATEWAY_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE"})
 # WAIT / REQUEST_EVIDENCE never authorize a broker write, but a freshly
@@ -4427,7 +4429,27 @@ class AutoTradeCycle:
             and has_schema_v2_codex_provenance
         )
         artifact_bound_action = action in {"TRADE", "CLOSE"} or schema_v2_codex_veto
-        if artifact_bound_action:
+        same_lock_attested = self._same_lock_verified_gpt_handoff_attested(
+            source_path=source_path,
+        )
+        if same_lock_attested:
+            # The wrapper has just run the verifier under the same live-lock
+            # generation and pinned the exact response, verifier output, and
+            # three immutable handoff artifacts by SHA-256.  The 30-second
+            # Guardian may legitimately publish a newer scoped receipt before
+            # autotrade-cycle starts; repeating the full artifact rebuild here
+            # would misclassify that freshly accepted result as stale.  The
+            # gateway still refreshes broker truth and reapplies current risk,
+            # Guardian-health, exposure, and duplicate-order gates before POST.
+            if (
+                not has_schema_v2_codex_provenance
+                or not self._verified_gpt_trade_decision_matches_source(
+                    decision,
+                    source_payload,
+                )
+            ):
+                return None
+        elif artifact_bound_action:
             if (
                 not self._verified_gpt_trade_decision_matches_source(decision, source_payload)
                 or not self._verified_gpt_trade_artifacts_still_current(source_payload)
@@ -4478,6 +4500,68 @@ class AutoTradeCycle:
             close_trade_ids=close_trade_ids,
             capital_allocation_size_multiple=capital_allocation_size_multiple,
         )
+
+    def _same_lock_verified_gpt_handoff_attested(
+        self,
+        *,
+        source_path: Path,
+    ) -> bool:
+        """Accept only the wrapper's fresh, exact, same-lock verifier bridge.
+
+        This is deliberately narrower than a generic environment override.
+        The inherited lock generation must still belong to this process tree,
+        the wrapper token must match, the attestation must be at most two
+        minutes old, and every immutable handoff file must retain its exact
+        post-verification SHA-256.  A caller cannot use the bridge to bless a
+        changed baseline, packet, overlay, source receipt, or verifier result.
+        """
+
+        if os.environ.get("QR_AUTOTRADE_LOCK_HELD") != "1":
+            return False
+        owner_token = str(os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN") or "").strip()
+        attested_owner_token = str(
+            os.environ.get("QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN") or ""
+        ).strip()
+        if not owner_token or attested_owner_token != owner_token:
+            return False
+        lock_dir = Path(
+            os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR
+        )
+        if not inherited_live_lock_is_valid(lock_dir, owner_token):
+            return False
+
+        try:
+            verified_at_ns = int(
+                os.environ.get("QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS") or ""
+            )
+        except (TypeError, ValueError):
+            return False
+        now_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        age_ns = now_ns - verified_at_ns
+        if age_ns < -5_000_000_000 or age_ns > (
+            SAME_LOCK_GPT_ATTESTATION_MAX_AGE_SECONDS * 1_000_000_000
+        ):
+            return False
+
+        brain = self._gpt_brain()
+        bound_paths = {
+            "QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256": source_path,
+            "QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256": self.gpt_decision_path,
+            "QR_AUTOTRADE_VERIFIED_HANDOFF_BASELINE_SHA256": brain.market_read_baseline_path,
+            "QR_AUTOTRADE_VERIFIED_HANDOFF_PACKET_SHA256": brain.market_read_evidence_packet_path,
+            "QR_AUTOTRADE_VERIFIED_HANDOFF_OVERLAY_SHA256": brain.market_read_overlay_path,
+        }
+        for env_name, path in bound_paths.items():
+            expected = str(os.environ.get(env_name) or "").strip().lower()
+            if len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+                return False
+            try:
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                return False
+            if actual != expected:
+                return False
+        return True
 
     @staticmethod
     def _string_tuple(value: Any) -> tuple[str, ...]:

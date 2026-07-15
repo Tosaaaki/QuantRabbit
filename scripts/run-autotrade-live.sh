@@ -546,6 +546,75 @@ refresh_gpt_handoff_if_needed() {
   fi
 }
 
+clear_same_lock_verified_gpt_handoff() {
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_BASELINE_SHA256
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_PACKET_SHA256
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_OVERLAY_SHA256
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN
+  unset QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS
+}
+
+establish_same_lock_verified_gpt_handoff() {
+  local response_path="$1"
+  local attestation source_sha decision_sha baseline_sha packet_sha overlay_sha verified_at_ns
+
+  attestation="$({
+    "$QR_PYTHON" - \
+      "$response_path" \
+      data/gpt_trader_decision.json \
+      data/trader_decision_baseline.json \
+      data/market_read_evidence_packet.json \
+      data/codex_market_read_overlay.json <<'PY'
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+
+paths = [Path(value) for value in sys.argv[1:]]
+try:
+    verified = json.loads(paths[1].read_text())
+except (IndexError, OSError, json.JSONDecodeError, TypeError, ValueError):
+    raise SystemExit(1)
+decision = verified.get("decision") if isinstance(verified, dict) else None
+action = str(decision.get("action") or "").upper() if isinstance(decision, dict) else ""
+if verified.get("status") != "ACCEPTED" or action not in {
+    "TRADE",
+    "WAIT",
+    "REQUEST_EVIDENCE",
+    "PROTECT",
+    "TIGHTEN_SL",
+    "CLOSE",
+    "CANCEL_PENDING",
+}:
+    raise SystemExit(1)
+try:
+    digests = [hashlib.sha256(path.read_bytes()).hexdigest() for path in paths]
+except OSError:
+    raise SystemExit(1)
+print("\t".join([*digests, str(time.time_ns())]))
+PY
+  } 2>/dev/null)" || return 1
+  IFS=$'\t' read -r \
+    source_sha decision_sha baseline_sha packet_sha overlay_sha verified_at_ns \
+    <<< "$attestation"
+  if [[ -z "$source_sha" || -z "$decision_sha" || -z "$baseline_sha" \
+    || -z "$packet_sha" || -z "$overlay_sha" || -z "$verified_at_ns" \
+    || -z "${QR_AUTOTRADE_LOCK_OWNER_TOKEN:-}" ]]; then
+    return 1
+  fi
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256="$source_sha"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256="$decision_sha"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_BASELINE_SHA256="$baseline_sha"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_PACKET_SHA256="$packet_sha"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_OVERLAY_SHA256="$overlay_sha"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN="$QR_AUTOTRADE_LOCK_OWNER_TOKEN"
+  export QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS="$verified_at_ns"
+  return 0
+}
+
 finalize_codex_market_read_handoff() {
   if [[ "$QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ" != "1" ]]; then
     return 0
@@ -586,6 +655,10 @@ finalize_codex_market_read_handoff() {
   set -e
   if [[ "$verify_status" -ne 0 ]]; then
     echo "[run-autotrade-live] gpt-trader-decision returned status=${verify_status}; continuing to autotrade-cycle under the same lock so rejection blocks new risk without skipping position maintenance." >&2
+  elif establish_same_lock_verified_gpt_handoff "$response_path"; then
+    echo "[run-autotrade-live] pinned the accepted GPT handoff to this live-lock generation for one gateway cycle." >&2
+  else
+    echo "[run-autotrade-live] accepted GPT handoff could not be attested; autotrade-cycle will fail closed or use ordinary deep revalidation." >&2
   fi
 }
 
@@ -676,6 +749,7 @@ if [[ "$QR_LIVE_ENABLED" == "1" && "$arg_count" -gt 0 ]] \
   fi
 fi
 
+clear_same_lock_verified_gpt_handoff
 refresh_position_guardian_send_status
 finalize_codex_market_read_handoff
 refresh_gpt_handoff_if_needed

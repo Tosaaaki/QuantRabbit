@@ -511,6 +511,69 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertNotEqual(owner_tokens, {""})
             self.assertIn("finalizing the scheduled Codex market read under the live lock", result.stderr)
 
+    def test_successful_finalizer_attests_exact_handoff_to_autotrade_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env["QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ"] = "1"
+            data = root / "data"
+            data.mkdir()
+            response = data / "codex_trader_decision_response.json"
+            verified = data / "gpt_trader_decision.json"
+            baseline = data / "trader_decision_baseline.json"
+            packet = data / "market_read_evidence_packet.json"
+            overlay = data / "codex_market_read_overlay.json"
+            response.write_text('{"action":"REQUEST_EVIDENCE"}\n')
+            verified.write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {"action": "REQUEST_EVIDENCE"},
+                        "verification_issues": [],
+                    }
+                )
+                + "\n"
+            )
+            baseline.write_text('{"action":"REQUEST_EVIDENCE"}\n')
+            packet.write_text('{"schema_version":1}\n')
+            overlay.write_text('{"schema_version":2}\n')
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                    "--send",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = _captured_cli_call_envs(capture.read_text())
+            autotrade = next(call for call in calls if "<autotrade-cycle>" in call["ARGV"])
+            self.assertEqual(
+                autotrade["QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256"],
+                hashlib.sha256(response.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                autotrade["QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256"],
+                hashlib.sha256(verified.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                autotrade["QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN"],
+                autotrade["QR_AUTOTRADE_LOCK_OWNER_TOKEN"],
+            )
+            self.assertTrue(autotrade["QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS"])
+            self.assertIn("pinned the accepted GPT handoff", result.stderr)
+
     def test_codex_market_read_apply_failure_aborts_before_verifier_and_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2786,6 +2849,10 @@ def _wrapper_env(
                 "  printf 'QR_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_AUTOTRADE_LOCK_HELD=%s\\n' \"${QR_AUTOTRADE_LOCK_HELD:-}\"",
                 "  printf 'QR_AUTOTRADE_LOCK_OWNER_TOKEN=%s\\n' \"${QR_AUTOTRADE_LOCK_OWNER_TOKEN:-}\"",
+                "  printf 'QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256=%s\\n' \"${QR_AUTOTRADE_VERIFIED_HANDOFF_SOURCE_SHA256:-}\"",
+                "  printf 'QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256=%s\\n' \"${QR_AUTOTRADE_VERIFIED_HANDOFF_DECISION_SHA256:-}\"",
+                "  printf 'QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN=%s\\n' \"${QR_AUTOTRADE_VERIFIED_HANDOFF_OWNER_TOKEN:-}\"",
+                "  printf 'QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS=%s\\n' \"${QR_AUTOTRADE_VERIFIED_HANDOFF_AT_EPOCH_NS:-}\"",
                 "  printf 'QR_CONSOLIDATED_CYCLE_ID=%s\\n' \"${QR_CONSOLIDATED_CYCLE_ID:-}\"",
                 "  printf 'QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS=%s\\n' \"${QR_CONSOLIDATED_CYCLE_LINEAGE_STATUS:-}\"",
                 "  printf 'PYTHONPATH=%s\\n' \"${PYTHONPATH:-}\"",
