@@ -131,6 +131,12 @@ class OandaReadOnlyClient:
         payload = self.get_json(f"/v3/accounts/{self.account_id}/instruments")
         return tuple(item for item in payload.get("instruments", []) or [] if isinstance(item, dict))
 
+    def quotes(self, pairs: Iterable[str]) -> dict[str, Quote]:
+        """Return current executable quotes without reading or mutating orders."""
+
+        quotes, _home_conversions = self._pricing(tuple(pairs))
+        return quotes
+
     def transactions_since_id(self, transaction_id: str) -> dict:
         return self.get_json(
             f"/v3/accounts/{self.account_id}/transactions/sinceid",

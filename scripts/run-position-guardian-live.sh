@@ -1247,6 +1247,14 @@ export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
+export QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED="${QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED:-1}"
+case "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED=${QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
 guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
@@ -1285,6 +1293,24 @@ run_guardian_event_router() {
     --escalation-output "${QR_POSITION_GUARDIAN_ESCALATION:-data/guardian_escalation.json}" \
     --report "${QR_POSITION_GUARDIAN_EVENT_REPORT:-docs/guardian_event_report.md}" \
     --action-review-report "${QR_POSITION_GUARDIAN_ACTION_REVIEW:-docs/guardian_action_review.md}"
+}
+
+emit_technical_forecast_forward_shadow() {
+  if [[ "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local emitter shadow_status
+  emitter="${ROOT_DIR}/scripts/emit_technical_forecast_forward_shadow.py"
+  if [[ ! -f "$emitter" ]]; then
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$emitter" --fresh-m5 >&2
+  shadow_status="$?"
+  set -e
+  if [[ "$shadow_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] technical forecast forward-shadow refresh failed status=${shadow_status}; no shadow signal was admitted." >&2
+  fi
 }
 
 "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
@@ -1350,6 +1376,7 @@ if [[ -z "$trader_pairs" ]]; then
     "$candidate_pairs" \
     "$monitor_pairs"
   run_guardian_event_router
+  emit_technical_forecast_forward_shadow
   echo "[run-position-guardian-live] no trader-owned open positions; completed read-only monitor scope pairs=${monitor_pairs:-none}." >&2
   exit 0
 fi
@@ -1375,3 +1402,4 @@ fi
 
 "$QR_PYTHON" -m quant_rabbit.cli "${pexec_args[@]}"
 run_guardian_event_router
+emit_technical_forecast_forward_shadow

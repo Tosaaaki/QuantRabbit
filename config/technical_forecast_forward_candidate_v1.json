@@ -1,0 +1,66 @@
+{
+  "contract": "QR_TECHNICAL_FORECAST_FORWARD_CANDIDATE_V1",
+  "schema_version": 1,
+  "status": "LOCKED_FORWARD_SHADOW",
+  "locked_at_utc": "2026-07-15T12:27:42+00:00",
+  "forward_evaluation_not_before_utc": "2026-07-15T12:27:42+00:00",
+  "shadow_enabled": true,
+  "live_order_enabled": false,
+  "promotion_allowed": false,
+  "selector": {
+    "horizon_min": 1440,
+    "feature": "return_12",
+    "feature_timeframe": "M5",
+    "orientation": "DIRECT",
+    "schedule_hour_utc": 23,
+    "schedule_minute_utc": 55,
+    "collection_lateness_max_seconds": 60,
+    "opportunity_fraction": 0.3,
+    "spread_cap_pips": 2.0
+  },
+  "vehicle": {
+    "order_type": "LIMIT",
+    "entry_reference": "JOIN_EXECUTABLE_NEAR_SIDE",
+    "entry_ttl_min": 5,
+    "max_hold_min": 1435,
+    "take_profit_pips": 15,
+    "stop_loss_pips": 30,
+    "market_entry_allowed": false,
+    "time_close_allowed": false
+  },
+  "selection_disclosure": {
+    "initial_holdout_inspected_before_lock": true,
+    "initial_history_is_research_only": true,
+    "initial_history_must_not_count_toward_forward_promotion": true,
+    "reason": "TTL5 TP15 SL30 was selected after inspecting the initial validation and holdout grid; only observations after this lock may count as independent forward evidence."
+  },
+  "research_evidence": {
+    "direction_selector_report_sha256": "5768acbfe00f14b976a8f9d60a2bb45eb088392689007d49732d2851203b8587",
+    "passive_vehicle_report_sha256": "4d11a6d05bcf05cf8d49acfc9a82043f4c3f38e81635ccf72efc0bc8b2f7103c",
+    "validation_predictions_sha256": "842766330a4ea2345241c3f7638c15a96f4a4480e34663fa448bb181a3c5e029",
+    "holdout_predictions_sha256": "c255ce14a54a6de74d90ea4ea30d16fb480694fcfb29a4fa705ee423c4bedbb2",
+    "s5_truth_candles_sha256": "e5acad57ae320d646be2020bcd23e088f5794cfc59ce4f193cfa42dbb3b983da",
+    "validation": {
+      "signals": 36,
+      "fills": 13,
+      "mean_conservative_pips": 4.615385,
+      "net_conservative_pips": 60.0,
+      "one_sided_95_mean_lower_pips": -4.387985,
+      "conservative_profit_factor": 1.666667
+    },
+    "holdout": {
+      "signals": 38,
+      "fills": 9,
+      "mean_conservative_pips": 10.0,
+      "net_conservative_pips": 90.0,
+      "one_sided_95_mean_lower_pips": 1.775,
+      "conservative_profit_factor": 4.0
+    }
+  },
+  "promotion_blockers": [
+    "NEW_FORWARD_COHORT_REQUIRED",
+    "MINIMUM_FORWARD_RESOLVED_FILLS_NOT_MET",
+    "FORWARD_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
+    "NOT_CONNECTED_TO_ORDER_INTENT_OR_GATEWAY"
+  ]
+}

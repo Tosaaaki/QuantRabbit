@@ -88,6 +88,17 @@ case "$QR_PREDICTIVE_SCOUT_LIVE_ENABLED" in
     exit 2
     ;;
 esac
+# The independently locked causal-technical candidate is collected as a
+# read-only forward shadow after each successful full cycle. It writes no
+# order intent and the candidate contract hard-codes live_order_enabled=false.
+export QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED="${QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED:-1}"
+case "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED=${QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 # Entry sends need the fast position guardian alive so TP-progress profit can be
 # converted between full trader cycles. The gateway uses the status exported by
 # this wrapper to block new risk while still allowing position-management closes.
@@ -591,6 +602,25 @@ refresh_position_guardian_send_status() {
   fi
 }
 
+emit_technical_forecast_forward_shadow() {
+  if [[ "$QR_TECHNICAL_FORECAST_FORWARD_SHADOW_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local emitter shadow_status
+  emitter="${ROOT_DIR}/scripts/emit_technical_forecast_forward_shadow.py"
+  if [[ ! -f "$emitter" ]]; then
+    echo "[run-autotrade-live] technical forecast forward-shadow emitter missing: ${emitter}" >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$emitter" >&2
+  shadow_status="$?"
+  set -e
+  if [[ "$shadow_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] technical forecast forward-shadow refresh failed status=${shadow_status}; no shadow signal was admitted." >&2
+  fi
+}
+
 if [[ "$arg_count" -gt 0 ]] && has_arg "--send" "${args[@]}" && ! has_arg "--use-gpt-trader" "${args[@]}"; then
   gpt_args=("--use-gpt-trader")
   if ! has_arg "--reuse-market-artifacts" "${args[@]}"; then
@@ -645,6 +675,10 @@ if [[ "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
       echo "[run-autotrade-live] failure-repair sidecar refresh incomplete: post-autotrade-failure-sidecars=${post_failure_sidecars_exit}" >&2
     fi
   fi
+fi
+
+if [[ "$cycle_exit" -eq 0 ]]; then
+  emit_technical_forecast_forward_shadow
 fi
 
 # Slack notifications are opt-in. User directive 2026-05-30:
