@@ -5152,6 +5152,34 @@ class MarketReadOverlayTest(unittest.TestCase):
                 summary = _apply(paths)
                 self.assertEqual(summary.action, "TRADE")
 
+    def test_m15_recovery_collection_allows_thin_positive_net_with_losses(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _configure_m15_recovery_lane(
+                paths,
+                mode="TP_PROOF_COLLECTION_HARVEST",
+                trades=7,
+                all_exit_losses=2,
+            )
+
+            packet = json.loads(paths["packet"].read_text())
+            lane = packet["capital_allocation_board"]["selected_lane"]
+            all_exit = lane["capture"]["exact_vehicle_all_exit"]
+
+            self.assertEqual(all_exit["trades"], 9)
+            self.assertEqual(all_exit["losses"], 2)
+            self.assertGreater(all_exit["net_jpy"], 0.0)
+            self.assertTrue(all_exit["thin_positive_consistent"])
+            self.assertFalse(all_exit["blocks_tp_exception"])
+            self.assertTrue(lane["allocation_eligible"], lane)
+            self.assertTrue(lane["edge_collection_proven"])
+            self.assertEqual(lane["edge_basis"], "M15_RECOVERY_EDGE_COLLECTION")
+
+            _write_overlay(paths, size_multiple=1.0)
+            self.assertEqual(_apply(paths).action, "TRADE")
+
     def test_m15_recovery_missing_or_tampered_chain_fails_closed(self) -> None:
         cases = (
             ("TP_PROOF_COLLECTION_HARVEST", 7, "source_receipt"),
@@ -5939,6 +5967,7 @@ def _configure_m15_recovery_lane(
     *,
     mode: str,
     trades: int,
+    all_exit_losses: int = 0,
 ) -> None:
     for index in range(trades):
         _append_vehicle_trade(
@@ -5949,6 +5978,16 @@ def _configure_m15_recovery_lane(
             vehicle="STOP",
             realized=320.0,
             index=10_000 + index,
+        )
+    for index in range(all_exit_losses):
+        _append_vehicle_trade(
+            paths["execution_ledger"],
+            pair="EUR_USD",
+            side="LONG",
+            method="BREAKOUT_FAILURE",
+            vehicle="STOP",
+            realized=-100.0,
+            index=20_000 + index,
         )
 
     baseline = json.loads(paths["baseline"].read_text())
@@ -6024,7 +6063,7 @@ def _configure_m15_recovery_lane(
         **evidence_body,
         "evidence_sha256": canonical_json_sha256(evidence_body),
     }
-    cycle_id = f"m15-recovery-{mode.lower()}-{trades}"
+    cycle_id = f"m15-recovery-{mode.lower()}-{trades}-{all_exit_losses}"
     forecast_binding = build_m15_recovery_forecast_binding(
         forecast_evidence,
         cycle_id=cycle_id,
@@ -6038,7 +6077,9 @@ def _configure_m15_recovery_lane(
     pessimistic = lower * 320.0 - (1.0 - lower) * 100.0
     proof_collection = mode == "TP_PROOF_COLLECTION_HARVEST"
     effective_max_loss = 320.0 if proof_collection else 400.0
-    net_jpy = float(trades * 320)
+    tp_net_jpy = float(trades * 320)
+    exact_net_trades = trades + all_exit_losses
+    exact_net_jpy = float(trades * 320 - all_exit_losses * 100)
     scope_key = (
         "EUR_USD|LONG|BREAKOUT_FAILURE|STOP|TAKE_PROFIT_ORDER"
     )
@@ -6062,7 +6103,7 @@ def _configure_m15_recovery_lane(
             "data/execution_ledger.db:exact_vehicle_take_profit"
         ),
         "capture_take_profit_expectancy_jpy": 320.0,
-        "capture_take_profit_net_jpy": net_jpy,
+        "capture_take_profit_net_jpy": tp_net_jpy,
         "capture_take_profit_trades": trades,
         "capture_take_profit_wins": trades,
         "capture_take_profit_losses": 0,
@@ -6078,13 +6119,17 @@ def _configure_m15_recovery_lane(
             "data/execution_ledger.db:exact_vehicle_net"
         ),
         "capture_exact_vehicle_net_exit_scope": "ALL_AUDITED_EXITS",
-        "capture_exact_vehicle_net_trades": trades,
+        "capture_exact_vehicle_net_trades": exact_net_trades,
         "capture_exact_vehicle_net_wins": trades,
-        "capture_exact_vehicle_net_losses": 0,
-        "capture_exact_vehicle_net_jpy": net_jpy,
-        "capture_exact_vehicle_net_expectancy_jpy": 320.0,
+        "capture_exact_vehicle_net_losses": all_exit_losses,
+        "capture_exact_vehicle_net_jpy": exact_net_jpy,
+        "capture_exact_vehicle_net_expectancy_jpy": (
+            exact_net_jpy / exact_net_trades
+        ),
         "capture_exact_vehicle_net_avg_win_jpy": 320.0,
-        "capture_exact_vehicle_net_avg_loss_jpy": 0.0,
+        "capture_exact_vehicle_net_avg_loss_jpy": (
+            100.0 if all_exit_losses else 0.0
+        ),
         "capture_exact_vehicle_net_unresolved_realized_trades": 0,
         "capture_exact_vehicle_net_unresolved_realized_net_jpy": 0.0,
         "capture_exact_vehicle_net_unresolved_trade_ids_sha256": (

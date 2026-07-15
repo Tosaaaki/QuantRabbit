@@ -230,8 +230,8 @@ class CaptureEconomicsTest(unittest.TestCase):
         self.assertFalse(evidence["proven"])
         self.assertTrue(evidence["blocks_tp_exception"])
 
-    def test_thin_tp_exception_never_hides_a_known_all_exit_loss(self) -> None:
-        losing_trade = evaluate_exact_vehicle_net_edge(
+    def test_thin_tp_collection_uses_net_lifecycle_not_perfect_win_rate(self) -> None:
+        positive_with_losses = evaluate_exact_vehicle_net_edge(
             {
                 "trades": 8,
                 "wins": 7,
@@ -240,6 +240,19 @@ class CaptureEconomicsTest(unittest.TestCase):
                 "expectancy_jpy_per_trade": 86.25,
                 "avg_win_jpy": 100.0,
                 "avg_loss_jpy": 10.0,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+        negative_with_losses = evaluate_exact_vehicle_net_edge(
+            {
+                "trades": 8,
+                "wins": 7,
+                "losses": 1,
+                "net_jpy": -100.0,
+                "expectancy_jpy_per_trade": -12.5,
+                "avg_win_jpy": 100.0,
+                "avg_loss_jpy": 800.0,
                 "unresolved_realized_trades": 0,
                 "unresolved_realized_net_jpy": 0.0,
             }
@@ -258,7 +271,10 @@ class CaptureEconomicsTest(unittest.TestCase):
             }
         )
 
-        self.assertTrue(losing_trade["blocks_tp_exception"])
+        self.assertTrue(positive_with_losses["thin_positive_consistent"])
+        self.assertFalse(positive_with_losses["blocks_tp_exception"])
+        self.assertFalse(negative_with_losses["thin_positive_consistent"])
+        self.assertTrue(negative_with_losses["blocks_tp_exception"])
         self.assertFalse(zero_loss["blocks_tp_exception"])
 
     def test_oanda_nanosecond_timestamps_are_audited_on_python_39(self) -> None:

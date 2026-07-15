@@ -600,6 +600,72 @@ class RiskEngineTest(unittest.TestCase):
                 {"M15_RECOVERY_RISK_REVALIDATED"},
             )
 
+    def test_m15_recovery_below_one_r_uses_current_evidence_weighted_expectancy(
+        self,
+    ) -> None:
+        from quant_rabbit.strategy.m15_recovery_contract import (
+            build_lane_binding,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now, chart_path, original, broker = _m15_recovery_fixture(root)
+
+            def reprice(tp: float) -> OrderIntent:
+                metadata = deepcopy(original.metadata)
+                binding = build_lane_binding(
+                    forecast_binding=metadata["forecast_m15_recovery_binding"],
+                    pair=original.pair,
+                    side=original.side.value,
+                    method=original.market_context.method.value,
+                    order_type="STOP-ENTRY",
+                    entry=original.entry,
+                    tp=tp,
+                    sl=original.sl,
+                    producer_units=original.units,
+                    metadata=metadata,
+                )
+                self.assertIsInstance(binding, dict)
+                assert isinstance(binding, dict)
+                metadata["m15_recovery_lane_binding"] = binding
+                metadata["m15_recovery_lane_binding_sha256"] = binding[
+                    "binding_sha256"
+                ]
+                return replace(original, tp=tp, metadata=metadata)
+
+            engine = RiskEngine(
+                policy=RiskPolicy(max_loss_jpy=500.0),
+                live_enabled=True,
+                validation_time_utc=now,
+                pair_charts_path=chart_path,
+                forecast_history_path=root / "forecast_history.jsonl",
+            )
+            positive = engine.validate(
+                reprice(1.14470),
+                broker,
+                for_live_send=True,
+            )
+            negative = engine.validate(
+                reprice(1.14498),
+                broker,
+                for_live_send=True,
+            )
+
+            positive_codes = {issue.code for issue in positive.issues}
+            self.assertTrue(
+                positive.allowed,
+                [(issue.code, issue.severity) for issue in positive.issues],
+            )
+            self.assertIn("M15_RECOVERY_EVIDENCE_WEIGHTED_RR", positive_codes)
+            self.assertNotIn("REWARD_RISK_TOO_LOW", positive_codes)
+            assert positive.metrics is not None
+            self.assertLess(positive.metrics.reward_risk, 1.0)
+
+            negative_codes = {issue.code for issue in negative.issues}
+            self.assertFalse(negative.allowed)
+            self.assertIn("REWARD_RISK_TOO_LOW", negative_codes)
+            self.assertNotIn("M15_RECOVERY_EVIDENCE_WEIGHTED_RR", negative_codes)
+
     def test_m15_recovery_limit_vehicle_fails_common_binding_and_risk(self) -> None:
         from quant_rabbit.strategy.m15_recovery_contract import (
             build_lane_binding,

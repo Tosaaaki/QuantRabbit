@@ -814,9 +814,12 @@ def evaluate_exact_vehicle_net_edge(
     """Validate one exact-vehicle all-exit row and stress its realized edge.
 
     A thin, arithmetically consistent positive row does not itself prove edge,
-    but it may coexist with the bounded exact-TP collection exception. Any
-    known loss, contradiction, mature non-robust row, or unresolved realized
-    lifecycle blocks that exception.
+    but it may coexist with the bounded exact-TP collection exception. Realized
+    losses are part of that net evidence rather than an automatic veto: a thin
+    row remains collection-eligible when the complete all-exit lifecycle is
+    still positive and reconciled. Contradictory arithmetic, a non-positive
+    net result, a mature non-robust row, or unresolved realized cash still
+    blocks the exception.
     """
 
     source = metrics if isinstance(metrics, Mapping) else {}
@@ -957,7 +960,6 @@ def evaluate_exact_vehicle_net_edge(
         positive_consistent
         and trades is not None
         and trades < min_trades
-        and losses == 0
     )
     blocks_tp_exception = bool(
         evidence_present

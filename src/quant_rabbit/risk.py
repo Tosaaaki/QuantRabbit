@@ -865,6 +865,63 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
     return pessimistic_expectancy > 0
 
 
+def _m15_recovery_evidence_weighted_expectancy_jpy(
+    intent: OrderIntent,
+    metrics: RiskMetrics,
+    validation: "M15RecoveryMicroValidation",
+) -> float | None:
+    """Return conservative current-geometry expectancy for a verified recovery.
+
+    A fixed 1R gate discards the interaction between hit rate and payoff.  For
+    the bounded M15 recovery route, the producer and this RiskEngine have
+    already revalidated an exact-vehicle TP cohort and its Wilson lower bound.
+    Apply that lower bound to the *current* TP/SL geometry, after charging one
+    current spread to both the winning and losing paths.  This can relax only
+    the generic RR floor; every loss, margin, freshness, event, GPT, Guardian,
+    allocation, and final pre-POST check remains in force.
+    """
+
+    if not validation.applicable or not validation.allowed:
+        return None
+    metadata = intent.metadata if isinstance(intent.metadata, dict) else {}
+    if str(metadata.get("positive_rotation_mode") or "").upper() not in {
+        "TP_PROOF_COLLECTION_HARVEST",
+        "TP_PROVEN_HARVEST",
+    }:
+        return None
+    if (
+        str(metadata.get("positive_rotation_confidence_method") or "")
+        != "WILSON_LOWER_BOUND_STRESS_EXPECTANCY"
+        or not math.isclose(
+            _to_float(metadata.get("positive_rotation_confidence_z")) or 0.0,
+            1.96,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        return None
+    lower = _to_float(metadata.get("positive_rotation_tp_win_rate_lower"))
+    trades = _to_int(metadata.get("positive_rotation_tp_trades"))
+    wins = _to_int(metadata.get("positive_rotation_tp_wins"))
+    losses = _to_int(metadata.get("capture_take_profit_losses"))
+    if (
+        lower is None
+        or not 0.0 < lower < 1.0
+        or trades is None
+        or trades < LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES
+        or wins != trades
+        or losses != 0
+    ):
+        return None
+    spread_cost_jpy = max(0.0, metrics.spread_pips * metrics.jpy_per_pip)
+    net_reward_jpy = max(0.0, metrics.reward_jpy - spread_cost_jpy)
+    net_loss_jpy = metrics.risk_jpy + spread_cost_jpy
+    if net_reward_jpy <= 0.0 or net_loss_jpy <= 0.0:
+        return None
+    expectancy = lower * net_reward_jpy - (1.0 - lower) * net_loss_jpy
+    return expectancy if math.isfinite(expectancy) else None
+
+
 def _exact_min_lot_cap_lift_matches(
     intent: OrderIntent,
     metadata: dict,
@@ -3160,12 +3217,40 @@ class RiskEngine:
         else:
             active_min_rr = self.policy.min_reward_risk
             floor_label = "default"
-        if metrics.reward_risk < active_min_rr:
+        evidence_weighted_expectancy_jpy = (
+            _m15_recovery_evidence_weighted_expectancy_jpy(
+                intent,
+                metrics,
+                m15_recovery_validation,
+            )
+            if metrics.reward_risk < active_min_rr
+            else None
+        )
+        if (
+            metrics.reward_risk < active_min_rr
+            and (
+                evidence_weighted_expectancy_jpy is None
+                or evidence_weighted_expectancy_jpy <= 0.0
+            )
+        ):
             issues.append(
                 RiskIssue(
                     "REWARD_RISK_TOO_LOW",
                     f"planned reward/risk {metrics.reward_risk:.2f}x is below {active_min_rr:.2f}x"
                     + (f" (regime={regime_state})" if regime_state else ""),
+                )
+            )
+        elif metrics.reward_risk < active_min_rr:
+            issues.append(
+                RiskIssue(
+                    "M15_RECOVERY_EVIDENCE_WEIGHTED_RR",
+                    f"planned reward/risk {metrics.reward_risk:.2f}x is below "
+                    f"the generic {active_min_rr:.2f}x floor, but the verified "
+                    "exact-vehicle TP Wilson lower bound applied to current "
+                    "spread-adjusted TP/SL geometry remains positive at "
+                    f"{evidence_weighted_expectancy_jpy:.2f} JPY; permit only "
+                    "the already bounded recovery size and retain all other gates",
+                    severity="WARN",
                 )
             )
         elif floor_label == "technical_harvest" and metrics.reward_risk < self.policy.min_reward_risk:
