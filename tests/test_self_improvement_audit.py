@@ -1966,6 +1966,77 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("OANDA campaign firepower is audit-only", finding["next_action"])
         self.assertIn("Do not wait for receipts", finding["next_action"])
 
+    def test_no_live_ready_snapshot_mismatch_routes_to_data_freshness_repair(self) -> None:
+        broker_snapshot = _tp_acquisition_broker_snapshot()
+        broker_snapshot["home_conversions"] = {"USD": 101.0, "CAD": 100.0}
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents(
+                [
+                    _tp_acquisition_route_result(
+                        lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                        metadata=_valid_tp_collection_metadata(),
+                    )
+                ]
+            ),
+            broker_snapshot=broker_snapshot,
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        candidate = breakdown["nearest_all_non_live_ready_candidates"][0]
+        self.assertFalse(candidate["tp_proof_acquisition_route_reachable"])
+        self.assertIn(
+            "sizing conversion receipt does not match independent broker snapshot",
+            candidate["tp_proof_acquisition_route_reason"],
+        )
+        action = _no_live_ready_next_action(
+            coverage_refresh=None,
+            intent_evidence_fresh=True,
+            live_readiness_breakdown=breakdown,
+        )
+        self.assertIn("REFRESH_INTENT_SIZING_BROKER_SNAPSHOT", action)
+        self.assertNotIn("Build or validate one exact non-market", action)
+
+    def test_root_cause_focus_treats_tp_route_snapshot_mismatch_as_data_freshness(self) -> None:
+        broker_snapshot = _tp_acquisition_broker_snapshot()
+        broker_snapshot["home_conversions"] = {"USD": 101.0, "CAD": 100.0}
+        breakdown = _intent_live_readiness_family_breakdown(
+            _tp_acquisition_intents(
+                [
+                    _tp_acquisition_route_result(
+                        lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                        metadata=_valid_tp_collection_metadata(),
+                    )
+                ]
+            ),
+            broker_snapshot=broker_snapshot,
+            sizing_receipt_root=_TP_SIZING_RECEIPT_ROOT,
+        )
+
+        root_focus = _root_cause_focus(
+            findings=[
+                {
+                    "priority": "P0",
+                    "layer": "opportunity",
+                    "code": "TARGET_OPEN_NO_LIVE_READY_LANES",
+                    "message": "daily target is open but order_intents has no LIVE_READY lanes",
+                    "next_action": "stale sizing receipt",
+                    "evidence": {
+                        "live_readiness_blocker_families": breakdown,
+                    },
+                }
+            ],
+            runtime={"live_ready_lanes": 0},
+            effect_metrics={"window": {"net_jpy": 100.0, "profit_factor": None}},
+            execution_quality={},
+        )
+
+        self.assertEqual(root_focus["primary"]["family"], "DATA_FRESHNESS")
+        self.assertEqual(root_focus["primary"]["priority"], "P0")
+        self.assertIn(
+            "TARGET_OPEN_NO_LIVE_READY_LANES",
+            root_focus["primary"]["supporting_codes"],
+        )
+
     def test_no_live_ready_next_action_names_reachable_tp_collection_lane(self) -> None:
         breakdown = _intent_live_readiness_family_breakdown(
             _tp_acquisition_intents(

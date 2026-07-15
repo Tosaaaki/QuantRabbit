@@ -9866,6 +9866,15 @@ def _no_live_ready_next_action(
         if not _candidate_tp_proof_acquisition_route_unreachable(candidate)
     ]
     if integrity_valid_candidates and not reachable_candidates:
+        if _tp_routes_blocked_by_sizing_snapshot_mismatch(live_readiness_breakdown):
+            return (
+                "REFRESH_INTENT_SIZING_BROKER_SNAPSHOT: every trusted TP-proof "
+                "acquisition candidate is fail-closed because its sizing conversion "
+                "receipt no longer matches the independently loaded broker snapshot. "
+                "Regenerate broker snapshot and order_intents from one current packet, "
+                "then rerun coverage/self-improvement before building new strategy or "
+                "TP-proof routes."
+            )
         return (
             "TP_PROOF_ACQUISITION_ROUTE_UNREACHABLE: every named candidate still "
             "requires TP proof but exposes no self-consistent route that can create it. "
@@ -9943,6 +9952,75 @@ def _candidate_tp_proof_acquisition_route_unreachable(
     )
     return bool(
         required and candidate.get("tp_proof_acquisition_route_reachable") is not True
+    )
+
+
+_TP_ROUTE_SIZING_SNAPSHOT_MISMATCH_TEXT = (
+    "sizing conversion receipt does not match independent broker snapshot"
+)
+
+
+def _candidate_tp_proof_route_snapshot_mismatch(candidate: dict[str, Any]) -> bool:
+    if not _candidate_tp_proof_acquisition_route_unreachable(candidate):
+        return False
+    reason = str(candidate.get("tp_proof_acquisition_route_reason") or "")
+    return _TP_ROUTE_SIZING_SNAPSHOT_MISMATCH_TEXT in reason
+
+
+def _tp_routes_blocked_by_sizing_snapshot_mismatch(
+    live_readiness_breakdown: dict[str, Any],
+) -> bool:
+    candidates: list[dict[str, Any]] = []
+    families = live_readiness_breakdown.get("families")
+    if isinstance(families, list):
+        for family in families:
+            if not isinstance(family, dict):
+                continue
+            for key in (
+                "nearest_candidates",
+                "nearest_actionable_candidate",
+            ):
+                raw = family.get(key)
+                if isinstance(raw, dict):
+                    candidates.append(raw)
+                elif isinstance(raw, list):
+                    candidates.extend(item for item in raw if isinstance(item, dict))
+    for key in (
+        "nearest_live_ready_candidates",
+        "nearest_all_non_live_ready_candidates",
+    ):
+        raw = live_readiness_breakdown.get(key)
+        if isinstance(raw, list):
+            candidates.extend(item for item in raw if isinstance(item, dict))
+    trusted_required = [
+        candidate
+        for candidate in candidates
+        if candidate.get("candidate_contract_valid") is not False
+        and candidate.get("tp_proof_acquisition_required") is True
+    ]
+    if not trusted_required:
+        return False
+    if any(
+        candidate.get("tp_proof_acquisition_route_reachable") is True
+        for candidate in trusted_required
+    ):
+        return False
+    return all(
+        _candidate_tp_proof_route_snapshot_mismatch(candidate)
+        for candidate in trusted_required
+    )
+
+
+def _finding_tp_routes_blocked_by_sizing_snapshot_mismatch(
+    finding: dict[str, Any],
+) -> bool:
+    evidence = (
+        finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+    )
+    breakdown = evidence.get("live_readiness_blocker_families")
+    return bool(
+        isinstance(breakdown, dict)
+        and _tp_routes_blocked_by_sizing_snapshot_mismatch(breakdown)
     )
 
 
@@ -11000,7 +11078,13 @@ def _root_cause_focus(
             if not family:
                 family = "PROCESS_LOOP"
         else:
-            family = _root_cause_family_for_code(code, layer=str(item.get("layer") or ""))
+            if (
+                code == "TARGET_OPEN_NO_LIVE_READY_LANES"
+                and _finding_tp_routes_blocked_by_sizing_snapshot_mismatch(item)
+            ):
+                family = "DATA_FRESHNESS"
+            else:
+                family = _root_cause_family_for_code(code, layer=str(item.get("layer") or ""))
         if not family:
             continue
         candidate = candidates.setdefault(
