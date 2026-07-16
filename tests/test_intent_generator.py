@@ -81,6 +81,9 @@ from quant_rabbit.strategy.forecast_technical_context import (
     build_forecast_technical_context,
     verify_forecast_technical_context_evidence,
 )
+from quant_rabbit.strategy.failed_break_evidence import (
+    build_m5_failed_break_evidence_from_candles,
+)
 from tests.support_bidask_rules import (
     bidask_rules_env,
     write_bidask_replay_fixture_rules,
@@ -1350,6 +1353,76 @@ class IntentGeneratorTest(unittest.TestCase):
             [(lane["pair"], lane["direction"], lane["method"]) for lane in seeds],
             [("AUD_JPY", "LONG", "TREND_CONTINUATION")],
         )
+
+    def test_forecast_learning_scout_skips_direct_rank_that_contradicts_breakout_failure(self) -> None:
+        now = datetime(2026, 7, 16, 8, 0, tzinfo=timezone.utc)
+        m5_candles = []
+        for index in range(20):
+            m5_candles.append(
+                {
+                    "t": (now - timedelta(minutes=(20 - index) * 5)).isoformat(),
+                    "o": 1.405,
+                    "h": 1.410,
+                    "l": 1.400,
+                    "c": 1.405,
+                    "complete": True,
+                }
+            )
+        m5_candles.append(
+            {
+                "t": now.isoformat(),
+                "o": 1.409,
+                "h": 1.411,
+                "l": 1.404,
+                "c": 1.409,
+                "complete": True,
+            }
+        )
+        failed_break = build_m5_failed_break_evidence_from_candles(m5_candles)
+        self.assertEqual(failed_break["direction"], "SHORT")
+        forecast = SimpleNamespace(
+            pair="USD_CAD",
+            direction="UNCLEAR",
+            confidence=0.0,
+            raw_confidence=0.71,
+            calibration_multiplier=1.0,
+            current_price=1.40438,
+            target_price=None,
+            invalidation_price=None,
+            range_low_price=None,
+            range_high_price=None,
+            range_width_pips=None,
+            horizon_min=0,
+            rationale_summary="forecast vetoed by contradictory technical context",
+            drivers_for=[],
+            drivers_against=[],
+            component_scores={"UP": 70.0, "DOWN": 30.0, "RANGE": 20.0},
+            market_support={},
+            technical_context_v1={"m5_failed_break_evidence": failed_break},
+            forecast_learning_v1={
+                "model_status": "RANK_ONLY",
+                "original_direction": "UP",
+                "rank_direction": "UP",
+                "orientation": "DIRECT",
+                "selected_orientation_probability": 0.61,
+                "ranking_horizon_min": 60,
+                "features": {
+                    "technical_selected_method": "BREAKOUT_FAILURE",
+                    "technical_family_direction_alignment": "CONTRADICTED",
+                },
+            },
+        )
+
+        seeds = _forecast_learning_scout_seed_lanes(
+            [],
+            BrokerSnapshot(fetched_at_utc=now),
+            {"USD_CAD": forecast},
+            source_by_pair={},
+            existing_by_key={},
+            cycle_id="breakout-failure-direction-mismatch",
+        )
+
+        self.assertEqual(seeds, [])
 
     def test_forecast_learning_scout_bypasses_only_broad_replay_negative(self) -> None:
         metadata = {

@@ -3415,9 +3415,11 @@ class RiskEngineTest(unittest.TestCase):
             "desk": "failure_trader",
             "forecast_learning_v1": {
                 "decision_sha256": "test-forecast-learning-decision",
+                "original_direction": "UP",
                 "rank_direction": "UP",
                 "features": {
-                    "technical_selected_method": "BREAKOUT_FAILURE"
+                    "technical_selected_method": "BREAKOUT_FAILURE",
+                    "technical_family_direction_alignment": "ALIGNED",
                 },
             },
         }

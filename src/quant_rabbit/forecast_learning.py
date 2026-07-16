@@ -77,15 +77,17 @@ def forecast_learning_selected_method(receipt: Mapping[str, Any] | None) -> str 
 
 def forecast_learning_rank_matches_technical_method(
     receipt: Mapping[str, Any] | None,
+    *,
+    technical_context: Mapping[str, Any] | None = None,
 ) -> bool:
     """Reject a learned side that contradicts its bound technical method.
 
     The orientation model ranks keep versus invert; it does not relabel the
-    point-in-time entry family.  In particular, an inverse rank cannot be sent
-    as TREND_CONTINUATION when the same receipt says the original forecast was
-    aligned with the trend family.  That combination is a counter-trend trade
-    wearing a trend label, so its geometry and historical evidence no longer
-    describe the order being proposed.
+    point-in-time entry family.  The ranked direction therefore has to equal
+    the direction of the family that selected BREAKOUT_FAILURE,
+    RANGE_ROTATION, or TREND_CONTINUATION.  Otherwise the order is wearing a
+    technical label whose geometry and historical evidence describe the
+    opposite trade.
     """
 
     if not isinstance(receipt, Mapping):
@@ -93,8 +95,6 @@ def forecast_learning_rank_matches_technical_method(
     method = forecast_learning_selected_method(receipt)
     if method is None:
         return False
-    if method != "TREND_CONTINUATION":
-        return True
     features = receipt.get("features")
     if not isinstance(features, Mapping):
         return False
@@ -109,10 +109,41 @@ def forecast_learning_rank_matches_technical_method(
     }:
         return False
     if family_alignment == "ALIGNED":
-        return rank_direction == original_direction
-    if family_alignment == "CONTRADICTED":
-        return rank_direction == _opposite(original_direction)
-    return False
+        family_matches = rank_direction == original_direction
+    elif family_alignment == "CONTRADICTED":
+        family_matches = rank_direction == _opposite(original_direction)
+    else:
+        return False
+    if not family_matches:
+        return False
+
+    # BREAKOUT_FAILURE owns a stronger, exact M5 predicate than the aggregate
+    # family direction.  When the point-in-time technical context is available,
+    # bind the learned side to that authenticated failed-break direction too.
+    # This prevents a broad family vote from turning a SHORT failed break into
+    # a LONG order while retaining the BREAKOUT_FAILURE label and geometry.
+    if method == "BREAKOUT_FAILURE" and isinstance(technical_context, Mapping):
+        context = technical_context
+        nested = context.get("technical_context_v1")
+        if isinstance(nested, Mapping):
+            context = nested
+        if "m5_failed_break_evidence" not in context:
+            # Historical/read-only callers predate the exact proof field.  The
+            # aggregate family binding above remains their compatibility gate;
+            # every current forecast context carries the explicit sibling.
+            return True
+        from quant_rabbit.strategy.failed_break_evidence import (
+            failed_break_direction,
+        )
+
+        proof_side = failed_break_direction(
+            context.get("m5_failed_break_evidence")
+        )
+        if proof_side not in {"LONG", "SHORT"}:
+            return False
+        proof_direction = "UP" if proof_side == "LONG" else "DOWN"
+        return rank_direction == proof_direction
+    return True
 
 
 def build_forecast_learning_execution_geometry(

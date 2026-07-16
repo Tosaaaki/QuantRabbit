@@ -3473,7 +3473,10 @@ def _forecast_learning_scout_seed_lanes(
             # vehicle must preserve the method selected by the same point-in-time
             # technical context.  Never replace NONE with BREAKOUT_FAILURE.
             continue
-        if not forecast_learning_rank_matches_technical_method(receipt):
+        if not forecast_learning_rank_matches_technical_method(
+            receipt,
+            technical_context=getattr(forecast, "technical_context_v1", None),
+        ):
             # The keep/invert learner ranks direction only.  Do not attach an
             # inverse side to a technical family whose point-in-time direction
             # says the opposite trade (for example, SHORT TREND_CONTINUATION

@@ -2652,7 +2652,6 @@ class AutoTradeCycle:
         else:
             promotion_summary = self._receipt_promoter().run()
         if promotion_summary.promoted and not self.reuse_market_artifacts:
-            self._refresh_campaign_plan(target_summary)
             refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
             if refreshed_snapshot is not snapshot:
                 snapshot = refreshed_snapshot
@@ -2662,6 +2661,12 @@ class AutoTradeCycle:
                 orders = len(snapshot.orders)
                 pending_entries = _pending_entry_order_count(snapshot)
                 resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
+            # Campaign plan must be the final member of the
+            # snapshot -> daily-target -> campaign lineage.  Planning before a
+            # last-moment quote refresh makes the immediately following target
+            # write newer than the plan and causes IntentGenerator to reject
+            # the same cycle as stale.
+            self._refresh_campaign_plan(target_summary)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         decision = self._brain().run(snapshot)
         deterministic_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
@@ -2799,7 +2804,6 @@ class AutoTradeCycle:
                             target_summary = self._update_target_state(snapshot) or target_summary
                             positions = len(snapshot.positions)
                             orders = len(snapshot.orders)
-                            self._refresh_campaign_plan(target_summary)
                             refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
                             if refreshed_snapshot is not snapshot:
                                 snapshot = refreshed_snapshot
@@ -2807,6 +2811,10 @@ class AutoTradeCycle:
                                 positions = len(snapshot.positions)
                                 orders = len(snapshot.orders)
                                 resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
+                            # A retry is a new evidence generation.  Bind its
+                            # plan after the final snapshot/target refresh, not
+                            # before it, or the plan is stale by construction.
+                            self._refresh_campaign_plan(target_summary)
                             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
                                 snapshot_path=self.snapshot_path,
                                 max_candidates=12,

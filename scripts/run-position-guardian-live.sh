@@ -1279,6 +1279,22 @@ case "$QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED" in
     exit 2
     ;;
 esac
+export QR_FAST_BOT_SHADOW_ENABLED="${QR_FAST_BOT_SHADOW_ENABLED:-1}"
+case "$QR_FAST_BOT_SHADOW_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_FAST_BOT_SHADOW_ENABLED=${QR_FAST_BOT_SHADOW_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
+export QR_FAST_BOT_OUTCOME_ENABLED="${QR_FAST_BOT_OUTCOME_ENABLED:-1}"
+case "$QR_FAST_BOT_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_FAST_BOT_OUTCOME_ENABLED=${QR_FAST_BOT_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
 guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
@@ -1391,6 +1407,56 @@ resolve_contextual_technical_forward_outcomes() {
   fi
 }
 
+run_fast_bot_shadow() {
+  if [[ "$QR_FAST_BOT_SHADOW_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local runner bot_status
+  runner="${ROOT_DIR}/scripts/run-fast-bot-shadow.py"
+  if [[ ! -f "$runner" ]]; then
+    echo "[run-position-guardian-live] fast bot shadow runner is missing; no signal was admitted." >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$runner" \
+    --fast-pair-charts "$guardian_charts" \
+    --slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-data/pair_charts.json}" \
+    --broker-snapshot "$guardian_snapshot" \
+    --guardian-events "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}" \
+    --ai-supervision "${QR_FAST_BOT_AI_SUPERVISION:-data/ai_regime_supervision.json}" \
+    --regime-output "${QR_FAST_BOT_REGIME_OUTPUT:-data/hierarchical_bot_regime.json}" \
+    --output "${QR_FAST_BOT_SHADOW_OUTPUT:-data/fast_bot_shadow.json}" \
+    --ledger "${QR_FAST_BOT_SHADOW_LEDGER:-data/fast_bot_shadow_ledger.jsonl}" \
+    --report "${QR_FAST_BOT_SHADOW_REPORT:-docs/fast_bot_shadow_report.md}" >&2
+  bot_status="$?"
+  set -e
+  if [[ "$bot_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] fast bot shadow failed status=${bot_status}; live permission remains false." >&2
+  fi
+}
+
+resolve_fast_bot_shadow_outcomes() {
+  if [[ "$QR_FAST_BOT_OUTCOME_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/scripts/resolve-fast-bot-shadow-outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo "[run-position-guardian-live] fast bot outcome resolver is missing; promotion remains blocked." >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" \
+    --shadow-ledger "${QR_FAST_BOT_SHADOW_LEDGER:-data/fast_bot_shadow_ledger.jsonl}" \
+    --outcome-ledger "${QR_FAST_BOT_OUTCOME_LEDGER:-data/fast_bot_outcome_ledger.jsonl}" \
+    --scorecard "${QR_FAST_BOT_SCORECARD:-data/fast_bot_scorecard.json}" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] fast bot outcome resolution failed status=${outcome_status}; promotion remains blocked." >&2
+  fi
+}
+
 "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
 pair_scope="$(position_guardian_pair_scope \
   "$guardian_snapshot" \
@@ -1454,6 +1520,8 @@ if [[ -z "$trader_pairs" ]]; then
     "$candidate_pairs" \
     "$monitor_pairs"
   run_guardian_event_router
+  run_fast_bot_shadow
+  resolve_fast_bot_shadow_outcomes
   emit_technical_forecast_forward_shadow
   resolve_technical_forecast_forward_outcomes
   emit_contextual_technical_forward_shadow
@@ -1483,6 +1551,8 @@ fi
 
 "$QR_PYTHON" -m quant_rabbit.cli "${pexec_args[@]}"
 run_guardian_event_router
+run_fast_bot_shadow
+resolve_fast_bot_shadow_outcomes
 emit_technical_forecast_forward_shadow
 resolve_technical_forecast_forward_outcomes
 emit_contextual_technical_forward_shadow
