@@ -123,7 +123,11 @@ class FastBotTruthTest(unittest.TestCase):
         signals = []
         outcomes = []
         for index in range(100):
-            generated = NOW - timedelta(days=index % 10)
+            generated = (
+                NOW
+                - timedelta(days=index % 10)
+                - timedelta(minutes=index // 10)
+            )
             signal = _signal(signal_id=f"signal-{index}", generated=generated)
             shifted = [
                 S5BidAskCandle(
@@ -171,6 +175,32 @@ class FastBotTruthTest(unittest.TestCase):
             scorecard["promotion_blockers"],
             ["SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED"],
         )
+
+    def test_same_pair_m1_identity_is_counted_once(self) -> None:
+        first = _signal(signal_id="first")
+        second_body = {
+            **_signal(signal_id="second", generated=NOW + timedelta(seconds=30)),
+            "m1_closed_candle_utc": first["m1_closed_candle_utc"],
+        }
+        second_body.pop("signal_sha256")
+        raw = json.dumps(second_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        second = {**second_body, "signal_sha256": hashlib.sha256(raw).hexdigest()}
+        first_outcome = resolve_fast_bot_signal(
+            first,
+            _complete_truth(_candle(5, ask_l=1.0999, bid_h=1.1004)),
+            resolved_at_utc=NOW + timedelta(minutes=20),
+        )
+
+        scorecard = build_fast_bot_scorecard(
+            [first, second],
+            [first_outcome],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+
+        self.assertEqual(scorecard["emitted_signals"], 1)
+        self.assertEqual(scorecard["resolved_signals"], 1)
+        self.assertEqual(scorecard["duplicate_identity_signals_ignored"], 1)
+        self.assertIsNone(scorecard["one_sided_95_mean_lower_pips"])
 
     def test_no_due_signals_does_not_open_oanda_client(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

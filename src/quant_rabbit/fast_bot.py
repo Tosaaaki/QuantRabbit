@@ -301,16 +301,19 @@ def build_fast_bot_shadow(
         sl = entry - sl_pips * pip_size if side == "LONG" else entry + sl_pips * pip_size
         identity = {
             "pair": pair,
+            "m1_closed_candle_utc": row.get("m1_closed_candle_utc"),
+        }
+        evidence_binding = {
+            **identity,
             "side": side,
             "method": method,
-            "m1_closed_candle_utc": row.get("m1_closed_candle_utc"),
             "regime_contract_sha256": regime_contract.get("contract_sha256"),
         }
         signal_body = {
                 "contract": SIGNAL_CONTRACT,
                 "schema_version": 1,
                 "signal_id": _canonical_sha(identity)[:24],
-                **identity,
+                **evidence_binding,
                 "generated_at_utc": now.isoformat(),
                 "quote_timestamp_utc": quote_at.isoformat(),
                 "order_type": "LIMIT",
@@ -679,28 +682,30 @@ def _append_signals_once(path: Path, shadow: Mapping[str, Any]) -> int:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
         seen: set[str] = set()
+        seen_identities: set[tuple[str, str]] = set()
         for line in handle:
             try:
                 item = json.loads(line)
             except (json.JSONDecodeError, ValueError):
                 continue
-            if isinstance(item, Mapping) and item.get("signal_id"):
+            if isinstance(item, Mapping) and _signal_digest_valid(item):
                 seen.add(str(item["signal_id"]))
+                seen_identities.add(_signal_identity(item))
         appended = 0
         handle.seek(0, os.SEEK_END)
         for signal in signals:
             signal_id = str(signal.get("signal_id") or "")
-            signal_sha = str(signal.get("signal_sha256") or "")
-            signal_body = {key: item for key, item in signal.items() if key != "signal_sha256"}
+            identity = _signal_identity(signal)
             if (
                 not signal_id
                 or signal_id in seen
-                or not _sha256_text(signal_sha)
-                or signal_sha != _canonical_sha(signal_body)
+                or identity in seen_identities
+                or not _signal_digest_valid(signal)
             ):
                 continue
             handle.write(json.dumps(dict(signal), ensure_ascii=False, sort_keys=True) + "\n")
             seen.add(signal_id)
+            seen_identities.add(identity)
             appended += 1
         handle.flush()
         os.fsync(handle.fileno())
@@ -788,6 +793,19 @@ def _canonical_sha(value: Any) -> str:
 def _sha256_text(value: Any) -> bool:
     text = str(value or "")
     return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
+
+
+def _signal_identity(signal: Mapping[str, Any]) -> tuple[str, str]:
+    return (
+        str(signal.get("pair") or ""),
+        str(signal.get("m1_closed_candle_utc") or ""),
+    )
+
+
+def _signal_digest_valid(signal: Mapping[str, Any]) -> bool:
+    signal_sha = str(signal.get("signal_sha256") or "")
+    signal_body = {key: item for key, item in signal.items() if key != "signal_sha256"}
+    return _sha256_text(signal_sha) and signal_sha == _canonical_sha(signal_body)
 
 
 def _parse_utc(value: Any) -> datetime | None:

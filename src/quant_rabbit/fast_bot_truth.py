@@ -144,7 +144,8 @@ def build_fast_bot_scorecard(
     *,
     as_of_utc: datetime,
 ) -> dict[str, Any]:
-    valid_signals = [item for item in signals if _fast_bot_signal_valid(item)]
+    valid_signal_rows = [item for item in signals if _fast_bot_signal_valid(item)]
+    valid_signals = _dedupe_signal_identities(valid_signal_rows)
     valid_outcomes = [
         item
         for item in outcomes
@@ -192,6 +193,7 @@ def build_fast_bot_scorecard(
         "generated_at_utc": _aware_utc(as_of_utc).isoformat(),
         "status": "FORWARD_EVIDENCE_PASSED" if passed else "COLLECTING_FORWARD_EVIDENCE",
         "emitted_signals": len(emitted),
+        "duplicate_identity_signals_ignored": len(valid_signal_rows) - len(valid_signals),
         "resolved_signals": len(resolved),
         "filled_signals": len(fills),
         "unfilled_signals": sum(item.get("filled") is False for item in resolved),
@@ -202,7 +204,11 @@ def build_fast_bot_scorecard(
         "win_rate": round(len(wins) / len(fills), 6) if fills else None,
         "net_pips": round(sum(values), 6),
         "mean_pips_per_fill": round(mean, 6) if mean is not None else None,
-        "one_sided_95_mean_lower_pips": round(lower, 6) if lower is not None else None,
+        "one_sided_95_mean_lower_pips": (
+            round(lower, 6)
+            if lower is not None and math.isfinite(lower)
+            else None
+        ),
         "profit_factor": round(profit_factor, 6) if profit_factor is not None and math.isfinite(profit_factor) else "INF" if profit_factor == math.inf else None,
         "forward_evidence_passed": passed,
         "live_permission": False,
@@ -234,7 +240,11 @@ def resolve_due_fast_bot_outcomes_from_oanda(
     clock: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
     now = _aware_utc((clock or (lambda: datetime.now(timezone.utc)))())
-    signals = _load_jsonl(shadow_ledger_path)
+    loaded_signals = _load_jsonl(shadow_ledger_path)
+    valid_loaded_signals = [
+        item for item in loaded_signals if _fast_bot_signal_valid(item)
+    ]
+    signals = _dedupe_signal_identities(valid_loaded_signals)
     outcomes = _load_jsonl(outcome_ledger_path)
     resolved_ids = {
         str(item.get("signal_id"))
@@ -262,9 +272,12 @@ def resolve_due_fast_bot_outcomes_from_oanda(
         "broker_mutation": False,
         "due_count": len(due),
         "selected_due_count": len(selected),
+        "duplicate_identity_signals_ignored": (
+            len(valid_loaded_signals) - len(signals)
+        ),
     }
     if not selected:
-        scorecard = build_fast_bot_scorecard(signals, outcomes, as_of_utc=now)
+        scorecard = build_fast_bot_scorecard(loaded_signals, outcomes, as_of_utc=now)
         _write_json_atomic(scorecard_path, scorecard)
         return {**base, "status": "NO_DUE_SIGNALS", "broker_read": False, "ledger_appended": 0, "scorecard_status": scorecard["status"]}
 
@@ -300,7 +313,11 @@ def resolve_due_fast_bot_outcomes_from_oanda(
                 })
     appended = _append_outcomes_once(outcome_ledger_path, resolved)
     all_outcomes = _load_jsonl(outcome_ledger_path)
-    scorecard = build_fast_bot_scorecard(signals, all_outcomes, as_of_utc=now)
+    scorecard = build_fast_bot_scorecard(
+        loaded_signals,
+        all_outcomes,
+        as_of_utc=now,
+    )
     _write_json_atomic(scorecard_path, scorecard)
     return {
         **base,
@@ -394,6 +411,31 @@ def _one_sided_95_mean_lower(values: Sequence[float]) -> float | None:
         return mean
     critical = _student_t_one_sided_95(len(values) - 1)
     return mean - critical * stdev / math.sqrt(len(values))
+
+
+def _dedupe_signal_identities(
+    signals: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Keep the first immutable hypothesis for each pair/closed-M1 seat.
+
+    Revision-1 signals briefly included the whole regime-contract digest in
+    ``signal_id``.  A quote-only 30-second refresh could therefore append the
+    same M1 seat twice.  The append-only ledger is preserved, while both due
+    resolution and scorecards ignore every later duplicate identity.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    out: list[Mapping[str, Any]] = []
+    for signal in signals:
+        identity = (
+            str(signal.get("pair") or ""),
+            str(signal.get("m1_closed_candle_utc") or ""),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        out.append(signal)
+    return out
 
 
 def _student_t_one_sided_95(df: int) -> float:

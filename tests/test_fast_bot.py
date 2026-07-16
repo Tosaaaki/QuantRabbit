@@ -276,13 +276,31 @@ class FastBotTest(unittest.TestCase):
                 now_utc=NOW,
             )
             first = run_fast_bot_shadow(**kwargs)
-            second = run_fast_bot_shadow(**kwargs)
+            fast_later = {**fast, "generated_at_utc": (NOW + timedelta(seconds=30)).isoformat()}
+            snapshot_later = {
+                **snapshot,
+                "fetched_at_utc": (NOW + timedelta(seconds=30)).isoformat(),
+                "quotes": {
+                    "EUR_USD": {
+                        **snapshot["quotes"]["EUR_USD"],
+                        "bid": 1.10001,
+                        "ask": 1.10009,
+                        "timestamp_utc": (NOW + timedelta(seconds=30)).isoformat(),
+                    }
+                },
+            }
+            paths["fast"].write_text(json.dumps(fast_later), encoding="utf-8")
+            paths["snapshot"].write_text(json.dumps(snapshot_later), encoding="utf-8")
+            second = run_fast_bot_shadow(
+                **{**kwargs, "now_utc": NOW + timedelta(seconds=30)}
+            )
             shadow = json.loads(paths["shadow"].read_text())
             ledger_rows = [json.loads(line) for line in paths["ledger"].read_text().splitlines()]
 
         self.assertEqual(first["ledger_appended"], 1)
         self.assertEqual(second["ledger_appended"], 0)
         self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(shadow["signals"][0]["signal_id"], ledger_rows[0]["signal_id"])
         self.assertFalse(shadow["live_permission"])
         self.assertFalse(shadow["broker_mutation_allowed"])
         self.assertFalse(shadow["ai_per_trade_approval_required"])
