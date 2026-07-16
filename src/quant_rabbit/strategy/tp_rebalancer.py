@@ -403,10 +403,10 @@ def _technical_harvest_pressure(*, side: str, chart_context: Optional[Dict[str, 
     # 2/3 is the documented majority boundary on the M15/M30/H1 panel.
     if tf_agreement is not None and tf_agreement < (2.0 / 3.0):
         reasons.append(f"TF agreement {tf_agreement:.2f} below majority")
-    sigma_24h = _optional_float(confluence.get("range_24h_sigma_multiple"))
-    # 2σ is the existing exhaustion boundary used by intent generation.
-    if sigma_24h is not None and sigma_24h >= 2.0:
-        reasons.append(f"24h range {sigma_24h:.2f}σ exhausted")
+    if confluence.get("range_24h_expansion_outlier") is True:
+        ratio = _optional_float(confluence.get("range_24h_expansion_ratio"))
+        fence = _optional_float(confluence.get("range_24h_expansion_upper_fence"))
+        reasons.append(f"24h expansion outlier ratio={ratio} upper_fence={fence}")
 
     for tf in ("M15", "M30", "H1"):
         indicators = (chart_context.get("indicators_by_tf") or {}).get(tf) or {}

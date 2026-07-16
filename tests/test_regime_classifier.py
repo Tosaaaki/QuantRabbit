@@ -26,6 +26,9 @@ def _pair_chart(
     confluence: dict = {}
     if sigma_24h is not None:
         confluence["range_24h_sigma_multiple"] = sigma_24h
+        confluence["range_24h_expansion_ratio"] = sigma_24h
+        confluence["range_24h_expansion_upper_fence"] = 2.5
+        confluence["range_24h_expansion_outlier"] = sigma_24h >= 2.5
     if atr_pct_24h is not None:
         confluence["atr_percentile_24h"] = atr_pct_24h
     if tf_agreement is not None:
@@ -60,7 +63,7 @@ class RegimeClassifierTest(unittest.TestCase):
     def test_reversal_risk_at_exhausted_range(self) -> None:
         chart = _pair_chart(
             "AUD_JPY",
-            sigma_24h=2.8,  # ≥ 2.5 exhaustion threshold
+            sigma_24h=2.8,  # above injected pair-relative upper fence
             atr_pct_24h=0.95,  # ≥ 0.90 vol expansion
             tf_agreement=0.6,
             d_bias="UP", h4_bias="UP", h1_bias="UP",

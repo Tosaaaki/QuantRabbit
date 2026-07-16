@@ -62,6 +62,15 @@ from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
 # under a few hundred KB even with 7 timeframes × N pairs.
 RECENT_CANDLES_PUBLISH = 30
 
+# A 24-hour high/low span divided by a typical H1 range is a dimensionless
+# expansion ratio, not a standard deviation (sigma).  Compare the current
+# ratio with prior rolling 24-hour ratios for the same pair and call it an
+# outlier only when it clears Tukey's upper fence.  This keeps the definition
+# pair- and regime-relative without tuning a fixed FX multiple such as 2.0.
+RANGE_EXPANSION_WINDOW_BARS = 24
+RANGE_EXPANSION_MIN_REFERENCE_WINDOWS = 24
+RANGE_EXPANSION_TUKEY_IQR_MULTIPLIER = 1.5
+
 
 # Default trader chart stack. These are roles, not equal votes:
 #
@@ -497,10 +506,15 @@ def _build_extended_confluence(
         the 7d percentile.
       - `atr_percentile_24h`: H1 atr_pips percentile vs trailing
         distribution (read from the H1 indicators if available).
-      - `range_24h_sigma_multiple`: (H1 24h high − H1 24h low) divided
-        by the median H1 ATR over the same window. >1 means the pair
-        has already covered more than one ATR span — buying tops or
-        selling bottoms after this point is statistically expensive.
+      - `range_24h_expansion_ratio`: (H1 24h high − H1 24h low) divided
+        by the median H1 high/low range over the same window. This is an
+        expansion ratio, not sigma.
+      - `range_24h_expansion_percentile`: empirical rank of the current
+        ratio against prior rolling 24h windows for the same pair.
+      - `range_24h_expansion_upper_fence` / `_outlier`: Tukey upper-fence
+        boundary and the resulting pair-relative outlier decision.
+      - `range_24h_sigma_multiple`: deprecated compatibility alias for the
+        raw expansion ratio. New decision code must not treat it as sigma.
       - `tf_agreement_score` (0.0-1.0): fraction of M15/M30/H1
         agreeing on regime direction (TREND_UP / TREND_DOWN / RANGE /
         UNCLEAR). 1.0 means all three agree, 0.33 means each TF
@@ -514,6 +528,11 @@ def _build_extended_confluence(
         "price_range_7d_low": None,
         "price_range_7d_high": None,
         "atr_percentile_24h": None,
+        "range_24h_expansion_ratio": None,
+        "range_24h_expansion_percentile": None,
+        "range_24h_expansion_upper_fence": None,
+        "range_24h_expansion_outlier": None,
+        "range_24h_expansion_sample_count": 0,
         "range_24h_sigma_multiple": None,
         "tf_agreement_score": None,
     }
@@ -533,13 +552,12 @@ def _build_extended_confluence(
             out["price_percentile_24h"] = round(
                 max(0.0, min(1.0, (current - lo) / (hi - lo))), 4
             )
-        # Range vs typical hourly ATR over the same window. We use the
-        # median per-bar high-low to avoid one wick blowing the metric.
-        per_bar_ranges = sorted(c.high - c.low for c in last_24 if c.high > c.low)
-        if per_bar_ranges:
-            median_range = per_bar_ranges[len(per_bar_ranges) // 2]
-            if median_range > 0:
-                out["range_24h_sigma_multiple"] = round((hi - lo) / median_range, 3)
+        expansion = _range_24h_expansion_metrics(h1_candles)
+        out.update(expansion)
+        # Compatibility only. This historical field was mislabeled as sigma;
+        # keep its raw value for old reports while every live decision consumes
+        # the empirically calibrated fields above.
+        out["range_24h_sigma_multiple"] = expansion["range_24h_expansion_ratio"]
 
     h4_candles = candles_by_tf.get("H4")
     if h4_candles and len(h4_candles) >= 42:
@@ -577,6 +595,57 @@ def _build_extended_confluence(
         out["tf_agreement_score"] = round(top_count / 3.0, 4)
 
     return out
+
+
+def _range_24h_expansion_metrics(candles: tuple) -> dict[str, object]:
+    ratios: list[float] = []
+    for end in range(RANGE_EXPANSION_WINDOW_BARS - 1, len(candles)):
+        window = candles[end - RANGE_EXPANSION_WINDOW_BARS + 1 : end + 1]
+        per_bar_ranges = sorted(c.high - c.low for c in window if c.high > c.low)
+        if not per_bar_ranges:
+            continue
+        median_range = _linear_quantile(per_bar_ranges, 0.5)
+        if median_range <= 0:
+            continue
+        ratio = (max(c.high for c in window) - min(c.low for c in window)) / median_range
+        ratios.append(ratio)
+
+    result: dict[str, object] = {
+        "range_24h_expansion_ratio": None,
+        "range_24h_expansion_percentile": None,
+        "range_24h_expansion_upper_fence": None,
+        "range_24h_expansion_outlier": None,
+        "range_24h_expansion_sample_count": max(0, len(ratios) - 1),
+    }
+    if not ratios:
+        return result
+
+    current = ratios[-1]
+    result["range_24h_expansion_ratio"] = round(current, 3)
+    reference = sorted(ratios[:-1])
+    if len(reference) < RANGE_EXPANSION_MIN_REFERENCE_WINDOWS:
+        return result
+
+    q1 = _linear_quantile(reference, 0.25)
+    q3 = _linear_quantile(reference, 0.75)
+    upper_fence = q3 + RANGE_EXPANSION_TUKEY_IQR_MULTIPLIER * (q3 - q1)
+    rank = sum(value <= current for value in reference)
+    result["range_24h_expansion_percentile"] = round(rank / len(reference), 4)
+    result["range_24h_expansion_upper_fence"] = round(upper_fence, 3)
+    result["range_24h_expansion_outlier"] = current > upper_fence
+    return result
+
+
+def _linear_quantile(sorted_values: list[float], probability: float) -> float:
+    if not sorted_values:
+        raise ValueError("quantile requires at least one value")
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    position = (len(sorted_values) - 1) * probability
+    lower = int(position)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    fraction = position - lower
+    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * fraction
 
 
 def _build_reading_layer(

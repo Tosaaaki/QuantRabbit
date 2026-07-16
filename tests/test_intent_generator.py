@@ -17311,8 +17311,9 @@ class IntegerUnitSizingIntentTest(unittest.TestCase):
 
 
 class ExhaustionRangeChaseTest(unittest.TestCase):
-    """Coverage for 2026-05-13 filter C: refuse same-direction entries
-    after a 2σ-equivalent 24h range extension. Operates via
+    """Refuse same-direction entries after a pair-relative 24h outlier.
+
+    The raw 24h/H1 ratio is telemetry, not sigma and not a fixed gate. Operates via
     `_method_context_issues` against the intent's metadata, so it
     fires at intent-generation time without touching open positions.
     """
@@ -17332,6 +17333,12 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
         metadata = {
             "range_24h_sigma_multiple": sigma_mult,
+            "range_24h_expansion_ratio": sigma_mult,
+            "range_24h_expansion_percentile": 1.0 if sigma_mult is not None else None,
+            "range_24h_expansion_upper_fence": 2.0 if sigma_mult is not None else None,
+            "range_24h_expansion_outlier": (
+                sigma_mult >= 2.0 if sigma_mult is not None else None
+            ),
             "price_percentile_24h": price_pct_24h,
         }
         if metadata_extra:
@@ -17405,6 +17412,27 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
     def test_sigma_below_threshold_passes(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
         intent = self._intent(side="LONG", sigma_mult=1.5, price_pct_24h=0.97)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_raw_ratio_above_two_without_distribution_outlier_passes(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(
+            side="LONG",
+            sigma_mult=5.93,
+            price_pct_24h=0.76,
+            order_type="LIMIT",
+            entry=0.58494,
+            pair="NZD_USD",
+            metadata_extra={
+                "range_24h_expansion_outlier": False,
+                "range_24h_expansion_percentile": 0.56,
+                "range_24h_expansion_upper_fence": 9.2,
+                "current_price_mid": 0.58532,
+                "entry_price_percentile_24h": 0.7287,
+                "entry_price_percentile_7d": 0.9977,
+            },
+        )
         codes = {issue["code"] for issue in _method_context_issues(intent)}
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
 
@@ -18210,6 +18238,10 @@ class PatternReversalChaseTest(unittest.TestCase):
                     },
                 ],
                 "range_24h_sigma_multiple": 8.657,
+                "range_24h_expansion_ratio": 8.657,
+                "range_24h_expansion_percentile": 1.0,
+                "range_24h_expansion_upper_fence": 7.2,
+                "range_24h_expansion_outlier": True,
                 "price_percentile_24h": 0.83,
             },
         )

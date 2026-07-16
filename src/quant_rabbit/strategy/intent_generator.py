@@ -384,7 +384,6 @@ DYNAMIC_RR_ADX_TREND_THRESHOLD = 25.0
 DYNAMIC_RR_ADX_RANGE_THRESHOLD = 18.0
 DYNAMIC_RR_ADX_TREND_BONUS = float(os.environ.get("QR_DYNAMIC_RR_ADX_TREND_BONUS", "1.5"))
 DYNAMIC_RR_ADX_RANGE_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_ADX_RANGE_PENALTY", "0.5"))
-DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD = 2.5
 DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY", "0.8"))
 DYNAMIC_RR_SESSION_OVERLAP_BONUS = float(os.environ.get("QR_DYNAMIC_RR_SESSION_OVERLAP_BONUS", "0.5"))
 DYNAMIC_RR_SESSION_THIN_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SESSION_THIN_PENALTY", "0.5"))
@@ -495,7 +494,7 @@ def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[f
     flattens from pair_charts.json):
       - confluence.atr_percentile_24h: 0.0-1.0
       - h1_adx or h4_adx: trend strength (0-100)
-      - confluence.range_24h_sigma_multiple: 0+ (exhaustion proxy)
+      - confluence.range_24h_expansion_outlier: pair-relative Tukey outlier
       - session_current_tag: LONDON_NY_OVERLAP / OFF_HOURS / TOKYO_KILLZONE / ...
 
     Returns (reward_risk, rationale_lines). Falls back to
@@ -535,14 +534,19 @@ def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[f
             rr -= DYNAMIC_RR_ADX_RANGE_PENALTY
             rationale.append(f"ADX {adx:.1f} ≤ {DYNAMIC_RR_ADX_RANGE_THRESHOLD} → -{DYNAMIC_RR_ADX_RANGE_PENALTY}")
 
-    # 24h range exhaustion.
-    try:
-        sigma_24h = float(confluence.get("range_24h_sigma_multiple"))
-    except (TypeError, ValueError):
-        sigma_24h = None
-    if sigma_24h is not None and sigma_24h >= DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD:
+    # Pair-relative 24h expansion. The old raw ratio was mislabeled as sigma
+    # and its 2.5 threshold fired in ordinary sessions; only the producer's
+    # rolling-distribution outlier decision may shorten the target now.
+    expansion_outlier = confluence.get("range_24h_expansion_outlier") is True
+    if expansion_outlier:
+        expansion_ratio = _optional_float(confluence.get("range_24h_expansion_ratio"))
+        expansion_fence = _optional_float(confluence.get("range_24h_expansion_upper_fence"))
         rr -= DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY
-        rationale.append(f"24h σ {sigma_24h:.2f} ≥ {DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD} → -{DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY}")
+        rationale.append(
+            "24h expansion is a pair-relative outlier"
+            f" (ratio={expansion_ratio}, upper_fence={expansion_fence})"
+            f" → -{DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY}"
+        )
 
     # Session adjustment.
     session = str(chart_context.get("session_current_tag") or chart_context.get("session_bucket") or "").upper()
@@ -1036,7 +1040,6 @@ FORECAST_SEED_MIN_RICH_TF_VIEWS = 2
 #     gap never silently creates an uncapped runner.
 # (c) replace via: post-trade learning on runner giveback vs capped TP fills.
 TP_MODE_TF_AGREEMENT_MAJORITY = 2.0 / 3.0
-TP_MODE_EXHAUSTION_SIGMA = DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD
 # Attached HARVEST TPs are expected to be reachable in the operating tape.
 # This mirrors tp_rebalancer's `MAX_TP_DISTANCE_ATR_MULT`: a target beyond
 # 10× current operating ATR is a runner, not a failed-break harvest.
@@ -1876,8 +1879,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "chart_story_structural": str(per_tf.get("chart_story") or ""),
         # 2026-05-13 precision context (B/C/D feed). Producers:
         # chart_reader._build_extended_confluence. Consumers:
-        # _method_context_issues for the C-gate (24h sigma BLOCK on
-        # same-side entry after a 2+σ move), trader_brain
+        # _method_context_issues for the pair-relative 24h expansion gate,
+        # trader_brain
         # _apply_directional_gating for B and D scoring, and
         # attack_advisor confidence ranking.
         "confluence": conf,
@@ -1890,6 +1893,11 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "price_range_7d_high": _price_range_high(conf, h4_indicators, horizon="7d"),
         "price_range_7d_source": _price_range_source(conf, h4_indicators, horizon="7d"),
         "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
+        "range_24h_expansion_ratio": _optional_float(conf.get("range_24h_expansion_ratio")),
+        "range_24h_expansion_percentile": _optional_float(conf.get("range_24h_expansion_percentile")),
+        "range_24h_expansion_upper_fence": _optional_float(conf.get("range_24h_expansion_upper_fence")),
+        "range_24h_expansion_outlier": conf.get("range_24h_expansion_outlier"),
+        "range_24h_expansion_sample_count": conf.get("range_24h_expansion_sample_count"),
         "range_24h_sigma_multiple": _optional_float(conf.get("range_24h_sigma_multiple")),
         "tf_agreement_score": _optional_float(conf.get("tf_agreement_score")),
         "chart_score_balance": _text_or_none(conf.get("score_balance")),
@@ -13074,18 +13082,19 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
             }
         )
 
-    # C — 2026-05-13 "no chasing exhausted moves" filter. When the pair
-    # has already covered >= EXHAUSTION_RANGE_SIGMA_MULTIPLE (= 2.0,
-    # standard 2σ boundary) of its typical H1 range in the last 24
-    # hours, AND the new entry direction is aligned with where the
-    # move travelled (LONG into a 24h high, SHORT into a 24h low),
-    # block it. Fading the exhausted move (opposite direction) is not
-    # blocked; same-direction chasing is the failure mode
-    # 2026-05-12T15:33 UTC drove the operator to demand killing.
-    sigma_mult = _optional_float(metadata.get("range_24h_sigma_multiple"))
+    # Refuse a same-side chase only when the current 24h expansion is an
+    # actual pair-relative outlier. The former `raw ratio >= 2.0` contract was
+    # invalid: historical S5 bid/ask replay showed every NZD_USD 24h window
+    # exceeded 2.0 because a daily span naturally covers several H1 ranges.
+    # The chart producer now compares the ratio with prior rolling windows and
+    # publishes a Tukey upper-fence decision.
+    expansion_outlier = metadata.get("range_24h_expansion_outlier") is True
+    expansion_ratio = _optional_float(metadata.get("range_24h_expansion_ratio"))
+    expansion_percentile = _optional_float(metadata.get("range_24h_expansion_percentile"))
+    expansion_fence = _optional_float(metadata.get("range_24h_expansion_upper_fence"))
     ppct_24h = _gate_location_percentile(intent, metadata, "24h")
     ppct_7d = _gate_location_percentile(intent, metadata, "7d")
-    if sigma_mult is not None and sigma_mult >= EXHAUSTION_RANGE_SIGMA_MULTIPLE:
+    if expansion_outlier:
         chasing = False
         if intent.side == Side.LONG and ppct_24h is not None and ppct_24h >= 0.5:
             chasing = True
@@ -13109,8 +13118,10 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                     "code": "EXHAUSTION_RANGE_CHASE",
                     "message": (
                         f"{intent.pair} {intent.side.value} chases a move already "
-                        f"{sigma_mult:.2f}× typical hourly range over 24h "
-                        f"({', '.join(location_bits) or 'location percentile unavailable'}); "
+                        "outside its pair-relative 24h expansion distribution "
+                        f"(ratio={expansion_ratio}, percentile={expansion_percentile}, "
+                        f"upper_fence={expansion_fence}; "
+                        f"{', '.join(location_bits) or 'location percentile unavailable'}); "
                         + _same_side_chase_tail(intent, hedge_recovery=hedge_recovery)
                     ),
                     "severity": severity,
@@ -13129,10 +13140,7 @@ def _same_side_chase_severity(intent: OrderIntent, *, hedge_recovery: bool) -> s
 
 def _same_side_chase_tail(intent: OrderIntent, *, hedge_recovery: bool) -> str:
     if not hedge_recovery:
-        return (
-            "refuse same-direction entry after the "
-            f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
-        )
+        return "refuse same-direction entry after a pair-relative expansion outlier."
     if intent.order_type == OrderType.MARKET:
         return (
             "recovery hedge must wait for a pullback, retest, or non-market trigger "
@@ -15911,16 +15919,6 @@ def _require_telemetry_for_live_active() -> bool:
     }
 
 
-# C — 2σ-equivalent extension boundary. (high_24h - low_24h) divided
-# by median H1 range over the same window above this multiple means
-# the pair has already exhausted >= 2× typical hourly motion in 24h.
-# Same-side entries after this point chase a move that has already
-# happened; spread + slippage on the late entry dominate the
-# remaining edge. 2.0 is the documented 2σ boundary used in
-# standard-deviation extreme detection — not a tuned market literal.
-EXHAUSTION_RANGE_SIGMA_MULTIPLE = 2.0
-
-
 def _method_direction_bias(metadata: dict[str, Any], method: TradeMethod | None) -> str:
     if method == TradeMethod.RANGE_ROTATION:
         long_bias = _optional_float(metadata.get("m5_long_bias"))
@@ -16759,9 +16757,13 @@ def _should_attach_take_profit_on_fill(
     if atr_pct is not None and atr_pct <= DYNAMIC_RR_ATR_PCTILE_LOW:
         return True, f"ATR percentile {atr_pct:.2f} is small-wave tape"
 
-    sigma_24h = _optional_float(ctx.get("range_24h_sigma_multiple"))
-    if sigma_24h is not None and sigma_24h >= TP_MODE_EXHAUSTION_SIGMA:
-        return True, f"24h range {sigma_24h:.2f}σ is exhausted; harvest rather than run"
+    if ctx.get("range_24h_expansion_outlier") is True:
+        ratio = _optional_float(ctx.get("range_24h_expansion_ratio"))
+        fence = _optional_float(ctx.get("range_24h_expansion_upper_fence"))
+        return True, (
+            "24h expansion is a pair-relative outlier "
+            f"(ratio={ratio}, upper_fence={fence}); harvest rather than run"
+        )
 
     session = str(ctx.get("session_current_tag") or ctx.get("session_bucket") or "").upper()
     if session in {"OFF_HOURS", "JP_HOLIDAY"}:

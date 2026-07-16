@@ -4060,10 +4060,11 @@ def _range_rail_event(pair: str, chart: dict[str, Any], confluence: dict[str, An
 def _session_expansion_event(pair: str, chart: dict[str, Any], confluence: dict[str, Any], *, now: datetime) -> GuardianEvent | None:
     session = chart.get("session") if isinstance(chart.get("session"), dict) else {}
     tag = str(session.get("current_tag") or "").upper()
-    sigma = _float(confluence.get("range_24h_sigma_multiple"))
+    expansion_ratio = _float(confluence.get("range_24h_expansion_ratio"))
+    expansion_fence = _float(confluence.get("range_24h_expansion_upper_fence"))
     if not tag or not any(item in tag for item in ("LONDON", "NY")):
         return None
-    if sigma is None or sigma < 2.0:
+    if confluence.get("range_24h_expansion_outlier") is not True:
         return None
     balance = str(confluence.get("score_balance") or "").upper()
     direction = "LONG" if "LONG" in balance else "SHORT" if "SHORT" in balance else None
@@ -4072,12 +4073,17 @@ def _session_expansion_event(pair: str, chart: dict[str, Any], confluence: dict[
         pair=pair,
         direction=direction,
         thesis="session expansion timing event",
-        price_zone=f"{tag} expansion sigma={sigma:.2f}",
+        price_zone=f"{tag} expansion ratio={expansion_ratio} fence={expansion_fence}",
         severity="P2",
         recommended_review_type="ENTRY_REVIEW",
         action_hint="TRADE",
         now=now,
-        details={"session_tag": tag, "range_24h_sigma_multiple": sigma},
+        details={
+            "session_tag": tag,
+            "range_24h_expansion_ratio": expansion_ratio,
+            "range_24h_expansion_upper_fence": expansion_fence,
+            "range_24h_expansion_outlier": True,
+        },
     )
 
 

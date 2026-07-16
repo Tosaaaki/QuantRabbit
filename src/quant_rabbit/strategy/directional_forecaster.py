@@ -2297,17 +2297,18 @@ def _market_location_priors(confluence: Dict[str, Any]) -> list[tuple[str, float
     """
     p24 = _to_float(confluence.get("price_percentile_24h"))
     p7 = _to_float(confluence.get("price_percentile_7d"))
-    sigma = _to_float(confluence.get("range_24h_sigma_multiple"))
+    expansion_outlier = confluence.get("range_24h_expansion_outlier") is True
+    expansion_ratio = _to_float(confluence.get("range_24h_expansion_ratio"))
     priors: list[tuple[str, float, str]] = []
 
     def _location_prior(direction: str, strength: float, labels: list[str]) -> None:
         if strength <= 0:
             return
-        sigma_boost = 0.0
-        if sigma is not None and sigma >= 3.0:
-            sigma_boost = 0.2
-            labels.append(f"24h_range={sigma:.2f}x")
-        strength = min(1.0, strength + sigma_boost)
+        expansion_boost = 0.0
+        if expansion_outlier:
+            expansion_boost = 0.2
+            labels.append(f"24h_expansion_outlier={expansion_ratio}")
+        strength = min(1.0, strength + expansion_boost)
         magnitude = min(
             FORECAST_MARKET_LOCATION_PRIOR_CAP,
             FORECAST_MARKET_LOCATION_PRIOR_BASE
@@ -3007,10 +3008,9 @@ def synthesize_forecast(
     if "RANGE" in regime_label:
         range_score += 15.0
         contributions.append(("RANGE", 15.0, "dominant regime RANGE → range forecast prior"))
-    sigma_24h = _to_float(confluence.get("range_24h_sigma_multiple"))
-    if sigma_24h is not None and sigma_24h < 1.0:
-        range_score += 10.0  # very tight range
-        contributions.append(("RANGE", 10.0, f"24h range sigma {sigma_24h:.2f}<1.0 → tight-range prior"))
+    # The retired raw `24h span / median H1 range < 1.0` condition is
+    # mathematically unreachable for ordinary 24-bar windows. Tight-range
+    # evidence already comes from ATR/BB squeeze and range-phase detectors.
 
     directional_total = up_score + down_score + range_score
     total = directional_total + either_score
@@ -3236,6 +3236,11 @@ def synthesize_forecast(
     # Decisiveness: need clear winner, not close call
     margin = winner_score - runner_up_score
     if margin < winner_score * 0.25:
+        contested_summary = (
+            "range breakout pending blocks RANGE rotation; directional evidence "
+            if range_phase.phase == "BREAKOUT_PENDING"
+            else ""
+        )
         contested_range_confidence = _contested_range_raw_confidence(
             phase=range_phase,
             winner_score=winner_score,
@@ -3291,9 +3296,15 @@ def synthesize_forecast(
             pair=pair, direction="UNCLEAR",
             confidence=margin / max(winner_score, 1.0),
             invalidation_price=None, target_price=None, horizon_min=0,
-            drivers_for=_top_reasons(contributions, direction=winner),
+            drivers_for=(
+                (("range_phase=BREAKOUT_PENDING",) if range_phase.phase == "BREAKOUT_PENDING" else ())
+                + _top_reasons(contributions, direction=winner)
+            ),
             drivers_against=_top_reasons(contributions, direction=candidates[1][0]),
-            rationale_summary=f"contested: {candidates[0][0]}={winner_score:.1f} vs {candidates[1][0]}={runner_up_score:.1f} (margin {margin:.1f} < 25%)",
+            rationale_summary=(
+                f"{contested_summary}contested: {candidates[0][0]}={winner_score:.1f} "
+                f"vs {candidates[1][0]}={runner_up_score:.1f} (margin {margin:.1f} < 25%)"
+            ),
             current_price=current_price,
             up_score=up_score,
             down_score=down_score,

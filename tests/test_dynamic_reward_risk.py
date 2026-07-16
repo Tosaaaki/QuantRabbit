@@ -53,8 +53,12 @@ class MarketDerivedRewardRiskTest(unittest.TestCase):
         rr, _ = _market_derived_reward_risk(ctx)
         self.assertLess(rr, DYNAMIC_RR_BASE)
 
-    def test_exhausted_24h_range_subtracts_penalty(self) -> None:
-        ctx = {"confluence": {"range_24h_sigma_multiple": 3.0}}
+    def test_pair_relative_24h_expansion_outlier_subtracts_penalty(self) -> None:
+        ctx = {"confluence": {
+            "range_24h_expansion_ratio": 9.0,
+            "range_24h_expansion_upper_fence": 8.0,
+            "range_24h_expansion_outlier": True,
+        }}
         rr, _ = _market_derived_reward_risk(ctx)
         self.assertLess(rr, DYNAMIC_RR_BASE)
 

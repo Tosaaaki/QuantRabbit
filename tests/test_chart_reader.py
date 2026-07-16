@@ -28,6 +28,25 @@ def _series(start: float, step: float, n: int = 100) -> list[Candle]:
     return out
 
 
+def _steady_h1_trend(start: float, step: float, n: int = 100) -> list[Candle]:
+    base = datetime(2026, 5, 4, tzinfo=timezone.utc)
+    out: list[Candle] = []
+    previous = start
+    for index in range(n):
+        close = previous + step
+        out.append(Candle(
+            base + timedelta(hours=index),
+            previous,
+            max(previous, close) + abs(step) * 0.25,
+            min(previous, close) - abs(step) * 0.25,
+            close,
+            1000,
+            True,
+        ))
+        previous = close
+    return out
+
+
 def _mba_entry(
     index: int,
     *,
@@ -469,6 +488,51 @@ class ChartReaderTest(unittest.TestCase):
         self.assertIsNotNone(chart.confluence["price_range_7d_low"])
         self.assertIsNotNone(chart.confluence["price_range_7d_high"])
         self.assertLess(chart.confluence["price_range_7d_low"], chart.confluence["price_range_7d_high"])
+
+    def test_raw_24h_to_h1_ratio_above_two_is_not_automatically_an_outlier(self) -> None:
+        candles_by_tf = {"H1": _steady_h1_trend(1.1000, 0.0002, n=100)}
+
+        chart = build_pair_chart(
+            "EUR_USD",
+            client=None,  # type: ignore[arg-type]
+            timeframes=("H1",),
+            candles_by_tf=candles_by_tf,
+        )
+
+        self.assertGreater(chart.confluence["range_24h_expansion_ratio"], 2.0)
+        self.assertFalse(chart.confluence["range_24h_expansion_outlier"])
+        self.assertEqual(
+            chart.confluence["range_24h_sigma_multiple"],
+            chart.confluence["range_24h_expansion_ratio"],
+        )
+
+    def test_24h_expansion_outlier_is_calculated_from_prior_rolling_windows(self) -> None:
+        candles = _steady_h1_trend(1.1000, 0.0002, n=100)
+        last = candles[-1]
+        candles[-1] = Candle(
+            last.timestamp_utc,
+            last.open,
+            last.high + 0.0200,
+            last.low,
+            last.close,
+            last.volume,
+            last.complete,
+        )
+
+        chart = build_pair_chart(
+            "EUR_USD",
+            client=None,  # type: ignore[arg-type]
+            timeframes=("H1",),
+            candles_by_tf={"H1": candles},
+        )
+
+        self.assertTrue(chart.confluence["range_24h_expansion_outlier"])
+        self.assertGreater(
+            chart.confluence["range_24h_expansion_ratio"],
+            chart.confluence["range_24h_expansion_upper_fence"],
+        )
+        self.assertEqual(chart.confluence["range_24h_expansion_percentile"], 1.0)
+        self.assertEqual(chart.confluence["range_24h_expansion_sample_count"], 76)
 
 
 if __name__ == "__main__":

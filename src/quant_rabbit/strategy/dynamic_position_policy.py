@@ -12,7 +12,7 @@ each cycle. The inputs are the same ones used by
 `intent_generator._market_derived_reward_risk`:
 - `confluence.atr_percentile_24h`
 - `h1_adx` / `h4_adx`
-- `confluence.range_24h_sigma_multiple`
+- `confluence.range_24h_expansion_outlier`
 - `session_current_tag`
 - per-position direction-vs-higher-TF alignment
 
@@ -144,10 +144,10 @@ def trailing_lock_behind_mult(chart_context: Optional[Dict[str, Any]]) -> tuple[
     if adx is not None and adx >= 25:
         v += 0.5
         rationale.append(f"ADX {adx:.1f} ≥ 25 → wider lock +0.5")
-    sigma_24h = _to_float(confluence.get("range_24h_sigma_multiple"))
-    if sigma_24h is not None and sigma_24h >= 2.5:
+    if confluence.get("range_24h_expansion_outlier") is True:
+        ratio = _to_float(confluence.get("range_24h_expansion_ratio"))
         v -= 0.4
-        rationale.append(f"24h σ {sigma_24h:.2f} ≥ 2.5 → lock-in tighter -0.4")
+        rationale.append(f"24h expansion outlier ratio={ratio} → lock-in tighter -0.4")
     return _clamp(v, TRAILING_LOCK_FLOOR, TRAILING_LOCK_CEILING), rationale
 
 
@@ -177,10 +177,10 @@ def adverse_trigger_mult(
     if adx is not None and adx <= 18:
         v -= 0.3
         rationale.append(f"ADX {adx:.1f} ≤ 18 (choppy) → close earlier -0.3")
-    sigma_24h = _to_float(confluence.get("range_24h_sigma_multiple"))
-    if sigma_24h is not None and sigma_24h >= 2.5:
+    if confluence.get("range_24h_expansion_outlier") is True:
+        ratio = _to_float(confluence.get("range_24h_expansion_ratio"))
         v -= 0.2
-        rationale.append(f"24h σ {sigma_24h:.2f} ≥ 2.5 → close earlier -0.2")
+        rationale.append(f"24h expansion outlier ratio={ratio} → close earlier -0.2")
     return _clamp(v, ADVERSE_TRIGGER_FLOOR, ADVERSE_TRIGGER_CEILING), rationale
 
 

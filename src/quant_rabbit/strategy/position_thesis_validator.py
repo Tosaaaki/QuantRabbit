@@ -334,7 +334,7 @@ def _range_location_alignment_score(
 ) -> tuple[float, str]:
     p24 = _to_float((confluence or {}).get("price_percentile_24h"))
     p7 = _to_float((confluence or {}).get("price_percentile_7d"))
-    sigma = _to_float((confluence or {}).get("range_24h_sigma_multiple"))
+    expansion_outlier = (confluence or {}).get("range_24h_expansion_outlier") is True
     lower = []
     upper = []
     if p24 is not None and p24 <= extreme:
@@ -350,11 +350,11 @@ def _range_location_alignment_score(
     labels = lower if side == "LONG" else upper
     against_labels = upper if side == "LONG" else lower
     if labels:
-        boost = 1.0 if sigma is not None and sigma >= 2.0 else 0.7
+        boost = 1.0 if expansion_outlier else 0.7
         score = THESIS_LOCATION_PRIOR_CAP * boost
         return score, f"market location {' '.join(labels)} supports {side} mean-reversion -> {score:+.1f}"
     if against_labels:
-        boost = 1.0 if sigma is not None and sigma >= 2.0 else 0.7
+        boost = 1.0 if expansion_outlier else 0.7
         score = -THESIS_LOCATION_PRIOR_CAP * boost
         return score, f"market location {' '.join(against_labels)} opposes {side} continuation -> {score:+.1f}"
     return 0.0, ""

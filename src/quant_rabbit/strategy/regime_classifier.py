@@ -18,9 +18,10 @@ rally" before the reversal. The classifier looks at:
    means volatility is regime-shifting — caution.
 2. **Multi-TF divergence**: D direction vs H4 direction vs H1 direction.
    When the three disagree, the trend is fracturing.
-3. **24h sigma multiple**: existing `range_24h_sigma_multiple` from
-   chart_reader. >2.5 means today's range is already exhausted (the
-   move that produced this range can't reasonably extend much further).
+3. **24h expansion outlier**: `range_24h_expansion_outlier` from
+   chart_reader. This compares the current 24h/H1 expansion ratio with
+   the same pair's rolling distribution instead of pretending the raw
+   ratio is a standard deviation.
 4. **Recent reversal candle count**: looks for engulfing/pin-bar
    reversal patterns in last 4 H1 candles.
 
@@ -37,7 +38,6 @@ from typing import Any, Dict, Optional
 
 
 REGIME_ATR_EXPANSION_THRESHOLD = float(os.environ.get("QR_REGIME_ATR_EXPANSION", "1.5"))
-REGIME_24H_SIGMA_EXHAUSTION = float(os.environ.get("QR_REGIME_24H_SIGMA_EXHAUSTION", "2.5"))
 REGIME_REVERSAL_RISK_PENALTY = float(os.environ.get("QR_REGIME_REVERSAL_RISK_PENALTY", "25.0"))
 # Threshold above which a same-direction entry gets the full penalty.
 # Below this threshold, the score scales linearly with reversal_risk.
@@ -74,7 +74,9 @@ def classify_pair(pair_chart: Dict[str, Any]) -> RegimeSnapshot:
     pair = str(pair_chart.get("pair", "?"))
 
     confluence = pair_chart.get("confluence") or {}
-    sigma_24h = _coerce_float(confluence.get("range_24h_sigma_multiple"))
+    expansion_outlier = confluence.get("range_24h_expansion_outlier") is True
+    expansion_ratio = _coerce_float(confluence.get("range_24h_expansion_ratio"))
+    expansion_fence = _coerce_float(confluence.get("range_24h_expansion_upper_fence"))
     atr_pct = _coerce_float(confluence.get("atr_percentile_24h"))
     tf_agreement = _coerce_float(confluence.get("tf_agreement_score"))
 
@@ -97,9 +99,12 @@ def classify_pair(pair_chart: Dict[str, Any]) -> RegimeSnapshot:
 
     # Signal 1: 24h range exhaustion.
     reversal_risk = 0.0
-    if sigma_24h is not None and sigma_24h >= REGIME_24H_SIGMA_EXHAUSTION:
+    if expansion_outlier:
         reversal_risk += 0.35
-        signals.append(f"24h sigma {sigma_24h:.2f} ≥ {REGIME_24H_SIGMA_EXHAUSTION} (range exhausted)")
+        signals.append(
+            "24h expansion ratio is above its pair-relative upper fence "
+            f"({expansion_ratio} > {expansion_fence}; range exhausted)"
+        )
 
     # Signal 2: ATR percentile extreme (volatility regime shift).
     if atr_pct is not None and atr_pct >= 0.90:
@@ -115,10 +120,10 @@ def classify_pair(pair_chart: Dict[str, Any]) -> RegimeSnapshot:
         reversal_risk += 0.20
         signals.append(f"tf_agreement_score {tf_agreement:.2f} < 0.50")
 
-    # Signal 4: ATR percentile high AND 24h sigma high together (compound
-    # exhaustion — vol expansion at range extreme).
+    # Signal 4: ATR percentile high AND a pair-relative 24h expansion outlier
+    # together (compound exhaustion — vol expansion at a range extreme).
     if (
-        sigma_24h is not None and sigma_24h >= REGIME_24H_SIGMA_EXHAUSTION
+        expansion_outlier
         and atr_pct is not None and atr_pct >= 0.75
     ):
         reversal_risk += 0.15
@@ -130,7 +135,11 @@ def classify_pair(pair_chart: Dict[str, Any]) -> RegimeSnapshot:
     # not silently land in RANGING. UNKNOWN preserves the "we cannot
     # tell" state through the scoring path and avoids the small
     # RANGING penalty when there is genuinely no data.
-    has_confluence = (sigma_24h is not None) or (atr_pct is not None) or (tf_agreement is not None)
+    has_confluence = (
+        confluence.get("range_24h_expansion_outlier") is not None
+        or atr_pct is not None
+        or tf_agreement is not None
+    )
     has_tf_bias = any(d != "NEUTRAL" for d in tf_directions.values())
     if not has_confluence and not has_tf_bias:
         label = "UNKNOWN"

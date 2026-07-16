@@ -61,8 +61,11 @@ class TrailingLockTest(unittest.TestCase):
         v, _ = trailing_lock_behind_mult({"confluence": {"atr_percentile_24h": 0.15}})
         self.assertLess(v, TRAILING_LOCK_BASE)
 
-    def test_24h_sigma_exhausted_tightens_lock(self) -> None:
-        v, _ = trailing_lock_behind_mult({"confluence": {"range_24h_sigma_multiple": 3.0}})
+    def test_24h_expansion_outlier_tightens_lock(self) -> None:
+        v, _ = trailing_lock_behind_mult({"confluence": {
+            "range_24h_expansion_ratio": 9.0,
+            "range_24h_expansion_outlier": True,
+        }})
         self.assertLess(v, TRAILING_LOCK_BASE)
 
     def test_strong_adx_widens_lock(self) -> None:
@@ -91,7 +94,11 @@ class AdverseTriggerTest(unittest.TestCase):
     def test_clamped_to_bounds(self) -> None:
         # Stack negative adjusters: against + choppy + sigma exhausted
         ctx = {
-            "confluence": {"higher_tf_alignment": "SHORT_LEAN", "range_24h_sigma_multiple": 3.0},
+            "confluence": {
+                "higher_tf_alignment": "SHORT_LEAN",
+                "range_24h_expansion_ratio": 9.0,
+                "range_24h_expansion_outlier": True,
+            },
             "h1_adx": 10,
         }
         v, _ = adverse_trigger_mult(ctx, "LONG")
