@@ -254,6 +254,32 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertEqual(outcome["exit_reason"], "STOP_LOSS_GAP")
         self.assertEqual(outcome["realized_pips"], -10.0)
 
+    def test_binary_float_noise_at_stop_is_not_mislabeled_as_gap(self) -> None:
+        signal = _signal()
+        outcome = resolve_fast_bot_signal(
+            signal,
+            _complete_truth(
+                _candle(5, ask_l=1.0999),
+                _candle(
+                    10,
+                    bid_o=signal["stop_loss"],
+                    bid_h=signal["stop_loss"],
+                    bid_l=signal["stop_loss"] - 0.00001,
+                ),
+            ),
+            resolved_at_utc=NOW + timedelta(minutes=20),
+            truth_chunk_sha256=["a" * 64],
+        )
+
+        self.assertEqual(outcome["exit_reason"], "STOP_LOSS")
+        self.assertEqual(outcome["realized_pips"], -3.0)
+        scorecard = build_fast_bot_scorecard(
+            [signal],
+            [outcome],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        self.assertEqual(scorecard["resolved_signals"], 1)
+
     def test_gap_through_fill_candle_is_charged_at_executable_open(self) -> None:
         outcome = resolve_fast_bot_signal(
             _signal(),
@@ -425,6 +451,108 @@ class FastBotTruthTest(unittest.TestCase):
 
         self.assertEqual(outcome["exit_reason"], "HORIZON_FULL_STOP_LOSS")
         self.assertEqual(outcome["realized_pips"], -3.0)
+
+    def test_early_fill_horizon_short_path_is_a_valid_v3_outcome(self) -> None:
+        signal = _signal_v2()
+        outcome = resolve_fast_bot_signal(
+            signal,
+            _complete_truth(
+                _candle(
+                    5,
+                    ask_l=1.0999,
+                    bid_h=1.1001,
+                    bid_l=1.0999,
+                )
+            ),
+            resolved_at_utc=NOW + timedelta(minutes=20),
+            truth_chunk_sha256=["a" * 64],
+        )
+
+        self.assertEqual(outcome["exit_reason"], "HORIZON_FULL_STOP_LOSS")
+        self.assertLess(
+            outcome["evaluated_candle_count"],
+            outcome["truth_candle_count"],
+        )
+        self.assertEqual(
+            outcome["evaluated_grid_slot_count"]
+            - outcome["evaluated_no_tick_slot_count"],
+            outcome["evaluated_candle_count"],
+        )
+        self.assertTrue(
+            all(
+                arm["exit_reason"] == "HORIZON_FULL_STOP_LOSS"
+                for arm in outcome["entry_experiment"]["arms"]
+            )
+        )
+        scorecard = build_fast_bot_scorecard(
+            [signal],
+            [outcome],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        self.assertEqual(scorecard["resolved_signals"], 1)
+        self.assertEqual(
+            scorecard["entry_experiment"]["resolved_precommitted_signals"],
+            1,
+        )
+
+        forged = json.loads(json.dumps(outcome))
+        forged["evaluated_candle_count"] = 1
+        for arm in forged["entry_experiment"]["arms"]:
+            arm["evaluated_candle_count"] = 1
+        forged = _reseal_outcome(forged)
+        forged_scorecard = build_fast_bot_scorecard(
+            [signal],
+            [forged],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        self.assertEqual(forged_scorecard["resolved_signals"], 0)
+
+    def test_later_no_ticks_cannot_be_reallocated_into_horizon_prefix(self) -> None:
+        signal = _signal_v2()
+        truth = _complete_truth(
+            _candle(
+                5,
+                ask_l=1.0999,
+                bid_h=1.1001,
+                bid_l=1.0999,
+            )
+        )
+        truth = [
+            candle
+            for candle in truth
+            if candle.timestamp_utc < NOW + timedelta(seconds=905)
+        ]
+        outcome = resolve_fast_bot_signal(
+            signal,
+            truth,
+            resolved_at_utc=NOW + timedelta(minutes=20),
+            truth_chunk_sha256=["a" * 64],
+        )
+
+        self.assertEqual(outcome["truth_no_tick_slot_count"], 17)
+        self.assertEqual(outcome["evaluated_no_tick_slot_count"], 0)
+        scorecard = build_fast_bot_scorecard(
+            [signal],
+            [outcome],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        self.assertEqual(scorecard["resolved_signals"], 1)
+
+        forged = json.loads(json.dumps(outcome))
+        forged["evaluated_candle_count"] -= outcome[
+            "truth_no_tick_slot_count"
+        ]
+        for arm in forged["entry_experiment"]["arms"]:
+            arm["evaluated_candle_count"] -= outcome[
+                "truth_no_tick_slot_count"
+            ]
+        forged = _reseal_outcome(forged)
+        forged_scorecard = build_fast_bot_scorecard(
+            [signal],
+            [forged],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        self.assertEqual(forged_scorecard["resolved_signals"], 0)
 
     def test_forward_scorecard_can_pass_but_never_grants_live_permission(self) -> None:
         signals = []
@@ -669,7 +797,7 @@ class FastBotTruthTest(unittest.TestCase):
                 )
                 self.assertEqual(scorecard["resolved_signals"], 0)
 
-    def test_old_or_invalid_policy_outcome_is_re_resolved(self) -> None:
+    def test_old_policy_outcome_is_re_resolved(self) -> None:
         signal = _signal(generated=NOW - timedelta(minutes=20))
         truth = _complete_truth(generated=NOW - timedelta(minutes=20))
         valid = resolve_fast_bot_signal(
@@ -684,38 +812,140 @@ class FastBotTruthTest(unittest.TestCase):
             if key not in {"contract_sha256", "scoring_policy"}
         }
         old = _reseal_outcome(old_body)
-        invalid_current = _reseal_outcome({**valid, "realized_pips": 999.0})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shadow_path = root / "shadow.jsonl"
+            outcome_path = root / "outcomes.jsonl"
+            scorecard_path = root / "scorecard.json"
+            shadow_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
+            outcome_path.write_text(json.dumps(old) + "\n", encoding="utf-8")
+            with patch(
+                "quant_rabbit.fast_bot_truth.fetch_frozen_s5_truth",
+                return_value=(truth, ["b" * 64]),
+            ):
+                result = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW,
+                )
+            rows = [
+                json.loads(line) for line in outcome_path.read_text().splitlines()
+            ]
+            scorecard = json.loads(scorecard_path.read_text())
 
-        for prior in (old, invalid_current):
-            with self.subTest(prior_policy=prior.get("scoring_policy")):
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    root = Path(temp_dir)
-                    shadow_path = root / "shadow.jsonl"
-                    outcome_path = root / "outcomes.jsonl"
-                    scorecard_path = root / "scorecard.json"
-                    shadow_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
-                    outcome_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
-                    with patch(
-                        "quant_rabbit.fast_bot_truth.fetch_frozen_s5_truth",
-                        return_value=(truth, ["b" * 64]),
-                    ):
-                        result = resolve_due_fast_bot_outcomes_from_oanda(
-                            shadow_ledger_path=shadow_path,
-                            outcome_ledger_path=outcome_path,
-                            scorecard_path=scorecard_path,
-                            client_factory=object,
-                            clock=lambda: NOW,
-                        )
-                    rows = [
-                        json.loads(line)
-                        for line in outcome_path.read_text().splitlines()
-                    ]
-                    scorecard = json.loads(scorecard_path.read_text())
+        self.assertEqual(result["ledger_appended"], 1)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[-1]["scoring_policy"], SCORING_POLICY)
+        self.assertEqual(scorecard["resolved_signals"], 1)
 
-                self.assertEqual(result["ledger_appended"], 1)
-                self.assertEqual(len(rows), 2)
-                self.assertEqual(rows[-1]["scoring_policy"], SCORING_POLICY)
-                self.assertEqual(scorecard["resolved_signals"], 1)
+    def test_seventy_invalid_v2_repeats_allow_one_v3_append(self) -> None:
+        signal = _signal(generated=NOW - timedelta(minutes=20))
+        truth = _complete_truth(generated=NOW - timedelta(minutes=20))
+        valid = resolve_fast_bot_signal(
+            signal,
+            truth,
+            resolved_at_utc=NOW,
+            truth_chunk_sha256=["a" * 64],
+        )
+        repeats = []
+        for index in range(70):
+            repeats.append(
+                _reseal_outcome(
+                    {
+                        **valid,
+                        "scoring_policy": (
+                            "QR_FAST_BOT_RECEIPTED_SPARSE_S5_CONSERVATIVE_V2"
+                        ),
+                        "resolved_at_utc": (
+                            NOW + timedelta(seconds=index)
+                        ).isoformat(),
+                        "exit_reason": "STOP_LOSS_GAP",
+                        "realized_pips": -3.0,
+                    }
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shadow_path = root / "shadow.jsonl"
+            outcome_path = root / "outcomes.jsonl"
+            scorecard_path = root / "scorecard.json"
+            shadow_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
+            outcome_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in repeats),
+                encoding="utf-8",
+            )
+            with patch(
+                "quant_rabbit.fast_bot_truth.fetch_frozen_s5_truth",
+                return_value=(truth, ["b" * 64]),
+            ) as fetch:
+                first = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW,
+                )
+                second = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW + timedelta(seconds=30),
+                )
+            rows = [
+                json.loads(line)
+                for line in outcome_path.read_text().splitlines()
+            ]
+
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(len(rows), 71)
+        self.assertEqual(first["status"], "RESOLVED")
+        self.assertEqual(first["ledger_appended"], 1)
+        self.assertEqual(first["outcome_identity_conflict_count"], 0)
+        self.assertEqual(rows[-1]["scoring_policy"], SCORING_POLICY)
+        self.assertEqual(second["status"], "NO_DUE_SIGNALS")
+        self.assertEqual(second["ledger_appended"], 0)
+        self.assertEqual(second["outcome_identity_conflict_count"], 0)
+
+    def test_second_resolver_run_does_not_append_same_current_policy_identity(self) -> None:
+        generated = NOW - timedelta(minutes=20)
+        signal = _signal(generated=generated)
+        truth = _complete_truth(generated=generated)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shadow_path = root / "shadow.jsonl"
+            outcome_path = root / "outcomes.jsonl"
+            scorecard_path = root / "scorecard.json"
+            shadow_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
+            with patch(
+                "quant_rabbit.fast_bot_truth.fetch_frozen_s5_truth",
+                return_value=(truth, ["b" * 64]),
+            ) as fetch:
+                first = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW,
+                )
+                second = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW + timedelta(seconds=30),
+                )
+            rows = outcome_path.read_text().splitlines()
+
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(first["ledger_appended"], 1)
+        self.assertEqual(second["ledger_appended"], 0)
+        self.assertEqual(second["status"], "NO_DUE_SIGNALS")
+        self.assertEqual(len(rows), 1)
 
     def test_due_rotation_does_not_starve_the_thirteenth_failed_signal(self) -> None:
         signals = [

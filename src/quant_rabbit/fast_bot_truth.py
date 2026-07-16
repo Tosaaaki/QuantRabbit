@@ -32,10 +32,15 @@ from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
 OUTCOME_CONTRACT = "QR_FAST_BOT_S5_BID_ASK_OUTCOME_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_FORWARD_SCORECARD_V1"
 TRUTH_ADAPTER_CONTRACT = "QR_FAST_BOT_S5_TRUTH_ADAPTER_V1"
-SCORING_POLICY = "QR_FAST_BOT_RECEIPTED_SPARSE_S5_CONSERVATIVE_V2"
+SCORING_POLICY = "QR_FAST_BOT_RECEIPTED_SPARSE_S5_CONSERVATIVE_V3"
 MAX_DUE_PER_RUN = 12
 MAX_WORKERS = 4
 TRUTH_CHUNK_CANDLE_LIMIT = 4500
+# Outcome pips are persisted at six decimal places throughout this contract.
+# Classifying gaps at that same precision prevents binary-float noise at the
+# attached-stop boundary from minting a GAP label that its sealed validator
+# cannot reproduce.  A future price-decimal contract should replace this.
+OUTCOME_PIP_ROUND_DIGITS = 6
 
 
 def resolve_fast_bot_signal(
@@ -153,6 +158,10 @@ def resolve_fast_bot_signal(
         "truth_candle_count": primary["truth_candle_count"],
         "truth_no_tick_slot_count": primary["truth_no_tick_slot_count"],
         "evaluated_candle_count": primary["evaluated_candle_count"],
+        "evaluated_grid_slot_count": primary["evaluated_grid_slot_count"],
+        "evaluated_no_tick_slot_count": primary[
+            "evaluated_no_tick_slot_count"
+        ],
         "truth_chunk_sha256": normalized_truth_hashes,
         "signal_sha256": str(signal["signal_sha256"]),
         "shadow_only": True,
@@ -198,6 +207,12 @@ def _resolve_entry_hypothesis(
     ambiguous = False
     observed = 0
     for candle in ordered:
+        if (
+            fill_at is not None
+            and candle.timestamp_utc
+            >= fill_at + timedelta(seconds=max_hold_seconds)
+        ):
+            break
         observed += 1
         newly_filled = False
         if fill_at is None:
@@ -213,8 +228,6 @@ def _resolve_entry_hypothesis(
                 continue
             fill_at = candle.timestamp_utc
             newly_filled = True
-        if candle.timestamp_utc >= fill_at + timedelta(seconds=max_hold_seconds):
-            break
         if side == "LONG":
             tp_hit = candle.bid_h >= take_profit
             sl_hit = candle.bid_l <= stop_loss
@@ -223,50 +236,56 @@ def _resolve_entry_hypothesis(
             sl_hit = candle.ask_h >= stop_loss
         if newly_filled and (tp_hit or sl_hit):
             ambiguous = True
-            realized_pips = _stop_loss_realized_pips(
-                side=side,
-                entry=entry,
-                stop_loss_pips=stop_loss_pips,
-                candle=candle,
-                pip_factor=pip_factor,
-                newly_filled=False,
+            realized_pips = _round_outcome_pips(
+                _stop_loss_realized_pips(
+                    side=side,
+                    entry=entry,
+                    stop_loss_pips=stop_loss_pips,
+                    candle=candle,
+                    pip_factor=pip_factor,
+                    newly_filled=False,
+                )
             )
             exit_reason = (
                 "STOP_LOSS_GAP_AMBIGUOUS_FILL_S5"
-                if realized_pips < -stop_loss_pips
+                if _is_executable_gap_pips(realized_pips, stop_loss_pips)
                 else "STOP_LOSS_AMBIGUOUS_FILL_S5"
             )
             exit_at = candle.timestamp_utc
             break
         if tp_hit and sl_hit:
             ambiguous = True
-            realized_pips = _stop_loss_realized_pips(
-                side=side,
-                entry=entry,
-                stop_loss_pips=stop_loss_pips,
-                candle=candle,
-                pip_factor=pip_factor,
-                newly_filled=newly_filled,
+            realized_pips = _round_outcome_pips(
+                _stop_loss_realized_pips(
+                    side=side,
+                    entry=entry,
+                    stop_loss_pips=stop_loss_pips,
+                    candle=candle,
+                    pip_factor=pip_factor,
+                    newly_filled=newly_filled,
+                )
             )
             exit_reason = (
                 "STOP_LOSS_GAP_AMBIGUOUS_SAME_S5"
-                if realized_pips < -stop_loss_pips
+                if _is_executable_gap_pips(realized_pips, stop_loss_pips)
                 else "STOP_LOSS_AMBIGUOUS_SAME_S5"
             )
             exit_at = candle.timestamp_utc
             break
         if sl_hit:
-            realized_pips = _stop_loss_realized_pips(
-                side=side,
-                entry=entry,
-                stop_loss_pips=stop_loss_pips,
-                candle=candle,
-                pip_factor=pip_factor,
-                newly_filled=newly_filled,
+            realized_pips = _round_outcome_pips(
+                _stop_loss_realized_pips(
+                    side=side,
+                    entry=entry,
+                    stop_loss_pips=stop_loss_pips,
+                    candle=candle,
+                    pip_factor=pip_factor,
+                    newly_filled=newly_filled,
+                )
             )
             exit_reason = (
                 "STOP_LOSS_GAP"
-                if realized_pips < -stop_loss_pips
+                if _is_executable_gap_pips(realized_pips, stop_loss_pips)
                 else "STOP_LOSS"
             )
             exit_at = candle.timestamp_utc
@@ -280,13 +299,22 @@ def _resolve_entry_hypothesis(
         exit_reason = "HORIZON_FULL_STOP_LOSS"
         realized_pips = -stop_loss_pips
         exit_at = min(fill_at + timedelta(seconds=max_hold_seconds), resolved)
+    evaluated_grid_slot_count = _evaluated_grid_slot_count(
+        generated=generated,
+        maturity=maturity,
+        exit_reason=exit_reason,
+        exit_at=exit_at,
+    )
+    evaluated_no_tick_slot_count = evaluated_grid_slot_count - observed
+    if evaluated_no_tick_slot_count < 0:
+        raise ValueError("evaluated candle count exceeds its exact S5 prefix")
     return {
         "maturity_at_utc": maturity.isoformat(),
         "filled": fill_at is not None,
         "fill_at_utc": fill_at.isoformat() if fill_at else None,
         "exit_at_utc": exit_at.isoformat() if exit_at else None,
         "exit_reason": exit_reason,
-        "realized_pips": round(realized_pips, 6),
+        "realized_pips": _round_outcome_pips(realized_pips),
         "ambiguous_same_s5": ambiguous,
         "truth_grid_slot_count": _expected_truth_candle_count(generated, maturity),
         "truth_candle_count": len(ordered),
@@ -294,6 +322,8 @@ def _resolve_entry_hypothesis(
             _expected_truth_candle_count(generated, maturity) - len(ordered)
         ),
         "evaluated_candle_count": observed,
+        "evaluated_grid_slot_count": evaluated_grid_slot_count,
+        "evaluated_no_tick_slot_count": evaluated_no_tick_slot_count,
     }
 
 
@@ -326,6 +356,31 @@ def _expected_truth_candle_count(
     first = _ceil_s5(generated)
     horizon_floor = _floor_s5(maturity)
     return max(0, int((horizon_floor - first).total_seconds() // 5))
+
+
+def _evaluated_grid_slot_count(
+    *,
+    generated: datetime,
+    maturity: datetime,
+    exit_reason: str,
+    exit_at: datetime | None,
+) -> int:
+    first = _ceil_s5(generated)
+    if exit_reason == "UNFILLED":
+        return _expected_truth_candle_count(generated, maturity)
+    if exit_at is None or _floor_s5(exit_at) != exit_at:
+        raise ValueError("filled outcome requires an aligned exit timestamp")
+    if exit_reason == "HORIZON_FULL_STOP_LOSS":
+        # The hold-cutoff candle is not evaluated.  This prefix is therefore
+        # first-grid <= t < fill+hold.
+        count = int((exit_at - first).total_seconds() // 5)
+    else:
+        # Price exits evaluate the exit candle itself.
+        count = int((exit_at - first).total_seconds() // 5) + 1
+    full_count = _expected_truth_candle_count(generated, maturity)
+    if not 0 < count <= full_count:
+        raise ValueError("evaluated S5 prefix is outside the truth grid")
+    return count
 
 
 def _ceil_s5(value: datetime) -> datetime:
@@ -361,6 +416,18 @@ def _stop_loss_realized_pips(
         else (entry - candle.ask_o) * pip_factor
     )
     return min(-stop_loss_pips, opening_exit_pips)
+
+
+def _round_outcome_pips(value: float) -> float:
+    return round(float(value), OUTCOME_PIP_ROUND_DIGITS)
+
+
+def _is_executable_gap_pips(realized_pips: float, stop_loss_pips: float) -> bool:
+    """Require a serialized executable loss strictly beyond attached SL."""
+
+    return _round_outcome_pips(realized_pips) < -_round_outcome_pips(
+        stop_loss_pips
+    )
 
 
 def build_fast_bot_scorecard(
@@ -687,6 +754,10 @@ def _entry_experiment_outcome_matches_signal(
             truth_count = observed["truth_candle_count"]
             no_tick_count = observed["truth_no_tick_slot_count"]
             evaluated_count = observed["evaluated_candle_count"]
+            evaluated_grid_count = observed["evaluated_grid_slot_count"]
+            evaluated_no_tick_count = observed[
+                "evaluated_no_tick_slot_count"
+            ]
         except (KeyError, TypeError, ValueError, OverflowError):
             return False
         if (
@@ -711,6 +782,10 @@ def _entry_experiment_outcome_matches_signal(
             or not isinstance(evaluated_count, int)
             or isinstance(evaluated_count, bool)
             or not 0 <= evaluated_count <= truth_count
+            or not isinstance(evaluated_grid_count, int)
+            or isinstance(evaluated_grid_count, bool)
+            or not isinstance(evaluated_no_tick_count, int)
+            or isinstance(evaluated_no_tick_count, bool)
             or not _outcome_timestamps_valid(
                 observed,
                 generated=generated,
@@ -741,6 +816,10 @@ def _fast_bot_outcome_valid_for_signal(
         truth_count = outcome["truth_candle_count"]
         no_tick_count = outcome["truth_no_tick_slot_count"]
         evaluated_count = outcome["evaluated_candle_count"]
+        evaluated_grid_count = outcome["evaluated_grid_slot_count"]
+        evaluated_no_tick_count = outcome[
+            "evaluated_no_tick_slot_count"
+        ]
         resolved = _parse_utc(outcome["resolved_at_utc"])
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
@@ -774,6 +853,10 @@ def _fast_bot_outcome_valid_for_signal(
         or not isinstance(evaluated_count, int)
         or isinstance(evaluated_count, bool)
         or not 0 <= evaluated_count <= truth_count
+        or not isinstance(evaluated_grid_count, int)
+        or isinstance(evaluated_grid_count, bool)
+        or not isinstance(evaluated_no_tick_count, int)
+        or isinstance(evaluated_no_tick_count, bool)
         or outcome.get("truth_source") != "OANDA_S5_BID_ASK"
         or not _truth_chunk_hashes_valid(outcome.get("truth_chunk_sha256"))
         or len(outcome["truth_chunk_sha256"])
@@ -831,6 +914,8 @@ def _fast_bot_outcome_valid_for_signal(
             "truth_candle_count",
             "truth_no_tick_slot_count",
             "evaluated_candle_count",
+            "evaluated_grid_slot_count",
+            "evaluated_no_tick_slot_count",
             "maturity_at_utc",
         )
     )
@@ -897,7 +982,7 @@ def _outcome_result_semantics_valid(
     }:
         return (
             ambiguous is (reason != "STOP_LOSS_GAP")
-            and realized_pips < -stop_loss_pips
+            and _is_executable_gap_pips(realized_pips, stop_loss_pips)
         )
     return False
 
@@ -944,6 +1029,11 @@ def _evaluated_count_valid(
     try:
         observed = result["evaluated_candle_count"]
         truth_count = result["truth_candle_count"]
+        truth_no_tick_count = result["truth_no_tick_slot_count"]
+        evaluated_grid_count = result["evaluated_grid_slot_count"]
+        evaluated_no_tick_count = result[
+            "evaluated_no_tick_slot_count"
+        ]
     except KeyError:
         return False
     if (
@@ -951,13 +1041,41 @@ def _evaluated_count_valid(
         or isinstance(observed, bool)
         or not isinstance(truth_count, int)
         or isinstance(truth_count, bool)
+        or not isinstance(truth_no_tick_count, int)
+        or isinstance(truth_no_tick_count, bool)
+        or not isinstance(evaluated_grid_count, int)
+        or isinstance(evaluated_grid_count, bool)
+        or not isinstance(evaluated_no_tick_count, int)
+        or isinstance(evaluated_no_tick_count, bool)
     ):
         return False
     reason = str(result.get("exit_reason") or "")
-    if reason in {"UNFILLED", "HORIZON_FULL_STOP_LOSS"}:
-        return observed == truth_count
-    del generated, maturity
-    return 0 < observed <= truth_count
+    try:
+        exit_at = (
+            _parse_utc(result["exit_at_utc"])
+            if reason != "UNFILLED"
+            else None
+        )
+        expected_grid_count = _evaluated_grid_slot_count(
+            generated=generated,
+            maturity=maturity,
+            exit_reason=reason,
+            exit_at=exit_at,
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return bool(
+        evaluated_grid_count == expected_grid_count
+        and 0 <= evaluated_no_tick_count <= truth_no_tick_count
+        and evaluated_grid_count - evaluated_no_tick_count == observed
+        and 0 <= observed <= truth_count
+        and (
+            observed == truth_count
+            and evaluated_no_tick_count == truth_no_tick_count
+            if reason == "UNFILLED"
+            else observed > 0
+        )
+    )
 
 
 def _truth_chunk_hashes_valid(value: Any) -> bool:
@@ -983,19 +1101,55 @@ def resolve_due_fast_bot_outcomes_from_oanda(
     ]
     signals = _dedupe_signal_identities(valid_loaded_signals)
     outcomes = _load_jsonl(outcome_ledger_path)
-    resolved_ids = {
-        str(signal.get("signal_id"))
-        for signal in signals
-        if any(
+    current_rows_by_identity: dict[
+        tuple[str, str], list[Mapping[str, Any]]
+    ] = {}
+    for outcome in outcomes:
+        identity = _current_outcome_identity(outcome)
+        if identity is not None:
+            current_rows_by_identity.setdefault(identity, []).append(outcome)
+    resolved_ids: set[str] = set()
+    outcome_identity_conflicts: list[dict[str, Any]] = []
+    for signal in signals:
+        identity = _signal_outcome_identity(signal)
+        current_rows = current_rows_by_identity.get(identity, [])
+        valid_rows = [
+            outcome
+            for outcome in current_rows
+            if (
             _sealed_valid(outcome, OUTCOME_CONTRACT)
             and outcome.get("scoring_policy") == SCORING_POLICY
             and _fast_bot_outcome_valid_for_signal(outcome, signal)
-            for outcome in outcomes
-        )
+            )
+        ]
+        if len(valid_rows) == 1:
+            resolved_ids.add(str(signal.get("signal_id") or ""))
+        elif current_rows:
+            outcome_identity_conflicts.append(
+                {
+                    "signal_id": str(signal.get("signal_id") or ""),
+                    "signal_sha256": str(signal.get("signal_sha256") or ""),
+                    "pair": str(signal.get("pair") or ""),
+                    "current_policy_row_count": len(current_rows),
+                    "valid_current_policy_row_count": len(valid_rows),
+                    "reason": (
+                        "CURRENT_POLICY_OUTCOME_IDENTITY_HAS_NO_VALID_ROW"
+                        if not valid_rows
+                        else "CURRENT_POLICY_OUTCOME_IDENTITY_HAS_MULTIPLE_VALID_ROWS"
+                    ),
+                }
+            )
+    conflict_signal_ids = {
+        str(item["signal_id"]) for item in outcome_identity_conflicts
     }
     due = []
     for signal in signals:
-        if not _fast_bot_signal_valid(signal) or str(signal.get("signal_id")) in resolved_ids:
+        signal_id = str(signal.get("signal_id") or "")
+        if (
+            not _fast_bot_signal_valid(signal)
+            or signal_id in resolved_ids
+            or signal_id in conflict_signal_ids
+        ):
             continue
         generated = _parse_utc(signal["generated_at_utc"])
         maturity = generated + timedelta(
@@ -1019,11 +1173,24 @@ def resolve_due_fast_bot_outcomes_from_oanda(
         "duplicate_identity_signals_ignored": (
             len(valid_loaded_signals) - len(signals)
         ),
+        "outcome_identity_conflict_count": len(outcome_identity_conflicts),
+        "outcome_identity_conflicts": outcome_identity_conflicts,
     }
     if not selected:
         scorecard = build_fast_bot_scorecard(loaded_signals, outcomes, as_of_utc=now)
         _write_json_atomic(scorecard_path, scorecard)
-        return {**base, "status": "NO_DUE_SIGNALS", "broker_read": False, "ledger_appended": 0, "scorecard_status": scorecard["status"]}
+        return {
+            **base,
+            "status": (
+                "OUTCOME_IDENTITY_CONFLICT"
+                if outcome_identity_conflicts
+                else "NO_DUE_SIGNALS"
+            ),
+            "broker_read": False,
+            "ledger_appended": 0,
+            "ledger_duplicate_outcome_identities_skipped": 0,
+            "scorecard_status": scorecard["status"],
+        }
 
     client = client_factory()
     resolved: list[dict[str, Any]] = []
@@ -1055,7 +1222,7 @@ def resolve_due_fast_bot_outcomes_from_oanda(
                     "pair": str(signal.get("pair") or ""),
                     "error": f"{type(exc).__name__}: {exc}"[:320],
                 })
-    appended = _append_outcomes_once(outcome_ledger_path, resolved)
+    append_result = _append_outcomes_once(outcome_ledger_path, resolved)
     all_outcomes = _load_jsonl(outcome_ledger_path)
     scorecard = build_fast_bot_scorecard(
         loaded_signals,
@@ -1065,9 +1232,23 @@ def resolve_due_fast_bot_outcomes_from_oanda(
     _write_json_atomic(scorecard_path, scorecard)
     return {
         **base,
-        "status": "RESOLVED_WITH_ERRORS" if errors else "RESOLVED",
+        "status": (
+            "RESOLVED_WITH_ERRORS"
+            if (
+                errors
+                or outcome_identity_conflicts
+                or append_result["duplicate_identity_count"]
+            )
+            else "RESOLVED"
+        ),
         "broker_read": True,
-        "ledger_appended": appended,
+        "ledger_appended": append_result["appended"],
+        "ledger_duplicate_outcome_identities_skipped": append_result[
+            "duplicate_identity_count"
+        ],
+        "ledger_duplicate_outcome_signal_ids": append_result[
+            "duplicate_identity_signal_ids"
+        ],
         "errors": errors,
         "scorecard_status": scorecard["status"],
         "forward_evidence_passed": scorecard["forward_evidence_passed"],
@@ -1326,14 +1507,42 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _append_outcomes_once(path: Path, outcomes: Sequence[Mapping[str, Any]]) -> int:
+def _signal_outcome_identity(signal: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(signal.get("signal_sha256") or ""), SCORING_POLICY)
+
+
+def _current_outcome_identity(
+    outcome: Mapping[str, Any],
+) -> tuple[str, str] | None:
+    signal_sha = str(outcome.get("signal_sha256") or "")
+    signal_id = str(outcome.get("signal_id") or "")
+    policy = str(outcome.get("scoring_policy") or "")
+    if (
+        outcome.get("contract") != OUTCOME_CONTRACT
+        or policy != SCORING_POLICY
+        or not _sha256_text(signal_sha)
+        or not signal_id
+    ):
+        return None
+    return (signal_sha, policy)
+
+
+def _append_outcomes_once(
+    path: Path,
+    outcomes: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
     if not outcomes:
-        return 0
+        return {
+            "appended": 0,
+            "duplicate_identity_count": 0,
+            "duplicate_identity_signal_ids": [],
+        }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
-        seen = set()
+        seen_digests: set[str] = set()
+        seen_identities: set[tuple[str, str]] = set()
         for line_number, line in enumerate(handle, start=1):
             try:
                 item = json.loads(line)
@@ -1346,27 +1555,48 @@ def _append_outcomes_once(path: Path, outcomes: Sequence[Mapping[str, Any]]) -> 
                     f"non-object JSONL row at {path}:{line_number}"
                 )
             if item.get("contract_sha256"):
-                seen.add(str(item["contract_sha256"]))
+                seen_digests.add(str(item["contract_sha256"]))
+            identity = _current_outcome_identity(item)
+            if identity is not None:
+                # Identity is intentionally retained even when the historical
+                # row fails today's deep validator.  Appending a new sealed
+                # row every 30 seconds cannot repair immutable history; it
+                # only hides the conflict and burns broker reads.
+                seen_identities.add(identity)
         handle.seek(0, os.SEEK_END)
         appended = 0
+        duplicate_identity_signal_ids: list[str] = []
         for outcome in outcomes:
             signal_id = str(outcome.get("signal_id") or "")
             outcome_sha = str(outcome.get("contract_sha256") or "")
+            identity = _current_outcome_identity(outcome)
             if (
                 not signal_id
                 or not outcome_sha
-                or outcome_sha in seen
+                or outcome_sha in seen_digests
                 or outcome.get("scoring_policy") != SCORING_POLICY
                 or not _sealed_valid(outcome, OUTCOME_CONTRACT)
             ):
                 continue
+            if identity is None:
+                continue
+            if identity in seen_identities:
+                duplicate_identity_signal_ids.append(signal_id)
+                continue
             handle.write(json.dumps(dict(outcome), ensure_ascii=False, sort_keys=True) + "\n")
-            seen.add(outcome_sha)
+            seen_digests.add(outcome_sha)
+            seen_identities.add(identity)
             appended += 1
         handle.flush()
         os.fsync(handle.fileno())
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    return appended
+    return {
+        "appended": appended,
+        "duplicate_identity_count": len(duplicate_identity_signal_ids),
+        "duplicate_identity_signal_ids": sorted(
+            set(duplicate_identity_signal_ids)
+        ),
+    }
 
 
 def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
