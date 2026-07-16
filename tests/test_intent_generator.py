@@ -3802,7 +3802,7 @@ class IntentGeneratorTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
-            _record_forecast_seed_telemetry(
+            recorded = _record_forecast_seed_telemetry(
                 forecast,
                 pair="EUR_USD",
                 quote=Quote("EUR_USD", 1.0999, 1.1001, stale_quote_time),
@@ -3812,8 +3812,62 @@ class IntentGeneratorTest(unittest.TestCase):
                 validation_time_utc=validation_time,
             )
 
+            self.assertFalse(recorded)
             self.assertFalse((data_root / "forecast_history.jsonl").exists())
             self.assertFalse((data_root / "projection_ledger.jsonl").exists())
+
+    def test_forecast_seed_lanes_skip_context_when_required_telemetry_is_stale(self) -> None:
+        prior = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            validation_time = datetime(2026, 6, 5, 3, 0, tzinfo=timezone.utc)
+            stale_quote_time = validation_time - timedelta(seconds=120)
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.91,
+                current_price=1.1,
+                target_price=1.105,
+                invalidation_price=1.098,
+                horizon_min=60,
+                projection_signals=(),
+                market_support=_high_precision_market_support("UP"),
+                rationale_summary="UP forecast",
+                drivers_for=("test",),
+                drivers_against=(),
+            )
+            source = {
+                "desk": "trend_trader",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "method": TradeMethod.TREND_CONTINUATION.value,
+            }
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=validation_time,
+                quotes={"EUR_USD": Quote("EUR_USD", 1.0999, 1.1001, stale_quote_time)},
+            )
+
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                data_root = Path(tmp)
+                lanes = _append_forecast_seed_lanes(
+                    [source],
+                    {"EUR_USD": {}},
+                    snapshot,
+                    data_root=data_root,
+                    forecast_cycle_id="cycle-stale",
+                )
+
+            self.assertEqual(lanes, [source])
+            self.assertNotIn("forecast_cycle_id", lanes[0])
+            self.assertNotIn("forecast_direction", lanes[0])
+        finally:
+            if prior is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
 
     def test_forecast_seed_telemetry_rejects_inexact_or_far_future_clock(self) -> None:
         from quant_rabbit.models import Quote
@@ -3875,7 +3929,7 @@ class IntentGeneratorTest(unittest.TestCase):
         for label, quote in quotes.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
                 data_root = Path(tmp)
-                _record_forecast_seed_telemetry(
+                recorded = _record_forecast_seed_telemetry(
                     forecast,
                     pair="EUR_USD",
                     quote=quote,
@@ -3885,6 +3939,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     validation_time_utc=validation_time,
                 )
 
+                self.assertFalse(recorded)
                 self.assertFalse((data_root / "forecast_history.jsonl").exists())
                 self.assertFalse((data_root / "projection_ledger.jsonl").exists())
                 self.assertFalse(
@@ -4934,7 +4989,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     ),
                     patch(
                         "quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry",
-                        return_value=None,
+                        return_value=False,
                     ),
                 ):
                     summary = IntentGenerator(
@@ -5430,7 +5485,8 @@ class IntentGeneratorTest(unittest.TestCase):
             for issue in item["risk_issues"]
         }
         self.assertEqual(summary.live_ready, 0)
-        self.assertIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", issue_codes)
+        self.assertIn("TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", issue_codes)
 
     def test_snapshot_packet_time_prevents_self_stale_intents(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")

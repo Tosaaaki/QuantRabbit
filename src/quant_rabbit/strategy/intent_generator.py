@@ -3229,7 +3229,7 @@ def _append_forecast_seed_lanes(
         )
         if forecast is None:
             continue
-        _record_forecast_seed_telemetry(
+        telemetry_recorded = _record_forecast_seed_telemetry(
             forecast,
             pair=pair,
             quote=quote,
@@ -3238,6 +3238,13 @@ def _append_forecast_seed_lanes(
             cycle_id=forecast_cycle_id,
             validation_time_utc=snapshot.fetched_at_utc,
         )
+        telemetry_required_for_context = (
+            _require_telemetry_for_live_active()
+            and data_root is not None
+            and bool(forecast_cycle_id)
+        )
+        if telemetry_required_for_context and not telemetry_recorded:
+            continue
         direction = str(getattr(forecast, "direction", "") or "").upper()
         confidence = _optional_float(getattr(forecast, "confidence", None))
         if direction and confidence is not None:
@@ -3847,14 +3854,14 @@ def _record_forecast_seed_telemetry(
     data_root: Path | None,
     cycle_id: str | None,
     validation_time_utc: datetime | None = None,
-) -> None:
+) -> bool:
     if not _require_telemetry_for_live_active() or data_root is None or not cycle_id:
-        return
+        return True
     raw_chart = pair_chart.get("__raw_chart") if isinstance(pair_chart, dict) else None
     try:
         current_price = float(quote.mid)
     except (TypeError, ValueError):
-        return
+        return False
     try:
         from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
         from quant_rabbit.strategy.projection_ledger import (
@@ -3879,11 +3886,11 @@ def _record_forecast_seed_telemetry(
             raw_emission_time,
             validation_time_utc=validation_time_utc,
         ):
-            return
+            return False
         emission_time = _ensure_utc(raw_emission_time)
         if emission_time is None:
-            return
-        record_forecast(
+            return False
+        recorded = record_forecast(
             forecast_record,
             data_root=data_root,
             cycle_id=cycle_id,
@@ -3892,7 +3899,7 @@ def _record_forecast_seed_telemetry(
             replace_existing=True,
         )
         if not projection_telemetry_market_open(emission_time):
-            return
+            return bool(recorded)
         record_directional_forecast(
             forecast_record,
             pair=pair,
@@ -3913,8 +3920,9 @@ def _record_forecast_seed_telemetry(
                 cycle_id=cycle_id,
                 now=emission_time,
             )
+        return bool(recorded)
     except Exception:
-        return
+        return False
 
 
 def _forecast_projection_signals_for_telemetry(forecast: Any) -> list[Any]:
