@@ -2,7 +2,7 @@
 """Train direct future-return models from causal M5 technical features.
 
 The model sees only complete candles available at forecast time. Entry is the
-next exact M5 bid/ask open and truth is the exact future executable close. A
+next exact M5 bid/ask open and truth is the exact future executable open. A
 chronological validation block chooses the prediction-strength threshold once;
 the final holdout is then evaluated with pair-local non-overlapping positions.
 
@@ -115,6 +115,9 @@ def main() -> int:
             for frame in feature_frames
         ]
         dataset = pd.concat(labelled).sort_index()
+        dataset = dataset.loc[
+            dataset["entry_spread_pips"] <= args.spread_cap_pips
+        ].copy()
         training, validation, holdout, split = _chronological_blocks(
             dataset,
             train_fraction=args.train_fraction,
@@ -219,13 +222,14 @@ def main() -> int:
         "history_price_component": "BID_ASK",
         "feature_causality": (
             "complete M5 candles through forecast close only; next exact M5 "
-            "bid/ask open entry; exact future executable bid/ask close truth"
+            "bid/ask open entry; exact entry-relative future bid/ask open truth"
         ),
         "feature_names": list(MODEL_FEATURES),
         "pair_codes": pair_codes,
         "horizons_min": horizons,
         "train_fraction": args.train_fraction,
         "validation_fraction": args.validation_fraction,
+        "spread_cap_pips": args.spread_cap_pips,
         **candle_stats,
         "by_horizon": horizon_reports,
     }
@@ -241,6 +245,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--horizons", default="15,60,240,1440")
     parser.add_argument("--train-fraction", type=float, default=0.60)
     parser.add_argument("--validation-fraction", type=float, default=0.20)
+    parser.add_argument("--spread-cap-pips", type=float, default=2.0)
     parser.add_argument("--minimum-validation-trades", type=int, default=40)
     parser.add_argument("--minimum-validation-days", type=int, default=12)
     parser.add_argument("--minimum-holdout-trades", type=int, default=40)
@@ -369,36 +374,58 @@ def _pair_feature_frame(pair: str, candles, *, pair_code: int, np, pd):
 
 def _label_frame(frame, *, horizon_min: int, np, pd):
     horizon_bars = int(horizon_min / 5)
+    # Forecasts are emitted after the current M5 candle is complete and enter
+    # at the next exact M5 open.  The truth timestamp must therefore be
+    # measured from that executable entry, not from the forecast candle.  The
+    # previous implementation recorded ``-horizon_bars`` as the exit time
+    # while valuing the close of that candle: the economic return was roughly
+    # the named horizon, but its result appeared resolved five minutes early.
+    truth_bars = horizon_bars + 1
     pip_factor = instrument_pip_factor(str(frame["pair"].iloc[0]))
     labelled = frame.copy()
     timestamp_series = labelled.index.to_series()
     labelled["entry_timestamp_utc"] = timestamp_series.shift(-1)
-    labelled["future_timestamp_utc"] = timestamp_series.shift(-horizon_bars)
+    labelled["future_timestamp_utc"] = timestamp_series.shift(-truth_bars)
     entry_mid = (
         labelled["bid_open"].shift(-1) + labelled["ask_open"].shift(-1)
     ) / 2.0
-    labelled["target_mid_pips"] = (
-        labelled["mid_close"].shift(-horizon_bars) - entry_mid
+    labelled["entry_spread_pips"] = (
+        labelled["ask_open"].shift(-1) - labelled["bid_open"].shift(-1)
     ) * pip_factor
+    # OANDA candle timestamps identify the candle open.  Therefore an exit
+    # timestamp exactly ``horizon_min`` after the executable entry must use
+    # that candle's executable open, not its five-minutes-later close.  Using
+    # the close while recording the open timestamp made the outcome appear
+    # resolved five minutes early and let the newest tuning row see a price
+    # that was not yet available at the claimed resolution time.
+    exit_bid = labelled["bid_open"].shift(-truth_bars)
+    exit_ask = labelled["ask_open"].shift(-truth_bars)
+    exit_mid = (exit_bid + exit_ask) / 2.0
+    labelled["exit_spread_pips"] = (exit_ask - exit_bid) * pip_factor
+    labelled["roundtrip_spread_cost_pips"] = (
+        labelled["entry_spread_pips"] + labelled["exit_spread_pips"]
+    ) / 2.0
+    labelled["target_mid_pips"] = (exit_mid - entry_mid) * pip_factor
     labelled["long_pips"] = (
-        labelled["bid_close"].shift(-horizon_bars)
-        - labelled["ask_open"].shift(-1)
+        exit_bid - labelled["ask_open"].shift(-1)
     ) * pip_factor
     labelled["short_pips"] = (
-        labelled["bid_open"].shift(-1)
-        - labelled["ask_close"].shift(-horizon_bars)
+        labelled["bid_open"].shift(-1) - exit_ask
     ) * pip_factor
     exact_entry = (
         labelled["entry_timestamp_utc"] - timestamp_series
     ).dt.total_seconds() == 300.0
     exact_truth = (
-        labelled["future_timestamp_utc"] - timestamp_series
+        labelled["future_timestamp_utc"] - labelled["entry_timestamp_utc"]
     ).dt.total_seconds() == float(horizon_min * 60)
     complete_lookback = labelled["lookback_span_hours"] <= 26.0
     required = list(MODEL_FEATURES) + [
         "target_mid_pips",
         "long_pips",
         "short_pips",
+        "entry_spread_pips",
+        "exit_spread_pips",
+        "roundtrip_spread_cost_pips",
         "future_timestamp_utc",
     ]
     return labelled.loc[exact_entry & exact_truth & complete_lookback].dropna(
@@ -454,6 +481,17 @@ def _prediction_rows(frame, predictions: Sequence[float]) -> list[dict[str, Any]
                 "predicted_pips": round(float(prediction), 6),
                 "long_pips": round(float(row.long_pips), 6),
                 "short_pips": round(float(row.short_pips), 6),
+                "entry_spread_pips": round(float(row.entry_spread_pips), 6),
+                "exit_spread_pips": round(float(row.exit_spread_pips), 6),
+                "roundtrip_spread_cost_pips": round(
+                    float(row.roundtrip_spread_cost_pips), 6
+                ),
+                "gross_directional_pips": round(
+                    float(row.target_mid_pips)
+                    if float(prediction) >= 0.0
+                    else -float(row.target_mid_pips),
+                    6,
+                ),
             }
         )
     return rows

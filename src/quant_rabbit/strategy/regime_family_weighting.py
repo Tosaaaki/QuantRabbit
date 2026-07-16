@@ -188,6 +188,39 @@ def _views_by_timeframe(chart: Mapping[str, Any]) -> dict[str, Mapping[str, Any]
 
 
 def _view_regime(view: Mapping[str, Any]) -> tuple[str, float | None]:
+    market_state = (
+        view.get("market_state")
+        if isinstance(view.get("market_state"), Mapping)
+        else {}
+    )
+    phase = str((market_state or {}).get("phase") or "").strip().upper()
+    readiness = str((market_state or {}).get("readiness") or "").strip().upper()
+    # Only complete producer-owned taxonomy evidence changes method routing.
+    # PRE states remain observable rather than becoming a blanket stop:
+    # confirmation promotes them to the method capable of trading that
+    # transition; an unconfirmed state remains non-directional evidence.
+    if (market_state or {}).get("evidence_complete") is True:
+        phase_regime = {
+            "TREND": "TREND_STRONG",
+            "RANGE": "RANGE",
+            "PRE_TREND": (
+                "TREND_WEAK"
+                if readiness in {"TRIGGERED", "ACTIVE"}
+                else "BREAKOUT_PENDING"
+            ),
+            "PRE_RANGE": (
+                "RANGE"
+                if readiness in {"TRIGGERED", "ACTIVE"}
+                else "TRANSITION"
+            ),
+        }.get(phase)
+        if phase_regime is not None:
+            confidence = _finite_number(
+                (market_state or {}).get("confidence"),
+                minimum=0.0,
+                maximum=1.0,
+            )
+            return phase_regime, confidence
     reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), Mapping) else {}
     state = _normalized_regime((reading or {}).get("state") or view.get("regime"))
     confidence = _finite_number((reading or {}).get("confidence"), minimum=0.0, maximum=1.0)

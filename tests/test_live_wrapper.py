@@ -1968,7 +1968,7 @@ class LiveWrapperTest(unittest.TestCase):
             )
             self.assertEqual(retried_pairs, {*failed_pairs, hard_pair})
 
-    def test_position_guardian_current_integrity_block_does_not_pin_rotation(self) -> None:
+    def test_position_guardian_current_or_historical_integrity_quarantine_does_not_pin_rotation(self) -> None:
         for chart_mode in (
             "INTEGRITY_BLOCKED",
             "INTEGRITY_BLOCKED_PROVENANCE_INVALID",
@@ -2005,7 +2005,11 @@ class LiveWrapperTest(unittest.TestCase):
                 self.assertEqual(freshness["status"], "FRESH")
                 self.assertEqual(
                     freshness["blocked_technical_inputs"],
-                    [f"{DEFAULT_TRADER_PAIRS[0]}:M5"],
+                    (
+                        [f"{DEFAULT_TRADER_PAIRS[0]}:M5"]
+                        if chart_mode == "INTEGRITY_BLOCKED"
+                        else []
+                    ),
                 )
                 self.assertEqual(freshness["coverage_cursor"], 2)
                 self.assertTrue(freshness["coverage_cursor_advanced"])

@@ -7394,9 +7394,16 @@ LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 EXACT_VEHICLE_TP_METRICS_SOURCE = (
     "data/execution_ledger.db:exact_vehicle_take_profit"
 )
+EXACT_VEHICLE_NET_METRICS_SOURCE = "data/execution_ledger.db:exact_vehicle_net"
+M15_RECOVERY_TP_PROOF_BOOTSTRAP_CONTRACT = (
+    "QR_M15_RECOVERY_TP_PROOF_BOOTSTRAP_V1"
+)
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
+)
+M15_RECOVERY_TP_PROOF_BOOTSTRAP_WARN_CODE = (
+    "M15_RECOVERY_TP_PROOF_BOOTSTRAP"
 )
 PREDICTIVE_SCOUT_FORWARD_EVIDENCE_WARN_CODE = (
     "PREDICTIVE_SCOUT_FORWARD_EVIDENCE_UNDER_NEGATIVE_EXPECTANCY"
@@ -7909,6 +7916,157 @@ def _tp_proof_collection_harvest_rotation_allowed(intent: OrderIntent) -> bool:
             }
         )
     return True
+
+
+def _m15_recovery_tp_proof_bootstrap_evidence(
+    intent: OrderIntent,
+) -> dict[str, Any] | None:
+    """Return bounded zero-history M15 recovery acquisition annotations.
+
+    A new pair/side/method/vehicle cannot already have the five local TP
+    outcomes required by the ordinary proof-collection route. Requiring those
+    outcomes before the first order made the content-addressed M15 recovery
+    candidate unreachable. This route lets current technical evidence create
+    forward observations without a fixed sample-count ceiling only while the
+    exact vehicle's cumulative net and expectancy remain non-negative. The
+    first negative result blocks later attempts. It does not claim positive
+    expectancy and does not relax the loss-asymmetry cap; the current risk
+    budget, forecast confidence, margin, and realized results continue to
+    resize each later attempt.
+    """
+
+    metadata = intent.metadata if isinstance(intent.metadata, dict) else {}
+    receipt = metadata.get("m15_recovery_micro_receipt")
+    forecast_binding = metadata.get("forecast_m15_recovery_binding")
+    method = intent.market_context.method if intent.market_context is not None else None
+    expected_direction = "UP" if intent.side == Side.LONG else "DOWN"
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(forecast_binding, dict)
+        or method != TradeMethod.BREAKOUT_FAILURE
+        or intent.order_type != OrderType.STOP_ENTRY
+        or intent.units.__class__ is not int
+        or not 1 <= intent.units <= M15_RECOVERY_MICRO_MAX_UNITS
+        or receipt.get("contract") != M15_RECOVERY_MICRO_CONTRACT
+        or receipt.get("mode") != M15_RECOVERY_MICRO_MODE
+        or receipt.get("status") != "ELIGIBLE_FOR_MICRO_REVALIDATION"
+        or receipt.get("live_permission") is not False
+        or receipt.get("requires_risk_gateway_revalidation") is not True
+        or receipt.get("manual_position_mutation_allowed") is not False
+        or metadata.get("m15_recovery_micro_receipt_sha256")
+        != receipt.get("receipt_sha256")
+        or metadata.get("forecast_direction") != expected_direction
+        or metadata.get("forecast_m15_recovery_binding_sha256")
+        != forecast_binding.get("binding_sha256")
+        or metadata.get("loss_asymmetry_guard_active") is not True
+        or str(metadata.get("capture_economics_status") or "").upper()
+        != "NEGATIVE_EXPECTANCY"
+        or metadata.get("loss_asymmetry_guard_relaxed") is not False
+        or not _non_market_attached_harvest_shape(intent)
+    ):
+        return None
+    forecast_valid, _ = validate_m15_recovery_forecast_binding(
+        forecast_binding,
+        recovery_receipt=receipt,
+        metadata=metadata,
+    )
+    if not forecast_valid:
+        return None
+
+    vehicle = _vehicle_for_order_type(intent.order_type)
+    expected_tp_scope_key = (
+        f"{intent.pair}|{intent.side.value}|{method.value}|{vehicle}|"
+        "TAKE_PROFIT_ORDER"
+    )
+    tp_trades = metadata.get("capture_take_profit_trades")
+    tp_wins = metadata.get("capture_take_profit_wins")
+    tp_losses = metadata.get("capture_take_profit_losses")
+    if (
+        vehicle != "STOP"
+        or metadata.get("capture_take_profit_exact_vehicle_required") is not True
+        or metadata.get("capture_take_profit_scope")
+        != "PAIR_SIDE_METHOD_VEHICLE"
+        or metadata.get("capture_take_profit_scope_key") != expected_tp_scope_key
+        or metadata.get("capture_take_profit_vehicle") != vehicle
+        or metadata.get("capture_take_profit_metrics_source")
+        != EXACT_VEHICLE_TP_METRICS_SOURCE
+        or any(
+            value.__class__ is not int or value < 0
+            for value in (tp_trades, tp_wins, tp_losses)
+        )
+        or tp_wins + tp_losses != tp_trades
+    ):
+        return None
+
+    expected_net_scope_key = (
+        f"{intent.pair}|{intent.side.value}|{method.value}|{vehicle}|"
+        "ALL_AUDITED_EXITS"
+    )
+    net_trades = metadata.get("capture_exact_vehicle_net_trades")
+    net_wins = metadata.get("capture_exact_vehicle_net_wins")
+    net_losses = metadata.get("capture_exact_vehicle_net_losses")
+    unresolved_trades = metadata.get(
+        "capture_exact_vehicle_net_unresolved_realized_trades"
+    )
+    net_jpy = metadata.get("capture_exact_vehicle_net_jpy")
+    net_expectancy = metadata.get("capture_exact_vehicle_net_expectancy_jpy")
+    if (
+        metadata.get("capture_exact_vehicle_net_scope")
+        != "PAIR_SIDE_METHOD_VEHICLE"
+        or metadata.get("capture_exact_vehicle_net_scope_key")
+        != expected_net_scope_key
+        or metadata.get("capture_exact_vehicle_net_vehicle") != vehicle
+        or metadata.get("capture_exact_vehicle_net_metrics_source")
+        != EXACT_VEHICLE_NET_METRICS_SOURCE
+        or any(
+            value.__class__ is not int or value < 0
+            for value in (net_trades, net_wins, net_losses, unresolved_trades)
+        )
+        or net_wins + net_losses != net_trades
+        or unresolved_trades != 0
+        or tp_trades > net_trades
+        or net_jpy.__class__ not in {int, float}
+        or not math.isfinite(float(net_jpy))
+        or net_expectancy.__class__ not in {int, float}
+        or not math.isfinite(float(net_expectancy))
+        or float(net_jpy) < 0.0
+        or float(net_expectancy) < 0.0
+    ):
+        return None
+
+    loss_cap = _optional_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    effective_cap = _optional_float(
+        metadata.get("loss_asymmetry_guard_effective_max_loss_jpy")
+    )
+    if (
+        loss_cap is None
+        or loss_cap <= 0.0
+        or effective_cap is None
+        or effective_cap <= 0.0
+        or effective_cap > loss_cap
+    ):
+        return None
+
+    return {
+        "positive_rotation_proof_collection_bootstrap_contract": (
+            M15_RECOVERY_TP_PROOF_BOOTSTRAP_CONTRACT
+        ),
+        "positive_rotation_proof_collection_evidence_status": (
+            "UNPROVEN_BOUNDED_FORWARD_SAMPLE"
+        ),
+        "positive_rotation_proof_collection_existing_net_trades": net_trades,
+        "positive_rotation_proof_collection_existing_net_wins": net_wins,
+        "positive_rotation_proof_collection_existing_net_losses": net_losses,
+        "positive_rotation_proof_collection_existing_net_jpy": float(net_jpy),
+        "positive_rotation_proof_collection_existing_net_expectancy_jpy": (
+            float(net_expectancy)
+        ),
+        "positive_rotation_proof_collection_ready": True,
+        "positive_rotation_proof_collection_mode": (
+            "TP_PROOF_COLLECTION_HARVEST"
+        ),
+        "positive_rotation_proof_collection_min_trades": 0,
+    }
 
 
 def _non_market_attached_harvest_shape(intent: OrderIntent) -> bool:
@@ -9807,6 +9965,30 @@ def _capture_positive_rotation_live_issue(
             ),
             "severity": "WARN",
         }
+    recovery_bootstrap = _m15_recovery_tp_proof_bootstrap_evidence(intent)
+    if recovery_bootstrap is not None:
+        metadata.update(recovery_bootstrap)
+        metadata["positive_rotation_mode"] = "TP_PROOF_COLLECTION_HARVEST"
+        metadata["positive_rotation_live_ready"] = False
+        metadata["positive_rotation_basis"] = (
+            "this exact M15+ technical forecast, STOP-ENTRY, attached TP/SL, "
+            "current spread, and <=999-unit loss cap form a bounded forward "
+            "learning vehicle; local exact-vehicle history is not required "
+            "before the first sample, and no positive expectancy is claimed"
+        )
+        return {
+            "code": M15_RECOVERY_TP_PROOF_BOOTSTRAP_WARN_CODE,
+            "message": (
+                "allow one bounded M15-recovery TP/SL sample without requiring "
+                "future exact-vehicle outcomes as a precondition; use later "
+                "non-negative outcomes to resize rather than impose a fixed "
+                "sample-count gate, and stop this route on its first negative "
+                "cumulative net or expectancy, "
+                "while retaining GPT, RiskEngine, spread, margin, Guardian, and "
+                "gateway validation"
+            ),
+            "severity": "WARN",
+        }
     if _predictive_scout_forward_evidence_allowed(intent):
         metadata["positive_rotation_mode"] = "PREDICTIVE_SCOUT_FORWARD_EVIDENCE"
         metadata["positive_rotation_live_ready"] = False
@@ -10082,28 +10264,44 @@ def positive_rotation_proof_acquisition_contract(
     ):
         failed_checks.append("capture_economics_status is not NEGATIVE_EXPECTANCY")
 
+    recovery_bootstrap_claimed = (
+        original.get("positive_rotation_proof_collection_bootstrap_contract")
+        == M15_RECOVERY_TP_PROOF_BOOTSTRAP_CONTRACT
+    )
     if mode == "TP_PROOF_COLLECTION_HARVEST":
-        if not _tp_proof_collection_harvest_rotation_allowed(probe):
-            failed_checks.append(
-                "intent does not satisfy the producer TP-proof collection shape"
+        if recovery_bootstrap_claimed:
+            bootstrap_annotations = _m15_recovery_tp_proof_bootstrap_evidence(
+                probe
             )
-        expected_annotations = {
-            key: probe.metadata.get(key)
-            for key in (
-                "positive_rotation_confidence_method",
-                "positive_rotation_confidence_z",
-                "positive_rotation_tp_wins",
-                "positive_rotation_tp_trades",
-                "positive_rotation_tp_win_rate_lower",
-                "positive_rotation_loss_proxy_jpy",
-                "positive_rotation_pessimistic_expectancy_jpy",
-                "positive_rotation_proof_collection_ready",
-                "positive_rotation_proof_collection_mode",
-                "positive_rotation_proof_collection_min_trades",
-                "positive_rotation_proof_collection_target_trades",
-                "positive_rotation_proof_collection_gap_trades",
-            )
-        }
+            if bootstrap_annotations is None:
+                failed_checks.append(
+                    "intent does not satisfy the bounded M15 recovery bootstrap shape"
+                )
+                expected_annotations = {}
+            else:
+                expected_annotations = bootstrap_annotations
+        else:
+            if not _tp_proof_collection_harvest_rotation_allowed(probe):
+                failed_checks.append(
+                    "intent does not satisfy the producer TP-proof collection shape"
+                )
+            expected_annotations = {
+                key: probe.metadata.get(key)
+                for key in (
+                    "positive_rotation_confidence_method",
+                    "positive_rotation_confidence_z",
+                    "positive_rotation_tp_wins",
+                    "positive_rotation_tp_trades",
+                    "positive_rotation_tp_win_rate_lower",
+                    "positive_rotation_loss_proxy_jpy",
+                    "positive_rotation_pessimistic_expectancy_jpy",
+                    "positive_rotation_proof_collection_ready",
+                    "positive_rotation_proof_collection_mode",
+                    "positive_rotation_proof_collection_min_trades",
+                    "positive_rotation_proof_collection_target_trades",
+                    "positive_rotation_proof_collection_gap_trades",
+                )
+            }
         failed_checks.extend(
             _positive_rotation_annotation_mismatches(
                 original,
@@ -10198,21 +10396,24 @@ def positive_rotation_proof_acquisition_contract(
         if original.get("positive_rotation_live_ready") is not False:
             failed_checks.append("predictive SCOUT live-ready is not exact false")
 
-    failed_checks.extend(_positive_rotation_source_type_failures(original, mode=mode))
-    failed_checks.extend(
-        _positive_rotation_source_integrity_failures(
-            pair=probe.pair,
-            side=probe.side,
-            method=(
-                probe.market_context.method
-                if probe.market_context is not None
-                else None
-            ),
-            order_type=probe.order_type,
-            metadata=original,
-            mode=mode,
+    if not recovery_bootstrap_claimed:
+        failed_checks.extend(
+            _positive_rotation_source_type_failures(original, mode=mode)
         )
-    )
+        failed_checks.extend(
+            _positive_rotation_source_integrity_failures(
+                pair=probe.pair,
+                side=probe.side,
+                method=(
+                    probe.market_context.method
+                    if probe.market_context is not None
+                    else None
+                ),
+                order_type=probe.order_type,
+                metadata=original,
+                mode=mode,
+            )
+        )
     return {
         "positive_rotation_mode": mode,
         "reachable": not failed_checks,

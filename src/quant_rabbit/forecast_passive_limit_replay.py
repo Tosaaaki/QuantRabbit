@@ -23,6 +23,10 @@ from quant_rabbit.instruments import instrument_pip_factor
 
 
 PASSIVE_LIMIT_REPLAY_CONTRACT = "QR_FORECAST_PASSIVE_LIMIT_BID_ASK_V1"
+MARKET_BRACKET_REPLAY_CONTRACT = "QR_FORECAST_MARKET_BRACKET_BID_ASK_V1"
+MARKET_STOP_TIME_CLOSE_REPLAY_CONTRACT = (
+    "QR_FORECAST_MARKET_STOP_TIME_CLOSE_BID_ASK_V1"
+)
 DIRECTIONAL = {"UP", "DOWN"}
 
 
@@ -259,6 +263,263 @@ def simulate_passive_limit(
     }
 
 
+def simulate_market_stop_time_close(
+    row: Any,
+    candles: Sequence[Any],
+    *,
+    horizon_min: float,
+    risk_pips: float,
+    candle_interval: timedelta = timedelta(minutes=1),
+    candle_times: Sequence[datetime] | None = None,
+    technical_features: Mapping[str, Any] | None = None,
+    time_close_quote_grace: timedelta = timedelta(seconds=60),
+) -> dict[str, Any]:
+    """Enter at market, cap downside with SL, and let profit run to horizon."""
+
+    direction = str(getattr(row, "direction", "") or "").upper()
+    pair = str(getattr(row, "pair", "") or "").upper()
+    source_index = int(getattr(row, "source_index", 0))
+    timestamp = getattr(row, "timestamp_utc", None)
+    risk = _positive_finite(risk_pips)
+    horizon = _positive_finite(horizon_min)
+    base = {
+        "source_index": source_index,
+        "timestamp_utc": _iso(timestamp),
+        "pair": pair,
+        "direction": direction,
+        "side": (
+            "LONG"
+            if direction == "UP"
+            else "SHORT"
+            if direction == "DOWN"
+            else None
+        ),
+        "horizon_min": float(horizon_min),
+        "entry_ttl_min": 0.0,
+        "max_hold_min": float(horizon_min),
+        "geometry_source": "FIXED_STOP_TIME_CLOSE",
+        "entry_vehicle": "MARKET_STOP_TIME_CLOSE",
+        "technical_features": dict(technical_features or {}),
+        "contract": MARKET_STOP_TIME_CLOSE_REPLAY_CONTRACT,
+    }
+    if (
+        direction not in DIRECTIONAL
+        or not pair
+        or not isinstance(timestamp, datetime)
+        or risk is None
+        or horizon is None
+    ):
+        return {**base, "status": "INVALID_FORECAST_GEOMETRY", "filled": False}
+    activation = ceil_time(timestamp, candle_interval)
+    available_end = activation + timedelta(minutes=horizon)
+    times = (
+        candle_times
+        if candle_times is not None
+        else [item.timestamp_utc for item in candles]
+    )
+    if len(times) != len(candles):
+        raise ValueError("candle_times must align one-to-one with candles")
+    start = bisect.bisect_left(times, activation)
+    end = bisect.bisect_right(times, available_end - candle_interval)
+    if end <= start:
+        return {
+            **base,
+            "status": "NO_EXECUTABLE_QUOTE_WINDOW",
+            "filled": False,
+            "activation_at_utc": _iso(activation),
+            "observation_available_to_utc": _iso(available_end),
+        }
+    window = candles[start:end]
+    first = window[0]
+    pip = 1.0 / instrument_pip_factor(pair)
+    if direction == "UP":
+        entry = float(first.ask.o)
+        invalidation = entry - risk * pip
+    else:
+        entry = float(first.bid.o)
+        invalidation = entry + risk * pip
+    spread_pips = (float(first.ask.o) - float(first.bid.o)) / pip
+    geometry = {
+        "filled": True,
+        "activation_at_utc": _iso(activation),
+        "observation_available_to_utc": _iso(available_end),
+        "fill_at_utc": _iso(first.timestamp_utc),
+        "entry_price": entry,
+        "target_price": None,
+        "invalidation_price": invalidation,
+        "activation_spread_pips": round(spread_pips, 6),
+        "reward_pips": None,
+        "risk_pips": round(risk, 6),
+    }
+    for candle in window:
+        if direction == "UP":
+            stop_open = float(candle.bid.o)
+            stop_hit = float(candle.bid.l) <= invalidation
+            stop_exit = stop_open if stop_open < invalidation else invalidation
+            realized = (stop_exit - entry) / pip
+        else:
+            stop_open = float(candle.ask.o)
+            stop_hit = float(candle.ask.h) >= invalidation
+            stop_exit = stop_open if stop_open > invalidation else invalidation
+            realized = (entry - stop_exit) / pip
+        if stop_hit:
+            value = round(realized, 6)
+            return {
+                **base,
+                **geometry,
+                "status": "FILLED_RESOLVED",
+                "exit_reason": "STOP_LOSS",
+                "exit_at_utc": _iso(candle.timestamp_utc + candle_interval),
+                "realized_pips": value,
+                "conservative_pips": value,
+                "gap_through_stop": stop_exit != invalidation,
+            }
+    time_close_index = bisect.bisect_left(times, available_end)
+    if (
+        time_close_index >= len(candles)
+        or times[time_close_index] > available_end + time_close_quote_grace
+    ):
+        return {
+            **base,
+            **geometry,
+            "status": "FILLED_OPEN",
+            "exit_reason": "OPEN_UNRESOLVED",
+            "exit_at_utc": None,
+            "realized_pips": None,
+            "conservative_pips": round(-risk, 6),
+            "gap_through_stop": False,
+        }
+    time_close_candle = candles[time_close_index]
+    exit_price = (
+        float(time_close_candle.bid.o)
+        if direction == "UP"
+        else float(time_close_candle.ask.o)
+    )
+    realized = (
+        (exit_price - entry) / pip
+        if direction == "UP"
+        else (entry - exit_price) / pip
+    )
+    value = round(realized, 6)
+    return {
+        **base,
+        **geometry,
+        "status": "FILLED_RESOLVED",
+        "exit_reason": "TIME_CLOSE",
+        "exit_at_utc": _iso(time_close_candle.timestamp_utc),
+        "exit_price": exit_price,
+        "realized_pips": value,
+        "conservative_pips": value,
+        "gap_through_stop": False,
+    }
+
+
+def simulate_market_bracket(
+    row: Any,
+    candles: Sequence[Any],
+    *,
+    horizon_min: float,
+    reward_pips: float,
+    risk_pips: float,
+    candle_interval: timedelta = timedelta(minutes=1),
+    candle_times: Sequence[datetime] | None = None,
+    technical_features: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Replay an executable market entry with an attached TP/SL bracket."""
+
+    direction = str(getattr(row, "direction", "") or "").upper()
+    pair = str(getattr(row, "pair", "") or "").upper()
+    source_index = int(getattr(row, "source_index", 0))
+    timestamp = getattr(row, "timestamp_utc", None)
+    reward = _positive_finite(reward_pips)
+    risk = _positive_finite(risk_pips)
+    horizon = _positive_finite(horizon_min)
+    base = {
+        "source_index": source_index,
+        "timestamp_utc": _iso(timestamp),
+        "pair": pair,
+        "direction": direction,
+        "side": (
+            "LONG"
+            if direction == "UP"
+            else "SHORT"
+            if direction == "DOWN"
+            else None
+        ),
+        "horizon_min": float(horizon_min),
+        "entry_ttl_min": 0.0,
+        "max_hold_min": float(horizon_min),
+        "geometry_source": "FIXED_PIPS",
+        "entry_vehicle": "MARKET",
+        "technical_features": dict(technical_features or {}),
+        "contract": MARKET_BRACKET_REPLAY_CONTRACT,
+    }
+    if (
+        direction not in DIRECTIONAL
+        or not pair
+        or not isinstance(timestamp, datetime)
+        or reward is None
+        or risk is None
+        or horizon is None
+    ):
+        return {**base, "status": "INVALID_FORECAST_GEOMETRY", "filled": False}
+    activation = ceil_time(timestamp, candle_interval)
+    available_end = activation + timedelta(minutes=horizon)
+    times = (
+        candle_times
+        if candle_times is not None
+        else [item.timestamp_utc for item in candles]
+    )
+    if len(times) != len(candles):
+        raise ValueError("candle_times must align one-to-one with candles")
+    start = bisect.bisect_left(times, activation)
+    end = bisect.bisect_right(times, available_end - candle_interval)
+    if end <= start:
+        return {
+            **base,
+            "status": "NO_EXECUTABLE_QUOTE_WINDOW",
+            "filled": False,
+            "activation_at_utc": _iso(activation),
+            "observation_available_to_utc": _iso(available_end),
+        }
+    window = candles[start:end]
+    first = window[0]
+    pip = 1.0 / instrument_pip_factor(pair)
+    if direction == "UP":
+        entry = float(first.ask.o)
+        target = entry + reward * pip
+        invalidation = entry - risk * pip
+    else:
+        entry = float(first.bid.o)
+        target = entry - reward * pip
+        invalidation = entry + risk * pip
+    spread_pips = (float(first.ask.o) - float(first.bid.o)) / pip
+    exit_result = _attached_exit(
+        direction=direction,
+        entry=entry,
+        target=target,
+        invalidation=invalidation,
+        candles=window,
+        pip=pip,
+        candle_interval=candle_interval,
+        entry_at_candle_open=True,
+    )
+    return {
+        **base,
+        "filled": True,
+        "activation_at_utc": _iso(activation),
+        "observation_available_to_utc": _iso(available_end),
+        "fill_at_utc": _iso(first.timestamp_utc),
+        "entry_price": entry,
+        "target_price": target,
+        "invalidation_price": invalidation,
+        "activation_spread_pips": round(spread_pips, 6),
+        "reward_pips": round(reward, 6),
+        "risk_pips": round(risk, 6),
+        **exit_result,
+    }
+
+
 def replay_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Summarize resolved and conservative all-filled economics."""
 
@@ -315,6 +576,7 @@ def _attached_exit(
     candles: Sequence[Any],
     pip: float,
     candle_interval: timedelta,
+    entry_at_candle_open: bool = False,
 ) -> dict[str, Any]:
     risk_pips = abs(entry - invalidation) / pip
     reward_pips = abs(target - entry) / pip
@@ -346,7 +608,12 @@ def _attached_exit(
                 "conservative_pips": round(min(stop_pips, -risk_pips), 6),
                 "gap_through_stop": gap_stop,
             }
-        if index == 0 and target_hit and not target_close_proof:
+        if (
+            index == 0
+            and not entry_at_candle_open
+            and target_hit
+            and not target_close_proof
+        ):
             return {
                 "status": "FILLED_AMBIGUOUS",
                 "exit_reason": "AMBIGUOUS_TARGET_BEFORE_FILL",

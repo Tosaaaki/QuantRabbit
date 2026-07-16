@@ -8,6 +8,8 @@ from quant_rabbit.forecast_passive_limit_replay import (
     ceil_time,
     replay_metrics,
     select_independent_forecasts,
+    simulate_market_bracket,
+    simulate_market_stop_time_close,
     simulate_passive_limit,
 )
 
@@ -132,6 +134,89 @@ class ForecastPassiveLimitReplayTest(unittest.TestCase):
         )
         self.assertFalse(result["filled"])
         self.assertEqual(result["status"], "UNFILLED_EXPIRED")
+
+    def test_market_long_enters_at_ask_and_exits_tp_on_bid(self) -> None:
+        start = datetime(2026, 7, 15, 0, 1, tzinfo=timezone.utc)
+        row = _Forecast(32, start, "EUR_USD", "UP", 1.1001, None, None)  # type: ignore[arg-type]
+        candles = [
+            _candle(start, bid=(1.1000, 1.1002, 1.0999, 1.1001)),
+            _candle(
+                start + timedelta(minutes=1),
+                bid=(1.1001, 1.1006, 1.1000, 1.1005),
+            ),
+        ]
+        result = simulate_market_bracket(
+            row,
+            candles,
+            horizon_min=2,
+            reward_pips=3,
+            risk_pips=6,
+        )
+        self.assertTrue(result["filled"])
+        self.assertEqual(result["entry_vehicle"], "MARKET")
+        self.assertAlmostEqual(result["entry_price"], 1.1002)
+        self.assertEqual(result["exit_reason"], "TAKE_PROFIT")
+        self.assertAlmostEqual(result["realized_pips"], 3.0)
+
+    def test_market_first_bar_target_is_not_passive_fill_ambiguity(self) -> None:
+        start = datetime(2026, 7, 15, 0, 1, tzinfo=timezone.utc)
+        row = _Forecast(33, start, "EUR_USD", "UP", 1.1001, None, None)  # type: ignore[arg-type]
+        candles = [_candle(start, bid=(1.1000, 1.1006, 1.0999, 1.1001))]
+        result = simulate_market_bracket(
+            row,
+            candles,
+            horizon_min=1,
+            reward_pips=3,
+            risk_pips=6,
+        )
+        self.assertEqual(result["exit_reason"], "TAKE_PROFIT")
+        self.assertAlmostEqual(result["realized_pips"], 3.0)
+
+    def test_market_stop_time_close_lets_profit_run_to_horizon(self) -> None:
+        start = datetime(2026, 7, 15, 0, 1, tzinfo=timezone.utc)
+        row = _Forecast(34, start, "EUR_USD", "UP", 1.1001, None, None)  # type: ignore[arg-type]
+        candles = [
+            _candle(start, bid=(1.1000, 1.1003, 1.0999, 1.1002)),
+            _candle(
+                start + timedelta(minutes=1),
+                bid=(1.1002, 1.1009, 1.1001, 1.1008),
+            ),
+            _candle(
+                start + timedelta(minutes=2),
+                bid=(1.1008, 1.1010, 1.1007, 1.1009),
+            ),
+        ]
+        result = simulate_market_stop_time_close(
+            row,
+            candles,
+            horizon_min=2,
+            risk_pips=6,
+        )
+        self.assertEqual(result["exit_reason"], "TIME_CLOSE")
+        self.assertAlmostEqual(result["realized_pips"], 6.0)
+
+    def test_market_time_close_uses_next_real_quote_inside_grace(self) -> None:
+        start = datetime(2026, 7, 15, 0, 1, tzinfo=timezone.utc)
+        row = _Forecast(35, start, "EUR_USD", "UP", 1.1001, None, None)  # type: ignore[arg-type]
+        candles = [
+            _candle(start, bid=(1.1000, 1.1002, 1.0999, 1.1001)),
+            _candle(
+                start + timedelta(minutes=1, seconds=15),
+                bid=(1.1005, 1.1007, 1.1004, 1.1006),
+            ),
+        ]
+        result = simulate_market_stop_time_close(
+            row,
+            candles,
+            horizon_min=1,
+            risk_pips=6,
+            time_close_quote_grace=timedelta(seconds=30),
+        )
+        self.assertEqual(result["exit_reason"], "TIME_CLOSE")
+        self.assertEqual(
+            result["exit_at_utc"],
+            (start + timedelta(minutes=1, seconds=15)).isoformat(),
+        )
 
     def test_fill_bar_target_without_close_proof_is_conservative_loss(self) -> None:
         start = datetime(2026, 7, 15, 0, 1, tzinfo=timezone.utc)

@@ -28,11 +28,24 @@ CONTRACT = "QR_PREDICTION_SPARSE_TRUTH_FETCH_V1"
 
 def main() -> int:
     args = _parse_args()
+    if (
+        args.window_minutes_from_entry is not None
+        and args.window_minutes_from_entry <= 0.0
+    ):
+        raise ValueError("--window-minutes-from-entry must be positive")
     granularity = str(args.granularity).upper()
     fetch._validate_granularities([granularity])
+    selected_pairs = {
+        item.strip().upper()
+        for item in str(args.pairs or "").split(",")
+        if item.strip()
+    }
     windows = _prediction_windows(
         args.predictions,
         granularity=granularity,
+        window_minutes_from_entry=args.window_minutes_from_entry,
+        selected_pairs=selected_pairs,
+        end_grace_seconds=args.end_grace_seconds,
     )
     client = OandaReadOnlyClient()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -78,6 +91,7 @@ def main() -> int:
             for path in args.predictions
         ],
         "granularity": granularity,
+        "window_minutes_from_entry": args.window_minutes_from_entry,
         "price": "BA",
         "output_dir": str(run_dir.resolve()),
         "pairs": sorted(windows),
@@ -115,6 +129,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-candles-per-request", type=int, default=4500)
     parser.add_argument("--sleep-seconds", type=float, default=0.2)
     parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument(
+        "--end-grace-seconds",
+        type=float,
+        default=None,
+        help="optional real-quote grace appended after each truth window",
+    )
+    parser.add_argument(
+        "--pairs",
+        default="",
+        help="optional comma-separated pair filter",
+    )
+    parser.add_argument(
+        "--window-minutes-from-entry",
+        type=float,
+        help=(
+            "override each future timestamp with a fixed entry-relative "
+            "truth window, for example 1440 for a 24h vehicle"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -123,9 +156,15 @@ def _prediction_windows(
     paths: Sequence[Path],
     *,
     granularity: str,
+    window_minutes_from_entry: float | None = None,
+    selected_pairs: set[str] | None = None,
+    end_grace_seconds: float | None = None,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     seconds = fetch.GRANULARITY_SECONDS[str(granularity).upper()]
-    pad = timedelta(seconds=seconds)
+    grace_seconds = seconds if end_grace_seconds is None else end_grace_seconds
+    if grace_seconds < seconds:
+        raise ValueError("end grace must cover at least one candle interval")
+    pad = timedelta(seconds=grace_seconds)
     raw: dict[str, list[tuple[datetime, datetime]]] = {}
     for path in paths:
         with path.open(encoding="utf-8") as handle:
@@ -134,8 +173,16 @@ def _prediction_windows(
                     continue
                 payload = json.loads(line)
                 pair = str(payload.get("pair") or "").strip().upper()
+                if selected_pairs and pair not in selected_pairs:
+                    continue
                 start = _parse_time(payload.get("entry_timestamp_utc"))
-                end = _parse_time(payload.get("future_timestamp_utc"))
+                end = (
+                    start + timedelta(minutes=window_minutes_from_entry)
+                    if start is not None
+                    and window_minutes_from_entry is not None
+                    and window_minutes_from_entry > 0.0
+                    else _parse_time(payload.get("future_timestamp_utc"))
+                )
                 if not pair or start is None or end is None or end <= start:
                     raise ValueError(f"invalid prediction truth window in {path}")
                 raw.setdefault(pair, []).append((start, end + pad))

@@ -105,6 +105,7 @@ def directional_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
     return {
         **_basic_metrics(values),
+        **_execution_cost_metrics(rows),
         "active_days": len(daily),
         "positive_day_rate": round(
             sum(value > 0.0 for value in daily) / len(daily), 6
@@ -113,6 +114,37 @@ def directional_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         else 0.0,
         "one_sided_95_daily_lower_pips": _one_sided_lower(daily),
         "by_pair": pair_metrics,
+    }
+
+
+def _execution_cost_metrics(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Expose gross edge and spread drag without subtracting either twice."""
+
+    gross: list[float] = []
+    costs: list[float] = []
+    residuals: list[float] = []
+    for row in rows:
+        executed = _finite(row.get("executed_pips"))
+        gross_value = _finite(row.get("gross_directional_pips"))
+        cost = _finite(row.get("roundtrip_spread_cost_pips"))
+        if executed is None or gross_value is None or cost is None:
+            continue
+        gross.append(gross_value)
+        costs.append(cost)
+        residuals.append(abs(executed - (gross_value - cost)))
+    return {
+        "cost_decomposition_trades": len(gross),
+        "gross_directional_mean_pips": (
+            round(statistics.mean(gross), 6) if gross else None
+        ),
+        "roundtrip_spread_cost_mean_pips": (
+            round(statistics.mean(costs), 6) if costs else None
+        ),
+        "execution_identity_max_abs_pips": (
+            round(max(residuals), 12) if residuals else None
+        ),
     }
 
 

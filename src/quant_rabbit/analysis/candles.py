@@ -35,9 +35,11 @@ TECHNICAL_CANDLE_QUARANTINE_DETAILS_ORDER = "CHRONOLOGICAL_ASC_NULLS_FIRST"
 TECHNICAL_CANDLE_QUARANTINE_DETAILS_SELECTION = "LATEST_BOUNDED_WINDOW"
 # ``compute_indicators`` deliberately marks a panel invalid below 30 bars,
 # and ``chart_reader`` publishes the same 30-bar recent evidence window.  A
-# quarantined packet therefore needs both 30 clean observations in total and
-# 30 clean observations after the most recent quarantined row before it may
-# drive a forecast.
+# quarantined packet therefore needs 30 clean observations in total before it
+# may drive indicators. The post-quarantine tail is retained as confidence
+# evidence, but a historical wide-spread row cannot relabel a current, valid
+# MBA packet as broken after the latest row is clean. Current execution spread
+# remains an independent RiskEngine/gateway check.
 TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT = 30
 _OANDA_MBA_UTC_TIMESTAMP_PATTERN = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z"
@@ -707,15 +709,12 @@ def _technical_candle_integrity(
     recent_clean_coverage_complete = (
         recent_clean_tail_count >= indicator_warmup_min_clean_count
     )
-    clean_coverage_blocked = (
-        recent_tail_state == "CLEAN"
-        and (not warmup_complete or not recent_clean_coverage_complete)
-    )
+    indicator_warmup_blocked = not warmup_complete
     if (
         malformed_count > 0
         or complete_entry_count <= 0
         or clean_count <= 0
-        or clean_coverage_blocked
+        or indicator_warmup_blocked
     ):
         codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
     if recent_tail_state == "SPREAD_CONTAMINATED":
@@ -725,7 +724,7 @@ def _technical_candle_integrity(
         or recent_tail_state == "PROVENANCE_INVALID"
         or complete_entry_count <= 0
         or clean_count <= 0
-        or clean_coverage_blocked
+        or indicator_warmup_blocked
     ):
         blocking_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
 

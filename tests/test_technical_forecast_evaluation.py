@@ -85,6 +85,29 @@ class TechnicalForecastEvaluationTest(unittest.TestCase):
         self.assertEqual(result["selected"]["threshold_pips"], 3.0)
         self.assertEqual(result["selected"]["metrics"]["trades"], 2)
 
+    def test_metrics_report_one_roundtrip_cost_identity(self) -> None:
+        start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        metrics = directional_metrics(
+            [
+                {
+                    **_row(start, long_pips=2.0),
+                    "executed_pips": 2.0,
+                    "gross_directional_pips": 3.5,
+                    "roundtrip_spread_cost_pips": 1.5,
+                },
+                {
+                    **_row(start + timedelta(hours=1), short_pips=1.0),
+                    "executed_pips": 1.0,
+                    "gross_directional_pips": 2.0,
+                    "roundtrip_spread_cost_pips": 1.0,
+                },
+            ]
+        )
+        self.assertEqual(metrics["gross_directional_mean_pips"], 2.75)
+        self.assertEqual(metrics["roundtrip_spread_cost_mean_pips"], 1.25)
+        self.assertEqual(metrics["mean_pips"], 1.5)
+        self.assertEqual(metrics["execution_identity_max_abs_pips"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

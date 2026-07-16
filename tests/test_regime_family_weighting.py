@@ -99,6 +99,47 @@ def _long_failed_break_candles() -> list[dict]:
 
 
 class RegimeFamilyWeightingTest(unittest.TestCase):
+    def test_confirmed_pre_phases_route_to_executable_family(self) -> None:
+        pre_trend = _chart(primary_regime="BREAKOUT_PENDING")
+        pre_range = _chart(primary_regime="TRANSITION")
+        for chart, phase, direction, expected_method in (
+            (pre_trend, "PRE_TREND", "UP", "TREND_CONTINUATION"),
+            (pre_range, "PRE_RANGE", "DOWN", "RANGE_ROTATION"),
+        ):
+            m15 = next(
+                view for view in chart["views"] if view["granularity"] == "M15"
+            )
+            m15["market_state"] = {
+                "phase": phase,
+                "direction": direction,
+                "readiness": "TRIGGERED",
+                "confidence": 0.8,
+                "evidence_complete": True,
+            }
+            receipt = build_regime_family_weighting_receipt(
+                chart,
+                pair="EUR_USD",
+            )
+            self.assertEqual(
+                receipt["source_identity"]["family_selected_method"],
+                expected_method,
+            )
+
+    def test_unconfirmed_pre_trend_remains_armed_without_guessing_direction(self) -> None:
+        chart = _chart(primary_regime="TREND_STRONG")
+        m15 = next(
+            view for view in chart["views"] if view["granularity"] == "M15"
+        )
+        m15["market_state"] = {
+            "phase": "PRE_TREND",
+            "direction": "UP",
+            "readiness": "ARMED",
+            "confidence": 0.8,
+            "evidence_complete": True,
+        }
+        receipt = build_regime_family_weighting_receipt(chart, pair="EUR_USD")
+        self.assertIsNone(receipt["source_identity"]["family_selected_method"])
+
     def test_primary_regime_switches_selected_technical_family_and_method(self) -> None:
         trend = build_regime_family_weighting_receipt(
             _chart(primary_regime="TREND_STRONG", trend_score=0.9),

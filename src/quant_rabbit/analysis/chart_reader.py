@@ -44,6 +44,11 @@ from quant_rabbit.broker.oanda import OandaReadOnlyClient
 # emitted as None, never silently faked.
 from quant_rabbit.analysis.regime import RegimeReading, classify_regime, classify_regime_from_values
 from quant_rabbit.analysis.families import FamilyScores, compute_family_scores
+from quant_rabbit.analysis.market_state import (
+    MarketStateReading,
+    classify_market_state,
+    summarize_market_states,
+)
 from quant_rabbit.analysis.statfilters import StatFilterReading, compute_stat_filters
 from quant_rabbit.analysis.sessions import SessionContext, build_session_context
 from quant_rabbit.analysis.smc import SMCReading, analyze_smc
@@ -123,6 +128,7 @@ class ChartView:
     # seed the indicator (early-startup case).
     indicator_series: dict[str, tuple[float, ...]] = field(default_factory=dict)
     candle_integrity: dict[str, object] = field(default_factory=dict)
+    market_state: MarketStateReading | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -146,6 +152,7 @@ class ChartView:
             ],
             "indicator_series": {k: list(v) for k, v in self.indicator_series.items()},
             "candle_integrity": self.candle_integrity,
+            "market_state": self.market_state.to_dict() if self.market_state else None,
         }
 
 
@@ -161,6 +168,7 @@ class PairChart:
     session: SessionContext | None = None  # killzone / Judas / Silver Bullet / JP holiday
     confluence: dict[str, object] = field(default_factory=dict)
     technical_candle_integrity: dict[str, object] = field(default_factory=dict)
+    market_state_summary: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -174,6 +182,7 @@ class PairChart:
             "session": _session_to_dict(self.session),
             "confluence": self.confluence,
             "technical_candle_integrity": self.technical_candle_integrity,
+            "market_state_summary": self.market_state_summary,
         }
 
 
@@ -283,6 +292,14 @@ def build_pair_chart(
         regime_reading, family_scores, stat_filters, smc_reading = _build_reading_layer(
             candles=candles, indicators=indicators, granularity=tf
         )
+        market_state = classify_market_state(
+            indicators=indicators,
+            regime_reading=regime_reading,
+            family_scores=family_scores,
+            structure=structure,
+            smc=smc_reading,
+            legacy_regime=regime,
+        )
         # Indicator series for divergence detection. Empty when there
         # aren't enough bars to seed the indicator.
         closes_for_series = tuple(c.close for c in candles)
@@ -305,6 +322,7 @@ def build_pair_chart(
                 recent_candles=tuple(candles[-RECENT_CANDLES_PUBLISH:]) if candles else tuple(),
                 indicator_series=series_map,
                 candle_integrity=candle_integrity,
+                market_state=market_state,
             )
         )
 
@@ -326,6 +344,7 @@ def build_pair_chart(
         requested_timeframes=timeframes,
         integrity_by_tf=integrity_by_tf,
     )
+    market_state_summary = summarize_market_states(views)
     return PairChart(
         pair=pair_key,
         views=tuple(views),
@@ -337,6 +356,7 @@ def build_pair_chart(
         session=session,
         confluence=confluence,
         technical_candle_integrity=technical_candle_integrity,
+        market_state_summary=market_state_summary,
     )
 
 
@@ -1021,6 +1041,8 @@ def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
             bits.append(f"ST={'+' if ind.supertrend_dir > 0 else '-'}")
         if view.regime_reading is not None:
             bits.append(f"Read={view.regime_reading.state}:{view.regime_reading.confidence:.2f}")
+        if view.market_state is not None:
+            bits.append(f"Phase={view.market_state.phase}/{view.market_state.readiness}")
         if ind.regime_quantile is not None:
             bits.append(f"q={ind.regime_quantile}")
         if ind.ichimoku_cloud_pos:

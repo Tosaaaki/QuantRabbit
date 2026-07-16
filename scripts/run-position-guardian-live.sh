@@ -1263,6 +1263,22 @@ case "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" in
     exit 2
     ;;
 esac
+export QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED="${QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED:-1}"
+case "$QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED=${QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
+export QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED="${QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED:-1}"
+case "$QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED=${QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
 guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
@@ -1339,6 +1355,42 @@ resolve_technical_forecast_forward_outcomes() {
   fi
 }
 
+emit_contextual_technical_forward_shadow() {
+  if [[ "$QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local emitter shadow_status
+  emitter="${ROOT_DIR}/scripts/emit_contextual_technical_240m_forward_shadow.py"
+  if [[ ! -f "$emitter" ]]; then
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$emitter" >&2
+  shadow_status="$?"
+  set -e
+  if [[ "$shadow_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] contextual technical forward shadow failed status=${shadow_status}; no signal was admitted." >&2
+  fi
+}
+
+resolve_contextual_technical_forward_outcomes() {
+  if [[ "$QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/scripts/resolve_contextual_technical_240m_forward_outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] contextual technical forward resolution failed status=${outcome_status}; live permission remains false." >&2
+  fi
+}
+
 "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
 pair_scope="$(position_guardian_pair_scope \
   "$guardian_snapshot" \
@@ -1404,6 +1456,8 @@ if [[ -z "$trader_pairs" ]]; then
   run_guardian_event_router
   emit_technical_forecast_forward_shadow
   resolve_technical_forecast_forward_outcomes
+  emit_contextual_technical_forward_shadow
+  resolve_contextual_technical_forward_outcomes
   echo "[run-position-guardian-live] no trader-owned open positions; completed read-only monitor scope pairs=${monitor_pairs:-none}." >&2
   exit 0
 fi
@@ -1431,3 +1485,5 @@ fi
 run_guardian_event_router
 emit_technical_forecast_forward_shadow
 resolve_technical_forecast_forward_outcomes
+emit_contextual_technical_forward_shadow
+resolve_contextual_technical_forward_outcomes

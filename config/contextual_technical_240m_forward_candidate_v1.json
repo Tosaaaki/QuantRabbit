@@ -1,0 +1,129 @@
+{
+  "contract": "QR_CONTEXTUAL_TECHNICAL_240M_FORWARD_CANDIDATE_V1",
+  "schema_version": 1,
+  "status": "LOCKED_FORWARD_SHADOW",
+  "locked_at_utc": "2026-07-16T02:36:07+00:00",
+  "forward_evaluation_not_before_utc": "2026-07-16T02:36:07+00:00",
+  "shadow_enabled": true,
+  "live_order_enabled": false,
+  "promotion_allowed": false,
+  "selector": {
+    "pairs": [
+      "AUD_USD",
+      "CAD_CHF",
+      "USD_CHF"
+    ],
+    "feature_timeframe": "M5",
+    "horizon_min": 240,
+    "schedule_interval_min": 240,
+    "collection_lateness_max_seconds": 90,
+    "history_fetch_days": 45,
+    "context_lookback_days": 14,
+    "minimum_context_rows": 12,
+    "admission": "SHRUNK_POSITIVE",
+    "spread_cap_pips": 2.0,
+    "rules": [
+      "breakout_fast",
+      "trend_fast",
+      "trend_slow",
+      "pullback_in_trend",
+      "mean_revert_fast",
+      "mean_revert_slow"
+    ],
+    "context_scopes": [
+      "PAIR_PHASE_SESSION",
+      "PAIR_PHASE",
+      "PAIR_SESSION",
+      "PAIR",
+      "PHASE_SESSION",
+      "PHASE",
+      "GLOBAL"
+    ],
+    "threshold_quantiles": [
+      0.0,
+      0.5,
+      0.7,
+      0.85
+    ],
+    "market_phases": [
+      "PRE_RANGE",
+      "RANGE",
+      "PRE_TREND",
+      "TREND"
+    ]
+  },
+  "vehicle": {
+    "entry_vehicle": "MARKET_STOP_TIME_CLOSE",
+    "entry_reference": "FIRST_COMPLETE_S5_EXECUTABLE_QUOTE_AT_OR_AFTER_DECISION",
+    "risk_pips": 20.0,
+    "take_profit_pips": null,
+    "max_hold_min": 240.0,
+    "time_close_quote_grace_seconds": 60,
+    "shadow_market_entry_model_enabled": true,
+    "market_entry_live_allowed": false,
+    "time_close_live_allowed": false
+  },
+  "resolver": {
+    "truth_source": "OANDA_S5_BID_ASK",
+    "truth_close_grace_seconds": 60,
+    "chunk_candle_limit": 4500,
+    "max_due_signals_per_run": 12,
+    "max_workers": 3,
+    "missing_no_tick_intervals_synthesized": false,
+    "open_at_horizon_policy": "FULL_STOP_LOSS_CONSERVATIVE",
+    "ambiguous_exit_policy": "WORST_CASE_STOP"
+  },
+  "forward_evaluation": {
+    "cohort_selection": "FIRST_120_SIGNALS_FIXED_BEFORE_FORWARD_COLLECTION",
+    "fixed_cohort_signals": 120,
+    "minimum_active_days": 7,
+    "minimum_mean_conservative_pips": 0.0,
+    "minimum_one_sided_95_student_t_lower_pips": 0.0,
+    "minimum_profit_factor": 1.15,
+    "minimum_positive_day_rate": 0.6,
+    "minimum_one_sided_95_daily_lower_pips": 0.0,
+    "forward_evidence_can_enable_live_orders": false,
+    "live_promotion_requires_separate_reviewed_contract": true
+  },
+  "selection_disclosure": {
+    "historical_validation_inspected": true,
+    "historical_holdout_inspected": true,
+    "pair_subset_selected_after_inspection": true,
+    "historical_rows_are_research_only": true,
+    "historical_rows_must_not_count_toward_forward_evaluation": true,
+    "reason": "The three-pair subset and 20-pip stop/time-close vehicle were selected after inspecting historical results. Only the fixed first 120 signals after this lock may count as independent evidence."
+  },
+  "research_evidence": {
+    "exact_horizon_label_semantics": "M5_NEXT_OPEN_TO_M5_OPEN_AT_ENTRY_PLUS_240M",
+    "selector_report_sha256": "da61b8d2c2490a9a2832f1c8edb5f49ae64a2777227a45da833872ca39544a21",
+    "vehicle_report_sha256": "fe1b44aaf47f7bb9b6a6bfa3308556572358fc892dd9a51c956c379f11e4fdde",
+    "validation_predictions_sha256": "9ffc76c9d76062b2fc564b781c342a44b52fd1b7789f59e9c96d949da070dd3b",
+    "holdout_predictions_sha256": "ae477b8f1a3d06253f3409bf03f874ff0384f1a96d8a2ff27ba0a1d90180e26d",
+    "validation": {
+      "signals": 119,
+      "fills": 112,
+      "mean_conservative_pips": 1.132143,
+      "net_conservative_pips": 126.8,
+      "conservative_profit_factor": 1.236921,
+      "one_sided_95_mean_lower_pips": -1.296137,
+      "positive_day_rate": 0.571429
+    },
+    "holdout": {
+      "signals": 112,
+      "fills": 110,
+      "mean_conservative_pips": 0.647273,
+      "net_conservative_pips": 71.2,
+      "conservative_profit_factor": 1.147321,
+      "one_sided_95_mean_lower_pips": -1.353831,
+      "positive_day_rate": 0.6
+    }
+  },
+  "promotion_blockers": [
+    "NEW_FIXED_FORWARD_COHORT_REQUIRED",
+    "FORWARD_COHORT_NOT_COMPLETE",
+    "FORWARD_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
+    "FORWARD_DAILY_STABILITY_NOT_PROVEN",
+    "NOT_CONNECTED_TO_ORDER_INTENT_OR_GATEWAY",
+    "SEPARATE_LIVE_RISK_CONTRACT_REQUIRED"
+  ]
+}

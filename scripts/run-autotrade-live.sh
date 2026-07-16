@@ -109,6 +109,25 @@ case "$QR_TECHNICAL_FORECAST_FORWARD_OUTCOME_ENABLED" in
     exit 2
     ;;
 esac
+# The exact-horizon contextual candidate is a separate fixed forward cohort.
+# It is intentionally shadow-only and never mutates order_intents or gateway
+# state even if its future scorecard eventually passes.
+export QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED="${QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED:-1}"
+case "$QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED=${QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
+export QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED="${QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED:-1}"
+case "$QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED=${QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 # Entry sends need the fast position guardian alive so TP-progress profit can be
 # converted between full trader cycles. The gateway uses the status exported by
 # this wrapper to block new risk while still allowing position-management closes.
@@ -723,6 +742,44 @@ resolve_technical_forecast_forward_outcomes() {
   fi
 }
 
+emit_contextual_technical_forward_shadow() {
+  if [[ "$QR_CONTEXTUAL_TECHNICAL_FORWARD_SHADOW_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local emitter shadow_status
+  emitter="${ROOT_DIR}/scripts/emit_contextual_technical_240m_forward_shadow.py"
+  if [[ ! -f "$emitter" ]]; then
+    echo "[run-autotrade-live] contextual technical forward emitter missing: ${emitter}" >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$emitter" >&2
+  shadow_status="$?"
+  set -e
+  if [[ "$shadow_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] contextual technical forward shadow failed status=${shadow_status}; no signal was admitted." >&2
+  fi
+}
+
+resolve_contextual_technical_forward_outcomes() {
+  if [[ "$QR_CONTEXTUAL_TECHNICAL_FORWARD_OUTCOME_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/scripts/resolve_contextual_technical_240m_forward_outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo "[run-autotrade-live] contextual technical forward resolver missing: ${resolver}" >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-autotrade-live] contextual technical forward resolution failed status=${outcome_status}; live permission remains false." >&2
+  fi
+}
+
 if [[ "$arg_count" -gt 0 ]] && has_arg "--send" "${args[@]}" && ! has_arg "--use-gpt-trader" "${args[@]}"; then
   gpt_args=("--use-gpt-trader")
   if ! has_arg "--reuse-market-artifacts" "${args[@]}"; then
@@ -783,6 +840,8 @@ fi
 if [[ "$cycle_exit" -eq 0 ]]; then
   emit_technical_forecast_forward_shadow
   resolve_technical_forecast_forward_outcomes
+  emit_contextual_technical_forward_shadow
+  resolve_contextual_technical_forward_outcomes
 fi
 
 # Slack notifications are opt-in. User directive 2026-05-30:

@@ -81,6 +81,10 @@ data/technical_forecast_forward_shadow.json|\
 data/technical_forecast_forward_shadow_ledger.jsonl|\
 data/technical_forecast_forward_outcome_ledger.jsonl|\
 data/technical_forecast_forward_scorecard.json|\
+data/contextual_technical_240m_forward_shadow.json|\
+data/contextual_technical_240m_forward_shadow_ledger.jsonl|\
+data/contextual_technical_240m_forward_outcome_ledger.jsonl|\
+data/contextual_technical_240m_forward_scorecard.json|\
 data/trader_goal_loop_orchestrator.json)
       return 0
       ;;

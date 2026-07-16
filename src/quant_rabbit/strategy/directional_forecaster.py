@@ -1433,17 +1433,14 @@ def _valid_mba_integrity(
 
     expected_codes: list[str] = []
     expected_blocking_codes: list[str] = []
-    clean_coverage_blocked = (
-        state == "CLEAN"
-        and (not warmup_complete or not recent_clean_coverage_complete)
-    )
+    indicator_warmup_blocked = not warmup_complete
     if counts["contaminated_count"] > 0:
         expected_codes.append(TECHNICAL_CANDLE_SPREAD_CONTAMINATED)
     if (
         counts["malformed_count"] > 0
         or counts["complete_entry_count"] <= 0
         or counts["clean_count"] <= 0
-        or clean_coverage_blocked
+        or indicator_warmup_blocked
     ):
         expected_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
     if state == "SPREAD_CONTAMINATED":
@@ -1453,16 +1450,42 @@ def _valid_mba_integrity(
         or state == "PROVENANCE_INVALID"
         or counts["complete_entry_count"] <= 0
         or counts["clean_count"] <= 0
-        or clean_coverage_blocked
+        or indicator_warmup_blocked
     ):
         expected_blocking_codes.append(TECHNICAL_CANDLE_PROVENANCE_INVALID)
     expected_status = "BLOCKED" if expected_blocking_codes else "DEGRADED" if expected_codes else "PASS"
-    return (
+    canonical = (
         item.get("codes") == expected_codes
         and item.get("blocking_codes") == expected_blocking_codes
         and item.get("forecast_blocking") is bool(expected_blocking_codes)
         and item.get("evaluation_status") == expected_status
     )
+    if canonical:
+        return True
+    # Compatibility is intentionally limited to the old, content-checked M15
+    # recovery receipt. Current chart production no longer emits this state:
+    # a historical wide-spread row plus a clean latest endpoint is DEGRADED,
+    # not a broken M1/M5 chart. Keeping the exact legacy shape readable lets
+    # already-bound recovery evidence fail safely through its 999-unit path
+    # while every newly generated packet takes the normal forecast route.
+    legacy_recovery_tail = bool(
+        granularity in TECHNICAL_CANDLE_SPREAD_EXECUTION_TIMEFRAMES
+        and state == "CLEAN"
+        and warmup_complete
+        and not recent_clean_coverage_complete
+        and counts["contaminated_count"] > 0
+        and counts["malformed_count"] == 0
+        and item.get("codes")
+        == [
+            TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
+            TECHNICAL_CANDLE_PROVENANCE_INVALID,
+        ]
+        and item.get("blocking_codes")
+        == [TECHNICAL_CANDLE_PROVENANCE_INVALID]
+        and item.get("forecast_blocking") is True
+        and item.get("evaluation_status") == "BLOCKED"
+    )
+    return legacy_recovery_tail
 
 
 def validate_mba_integrity_receipt(

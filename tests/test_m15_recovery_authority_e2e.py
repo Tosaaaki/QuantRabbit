@@ -34,9 +34,13 @@ from quant_rabbit.models import (
     AccountSummary,
     BrokerPosition,
     BrokerSnapshot,
+    MarketContext,
+    OrderIntent,
+    OrderType,
     Owner,
     Quote,
     Side,
+    TradeMethod,
 )
 from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
 from quant_rabbit.strategy.intent_generator import (
@@ -45,6 +49,7 @@ from quant_rabbit.strategy.intent_generator import (
     _exact_vehicle_net_metrics,
     _exact_vehicle_take_profit_metrics,
     _forecast_seed_lane,
+    _m15_recovery_tp_proof_bootstrap_evidence,
 )
 from quant_rabbit.strategy.trader_brain import ACTION_SEND_ENTRY, TraderBrain
 import tests.test_directional_forecaster as directional_forecaster_fixtures
@@ -542,6 +547,8 @@ class M15RecoveryAuthorityE2ETest(unittest.TestCase):
     def _producer_bundle(
         self,
         root: Path,
+        *,
+        exact_tp_trades: int = 7,
     ) -> tuple[dict[str, Path], datetime, BrokerSnapshot, dict[str, Any], dict[str, Any]]:
         files = gpt_fixtures(root)
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -582,7 +589,7 @@ class M15RecoveryAuthorityE2ETest(unittest.TestCase):
         )
         _insert_m15_recovery_exact_tp_outcomes(
             files["execution_ledger"],
-            trades=7,
+            trades=exact_tp_trades,
         )
         files["capture_economics"].write_text(
             json.dumps(_capture_economics_payload(datetime.now(timezone.utc))),
@@ -848,6 +855,116 @@ class M15RecoveryAuthorityE2ETest(unittest.TestCase):
             intent["metadata"]["m15_recovery_micro_receipt_sha256"],
         )
         return verified, paths
+
+    def test_zero_history_m15_recovery_can_bootstrap_one_bounded_tp_sample(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                patch(
+                    "quant_rabbit.capture_economics.read_execution_cost_surface",
+                    return_value=_synthetic_execution_cost_surface(),
+                ),
+                patch.object(
+                    market_read_overlay_module,
+                    "execution_cost_floor_from_surface",
+                    side_effect=lambda _surface, *, exact_key, as_of: (
+                        _synthetic_execution_cost_floor(exact_key)
+                    ),
+                ),
+                patch.object(
+                    execution_module,
+                    "execution_cost_floor_from_surface",
+                    side_effect=lambda _surface, *, exact_key, as_of: (
+                        _synthetic_execution_cost_floor(exact_key)
+                    ),
+                ),
+            ):
+                _files, _now, _snapshot, _lane, intent = self._producer_bundle(
+                    root,
+                    exact_tp_trades=0,
+                )
+
+        metadata = intent["metadata"]
+        self.assertEqual(
+            metadata["positive_rotation_mode"],
+            "TP_PROOF_COLLECTION_HARVEST",
+        )
+        self.assertEqual(
+            metadata["positive_rotation_proof_collection_bootstrap_contract"],
+            "QR_M15_RECOVERY_TP_PROOF_BOOTSTRAP_V1",
+        )
+        self.assertEqual(
+            metadata["positive_rotation_proof_collection_existing_net_trades"],
+            0,
+        )
+        self.assertEqual(
+            metadata["positive_rotation_proof_collection_existing_net_jpy"],
+            0.0,
+        )
+        self.assertTrue(metadata["m15_recovery_micro_shape_eligible"])
+        self.assertTrue(metadata["m15_recovery_micro_risk_revalidated"])
+
+    def test_negative_exact_vehicle_net_stops_m15_bootstrap_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                patch(
+                    "quant_rabbit.capture_economics.read_execution_cost_surface",
+                    return_value=_synthetic_execution_cost_surface(),
+                ),
+                patch.object(
+                    market_read_overlay_module,
+                    "execution_cost_floor_from_surface",
+                    side_effect=lambda _surface, *, exact_key, as_of: (
+                        _synthetic_execution_cost_floor(exact_key)
+                    ),
+                ),
+                patch.object(
+                    execution_module,
+                    "execution_cost_floor_from_surface",
+                    side_effect=lambda _surface, *, exact_key, as_of: (
+                        _synthetic_execution_cost_floor(exact_key)
+                    ),
+                ),
+            ):
+                _files, _now, _snapshot, _lane, intent = self._producer_bundle(
+                    root,
+                    exact_tp_trades=0,
+                )
+
+        metadata = deepcopy(intent["metadata"])
+        probe = OrderIntent(
+            pair=intent["pair"],
+            side=Side(intent["side"]),
+            order_type=OrderType(intent["order_type"]),
+            units=int(intent["units"]),
+            entry=float(intent["entry"]),
+            tp=float(intent["tp"]),
+            sl=float(intent["sl"]),
+            thesis=str(intent["thesis"]),
+            owner=Owner.TRADER,
+            market_context=MarketContext(
+                regime="TREND_DOWN",
+                narrative="M15 recovery",
+                chart_story="M15 only",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="M15 structure",
+            ),
+            metadata=metadata,
+        )
+        self.assertIsNotNone(_m15_recovery_tp_proof_bootstrap_evidence(probe))
+        metadata.update(
+            {
+                "capture_exact_vehicle_net_trades": 1,
+                "capture_exact_vehicle_net_wins": 0,
+                "capture_exact_vehicle_net_losses": 1,
+                "capture_exact_vehicle_net_jpy": -100.0,
+                "capture_exact_vehicle_net_expectancy_jpy": -100.0,
+            }
+        )
+        self.assertIsNone(_m15_recovery_tp_proof_bootstrap_evidence(probe))
 
     def test_actual_m15_recovery_authority_chain_direct_and_batch(self) -> None:
         for batch in (False, True):

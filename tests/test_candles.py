@@ -232,7 +232,9 @@ class CandleParsingTest(unittest.TestCase):
             batch.integrity["blocking_codes"],
         )
 
-    def test_total_warmup_does_not_replace_latest_clean_tail_coverage(self) -> None:
+    def test_historical_wide_spread_downgrades_but_does_not_break_current_chart(
+        self,
+    ) -> None:
         entries = [_mba_candle(index) for index in range(40)]
         entries.append(_mba_candle(40, ask_widening=_above_cap_ask_widening()))
         entries.append(_mba_candle(41))
@@ -243,10 +245,12 @@ class CandleParsingTest(unittest.TestCase):
         self.assertTrue(batch.integrity["indicator_warmup_complete"])
         self.assertEqual(batch.integrity["recent_clean_tail_count"], 1)
         self.assertFalse(batch.integrity["recent_clean_coverage_complete"])
-        self.assertTrue(batch.integrity["forecast_blocking"])
-        self.assertIn(
+        self.assertFalse(batch.integrity["forecast_blocking"])
+        self.assertEqual(batch.integrity["evaluation_status"], "DEGRADED")
+        self.assertEqual(batch.integrity["blocking_codes"], [])
+        self.assertNotIn(
             TECHNICAL_CANDLE_PROVENANCE_INVALID,
-            batch.integrity["blocking_codes"],
+            batch.integrity["codes"],
         )
 
     def test_whole_cadence_no_tick_gap_preserves_clean_tail_coverage(self) -> None:

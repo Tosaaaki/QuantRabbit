@@ -2476,18 +2476,33 @@ def validate_m15_recovery_micro_live_claim(
         )
     try:
         from quant_rabbit.strategy.intent_generator import (
+            M15_RECOVERY_TP_PROOF_BOOTSTRAP_CONTRACT,
+            _m15_recovery_tp_proof_bootstrap_evidence,
             _positive_rotation_source_integrity_failures,
             positive_rotation_proof_acquisition_contract,
         )
 
-        source_failures = _positive_rotation_source_integrity_failures(
-            pair=intent.pair,
-            side=intent.side,
-            method=method,
-            order_type=intent.order_type,
-            metadata=metadata,
-            mode=str(proof_mode or ""),
+        recovery_bootstrap_claimed = (
+            metadata.get(
+                "positive_rotation_proof_collection_bootstrap_contract"
+            )
+            == M15_RECOVERY_TP_PROOF_BOOTSTRAP_CONTRACT
         )
+        if recovery_bootstrap_claimed:
+            source_failures = (
+                []
+                if _m15_recovery_tp_proof_bootstrap_evidence(intent) is not None
+                else ["bounded M15 recovery bootstrap evidence is invalid"]
+            )
+        else:
+            source_failures = _positive_rotation_source_integrity_failures(
+                pair=intent.pair,
+                side=intent.side,
+                method=method,
+                order_type=intent.order_type,
+                metadata=metadata,
+                mode=str(proof_mode or ""),
+            )
         proof_contract = positive_rotation_proof_acquisition_contract(intent)
     except Exception as exc:
         source_failures = [f"producer proof validator raised {type(exc).__name__}: {exc}"]
@@ -2496,7 +2511,7 @@ def validate_m15_recovery_micro_live_claim(
         issues.append(
             RiskIssue(
                 "M15_RECOVERY_POSITIVE_EXACT_VEHICLE_PROOF_INVALID",
-                "M15 recovery requires the current producer-owned positive exact-vehicle HARVEST proof contract",
+                "M15 recovery requires either the current producer-owned exact-vehicle HARVEST proof or its bounded current-technical bootstrap contract",
             )
         )
 
