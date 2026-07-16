@@ -24,11 +24,19 @@ from tools.guardian_wake_dispatcher import (
     DispatcherPaths,
     _resolve_codex_bin,
     _select_dispatch_event,
-    run_dispatcher,
+    run_dispatcher as _production_run_dispatcher,
 )
 
 
 NOW = datetime(2026, 6, 30, 4, 0, tzinfo=timezone.utc)
+
+
+def run_dispatcher(*, env: dict[str, str] | None = None, **kwargs):
+    """Run legacy-path tests only when they explicitly opt out of supervisor mode."""
+
+    legacy_env = {"QR_GUARDIAN_WAKE_SUPERVISOR_ONLY": "0"}
+    legacy_env.update(env or {})
+    return _production_run_dispatcher(env=legacy_env, **kwargs)
 
 
 class GuardianWakeDispatcherTest(unittest.TestCase):
@@ -106,7 +114,8 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
         prompt = (Path(__file__).resolve().parents[1] / "docs" / "guardian_wake_prompt.md").read_text()
 
         self.assertIn("Return JSON only", prompt)
-        self.assertIn('"action": "TRADE|ADD|HOLD|HARVEST|REDUCE|CANCEL_PENDING|NO_ACTION"', prompt)
+        self.assertIn('"action": "HOLD|NO_ACTION"', prompt)
+        self.assertIn("`AI_ORDER_AUTHORITY=NONE`", prompt)
         self.assertIn('"new_information": true', prompt)
         self.assertIn('"thesis_state": "ALIVE|WOUNDED|INVALIDATED|EMERGENCY"', prompt)
         self.assertIn('"ownership": "SYSTEM|OPERATOR_MANUAL|UNKNOWN"', prompt)
@@ -303,6 +312,95 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             self.assertEqual(second["status"], "SUPPRESSED")
             self.assertEqual(calls, [])
+
+    def test_supervisor_only_queues_non_material_entry_without_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_GUARDIAN_WAKE_SUPERVISOR_ONLY": "1",
+                    "QR_GUARDIAN_WAKE_TUNING_MODE": "HOURLY",
+                },
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "QUEUED_FOR_SCHEDULED_SUPERVISOR")
+            self.assertEqual(result["supervision_schedule"], "SIX_HOURLY")
+            self.assertTrue(result["queued_for_scheduled_supervisor"])
+            self.assertFalse(result["queued_for_hourly_tuning"])
+            self.assertFalse(result["wake_gpt"])
+            self.assertEqual(calls, [])
+
+    def test_missing_or_empty_supervisor_flag_defaults_to_scheduled_queue(self) -> None:
+        for env in ({}, {"QR_GUARDIAN_WAKE_SUPERVISOR_ONLY": ""}):
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp))
+                calls: list[list[str]] = []
+
+                result = dispatcher_module.run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env=env,
+                    subprocess_run=_fake_codex(calls, _valid_receipt()),
+                )
+
+                self.assertEqual(
+                    result["status"], "QUEUED_FOR_SCHEDULED_SUPERVISOR"
+                )
+                self.assertEqual(result["supervision_schedule"], "SIX_HOURLY")
+                self.assertTrue(result["queued_for_scheduled_supervisor"])
+                self.assertFalse(result["queued_for_hourly_tuning"])
+                self.assertFalse(result["wake_gpt"])
+                self.assertEqual(result["selected_event"]["action_hint"], "TRADE")
+                self.assertEqual(result["selected_event"]["event_type"], "FAILED_ACCEPTANCE")
+                self.assertEqual(calls, [])
+
+    def test_supervisor_only_wakes_ai_for_material_regime_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            event = _technical_tuning_event(pair="CAD_CHF")
+            paths.events.write_text(json.dumps({"events": [event]}))
+            paths.event_state.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "events": {
+                            event["dedupe_key"]: {
+                                **event,
+                                "last_seen_at_utc": NOW.isoformat(),
+                            }
+                        },
+                    }
+                )
+            )
+            paths.escalation.write_text(
+                json.dumps({"wake_gpt": True, "events_to_review": [event]})
+            )
+            calls: list[list[str]] = []
+            response = _valid_receipt(
+                action="NO_ACTION",
+                event_id=event["event_id"],
+                pair=event["pair"],
+                side=event["direction"],
+                dedupe_key=event["dedupe_key"],
+                tuning_review=True,
+            )
+
+            result = dispatcher_module.run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, response),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["selected_event"]["event_type"], "TECHNICAL_STATE_CHANGE")
+            self.assertEqual(result["gateway_handoff"]["ai_order_authority"], "NONE")
+            self.assertEqual(len(calls), 1)
 
     def test_hourly_tuning_row_does_not_starve_entry_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4586,7 +4684,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                 )
             )
 
-    def test_base_queue_full_still_runs_enabled_gateway_action_cycle(self) -> None:
+    def test_base_queue_full_never_runs_ai_gateway_action_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), reasons=("REGIME_STATE_CHANGE",))
             _fill_tuning_queue(paths.tuning_work_order)
@@ -4611,8 +4709,8 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             self.assertEqual(result["status"], "RECEIPT_WRITTEN")
             self.assertEqual(result["tuning_handoff"]["status"], "WORK_ORDER_WRITTEN")
-            self.assertEqual(result["gateway_handoff"]["status"], "ACTION_CYCLE_CALLED")
-            self.assertEqual(len(action_calls), 1)
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_AI_ORDER_AUTHORITY_NONE")
+            self.assertEqual(len(action_calls), 0)
 
     def test_corrupt_tuning_queue_never_releases_budget_or_overwrites_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6767,7 +6865,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_DEFAULT_OFF")
             self.assertEqual(len(calls), 1)
 
-    def test_enabled_gateway_handoff_requires_action_execute_flag(self) -> None:
+    def test_enabled_legacy_gateway_flag_is_blocked_by_ai_order_authority_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _fixture(root)
@@ -6781,10 +6879,11 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             )
 
             self.assertEqual(result["gateway_handoff"]["required_gateway"], "LiveOrderGateway")
-            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_ACTION_EXECUTE_DISABLED")
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_AI_ORDER_AUTHORITY_NONE")
+            self.assertEqual(result["gateway_handoff"]["ai_order_authority"], "NONE")
             self.assertEqual(len(calls), 1)
 
-    def test_all_guardian_execute_flags_call_action_cycle_cli_after_accepted_receipt(self) -> None:
+    def test_all_legacy_execute_flags_cannot_call_action_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
             codex_calls: list[list[str]] = []
@@ -6810,8 +6909,37 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
                     subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
                 )
 
-            self.assertEqual(result["gateway_handoff"]["status"], "ACTION_CYCLE_CALLED")
-            self.assertEqual(action_calls, [["python3", "-m", "quant_rabbit.cli", "guardian-action-cycle"]])
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_AI_ORDER_AUTHORITY_NONE")
+            self.assertEqual(action_calls, [])
+            self.assertEqual(len(codex_calls), 1)
+
+    def test_non_none_ai_order_authority_also_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            action_calls: list[list[str]] = []
+
+            def fake_action_cycle(cmd, **kwargs):
+                action_calls.append(list(cmd))
+                return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+            with patch("tools.guardian_wake_dispatcher.subprocess.run", side_effect=fake_action_cycle):
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "AI_ORDER_AUTHORITY": "LIVE",
+                        "QR_GUARDIAN_WAKE_SUPERVISOR_ONLY": "0",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        "QR_LIVE_ENABLED": "1",
+                    },
+                    subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                )
+
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_AI_ORDER_AUTHORITY_INVALID")
+            self.assertEqual(result["gateway_handoff"]["configured_ai_order_authority"], "LIVE")
+            self.assertEqual(action_calls, [])
             self.assertEqual(len(codex_calls), 1)
 
 

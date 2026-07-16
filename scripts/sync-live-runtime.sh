@@ -310,67 +310,50 @@ verify_automation() {
     exit 6
   fi
   if ! grep -Fq "cwds = [\"$LIVE_ROOT\"]" "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation does not point at $LIVE_ROOT." >&2
+    echo "[sync-live-runtime] QR AI Supervisor automation does not point at $LIVE_ROOT." >&2
     exit 6
   fi
-  if ! grep -Fq 'rrule = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation cadence must be 60 minutes; frequent risk monitoring belongs to guardian probe/router." >&2
+  if ! grep -Fq 'id = "qr-trader"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR AI Supervisor must retain the qr-trader compatibility id." >&2
+    exit 6
+  fi
+  if ! grep -Fq 'name = "QR AI Supervisor"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] qr-trader compatibility automation name must be QR AI Supervisor." >&2
+    exit 6
+  fi
+  if ! grep -Fq 'rrule = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR AI Supervisor cadence must be 360 minutes; deterministic market monitoring remains continuous outside the AI schedule." >&2
     exit 6
   fi
   if ! grep -Fq 'model = "gpt-5.5"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation model must be gpt-5.5." >&2
+    echo "[sync-live-runtime] QR AI Supervisor automation model must be gpt-5.5." >&2
     exit 6
   fi
   if ! grep -Fq 'reasoning_effort = "high"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation reasoning_effort must be high." >&2
+    echo "[sync-live-runtime] QR AI Supervisor automation reasoning_effort must be high." >&2
     exit 6
   fi
   for required in \
-    'data/trader_decision_baseline.json' \
-    'data/market_read_evidence_packet.json' \
-    'data/codex_market_read_overlay.json' \
-    'trader-apply-market-read' \
-    'QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1' \
-    'the AI trader is this scheduled GPT-5.5/Codex role' \
-    'The deterministic draft is never the final AI decision' \
-    'never replace it downstream' \
-    'Strict economics split' \
-    'structured `evidence_acquisition`'
+    'AI_ORDER_AUTHORITY=NONE' \
+    'REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY' \
+    'data/ai_regime_supervision.json' \
+    'tools/ai_regime_supervision.py' \
+    'GO CAUTION STOP' \
+    'data/guardian_tuning_work_order.json'
   do
     if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
-      echo "[sync-live-runtime] QR vNext Trader automation AI/tuning workflow is stale; missing: $required" >&2
+      echo "[sync-live-runtime] QR AI Supervisor prompt is stale; missing: $required" >&2
       exit 6
     fi
   done
-  if grep -Fq 'After the receipt is ACCEPTED by `gpt-trader-decision`' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation has stale ACCEPTED-only gateway handoff text." >&2
-    exit 6
-  fi
-  if grep -Fq '`data/codex_trader_decision_response.json` was written very recently by another cycle' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation has stale recent-receipt STOP text." >&2
-    exit 6
-  fi
-  if ! grep -Fq 'Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation is missing verifier-result gateway handoff text." >&2
-    exit 6
-  fi
-  if ! grep -Fq 'Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation is missing recent-receipt router handoff text." >&2
-    exit 6
-  fi
-  for required in \
-    'data/guardian_receipt_consumption.json' \
-    'data/guardian_receipt_operator_review.json' \
-    'named proof/acceptance evidence' \
-    'data/trader_goal_loop_orchestrator.json' \
-    'data/active_trader_contract.json' \
-    'data/active_opportunity_board.json' \
-    'docs/active_opportunity_board.md' \
-    'eurusd_short_breakout_failure_*' \
-    'runtime drift and **do not** block the run'
+  for forbidden in \
+    'run-autotrade-live.sh' \
+    '--send' \
+    'QR_LIVE_ENABLED=1' \
+    'QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1'
   do
-    if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
-      echo "[sync-live-runtime] QR vNext Trader automation clean-tree runtime drift allow-list is stale; missing: $required" >&2
+    if grep -Fq -- "$forbidden" "$AUTOMATION_FILE"; then
+      echo "[sync-live-runtime] QR AI Supervisor prompt contains forbidden live-order token: $forbidden" >&2
       exit 6
     fi
   done
@@ -378,10 +361,10 @@ verify_automation() {
     return 0
   fi
   if grep -Fq 'status = "PAUSED"' "$AUTOMATION_FILE" && weekend_guard_paused; then
-    echo "[sync-live-runtime] QR vNext Trader automation is PAUSED by weekend task guard." >&2
+    echo "[sync-live-runtime] QR AI Supervisor automation is PAUSED by weekend task guard." >&2
     return 0
   fi
-  echo "[sync-live-runtime] QR vNext Trader automation is not ACTIVE." >&2
+  echo "[sync-live-runtime] QR AI Supervisor automation is not ACTIVE." >&2
   exit 6
 }
 

@@ -66,6 +66,7 @@ ACTIVE_AI_MODES = {"GO", "CAUTION", "STOP"}
 FAST_CHART_MAX_AGE_SECONDS = 180
 QUOTE_MAX_AGE_SECONDS = 45
 AI_TUNING_INTERVAL_SECONDS = 6 * 60 * 60
+AI_SUPERVISION_HANDOFF_GRACE_SECONDS = 15 * 60
 TIMEFRAME_SECONDS = {
     "M1": 60,
     "M5": 5 * 60,
@@ -99,7 +100,7 @@ def build_hierarchical_regime_contract(
     events = [item for item in event_payload.get("events", []) or [] if isinstance(item, Mapping)]
     validated_supervision = (
         ai_supervision
-        if _sealed_contract_valid(ai_supervision or {}, AI_SUPERVISION_CONTRACT)
+        if _ai_supervision_contract_valid(ai_supervision or {})
         else {}
     )
     stale_pairs = {
@@ -687,13 +688,25 @@ def _entry_experiment_arms(
 
 
 def _ai_pair_state(value: Mapping[str, Any] | None, *, pair: str, now: datetime) -> dict[str, Any]:
-    if not _sealed_contract_valid(value or {}, AI_SUPERVISION_CONTRACT):
+    if not _ai_supervision_contract_valid(value or {}):
         return {"mode": "UNSUPERVISED", "reason": "NO_CURRENT_AI_REGIME_OVERRIDE", "expires_at_utc": None}
     pairs = value.get("pairs") if isinstance(value.get("pairs"), Mapping) else {}
     row = pairs.get(pair) if isinstance(pairs.get(pair), Mapping) else {}
     mode = str(row.get("mode") or "UNSUPERVISED").upper()
     expires = _parse_utc(row.get("expires_at_utc"))
-    if mode not in ACTIVE_AI_MODES or expires is None or expires <= now:
+    if mode not in ACTIVE_AI_MODES or expires is None:
+        return {"mode": "UNSUPERVISED", "reason": "AI_REGIME_OVERRIDE_MISSING_OR_EXPIRED", "expires_at_utc": None}
+    if expires <= now:
+        expired_for = (now - expires).total_seconds()
+        if mode == "STOP" and expired_for <= AI_SUPERVISION_HANDOFF_GRACE_SECONDS:
+            return {
+                "mode": "STOP",
+                "reason": (
+                    str(row.get("reason") or "MATERIAL_REGIME_REVIEW")
+                    + "; SCHEDULED_SUPERVISOR_HANDOFF_GRACE"
+                ),
+                "expires_at_utc": expires.isoformat(),
+            }
         return {"mode": "UNSUPERVISED", "reason": "AI_REGIME_OVERRIDE_MISSING_OR_EXPIRED", "expires_at_utc": None}
     return {
         "mode": mode,
@@ -921,6 +934,39 @@ def _sealed_contract_valid(value: Mapping[str, Any], contract: str) -> bool:
     stored = str(value.get("contract_sha256") or "")
     body = {key: item for key, item in value.items() if key != "contract_sha256"}
     return bool(stored and stored == _canonical_sha(body))
+
+
+def _ai_supervision_contract_valid(value: Mapping[str, Any]) -> bool:
+    """Accept only sealed supervision that is structurally unable to order."""
+
+    if not _sealed_contract_valid(value, AI_SUPERVISION_CONTRACT):
+        return False
+    schema_version = value.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != 1:
+        return False
+    if value.get("ai_role") != "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY":
+        return False
+    if value.get("ai_order_authority") != "NONE":
+        return False
+    if value.get("live_permission") is not False:
+        return False
+    if value.get("broker_mutation_allowed") is not False:
+        return False
+    pairs = value.get("pairs")
+    if not isinstance(pairs, Mapping):
+        return False
+    for pair, row in pairs.items():
+        if not isinstance(pair, str) or not isinstance(row, Mapping):
+            return False
+        if set(row) != {"mode", "reason", "expires_at_utc"}:
+            return False
+        if str(row.get("mode") or "").upper() not in ACTIVE_AI_MODES:
+            return False
+        if not str(row.get("reason") or "").strip():
+            return False
+        if _parse_utc(row.get("expires_at_utc")) is None:
+            return False
+    return True
 
 
 def _canonical_sha(value: Any) -> str:

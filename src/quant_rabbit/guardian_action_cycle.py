@@ -60,6 +60,8 @@ DEFAULT_EVENT_STATE_MAX_AGE_SECONDS = 5 * 60
 GUARDIAN_ACTIONS = {"TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION"}
 ENTRY_ACTIONS = {"TRADE", "ADD"}
 POSITION_ACTIONS = {"HARVEST", "REDUCE", "CANCEL_PENDING"}
+AI_MUTATING_ACTIONS = ENTRY_ACTIONS | POSITION_ACTIONS
+AI_ORDER_AUTHORITY = "NONE"
 ALLOWED_BY_THESIS_STATE = {
     "ALIVE": {"TRADE", "ADD", "HOLD", "HARVEST", "REDUCE", "CANCEL_PENDING", "NO_ACTION"},
     "WOUNDED": {"HOLD", "HARVEST", "REDUCE", "NO_ACTION"},
@@ -251,6 +253,8 @@ def run_guardian_action_cycle(
     no_send = []
     if not flags["all_enabled"]:
         no_send.append("LIVE_FLAGS_DISABLED")
+    if action in AI_MUTATING_ACTIONS and not flags["ai_order_authorized"]:
+        no_send.append("AI_ORDER_AUTHORITY_NONE")
     if strict_issues:
         no_send.append("RECEIPT_OR_SAFETY_REJECTED")
     if action in POSITION_ACTIONS:
@@ -961,12 +965,20 @@ def _execution_flags(env: dict[str, str]) -> dict[str, Any]:
         "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": env.get("QR_GUARDIAN_WAKE_GATEWAY_HANDOFF", "0"),
         "QR_GUARDIAN_ACTION_EXECUTE": env.get("QR_GUARDIAN_ACTION_EXECUTE", "0"),
     }
+    configured_ai_order_authority = (
+        str(env.get("AI_ORDER_AUTHORITY", AI_ORDER_AUTHORITY)).strip().upper()
+        or AI_ORDER_AUTHORITY
+    )
     return {
         **flags,
+        "AI_ORDER_AUTHORITY": AI_ORDER_AUTHORITY,
         "live_enabled": flags["QR_LIVE_ENABLED"] == "1",
         "handoff_enabled": flags["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"] == "1",
         "action_execute_enabled": flags["QR_GUARDIAN_ACTION_EXECUTE"] == "1",
         "all_enabled": all(value == "1" for value in flags.values()),
+        "configured_ai_order_authority": configured_ai_order_authority,
+        "ai_order_authority": AI_ORDER_AUTHORITY,
+        "ai_order_authorized": False,
     }
 
 

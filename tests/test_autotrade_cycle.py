@@ -2111,11 +2111,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(row["resolution_status"], "HIT")
         self.assertIn("Projection preflight: status=`OK`", report)
 
-    def test_gpt_cancel_pending_runs_when_no_live_ready_basket_exists(self) -> None:
-        # Regression for 2026-06-12 AUD_CAD 472367: verifier accepted a
-        # CANCEL_PENDING receipt, but the pending-entry branch skipped
-        # _run_gpt_handoff whenever the current basket prefilter was empty.
-        # The stale GTC order survived with live_ready=0.
+    def test_gpt_cancel_pending_is_supervisor_only_when_no_live_ready_basket_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime(2026, 6, 12, 14, 32, tzinfo=timezone.utc)
@@ -2143,44 +2139,49 @@ class AutoTradeCycleTest(unittest.TestCase):
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
-            summary = _ForecastReceiptFixtureCycle(
-                client=client,
-                snapshot_path=snapshot_path,
-                intents_path=intents_path,
-                intent_report_path=root / "intents.md",
-                decision_path=root / "decision.json",
-                decision_report_path=root / "decision.md",
-                gpt_decision_path=root / "gpt_decision.json",
-                gpt_decision_report_path=root / "gpt_decision.md",
-                gpt_attack_advice_path=root / "attack_missing.json",
-                position_management_path=root / "pm.json",
-                position_management_report_path=root / "pm.md",
-                position_execution_path=root / "pe.json",
-                position_execution_report_path=root / "pe.md",
-                live_order_output_path=root / "live_order.json",
-                live_order_report_path=root / "live_order.md",
-                report_path=root / "report.md",
-                campaign_plan_path=_campaign(root),
-                strategy_profile_path=_candidate_profile(root),
-                market_story_profile_path=_stories(root),
-                receipt_promotion_report_path=root / "promotion.md",
-                target_state_path=target_state,
-                target_report_path=root / "target.md",
-                gpt_target_state_path=target_state,
-                execution_ledger_db_path=root / "execution_ledger.db",
-                execution_ledger_report_path=root / "execution_ledger.md",
-                use_gpt_trader=True,
-                gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
-                reuse_market_artifacts=True,
-                refresh_market_story=False,
-                live_enabled=True,
-                max_loss_jpy=1_500,
-            ).run(send=True)
+            with mock.patch.dict(
+                os.environ,
+                {"AI_ORDER_AUTHORITY": "LIVE", "QR_LIVE_ENABLED": "1"},
+                clear=False,
+            ):
+                summary = _ForecastReceiptFixtureCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
 
-        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+        self.assertEqual(summary.status, "GPT_CANCEL_PENDING")
         self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
-        self.assertEqual(summary.canceled_orders, ("pending-1",))
-        self.assertEqual(client.orders_canceled, ["pending-1"])
+        self.assertEqual(summary.canceled_orders, ())
+        self.assertEqual(client.orders_canceled, [])
         self.assertEqual(client.orders_sent, [])
 
     def test_gpt_trade_replaces_pending_when_deterministic_basket_is_empty(self) -> None:
@@ -2269,17 +2270,16 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
                 max_loss_jpy=1_500,
             ).run(send=True)
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
-        self.assertEqual(summary.status, "SENT")
+        self.assertEqual(summary.status, "BLOCKED")
         self.assertEqual(summary.decision_source, "gpt_trader")
         self.assertEqual(summary.gpt_action, "TRADE")
         self.assertEqual(summary.selected_lane_size_multiple, 0.75)
         self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
-        self.assertEqual(summary.canceled_orders, ("stale-pending",))
-        self.assertEqual(client.orders_canceled, ["stale-pending"])
-        self.assertEqual(len(client.orders_sent), 1)
-        self.assertGreater(int(client.orders_sent[0]["units"]), 0)
-        self.assertLess(int(client.orders_sent[0]["units"]), 7_500)
+        self.assertEqual(summary.canceled_orders, ())
+        self.assertEqual(client.orders_canceled, [])
+        self.assertEqual(client.orders_sent, [])
 
     def test_report_summarizes_harvest_and_runner_opportunity_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2428,7 +2428,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertFalse(execution.sent)
         self.assertEqual(client.closed, [])
 
-    def test_accepted_gpt_close_routes_through_position_gateway_receipt(self) -> None:
+    def test_accepted_gpt_close_is_blocked_before_position_gateway(self) -> None:
         class Client:
             def __init__(self) -> None:
                 self.closed: list[tuple[str, str]] = []
@@ -2497,18 +2497,31 @@ class AutoTradeCycleTest(unittest.TestCase):
                 close_trade_ids=("471232",),
             )
 
-            execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"AI_ORDER_AUTHORITY": "LIVE", "QR_LIVE_ENABLED": "1"},
+                    clear=False,
+                ),
+                mock.patch.object(cycle, "_position_gateway") as position_gateway,
+            ):
+                execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
 
-            self.assertEqual(execution.status, "SENT")
-            self.assertTrue(execution.sent)
-            self.assertEqual(client.closed, [("471232", "ALL")])
+            self.assertEqual(execution.status, "BLOCKED")
+            self.assertFalse(execution.sent)
+            position_gateway.assert_not_called()
+            self.assertEqual(client.closed, [])
             self.assertEqual(len(client.snapshot_calls), 1)
             self.assertIn("EUR_USD", client.snapshot_calls[0])
             payload = json.loads((root / "pe.json").read_text())
-            self.assertEqual(payload["status"], "SENT")
-            self.assertEqual(payload["actions"][0]["request"]["type"], "CLOSE")
+            self.assertEqual(payload["status"], "BLOCKED")
+            self.assertIsNone(payload["actions"][0]["request"])
             self.assertEqual(payload["actions"][0]["trade_id"], "471232")
-            self.assertIn("CLOSE", (root / "pe.md").read_text())
+            self.assertEqual(
+                payload["actions"][0]["issues"][0]["code"],
+                "AI_ORDER_AUTHORITY_NONE",
+            )
+            self.assertIn("AI_ORDER_AUTHORITY=NONE", (root / "pe.md").read_text())
 
     def test_accepted_gpt_close_without_close_gate_evidence_blocks_before_gateway(self) -> None:
         class Client:
@@ -2628,7 +2641,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             "PASS",
         )
 
-    def test_accepted_gpt_close_ledger_receipt_survives_position_execution_overwrite(self) -> None:
+    def test_authority_blocked_gpt_close_ledger_receipt_survives_position_execution_overwrite(self) -> None:
         class Client:
             def __init__(self, snapshot_payload: BrokerSnapshot) -> None:
                 self.snapshot_payload = snapshot_payload
@@ -2705,7 +2718,8 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
 
             execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
-            self.assertEqual(execution.status, "SENT")
+            self.assertEqual(execution.status, "BLOCKED")
+            self.assertEqual(cycle.client.closed, [])
 
             overwritten = {
                 "generated_at_utc": (now + timedelta(minutes=1)).isoformat(),
@@ -2733,8 +2747,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                     "SELECT event_type, trade_id, exit_reason FROM execution_events ORDER BY rowid"
                 ).fetchall()
 
-        self.assertIn(("GATEWAY_TRADE_CLOSE_SENT", "471232", "GPT_CLOSE"), events)
+        self.assertNotIn(("GATEWAY_TRADE_CLOSE_SENT", "471232", "GPT_CLOSE"), events)
         self.assertIn(("GATEWAY_GPT_CLOSE_ACCEPTED", "471232", "GPT_CLOSE_ACCEPTED"), events)
+        self.assertIn(("GATEWAY_POSITION_NO_ACTION", "471232", "GPT_CLOSE"), events)
         self.assertIn(("GATEWAY_POSITION_NO_ACTION", "471232", "HOLD_SL_FREE"), events)
 
     def test_cycle_end_records_rejected_gpt_close_gate_evidence(self) -> None:
@@ -3558,7 +3573,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
 
-    def test_no_live_ready_gpt_cancel_obeys_self_improvement_cancel_review(self) -> None:
+    def test_no_live_ready_gpt_cancel_cannot_use_self_improvement_review_as_authority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -3646,10 +3661,10 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+            self.assertEqual(summary.status, "GPT_CANCEL_PENDING")
             self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
-            self.assertEqual(summary.canceled_orders, ("audit-forced-pending",))
-            self.assertEqual(client.orders_canceled, ["audit-forced-pending"])
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
 
     def test_gpt_cancel_helper_preserves_pending_with_current_thesis(self) -> None:
@@ -3767,7 +3782,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(canceled, ())
             self.assertEqual(client.orders_canceled, [])
 
-    def test_gpt_cancel_helper_cancels_self_improvement_review_inside_recorded_thesis_horizon(self) -> None:
+    def test_gpt_cancel_helper_authority_none_blocks_audit_forced_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -3863,10 +3878,38 @@ class AutoTradeCycleTest(unittest.TestCase):
                 cancel_order_ids=("horizon-pending",),
             )
 
+            with mock.patch.dict(
+                os.environ,
+                {"AI_ORDER_AUTHORITY": "LIVE", "QR_LIVE_ENABLED": "1"},
+                clear=False,
+            ):
+                canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
+
+            self.assertEqual(canceled, ())
+            self.assertEqual(client.orders_canceled, [])
+
+    def test_gpt_trade_cancel_ids_cannot_override_code_fixed_authority(self) -> None:
+        client = FakeCycleClient(BrokerSnapshot(fetched_at_utc=datetime.now(timezone.utc)))
+        cycle = AutoTradeCycle(client=client, live_enabled=True)
+        gpt_summary = GptHandoffSummary(
+            status="ACCEPTED",
+            action="TRADE",
+            selected_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+            allowed=True,
+            issues=0,
+            cancel_order_ids=("legacy-replacement",),
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"AI_ORDER_AUTHORITY": "LIVE", "QR_LIVE_ENABLED": "1"},
+            clear=False,
+        ):
             canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
 
-            self.assertEqual(canceled, ("horizon-pending",))
-            self.assertEqual(client.orders_canceled, ["horizon-pending"])
+        self.assertEqual(canceled, ())
+        self.assertEqual(client.orders_canceled, [])
+        self.assertEqual(client.orders_sent, [])
 
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3943,11 +3986,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
             self.assertEqual(client.orders_canceled, [])
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent, [])
             self.assertEqual(summary.orders, 1)
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_pending_entry_dry_probe_runs_gpt_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4106,14 +4150,15 @@ class AutoTradeCycleTest(unittest.TestCase):
                 else:
                     os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
 
-            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.status, "BLOCKED")
             self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(summary.canceled_orders, ())
             self.assertEqual(client.orders_canceled, [])
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent, [])
             decision_payload = json.loads((root / "decision.json").read_text())
             self.assertEqual(decision_payload["pending_cancel_order_ids"], ["stale-but-gpt-preserved"])
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_gpt_trade_preserves_same_lane_near_pending_cancel_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4350,7 +4395,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(gateway.calls[0]["confirm_live"], True)
             self.assertEqual(client.orders_canceled, [])
 
-    def test_gpt_trade_replacement_send_keeps_ignored_pending_order_ids(self) -> None:
+    def test_gpt_trade_replacement_keeps_ignore_scope_but_cannot_cancel_pending(self) -> None:
         class FakeGateway:
             def __init__(self, *, client: FakeCycleClient, root: Path) -> None:
                 self.client = client
@@ -4492,13 +4537,13 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
 
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(canceled, (pending.order_id,))
+            self.assertEqual(canceled, ())
             self.assertEqual(len(gateway.calls), 2)
             self.assertEqual(gateway.calls[0]["ignore_pending_order_ids"], (pending.order_id,))
             self.assertEqual(gateway.calls[0]["send"], False)
             self.assertEqual(gateway.calls[1]["ignore_pending_order_ids"], (pending.order_id,))
             self.assertEqual(gateway.calls[1]["send"], True)
-            self.assertEqual(client.orders_canceled, [pending.order_id])
+            self.assertEqual(client.orders_canceled, [])
 
     def test_gpt_trade_preserves_same_lane_pending_with_disaster_stop_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4894,11 +4939,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 1)
-            self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
-            self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(client.orders_sent, [])
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_gpt_trade_blocked_by_gateway_preserves_named_pending_orders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5301,11 +5347,12 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
-            self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 1)
-            self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
-            self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(client.orders_sent, [])
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_protected_position_gpt_trade_preserves_pending_cancel_candidate_when_cancel_not_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5400,13 +5447,14 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
-            self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
             self.assertEqual(summary.canceled_orders, ())
             self.assertEqual(client.orders_canceled, [])
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent, [])
             decision_payload = json.loads((root / "decision.json").read_text())
             self.assertEqual(decision_payload["pending_cancel_order_ids"], [pending.order_id])
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_protected_position_can_cancel_contaminated_pending_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6144,16 +6192,22 @@ class AutoTradeCycleTest(unittest.TestCase):
                     max_loss_jpy=1_500,
                 ).run(send=True)
 
-                self.assertEqual(summary.status, "POSITION_ACTION_SENT")
+                self.assertEqual(summary.status, "POSITION_ACTION_BLOCKED")
                 self.assertEqual(summary.decision_source, "gpt_trader")
-                self.assertEqual(summary.position_execution_status, "SENT")
-                self.assertTrue(summary.position_execution_sent)
+                self.assertEqual(summary.position_execution_status, "BLOCKED")
+                self.assertFalse(summary.position_execution_sent)
                 self.assertEqual(summary.gpt_action, "CLOSE")
-                self.assertEqual(summary.gpt_recovery_source, "POST_CLOSE_REENTRY_DEFERRED")
-                self.assertEqual(client.trades_closed, [("close-me", "ALL")])
+                self.assertIsNone(summary.gpt_recovery_source)
+                self.assertEqual(client.trades_closed, [])
                 self.assertEqual(len(client.orders_sent), 0)
                 self.assertIsNone(summary.selected_lane_id)
                 self.assertFalse((root / "gpt_decision.close_reentry.json").exists())
+                position_execution = json.loads((root / "pe.json").read_text())
+                self.assertEqual(position_execution["status"], "BLOCKED")
+                self.assertEqual(
+                    position_execution["actions"][0]["issues"][0]["code"],
+                    "AI_ORDER_AUTHORITY_NONE",
+                )
                 current_receipt = json.loads((root / "gpt_decision.json").read_text())
                 self.assertEqual(current_receipt["decision"]["action"], "CLOSE")
         finally:
@@ -6562,7 +6616,6 @@ class AutoTradeCycleTest(unittest.TestCase):
             snapshot_path = root / "snapshot.json"
             snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
             intents_path = root / "intents.json"
-            market_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
             _write_two_live_ready_intents(intents_path)
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
@@ -6604,25 +6657,21 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
             self.assertEqual(
                 summary.selected_lane_ids,
                 ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
             )
             self.assertEqual(summary.selected_lane_size_multiple, 0.75)
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent, [])
             sent_payload = json.loads((root / "live_order.json").read_text())
-            self.assertEqual(
-                client.orders_sent[0]["units"],
-                str(sent_payload["scaled_units"]),
-            )
-            self.assertLess(int(client.orders_sent[0]["units"]), 7_500)
             self.assertLessEqual(sent_payload["risk_metrics"]["risk_jpy"], 250.0)
             self.assertEqual(
                 sent_payload["sizing_evidence"]["loss_asymmetry_guard_loss_cap_jpy"],
                 250.0,
             )
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_gpt_batch_trade_dedupes_same_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6684,17 +6733,18 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "SENT")
-            self.assertTrue(summary.sent)
-            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(summary.sent_count, 0)
             self.assertEqual(
                 summary.selected_lane_ids,
                 ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
             )
-            self.assertEqual(len(client.orders_sent), 1)
+            self.assertEqual(client.orders_sent, [])
             result = json.loads((root / "live_order.json").read_text())
             self.assertEqual(result["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertNotIn("orders", result)
+            _assert_ai_order_authority_none(self, root / "live_order.json")
 
     def test_cycle_appends_jsonl_audit_entry_per_run(self) -> None:
         """Regression: each cycle must append one JSONL line to the trader
@@ -6764,7 +6814,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             )
             summary = cycle.run(send=True)
-            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.status, "BLOCKED")
             self.assertTrue(journal_path.exists())
             entries = [
                 json.loads(line)
@@ -6773,9 +6823,9 @@ class AutoTradeCycleTest(unittest.TestCase):
             ]
             self.assertEqual(len(entries), 1)
             entry = entries[0]
-            self.assertEqual(entry["status"], "SENT")
-            self.assertTrue(entry["sent"])
-            self.assertEqual(entry["sent_count"], 1)
+            self.assertEqual(entry["status"], "BLOCKED")
+            self.assertFalse(entry["sent"])
+            self.assertEqual(entry["sent_count"], 0)
             self.assertEqual(
                 entry["selected_lane_ids"],
                 [
@@ -6783,6 +6833,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 ],
             )
             self.assertIn("ts", entry)
+            self.assertEqual(client.orders_sent, [])
+            _assert_ai_order_authority_none(self, root / "live_order.json")
             # Run a second cycle to confirm the journal is append-only.
             cycle.run(send=True)
             entries = [
@@ -6975,20 +7027,18 @@ class AutoTradeCycleTest(unittest.TestCase):
                     max_loss_jpy=1_500,
                 ).run(send=True)
 
-            self.assertEqual(
-                summary.status,
-                "SENT",
-                msg=(summary, (root / "live_order.json").read_text()),
-            )
-            # Gateway performs its risk reconciliation sync and a second
-            # post-reservation boundary sync before POST, then the cycle syncs
-            # once more after recording the send receipt.
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            # The cycle and gateway still perform the pre-send ledger reads,
+            # but authority NONE stops before reconciliation, POST, and the
+            # post-send receipt sync.
             self.assertEqual(
                 client.transaction_sync_calls,
-                ["100", "100", "100", "100"],
+                ["100", "100"],
             )
             live_order = json.loads((root / "live_order.json").read_text())
-            self.assertEqual(live_order["pre_post_reconciliation"]["status"], "PASSED")
+            self.assertEqual(live_order["pre_post_reconciliation"]["status"], "NOT_RUN")
+            _assert_ai_order_authority_none(self, root / "live_order.json")
             with closing(sqlite3.connect(ledger_path)) as conn, conn:
                 event_types = {
                     row[0] for row in conn.execute("SELECT event_type FROM execution_events").fetchall()
@@ -6999,11 +7049,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                     "SELECT value FROM sync_state WHERE key='last_oanda_transaction_id'"
                 ).fetchone()[0]
 
-            self.assertIn("GATEWAY_ORDER_SENT", event_types)
-            self.assertIn("ORDER_FILLED", event_types)
-            self.assertEqual(tx_count, 1)
+            self.assertIn("GATEWAY_ORDER_BLOCKED", event_types)
+            self.assertEqual(client.orders_sent, [])
+            self.assertEqual(tx_count, 0)
             self.assertGreaterEqual(receipt_count, 1)
-            self.assertEqual(last_id, "101")
+            self.assertEqual(last_id, "100")
 
     def test_live_fresh_entry_requires_gpt_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7500,14 +7550,14 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+            self.assertEqual(summary.status, "GPT_CANCEL_PENDING")
             self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
             self.assertIsNone(summary.selected_lane_id)
             self.assertFalse(summary.sent)
             self.assertEqual(summary.sent_count, 0)
-            self.assertEqual(summary.canceled_orders, ("stale-pending",))
-            self.assertEqual(client.orders_canceled, ["stale-pending"])
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
             self.assertFalse((root / "live_order.json").exists())
 
@@ -7901,11 +7951,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertFalse((root / "live_order.json").exists())
 
-    def test_reused_verified_gpt_close_reaches_position_gateway(self) -> None:
-        # The verifier-to-gateway bridge must cover accepted CLOSE receipts,
-        # not just TRADE. Otherwise hard Gate A exits are repeatedly reported
-        # as accepted but never reach PositionProtectionGateway, blocking fresh
-        # entries behind the still-open position.
+    def test_reused_verified_gpt_close_is_still_blocked_by_ai_authority_none(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         try:
@@ -8065,12 +8111,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
-        self.assertEqual(summary.status, "POSITION_ACTION_SENT", msg=summary)
+        self.assertEqual(summary.status, "POSITION_ACTION_BLOCKED", msg=summary)
         self.assertEqual(summary.decision_source, "gpt_trader")
         self.assertEqual(summary.gpt_status, "ACCEPTED")
         self.assertEqual(summary.gpt_action, "CLOSE")
-        self.assertEqual(summary.position_execution_status, "SENT")
-        self.assertEqual(client.trades_closed, [("close-me", "ALL")])
+        self.assertEqual(summary.position_execution_status, "BLOCKED")
+        self.assertEqual(client.trades_closed, [])
         self.assertEqual(client.orders_sent, [])
 
     def test_reused_schema_v2_codex_veto_revalidates_material_sources(self) -> None:
@@ -10298,6 +10344,28 @@ def _write_no_live_ready_intents(path: Path) -> None:
         result["status"] = "DRY_RUN_BLOCKED"
         result["live_blockers"] = ["forecast no longer backs this pending entry"]
     path.write_text(json.dumps(payload) + "\n")
+
+
+def _assert_ai_order_authority_none(
+    testcase: unittest.TestCase,
+    live_order_path: Path,
+) -> None:
+    payload = json.loads(live_order_path.read_text(encoding="utf-8"))
+    orders = payload.get("orders")
+    blocked = orders if isinstance(orders, list) else [payload]
+    testcase.assertTrue(blocked)
+    for item in blocked:
+        testcase.assertEqual(item["status"], "BLOCKED")
+        testcase.assertFalse(item["sent"])
+        testcase.assertIsNone(item.get("response"))
+        testcase.assertIn(
+            "AI_ORDER_AUTHORITY_NONE",
+            {
+                issue.get("code")
+                for issue in item.get("risk_issues", [])
+                if isinstance(issue, dict)
+            },
+        )
 
 
 def _write_two_live_ready_intents(path: Path) -> None:

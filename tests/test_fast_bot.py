@@ -279,7 +279,12 @@ class FastBotTest(unittest.TestCase):
         fast, slow, snapshot = _inputs()
         supervision = _seal_contract({
             "contract": AI_SUPERVISION_CONTRACT,
+            "schema_version": 1,
             "last_tuned_at_utc": NOW.isoformat(),
+            "ai_role": "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
+            "ai_order_authority": "NONE",
+            "live_permission": False,
+            "broker_mutation_allowed": False,
             "pairs": {
                 "EUR_USD": {
                     "mode": "STOP",
@@ -301,6 +306,84 @@ class FastBotTest(unittest.TestCase):
         self.assertEqual(trend["state"], "STOP")
         self.assertIn("AI_REGIME_SUPERVISOR_STOP", trend["hard_blockers"])
         self.assertFalse(contract["ai_per_trade_approval_required"])
+
+    def test_sealed_ai_supervision_with_order_authority_is_ignored(self) -> None:
+        fast, slow, snapshot = _inputs()
+        supervision = _seal_contract({
+            "contract": AI_SUPERVISION_CONTRACT,
+            "schema_version": 1,
+            "last_tuned_at_utc": NOW.isoformat(),
+            "ai_role": "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
+            "ai_order_authority": "LIVE",
+            "live_permission": True,
+            "broker_mutation_allowed": True,
+            "pairs": {
+                "EUR_USD": {
+                    "mode": "STOP",
+                    "reason": "must not be accepted",
+                    "expires_at_utc": (NOW + timedelta(minutes=30)).isoformat(),
+                }
+            },
+        })
+        contract = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            ai_supervision=supervision,
+            now_utc=NOW,
+        )
+
+        trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+        self.assertEqual(trend["state"], "GO")
+        self.assertEqual(trend["ai_supervision"]["mode"], "UNSUPERVISED")
+        self.assertTrue(contract["tuning_due"])
+
+    def test_expired_stop_survives_only_the_scheduled_handoff_grace(self) -> None:
+        fast, slow, snapshot = _inputs()
+
+        def supervision(expires_at: datetime) -> dict:
+            return _seal_contract({
+                "contract": AI_SUPERVISION_CONTRACT,
+                "schema_version": 1,
+                "last_tuned_at_utc": (NOW - timedelta(hours=6)).isoformat(),
+                "ai_role": "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
+                "ai_order_authority": "NONE",
+                "live_permission": False,
+                "broker_mutation_allowed": False,
+                "pairs": {
+                    "EUR_USD": {
+                        "mode": "STOP",
+                        "reason": "material volatility transition",
+                        "expires_at_utc": expires_at.isoformat(),
+                    }
+                },
+            })
+
+        in_grace = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            ai_supervision=supervision(NOW - timedelta(minutes=5)),
+            now_utc=NOW,
+        )
+        after_grace = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            ai_supervision=supervision(NOW - timedelta(minutes=16)),
+            now_utc=NOW,
+        )
+
+        grace_row = _row(in_grace, side="LONG", method="TREND_CONTINUATION")
+        expired_row = _row(after_grace, side="LONG", method="TREND_CONTINUATION")
+        self.assertEqual(grace_row["ai_supervision"]["mode"], "STOP")
+        self.assertIn("SCHEDULED_SUPERVISOR_HANDOFF_GRACE", grace_row["ai_supervision"]["reason"])
+        self.assertIn("AI_REGIME_SUPERVISOR_STOP", grace_row["hard_blockers"])
+        self.assertEqual(expired_row["ai_supervision"]["mode"], "UNSUPERVISED")
+        self.assertNotIn("AI_REGIME_SUPERVISOR_STOP", expired_row["hard_blockers"])
 
     def test_unsealed_ai_supervision_cannot_stop_or_reset_tuning_clock(self) -> None:
         fast, slow, snapshot = _inputs()

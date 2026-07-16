@@ -27,14 +27,17 @@ except ModuleNotFoundError:  # pragma: no cover
 EXPECTED_MODEL = "gpt-5.5"
 EXPECTED_REASONING_EFFORT = "high"
 EXPECTED_CWD = "/Users/tossaki/App/QuantRabbit-live"
-EXPECTED_CADENCE_MINUTES = 60
+EXPECTED_CADENCE_MINUTES = 360
 DEFAULT_GRACE_MINUTES = 15
+AI_REGIME_SUPERVISION_CONTRACT = "QR_AI_REGIME_SUPERVISION_V1"
 DEFAULT_LIVE_ROOT = Path(EXPECTED_CWD)
 DEFAULT_AUTOMATION_DIR = Path.home() / ".codex" / "automations" / "qr-trader"
 DEFAULT_WEEKEND_STATE = Path.home() / ".codex" / "quant_rabbit_weekend_task_state.json"
 DEFAULT_CODEX_LOGS = Path.home() / ".codex" / "logs_2.sqlite"
 HIGH_URGENCY_GUARDIAN_ACTIONS = {"REDUCE", "HARVEST", "CANCEL_PENDING"}
 LOW_URGENCY_GUARDIAN_ACTIONS = {"HOLD", "NO_ACTION"}
+AI_REGIME_SUPERVISION_PAIR_KEYS = {"mode", "reason", "expires_at_utc"}
+AI_REGIME_SUPERVISION_MODES = {"GO", "CAUTION", "STOP"}
 TERMINAL_RECEIPT_LIFECYCLES = {"CONSUMED", "SUPERSEDED", "EXPIRED", "REJECTED"}
 RECEIPT_LIFECYCLE_PRECEDENCE = {
     "EXPIRED": 50,
@@ -55,6 +58,7 @@ class WatchdogPaths:
     autotrade_report: Path
     gpt_decision_report: Path
     decision_response: Path
+    ai_regime_supervision: Path
     guardian_receipt: Path
     guardian_review: Path
     guardian_trigger_contract: Path
@@ -86,6 +90,7 @@ class WatchdogPaths:
             autotrade_report=root / "docs" / "autotrade_cycle_report.md",
             gpt_decision_report=root / "docs" / "gpt_trader_decision_report.md",
             decision_response=root / "data" / "codex_trader_decision_response.json",
+            ai_regime_supervision=root / "data" / "ai_regime_supervision.json",
             guardian_receipt=root / "data" / "guardian_action_receipt.json",
             guardian_review=root / "docs" / "guardian_action_review.md",
             guardian_trigger_contract=root / "data" / "guardian_trigger_contract.json",
@@ -138,10 +143,26 @@ def evaluate_watchdog(
     missed_expected_window = False
     status = "UNKNOWN"
     issues: list[dict[str, Any]] = []
+    supervision_evidence = evidence.get("ai_regime_supervision", {})
+    supervision_invalid = bool(
+        isinstance(supervision_evidence, dict)
+        and supervision_evidence.get("exists")
+        and not supervision_evidence.get("valid_sealed_artifact")
+    )
 
     issues.extend(config_issues)
     if config_issues:
         status = "BROKEN"
+    elif supervision_invalid:
+        status = "BROKEN"
+        issues.append(
+            _issue(
+                "AI_REGIME_SUPERVISION_INVALID",
+                "P1",
+                "Existing AI supervision artifact is invalid and cannot be masked by legacy trader evidence: "
+                f"{supervision_evidence.get('invalid_reason') or 'unknown validation failure'}",
+            )
+        )
     elif last_trader_run_at is None:
         if weekend_cadence_paused:
             status = "OK"
@@ -206,6 +227,7 @@ def evaluate_watchdog(
         "rejected_timestamp_candidates": evidence["rejected_timestamp_candidates"],
         "last_journal_at": evidence["last_journal_at"],
         "last_decision_artifact_at": evidence["last_decision_artifact_at"],
+        "last_ai_regime_supervision_at": evidence["last_ai_regime_supervision_at"],
         "last_memory_at": evidence["last_memory_at"],
         "automation_config": automation,
         "weekend_pause": weekend_pause,
@@ -244,6 +266,7 @@ def evaluate_watchdog(
             "autotrade_report": str(paths.autotrade_report),
             "gpt_decision_report": str(paths.gpt_decision_report),
             "decision_response": str(paths.decision_response),
+            "ai_regime_supervision": str(paths.ai_regime_supervision),
             "guardian_receipt": str(paths.guardian_receipt),
             "guardian_review": str(paths.guardian_review),
             "guardian_trigger_contract": str(paths.guardian_trigger_contract),
@@ -471,6 +494,10 @@ def _cadence_from_rrule(rrule: Any) -> int | None:
 
 
 def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str, Any]:
+    supervision = _ai_regime_supervision_evidence(
+        paths.ai_regime_supervision,
+        now_utc=now_utc,
+    )
     journal = _journal_evidence(paths.trader_journal)
     decision = _decision_artifact_evidence(
         paths.decision_response,
@@ -478,18 +505,34 @@ def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str
         paths.autotrade_report,
     )
     memory = _memory_evidence(paths.automation_memory)
-    accepted_candidates: list[dict[str, Any]] = []
+    legacy_accepted_candidates: list[dict[str, Any]] = []
     for item in (
         journal.get("accepted_timestamp_candidates"),
         decision.get("accepted_timestamp_candidates"),
         memory.get("accepted_timestamp_candidates"),
     ):
         if isinstance(item, list):
-            accepted_candidates.extend(candidate for candidate in item if isinstance(candidate, dict))
-    latest_candidate = _latest_timestamp_candidate(accepted_candidates)
+            legacy_accepted_candidates.extend(candidate for candidate in item if isinstance(candidate, dict))
+    supervision_candidates = supervision.get("accepted_timestamp_candidates")
+    supervision_exists = bool(supervision.get("exists"))
+    preferred_candidates = (
+        [candidate for candidate in supervision_candidates if isinstance(candidate, dict)]
+        if supervision_exists and isinstance(supervision_candidates, list)
+        else legacy_accepted_candidates
+    )
+    accepted_candidates = [
+        *(
+            [candidate for candidate in supervision_candidates if isinstance(candidate, dict)]
+            if isinstance(supervision_candidates, list)
+            else []
+        ),
+        *legacy_accepted_candidates,
+    ]
+    latest_candidate = _latest_timestamp_candidate(preferred_candidates)
     latest = _parse_utc(latest_candidate.get("timestamp_utc")) if latest_candidate else None
     rejected_candidates: list[dict[str, Any]] = []
     for item in (
+        supervision.get("rejected_timestamp_candidates"),
         journal.get("rejected_timestamp_candidates"),
         decision.get("rejected_timestamp_candidates"),
         memory.get("rejected_timestamp_candidates"),
@@ -506,12 +549,144 @@ def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str
         "rejected_timestamp_candidates": rejected_candidates,
         "last_journal_at": journal.get("last_at"),
         "last_decision_artifact_at": decision.get("last_at"),
+        "last_ai_regime_supervision_at": supervision.get("last_at"),
         "last_memory_at": memory.get("last_at"),
+        "evidence_priority": (
+            "AI_REGIME_SUPERVISION"
+            if isinstance(supervision_candidates, list) and supervision_candidates
+            else (
+                "INVALID_AI_REGIME_SUPERVISION_FAIL_CLOSED"
+                if supervision_exists
+                else "LEGACY_TRADER_ARTIFACT_FALLBACK"
+            )
+        ),
+        "ai_regime_supervision": supervision,
         "journal": journal,
         "decision_artifacts": decision,
         "memory": memory,
         "now_utc": now_utc.isoformat(),
     }
+
+
+def _ai_regime_supervision_evidence(
+    path: Path,
+    *,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    payload = _read_json_object(path)
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    parsed = _parse_utc(payload.get("generated_at_utc")) if isinstance(payload, dict) else None
+    invalid_reason = _ai_regime_supervision_invalid_reason(
+        payload,
+        now_utc=now_utc,
+    )
+    if parsed is not None:
+        candidate = _timestamp_candidate(
+            source="ai_regime_supervision.generated_at_utc",
+            path=path,
+            timestamp=parsed,
+        )
+        if invalid_reason is None:
+            accepted.append(candidate)
+        else:
+            rejected.append({**candidate, "rejected_reason": invalid_reason})
+    mtime = _mtime_utc(path)
+    if mtime is not None:
+        rejected.append(
+            _timestamp_candidate(
+                source="ai_regime_supervision.file_mtime",
+                path=path,
+                timestamp=mtime,
+                rejected_reason=(
+                    "file mtime is not explicit sealed AI supervision run evidence"
+                    if invalid_reason is None
+                    else f"AI supervision artifact is invalid: {invalid_reason}"
+                ),
+            )
+        )
+    latest = _latest_timestamp_candidate(accepted)
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "valid_sealed_artifact": invalid_reason is None,
+        "invalid_reason": invalid_reason,
+        "last_at": latest.get("timestamp_utc") if latest else None,
+        "ai_order_authority": payload.get("ai_order_authority") if isinstance(payload, dict) else None,
+        "broker_mutation_allowed": payload.get("broker_mutation_allowed") if isinstance(payload, dict) else None,
+        "accepted_timestamp_candidates": accepted,
+        "rejected_timestamp_candidates": rejected,
+    }
+
+
+def _ai_regime_supervision_invalid_reason(
+    payload: dict[str, Any] | None,
+    *,
+    now_utc: datetime,
+) -> str | None:
+    if not isinstance(payload, dict):
+        return "artifact is missing or not a JSON object"
+    schema_version = payload.get("schema_version")
+    if (
+        payload.get("contract") != AI_REGIME_SUPERVISION_CONTRACT
+        or isinstance(schema_version, bool)
+        or schema_version != 1
+    ):
+        return "contract or schema_version is invalid"
+    stored = str(payload.get("contract_sha256") or "")
+    body = {key: item for key, item in payload.items() if key != "contract_sha256"}
+    try:
+        raw = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return "sealed body is not canonical JSON"
+    if len(stored) != 64 or stored != hashlib.sha256(raw).hexdigest():
+        return "contract_sha256 does not seal the artifact body"
+    generated_at = _strict_aware_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return "generated_at_utc is missing or invalid"
+    if generated_at > now_utc:
+        return "generated_at_utc is future-dated"
+    last_tuned_at = _strict_aware_utc(payload.get("last_tuned_at_utc"))
+    if last_tuned_at is None or last_tuned_at > generated_at:
+        return "last_tuned_at_utc is missing, invalid, or later than generation"
+    if payload.get("ai_role") != "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY":
+        return "ai_role must be regime review and periodic tuning only"
+    if str(payload.get("ai_order_authority") or "").strip().upper() != "NONE":
+        return "ai_order_authority must be NONE"
+    if payload.get("live_permission") is not False:
+        return "live_permission must be false"
+    if payload.get("broker_mutation_allowed") is not False:
+        return "broker_mutation_allowed must be false"
+    if not isinstance(payload.get("pairs"), dict):
+        return "pairs must be a JSON object"
+    for pair, row in payload["pairs"].items():
+        if not str(pair).strip():
+            return "pair name must be non-empty"
+        if not isinstance(row, dict) or set(row) != AI_REGIME_SUPERVISION_PAIR_KEYS:
+            return f"{pair}: pair row must contain exact mode/reason/expires_at_utc keys"
+        mode = row.get("mode")
+        if not isinstance(mode, str) or mode not in AI_REGIME_SUPERVISION_MODES:
+            return f"{pair}: mode must be GO, CAUTION, or STOP"
+        reason = row.get("reason")
+        if (
+            not isinstance(reason, str)
+            or reason != reason.strip()
+            or not 1 <= len(reason) <= 500
+        ):
+            return f"{pair}: reason must be non-empty and at most 500 characters"
+        expires_at = _strict_aware_utc(row.get("expires_at_utc"))
+        if (
+            expires_at is None
+            or not last_tuned_at < expires_at <= last_tuned_at + timedelta(hours=6)
+        ):
+            return f"{pair}: expires_at_utc must be aware and within six hours of tuning"
+    return None
 
 
 def _journal_evidence(path: Path) -> dict[str, Any]:
@@ -1607,7 +1782,7 @@ def _suspected_cause(
 ) -> str | None:
     hints = codex_logs.get("cause_hints") if isinstance(codex_logs.get("cause_hints"), list) else []
     if status == "BROKEN":
-        return "qr-trader automation config does not match the active hourly gpt-5.5 high live-root policy."
+        return "qr-trader automation config does not match the active six-hour gpt-5.5 high supervisor policy."
     if status == "UNKNOWN":
         return "Run evidence is insufficient; automation config exists but no journal, decision, or memory timestamp was usable."
     if guardian.get("issues"):
@@ -1621,7 +1796,7 @@ def _suspected_cause(
                 "Codex logs show a recent qr-trader/live-root session, but trader artifacts are stale; "
                 "inspect the latest Codex thread for preflight, quota, or early-exit failure."
             )
-        return "No explicit Codex log cause was visible; latest trader artifacts missed the expected hourly window."
+        return "No explicit Codex log cause was visible; latest supervisor artifacts missed the expected six-hour window."
     return None
 
 
@@ -1634,7 +1809,7 @@ def _recommended_operator_action(
         return {
             "code": "REPAIR_QR_TRADER_AUTOMATION_CONFIG",
             "requires_explicit_operator_approval": True,
-            "command": "open Codex automation qr-trader settings and restore ACTIVE gpt-5.5 high hourly live-root policy",
+            "command": "open Codex automation qr-trader settings and restore the ACTIVE gpt-5.5 high six-hour supervisor policy",
             "reason": "; ".join(item["code"] for item in config_issues),
         }
     if status == "STALE":
@@ -1642,7 +1817,7 @@ def _recommended_operator_action(
             "code": "INSPECT_CODEX_QR_TRADER_THREAD",
             "requires_explicit_operator_approval": False,
             "command": "review latest QR vNext Trader Codex thread/logs; do not run live trader manually from the watchdog",
-            "reason": "scheduled-run evidence missed the hourly cadence plus grace",
+            "reason": "scheduled-run evidence missed the six-hour cadence plus grace",
         }
     if guardian.get("issues"):
         return {
@@ -1727,6 +1902,10 @@ def _render_report(payload: dict[str, Any]) -> str:
         "",
         "## Latest Run Evidence",
         "",
+        f"- Evidence priority: `{evidence.get('evidence_priority')}`",
+        f"- AI regime supervision: `{payload.get('last_ai_regime_supervision_at')}` "
+        f"valid_sealed=`{evidence.get('ai_regime_supervision', {}).get('valid_sealed_artifact')}` "
+        f"path=`{evidence.get('ai_regime_supervision', {}).get('path')}`",
         f"- Journal: `{payload['last_journal_at']}` path=`{evidence['journal']['path']}`",
         f"- Decision artifacts: `{payload['last_decision_artifact_at']}`",
         f"- Automation memory: `{payload['last_memory_at']}` path=`{evidence['memory']['path']}`",
@@ -1871,6 +2050,22 @@ def _parse_utc(value: Any) -> datetime | None:
     except ValueError:
         return None
     return _utc(parsed)
+
+
+def _strict_aware_utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    text = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _utc(value: datetime) -> datetime:

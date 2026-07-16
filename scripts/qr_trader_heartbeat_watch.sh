@@ -30,9 +30,9 @@ LIVE_ROOT="${QR_LIVE_ROOT:-/Users/tossaki/App/QuantRabbit-live}"
 STATE_FILE="${QR_WEEKEND_STATE:-$HOME/.codex/quant_rabbit_weekend_task_state.json}"
 ALERT_LOG="${QR_HEARTBEAT_ALERT_LOG:-$LIVE_ROOT/logs/heartbeat_alerts.log}"
 STAMP_FILE="${QR_HEARTBEAT_STAMP:-$HOME/.cache/qr_trader_heartbeat_last_alert}"
-# 3 × 60-minute cadence + 5 min slack. The cadence is the qr-trader RRULE
+# 3 × 360-minute supervision cadence + 5 min slack. The cadence is the qr-trader RRULE
 # interval; change both together.
-MAX_SILENCE_SECONDS="${QR_HEARTBEAT_MAX_SILENCE:-18300}"
+MAX_SILENCE_SECONDS="${QR_HEARTBEAT_MAX_SILENCE:-65100}"
 ALERT_THROTTLE_SECONDS="${QR_HEARTBEAT_THROTTLE:-3600}"
 
 now_epoch=$(date +%s)
@@ -53,17 +53,31 @@ market_state=$(PYTHONPATH="$LIVE_ROOT/src" /usr/bin/python3 -c \
   2>/dev/null || echo UNKNOWN)
 if [ "$market_state" = "CLOSED" ]; then exit 0; fi
 
-# --- 3. Heartbeat: newest artifact the trader cycle always writes ---
+# --- 3. Heartbeat: prefer the sealed, tuning-only AI supervision artifact.
+# Legacy trader-cycle artifacts remain a fallback during cutover, but they may
+# not mask a stale supervisor once a valid authority-NONE artifact exists. ---
 newest_mtime=0
-for f in \
-  "$LIVE_ROOT/data/codex_trader_decision_response.json" \
-  "$LIVE_ROOT/data/broker_snapshot.json" \
-  "$LIVE_ROOT/logs/trader_journal.jsonl"; do
-  if [ -f "$f" ]; then
-    m=$(stat -f %m "$f" 2>/dev/null || echo 0)
-    if [ "$m" -gt "$newest_mtime" ]; then newest_mtime=$m; fi
+supervision_artifact="$LIVE_ROOT/data/ai_regime_supervision.json"
+supervision_present=0
+if [ -f "$supervision_artifact" ]; then
+  supervision_present=1
+  supervision_epoch=$(/usr/bin/python3 -c 'import datetime,hashlib,json,sys;p=json.load(open(sys.argv[1]));s=p.pop("contract_sha256","");v=p.get("schema_version");ts=datetime.datetime.fromisoformat(str(p.get("generated_at_utc","")).replace("Z","+00:00"));raw=json.dumps(p,ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False).encode();ok=p.get("contract")=="QR_AI_REGIME_SUPERVISION_V1" and type(v) is int and v==1 and ts.tzinfo is not None and int(ts.timestamp())<=int(sys.argv[2]) and p.get("ai_role")=="REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY" and p.get("ai_order_authority")=="NONE" and p.get("live_permission") is False and p.get("broker_mutation_allowed") is False and isinstance(p.get("pairs"),dict) and len(s)==64 and s==hashlib.sha256(raw).hexdigest();print(int(ts.timestamp())) if ok else sys.exit(1)' "$supervision_artifact" "$now_epoch" 2>/dev/null || echo 0)
+  if [ "$supervision_epoch" -gt 0 ]; then
+    newest_mtime=$supervision_epoch
   fi
-done
+fi
+
+if [ "$supervision_present" -eq 0 ]; then
+  for f in \
+    "$LIVE_ROOT/data/codex_trader_decision_response.json" \
+    "$LIVE_ROOT/data/broker_snapshot.json" \
+    "$LIVE_ROOT/logs/trader_journal.jsonl"; do
+    if [ -f "$f" ]; then
+      m=$(stat -f %m "$f" 2>/dev/null || echo 0)
+      if [ "$m" -gt "$newest_mtime" ]; then newest_mtime=$m; fi
+    fi
+  done
+fi
 
 if [ "$newest_mtime" -eq 0 ]; then
   silence="unknown (no heartbeat artifacts found)"
@@ -91,7 +105,7 @@ msg="QuantRabbit trader silent for ${silence} during open market. Check Codex cr
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $msg" >> "$ALERT_LOG"
 /usr/bin/osascript -e "display notification \"$msg\" with title \"QR trader heartbeat\" sound name \"Basso\"" 2>/dev/null
 
-# --- 5. Self-heal: relaunch Codex.app when its process is gone. The hourly
+# --- 5. Self-heal: relaunch Codex.app when its process is gone. The six-hour
 #        scheduler lives inside the app, so an app crash/quit IS a dead
 #        trader; relaunching restores the already-enabled automation without
 #        touching task state. When the process is alive (e.g. the 2026-06-09

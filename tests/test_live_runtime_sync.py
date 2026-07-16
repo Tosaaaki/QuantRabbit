@@ -569,9 +569,9 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("QR vNext Trader automation is not ACTIVE", result.stderr)
+            self.assertIn("QR AI Supervisor automation is not ACTIVE", result.stderr)
 
-    def test_live_only_blocks_stale_accepted_only_automation_prompt(self) -> None:
+    def test_live_only_blocks_supervisor_prompt_with_live_wrapper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -587,7 +587,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 prompt="\n".join(
                     [
                         _current_trader_prompt_sentinel(),
-                        "After the receipt is ACCEPTED by `gpt-trader-decision`, stop here.",
+                        "Execute run-autotrade-live.sh after the review.",
                     ]
                 ),
             )
@@ -601,9 +601,12 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("stale ACCEPTED-only gateway handoff text", result.stderr)
+            self.assertIn(
+                "forbidden live-order token: run-autotrade-live.sh",
+                result.stderr,
+            )
 
-    def test_live_only_blocks_stale_recent_receipt_stop_prompt(self) -> None:
+    def test_live_only_blocks_supervisor_prompt_with_send_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -619,7 +622,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 prompt="\n".join(
                     [
                         _current_trader_prompt_sentinel(),
-                        "STOP if `data/codex_trader_decision_response.json` was written very recently by another cycle.",
+                        "Use --send after the review.",
                     ]
                 ),
             )
@@ -633,9 +636,9 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("stale recent-receipt STOP text", result.stderr)
+            self.assertIn("forbidden live-order token: --send", result.stderr)
 
-    def test_live_only_blocks_stale_clean_tree_runtime_drift_prompt(self) -> None:
+    def test_live_only_blocks_supervisor_prompt_missing_output_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -649,7 +652,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 live,
                 status="ACTIVE",
                 prompt=_current_trader_prompt_sentinel(
-                    include_current_runtime_drift=False
+                    include_supervision_output=False
                 ),
             )
 
@@ -662,7 +665,73 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("clean-tree runtime drift allow-list is stale", result.stderr)
+            self.assertIn(
+                "QR AI Supervisor prompt is stale; missing: data/ai_regime_supervision.json",
+                result.stderr,
+            )
+
+    def test_live_only_blocks_supervisor_prompt_with_live_enable_tokens(self) -> None:
+        for forbidden in (
+            "QR_LIVE_ENABLED=1",
+            "QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1",
+        ):
+            with self.subTest(forbidden=forbidden), tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp) / "repo"
+                live = Path(tmp) / "live"
+                _init_repo(repo)
+                _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+                _run(["git", "branch", "-m", "main"], cwd=repo)
+                _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+                automation_file = Path(tmp) / "automation.toml"
+                _write_automation(
+                    automation_file,
+                    live,
+                    status="ACTIVE",
+                    prompt="\n".join(
+                        [_current_trader_prompt_sentinel(), forbidden]
+                    ),
+                )
+
+                result = _sync(
+                    repo,
+                    live,
+                    live_only=True,
+                    skip_automation_check=False,
+                    automation_file=automation_file,
+                )
+
+                self.assertEqual(result.returncode, 6)
+                self.assertIn(
+                    f"forbidden live-order token: {forbidden}",
+                    result.stderr,
+                )
+
+    def test_live_only_blocks_old_trader_automation_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(
+                automation_file,
+                live,
+                status="ACTIVE",
+                name="QR vNext Trader",
+            )
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("name must be QR AI Supervisor", result.stderr)
 
     def test_live_only_blocks_too_fast_trader_cadence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -689,7 +758,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("cadence must be 60 minutes", result.stderr)
+            self.assertIn("cadence must be 360 minutes", result.stderr)
 
 
 def _sync(
@@ -754,7 +823,8 @@ def _write_automation(
     *,
     status: str,
     prompt: str | None = None,
-    rrule: str = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+    name: str = "QR AI Supervisor",
 ) -> None:
     prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(
@@ -763,7 +833,7 @@ def _write_automation(
                 "version = 1",
                 'id = "qr-trader"',
                 'kind = "cron"',
-                'name = "QR vNext Trader"',
+                f'name = "{name}"',
                 "prompt = '''" + prompt_text + "'''",
                 f'status = "{status}"',
                 f'rrule = "{rrule}"',
@@ -779,27 +849,17 @@ def _write_automation(
 
 def _current_trader_prompt_sentinel(
     *,
-    include_current_runtime_drift: bool = True,
+    include_supervision_output: bool = True,
 ) -> str:
     lines = [
-        "In this workflow, the AI trader is this scheduled GPT-5.5/Codex role; there is no second AI decision-maker.",
-        "The deterministic draft is never the final AI decision.",
-        "Write `data/trader_decision_baseline.json` and `data/market_read_evidence_packet.json` before the GPT market read.",
-        "Author `data/codex_market_read_overlay.json`, run `trader-apply-market-read`, and never replace it downstream with deterministic output.",
-        "Run the locked handoff with QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1.",
-        "Strict economics split must preserve lifetime, recent, prior, and historical results without claiming proof from a small sample.",
-        "Every insufficient-evidence tuning review must include structured `evidence_acquisition`.",
-        "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
-        "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
+        "AI_ORDER_AUTHORITY=NONE",
+        "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
+        "Run tools/ai_regime_supervision.py to refresh the bounded supervisor artifact.",
+        "Publish only pair states from GO CAUTION STOP; these states never authorize an order.",
+        "Review pending tuning evidence in data/guardian_tuning_work_order.json.",
     ]
-    if include_current_runtime_drift:
-        lines.append(
-            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, `data/guardian_trigger_contract.json`, receipt-state drift (`data/guardian_receipt_consumption.json`, `data/guardian_receipt_operator_review.json`), named proof/acceptance evidence diffs, `data/trader_goal_loop_orchestrator.json`, `data/active_trader_contract.json`, `data/active_opportunity_board.json`, `docs/active_opportunity_board.md`, and `eurusd_short_breakout_failure_*` diffs are runtime drift and **do not** block the run."
-        )
-    else:
-        lines.append(
-            "Tracked `docs/*_report.md`, `docs/guardian_action_review.md`, and `data/guardian_trigger_contract.json` diffs are runtime drift and **do not** block the run."
-        )
+    if include_supervision_output:
+        lines.append("Write data/ai_regime_supervision.json atomically.")
     return "\n".join(lines)
 
 

@@ -15,7 +15,6 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable
 
 from quant_rabbit.guardian_events import (
@@ -59,6 +58,15 @@ from quant_rabbit.guardian_tuning_overrides import (
 MODEL = "gpt-5.5"
 ACTIONABLE_ACTIONS = {"TRADE", "ADD", "HARVEST", "REDUCE", "CANCEL_PENDING"}
 THESIS_STATES = {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}
+IMMEDIATE_AI_SUPERVISION_EVENT_TYPES = {
+    "TECHNICAL_STATE_CHANGE",
+    "SPREAD_ANOMALY",
+    "VOLATILITY_SHOCK",
+    "PERFORMANCE_DEGRADATION",
+}
+AI_ORDER_AUTHORITY_ENV = "AI_ORDER_AUTHORITY"
+AI_ORDER_AUTHORITY_NONE = "NONE"
+GUARDIAN_SUPERVISOR_ONLY_ENV = "QR_GUARDIAN_WAKE_SUPERVISOR_ONLY"
 DEFAULT_LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
 DEFAULT_CODEX_APP_BIN = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
 LEGACY_CODEX_APP_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
@@ -596,22 +604,32 @@ def _run_dispatcher_once(
         _append_log(paths.log, result)
         return result
 
-    if _route_event_to_hourly_tuning(selected, env=environ):
-        # Closed-candle P2 tuning observations are valuable training input but
-        # are not time-critical trade decisions.  Waking GPT every 30 seconds
-        # for a NO_ACTION tuning row duplicates the hourly AI's role and can
-        # repeatedly spend model capacity when the durable tuning queue is
-        # already full.  Preserve the event for the hourly cycle while keeping
-        # entry/add and active-exposure events on the event-driven GPT path.
+    if _route_event_to_scheduled_supervision(selected, env=environ):
+        # Supervisor mode keeps ordinary entry/trade and tuning observations on
+        # the scheduled review path.  Only material market-state changes wake
+        # the AI immediately.  Explicit legacy mode retains the old hourly
+        # NO_ACTION tuning route for compatibility.
+        supervisor_only = _supervisor_only_enabled(environ)
         result = {
             **result_base,
-            "status": "QUEUED_FOR_HOURLY_TUNING",
+            "status": (
+                "QUEUED_FOR_SCHEDULED_SUPERVISOR"
+                if supervisor_only
+                else "QUEUED_FOR_HOURLY_TUNING"
+            ),
             "wake_gpt": False,
             "selected_event": selected,
             "selection": selection,
-            "queued_for_hourly_tuning": True,
+            "queued_for_hourly_tuning": not supervisor_only,
+            "queued_for_scheduled_supervisor": supervisor_only,
+            "supervision_schedule": (
+                "SIX_HOURLY" if supervisor_only else "LEGACY_HOURLY"
+            ),
             "reason": (
-                "NO_ACTION TUNING_REVIEW is owned by the hourly AI; "
+                "non-material events are owned by the six-hour AI supervisor; "
+                "event-driven AI is reserved for material regime, volatility, cost, or performance change"
+                if supervisor_only
+                else "NO_ACTION TUNING_REVIEW is owned by the hourly AI; "
                 "event-driven GPT is reserved for entry/add or active-exposure decisions"
             ),
             "receipt_written": False,
@@ -1690,7 +1708,7 @@ def _select_dispatch_event(
             suppressed.append({"event": event, **retry_suppression})
             continue
         record = reviewed.get(dedupe_key) if isinstance(reviewed, dict) else None
-        if record is None and _route_event_to_hourly_tuning(event, env=env):
+        if record is None and _route_event_to_scheduled_supervision(event, env=env):
             record = hourly_routed.get(dedupe_key)
         throttle = _dispatch_throttle_seconds(event, env)
         if isinstance(record, dict):
@@ -2145,11 +2163,13 @@ def _event_is_active_or_material(event: dict[str, Any]) -> bool:
     )
 
 
-def _route_event_to_hourly_tuning(
+def _route_event_to_scheduled_supervision(
     event: dict[str, Any],
     *,
     env: dict[str, str],
 ) -> bool:
+    if _supervisor_only_enabled(env):
+        return not _event_requires_immediate_ai_supervision(event)
     if str(env.get("QR_GUARDIAN_WAKE_TUNING_MODE") or "EVENT_GPT").upper() != "HOURLY":
         return False
     return bool(
@@ -2158,6 +2178,27 @@ def _route_event_to_hourly_tuning(
         and str(event.get("action_hint") or "").upper() == "NO_ACTION"
         and str(event.get("severity") or "").upper() != "P0"
         and not _event_has_open_exposure(event)
+    )
+
+
+def _supervisor_only_enabled(env: dict[str, str]) -> bool:
+    """Fail closed unless an operator explicitly selects legacy mode with 0."""
+
+    return str(env.get(GUARDIAN_SUPERVISOR_ONLY_ENV) or "1").strip() != "0"
+
+
+def _event_requires_immediate_ai_supervision(event: dict[str, Any]) -> bool:
+    event_type = str(event.get("event_type") or "").strip().upper()
+    if event_type in IMMEDIATE_AI_SUPERVISION_EVENT_TYPES:
+        return True
+    reasons = {
+        str(reason).strip().upper()
+        for reason in event.get("wake_reason_codes", []) or []
+    }
+    return any(
+        reason in IMMEDIATE_AI_SUPERVISION_EVENT_TYPES
+        or reason == "REGIME_STATE_CHANGE"
+        for reason in reasons
     )
 
 
@@ -3318,51 +3359,33 @@ def _maybe_gateway_handoff(
     lock: dict[str, Any],
 ) -> dict[str, Any]:
     enabled = env.get("QR_GUARDIAN_WAKE_GATEWAY_HANDOFF", "0") == "1"
+    configured_authority = str(env.get(AI_ORDER_AUTHORITY_ENV) or AI_ORDER_AUTHORITY_NONE).strip().upper()
+    supervisor_only = _supervisor_only_enabled(env)
     base = {
         "enabled": enabled,
         "default_off_env": "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0",
+        "ai_order_authority": AI_ORDER_AUTHORITY_NONE,
+        "configured_ai_order_authority": configured_authority,
+        "supervisor_only": supervisor_only,
         "required_gateway": "LiveOrderGateway",
         "required_revalidators": ["guardian-action-cycle", "RiskEngine", "LiveOrderGateway"],
     }
     if not enabled:
         return {**base, "status": "SKIPPED_DEFAULT_OFF"}
-    if receipt_review is None or receipt_review.get("status") != "ACCEPTED":
-        return {**base, "status": "SKIPPED_RECEIPT_NOT_ACCEPTED"}
-    receipt = receipt_review.get("receipt") if isinstance(receipt_review.get("receipt"), dict) else {}
-    if receipt.get("gateway_required") is not True:
-        return {**base, "status": "SKIPPED_GATEWAY_REQUIRED_FALSE"}
-    if receipt.get("new_information") is not True:
-        return {**base, "status": "SKIPPED_NO_NEW_INFORMATION"}
-    reason = str(receipt.get("reason") or "").lower()
-    if "scheduled hour" in reason or "hourly" in reason or receipt.get("schedule_only") is True:
-        return {**base, "status": "SKIPPED_SCHEDULED_HOUR_ONLY"}
-    if lock.get("active"):
-        return {**base, "status": "SKIPPED_LOCK_CONFLICT", "lock": lock}
-    live_flags = {
-        "QR_LIVE_ENABLED": env.get("QR_LIVE_ENABLED", "0"),
-        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": env.get("QR_GUARDIAN_WAKE_GATEWAY_HANDOFF", "0"),
-        "QR_GUARDIAN_ACTION_EXECUTE": env.get("QR_GUARDIAN_ACTION_EXECUTE", "0"),
-    }
-    if live_flags["QR_GUARDIAN_ACTION_EXECUTE"] != "1":
-        return {**base, "status": "SKIPPED_ACTION_EXECUTE_DISABLED", "live_flags": live_flags}
-    if any(value != "1" for value in live_flags.values()):
-        return {**base, "status": "SKIPPED_LIVE_FLAGS_DISABLED", "live_flags": live_flags}
-    python_bin = env.get("QR_PYTHON", "python3")
-    cmd = [python_bin, "-m", "quant_rabbit.cli", "guardian-action-cycle"]
-    run_env = dict(env)
-    run_env["PYTHONPATH"] = str(paths.root / "src")
-    try:
-        proc = subprocess.run(cmd, cwd=str(paths.root), capture_output=True, text=True, timeout=180, env=run_env)
-    except Exception as exc:  # noqa: BLE001
-        return {**base, "status": "ACTION_CYCLE_EXCEPTION", "live_flags": live_flags, "command": cmd, "error": str(exc)}
+    # The Guardian GPT is a regime/tuning supervisor, not an order authority.
+    # This is deliberately not an opt-in switch: legacy launchd/environment
+    # flags cannot reactivate the former action-cycle handoff.  Any value other
+    # than NONE is reported as a configuration violation and still fails closed.
+    if configured_authority != AI_ORDER_AUTHORITY_NONE:
+        return {
+            **base,
+            "status": "SKIPPED_AI_ORDER_AUTHORITY_INVALID",
+            "reason": f"{AI_ORDER_AUTHORITY_ENV} must remain {AI_ORDER_AUTHORITY_NONE}",
+        }
     return {
         **base,
-        "status": "ACTION_CYCLE_CALLED" if proc.returncode == 0 else "ACTION_CYCLE_FAILED",
-        "live_flags": live_flags,
-        "command": cmd,
-        "returncode": proc.returncode,
-        "stdout_tail": (proc.stdout or "")[-1000:],
-        "stderr_tail": (proc.stderr or "")[-1000:],
+        "status": "SKIPPED_AI_ORDER_AUTHORITY_NONE",
+        "reason": "AI supervisor has no broker-order or guardian action-cycle authority",
     }
 
 
@@ -3373,7 +3396,6 @@ def _write_action_review(
     action_receipt_path: Path | None = None,
     now: datetime | None = None,
 ) -> None:
-    clock = _utc(now)
     latest_receipt = _latest_accepted_receipt_payload(action_receipt_path)
     receipt_written = bool(payload.get("receipt_written", False))
     receipt_exists = bool(latest_receipt)

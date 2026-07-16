@@ -23,10 +23,14 @@
     <key>PYTHONPATH</key>
     <string>src</string>
     <key>QR_GUARDIAN_WAKE_GATEWAY_HANDOFF</key>
-    <string>1</string>
+    <string>0</string>
     <key>QR_GUARDIAN_ACTION_EXECUTE</key>
-    <string>1</string>
+    <string>0</string>
     <key>QR_LIVE_ENABLED</key>
+    <string>0</string>
+    <key>AI_ORDER_AUTHORITY</key>
+    <string>NONE</string>
+    <key>QR_GUARDIAN_WAKE_SUPERVISOR_ONLY</key>
     <string>1</string>
     <key>QR_GUARDIAN_WAKE_TUNING_MODE</key>
     <string>HOURLY</string>

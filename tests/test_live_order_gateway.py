@@ -269,6 +269,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self._guardian_tmp = tempfile.TemporaryDirectory()
+        self._original_ai_order_authority = execution_module.AI_ORDER_AUTHORITY
         self._original_per_trade_reader = execution_module._per_trade_risk_from_state
         self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
         self._original_target_trades_reader = execution_module._target_trades_per_day_from_state
@@ -334,6 +335,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
         execution_module._per_trade_risk_from_state = lambda: TEST_PER_TRADE_RISK_JPY
         execution_module._daily_risk_budget_from_state = lambda path=None: TEST_DAILY_RISK_BUDGET_JPY
         execution_module._target_trades_per_day_from_state = lambda path=None: None
+        # Legacy gateway fixtures exercise their original risk boundary.  Tests
+        # for the production AI-authority kill switch opt back into the fixed
+        # NONE state explicitly below.
+        execution_module.AI_ORDER_AUTHORITY = "LEGACY_TEST_FIXTURE"
         guardian_paths = _write_empty_guardian_artifacts(Path(self._guardian_tmp.name))
         os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(guardian_paths["watchdog"])
         os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(guardian_paths["consumption"])
@@ -345,6 +350,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
         self._execution_cost_floor_patch.stop()
         self._final_pre_post_boundary_patch.stop()
         self._pre_post_reconcile_patch.stop()
+        execution_module.AI_ORDER_AUTHORITY = self._original_ai_order_authority
         execution_module._per_trade_risk_from_state = self._original_per_trade_reader
         execution_module._daily_risk_budget_from_state = self._original_daily_budget_reader
         execution_module._target_trades_per_day_from_state = self._original_target_trades_reader
@@ -3296,6 +3302,64 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     "GPT_GUARDIAN_ACTION_RECEIPT_PROVENANCE_INVALID_AT_GATEWAY_ENTRY",
                     {issue["code"] for issue in result["risk_issues"]},
                 )
+
+    def test_ai_order_authority_none_blocks_ai_receipt_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane_id = "lane:EUR_USD:LONG"
+            verified = _write_ordinary_verified_decision(root, lane_id=lane_id)
+            client = FakeExecutionClient()
+
+            with patch.object(execution_module, "AI_ORDER_AUTHORITY", "NONE"):
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    verified_decision_path=verified,
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        lane_id=lane_id,
+                        metadata=_ordinary_claim_metadata(),
+                    ),
+                    lane_id=lane_id,
+                    send=True,
+                    confirm_live=True,
+                )
+
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "AI_ORDER_AUTHORITY_NONE",
+                {issue["code"] for issue in result["risk_issues"]},
+            )
+
+    def test_ai_order_authority_gate_is_narrow_to_explicit_ai_authors(self) -> None:
+        with patch.object(execution_module, "AI_ORDER_AUTHORITY", "NONE"):
+            for author_kind in ("AI", "CODEX_MARKET_READ", "codex_market_read"):
+                with self.subTest(author_kind=author_kind):
+                    self.assertEqual(
+                        [
+                            issue.code
+                            for issue in execution_module._ai_order_authority_live_send_issues(
+                                {"author_kind": author_kind}
+                            )
+                        ],
+                        ["AI_ORDER_AUTHORITY_NONE"],
+                    )
+
+            for author_kind in ("FAST_BOT", "DETERMINISTIC_EXECUTOR", ""):
+                with self.subTest(author_kind=author_kind):
+                    self.assertEqual(
+                        execution_module._ai_order_authority_live_send_issues(
+                            {"author_kind": author_kind}
+                        ),
+                        [],
+                    )
 
     def test_frozen_numeric_proof_rejects_forged_net_cost_identities(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

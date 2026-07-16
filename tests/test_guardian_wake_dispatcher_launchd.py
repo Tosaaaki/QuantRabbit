@@ -22,7 +22,7 @@ class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
             root / "data" / "position_guardian_broker_snapshot.json",
         )
 
-    def test_plist_routes_important_wakes_through_guarded_live_action_cycle(self) -> None:
+    def test_plist_runs_supervisor_without_ai_order_authority(self) -> None:
         payload = plistlib.loads(PLIST.read_bytes())
 
         self.assertEqual(payload["Label"], "com.quantrabbit.guardian-wake-dispatcher")
@@ -47,9 +47,11 @@ class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
             "/Applications/ChatGPT.app/Contents/Resources/codex",
         )
         self.assertEqual(env["QR_GUARDIAN_WAKE_CODEX_PREFLIGHT"], "1")
-        self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "1")
-        self.assertEqual(env["QR_GUARDIAN_ACTION_EXECUTE"], "1")
-        self.assertEqual(env["QR_LIVE_ENABLED"], "1")
+        self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "0")
+        self.assertEqual(env["QR_GUARDIAN_ACTION_EXECUTE"], "0")
+        self.assertEqual(env["QR_LIVE_ENABLED"], "0")
+        self.assertEqual(env["AI_ORDER_AUTHORITY"], "NONE")
+        self.assertEqual(env["QR_GUARDIAN_WAKE_SUPERVISOR_ONLY"], "1")
         self.assertEqual(env["QR_GUARDIAN_WAKE_TUNING_MODE"], "HOURLY")
         self.assertEqual(env["CODEX_DISABLE_UPDATE_CHECK"], "1")
 

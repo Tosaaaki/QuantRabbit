@@ -82,6 +82,7 @@ data/technical_forecast_forward_shadow_ledger.jsonl|\
 data/technical_forecast_forward_outcome_ledger.jsonl|\
 data/technical_forecast_forward_scorecard.json|\
 data/hierarchical_bot_regime.json|\
+data/ai_regime_supervision.json|\
 data/fast_bot_shadow.json|\
 data/fast_bot_shadow_ledger.jsonl|\
 data/fast_bot_outcome_ledger.jsonl|\

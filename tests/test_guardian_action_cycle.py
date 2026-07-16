@@ -170,7 +170,7 @@ class GuardianActionCycleTest(unittest.TestCase):
                 codes = {issue["code"] for issue in result["strict_receipt_issues"]}
                 self.assertIn("GUARDIAN_ACTION_THESIS_STATE_BLOCKS_ENTRY", codes)
 
-    def test_live_order_gateway_required_for_trade_add(self) -> None:
+    def test_ai_order_authority_none_blocks_gateway_even_with_legacy_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
             calls: list[tuple[str, bool]] = []
@@ -183,15 +183,72 @@ class GuardianActionCycleTest(unittest.TestCase):
                         "QR_LIVE_ENABLED": "1",
                         "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
                         "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        "AI_ORDER_AUTHORITY": "GUARDIAN_ACTION_CYCLE",
                     },
                     command_runner=_command_ok,
                     gateway_runner=_gateway(calls, status="SENT"),
                 )
 
-            self.assertEqual(result["status"], "EXECUTED")
+            self.assertEqual(result["status"], "VERIFIED_NO_SEND")
             self.assertEqual(result["required_gateway"], "LiveOrderGateway")
-            self.assertEqual(calls, [(LANE_ID, True)])
+            self.assertEqual(calls, [])
+            self.assertIn("AI_ORDER_AUTHORITY_NONE", result["no_send_reason"])
+            self.assertEqual(
+                result["execution_flags"]["configured_ai_order_authority"],
+                "GUARDIAN_ACTION_CYCLE",
+            )
+            self.assertEqual(result["execution_flags"]["ai_order_authority"], "NONE")
+            self.assertFalse(result["execution_flags"]["ai_order_authorized"])
             self.assertTrue(result["no_direct_oanda"])
+
+    def test_ai_order_authority_none_blocks_every_ai_mutating_action(self) -> None:
+        for action in ("TRADE", "ADD", "HARVEST", "REDUCE", "CANCEL_PENDING"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                position_action = action in {"HARVEST", "REDUCE"}
+                event_overrides = {"action_hint": action}
+                receipt_overrides = {"action": action}
+                manual_position = None
+                if position_action:
+                    event_overrides["details"] = {
+                        "executable_reduction_target_trade_ids": ["system-a"],
+                    }
+                    receipt_overrides["trade_ids"] = ["system-a"]
+                    manual_position = {
+                        "trade_id": "system-a",
+                        "owner": "trader",
+                        "unrealized_pl_jpy": 20.0,
+                    }
+                paths = _fixture(
+                    Path(tmp),
+                    event_overrides=event_overrides,
+                    receipt_overrides=receipt_overrides,
+                    manual_position=manual_position,
+                )
+                calls: list[tuple[str, bool]] = []
+
+                with patch(
+                    "quant_rabbit.guardian_action_cycle._risk_result",
+                    return_value={"status": "ALLOWED", "allowed": True},
+                ):
+                    result = run_guardian_action_cycle(
+                        paths=paths,
+                        now=NOW,
+                        env={
+                            "QR_LIVE_ENABLED": "1",
+                            "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                            "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                            "AI_ORDER_AUTHORITY": " none ",
+                        },
+                        command_runner=_command_ok,
+                        gateway_runner=_gateway(calls, status="SENT"),
+                    )
+
+                self.assertEqual(result["strict_receipt_issues"], [])
+                self.assertIn("AI_ORDER_AUTHORITY_NONE", result["no_send_reason"])
+                self.assertEqual(result["execution_flags"]["ai_order_authority"], "NONE")
+                self.assertFalse(result["execution_flags"]["ai_order_authorized"])
+                self.assertFalse(result["executed"])
+                self.assertEqual(calls, [])
 
     def test_retained_technical_input_stale_blocks_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -819,7 +876,7 @@ class GuardianActionCycleTest(unittest.TestCase):
             )
             self.assertFalse(result["executed"])
 
-    def test_duplicate_receipt_cannot_execute_twice(self) -> None:
+    def test_repeated_receipt_cannot_reenable_retired_ai_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
             calls: list[tuple[str, bool]] = []
@@ -827,6 +884,7 @@ class GuardianActionCycleTest(unittest.TestCase):
                 "QR_LIVE_ENABLED": "1",
                 "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
                 "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                "AI_ORDER_AUTHORITY": "GUARDIAN_ACTION_CYCLE",
             }
 
             with patch("quant_rabbit.guardian_action_cycle._risk_result", return_value={"status": "ALLOWED", "allowed": True}):
@@ -845,11 +903,11 @@ class GuardianActionCycleTest(unittest.TestCase):
                     gateway_runner=_gateway(calls, status="SENT"),
                 )
 
-            self.assertEqual(first["status"], "EXECUTED")
-            self.assertEqual(second["status"], "REJECTED")
-            self.assertEqual(calls, [(LANE_ID, True)])
-            codes = {issue["code"] for issue in second["strict_receipt_issues"]}
-            self.assertIn("GUARDIAN_ACTION_DUPLICATE_RECEIPT", codes)
+            self.assertEqual(first["status"], "VERIFIED_NO_SEND")
+            self.assertEqual(second["status"], "VERIFIED_NO_SEND")
+            self.assertEqual(calls, [])
+            self.assertIn("AI_ORDER_AUTHORITY_NONE", first["no_send_reason"])
+            self.assertIn("AI_ORDER_AUTHORITY_NONE", second["no_send_reason"])
 
     def test_hold_and_no_action_never_execute_and_mark_consumed(self) -> None:
         for action in ("HOLD", "NO_ACTION"):

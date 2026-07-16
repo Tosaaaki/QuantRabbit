@@ -146,6 +146,15 @@ TARGET_PATH_LIVE_LEARNING_PREBOUNDED_REASON = (
 )
 FORECAST_S5_SECONDS = 5
 FORECAST_S5_MAX_WINDOW_SECONDS = 15 * 60
+# AI is a supervisory/tuning layer in the fast-bot architecture.  Keep its
+# broker-entry authority fixed off at the last shared order gateway so a stale
+# scheduler, replayed verified receipt, or accidentally re-enabled Guardian
+# handoff cannot turn an AI market read into a broker POST.  This is deliberately
+# scoped to explicit AI author identities; deterministic protection uses the
+# separate PositionProtectionGateway and a future FAST_BOT author identity is
+# not rejected by this authority boundary.
+AI_ORDER_AUTHORITY = "NONE"
+AI_ORDER_AUTHOR_KINDS = frozenset({"AI", "CODEX_MARKET_READ"})
 PRE_ENTRY_FORECAST_CYCLE_RE = re.compile(
     r"^pre-entry-forecast-refresh:"
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
@@ -10792,6 +10801,7 @@ def _gpt_verified_decision_live_send_issues(
         if isinstance(decision.get("decision_provenance"), dict)
         else {}
     )
+    issues.extend(_ai_order_authority_live_send_issues(provenance))
     if action == "TRADE":
         issues.extend(
             _codex_capital_allocation_live_send_issues(
@@ -10914,6 +10924,31 @@ def _gpt_verified_decision_live_send_issues(
                 )
 
     return [issue.__dict__ for issue in issues]
+
+
+def _ai_order_authority_live_send_issues(
+    provenance: dict[str, Any],
+) -> list[RiskIssue]:
+    """Reject explicit AI order authors while AI order authority is NONE.
+
+    The author check is intentionally exact rather than prefix-based.  Unknown
+    or malformed receipt authors continue to fail through the existing verified
+    receipt contract, while an explicit future ``FAST_BOT`` provenance is left
+    for its own deterministic gateway contract instead of being mislabeled AI.
+    """
+
+    author_kind = str(provenance.get("author_kind") or "").strip().upper()
+    if (
+        AI_ORDER_AUTHORITY == "NONE"
+        and author_kind in AI_ORDER_AUTHOR_KINDS
+    ):
+        return [
+            RiskIssue(
+                "AI_ORDER_AUTHORITY_NONE",
+                f"{author_kind} may supervise or tune the trading bot but cannot authorize a broker entry while AI_ORDER_AUTHORITY=NONE",
+            )
+        ]
+    return []
 
 
 def verified_trade_size_multiple(

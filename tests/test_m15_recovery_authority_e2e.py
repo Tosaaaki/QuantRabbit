@@ -1100,9 +1100,20 @@ class M15RecoveryAuthorityE2ETest(unittest.TestCase):
                         )
                     )
                     order = payload["orders"][0] if batch else payload
-                    self.assertTrue(summary.sent, order)
-                    self.assertEqual(len(client.orders), 1)
-                    request = client.orders[0]
+                    self.assertFalse(summary.sent, order)
+                    self.assertEqual(client.orders, [])
+                    self.assertEqual(order["status"], "BLOCKED")
+                    self.assertFalse(order["sent"])
+                    self.assertIsNone(order["response"])
+                    self.assertIn(
+                        "AI_ORDER_AUTHORITY_NONE",
+                        {
+                            issue.get("code")
+                            for issue in order["risk_issues"]
+                            if isinstance(issue, dict)
+                        },
+                    )
+                    request = order["order_request"]
                     self.assertEqual(request["type"], "STOP")
                     self.assertEqual(request["units"], f"-{intent['units']}")
                     self.assertEqual(request["price"], f"{intent['entry']:.5f}")
@@ -1128,34 +1139,30 @@ class M15RecoveryAuthorityE2ETest(unittest.TestCase):
                         _manual_position_bytes(client.snapshot_value),
                         before_manual,
                     )
-                    final_boundary = order["pre_post_reconciliation"][
-                        "final_post_reservation_boundary"
-                    ]
-                    final_recheck = final_boundary[
-                        "m15_recovery_micro_final_recheck"
-                    ]
                     self.assertEqual(
-                        final_recheck["receipt_sha256"],
+                        order["pre_post_reconciliation"]["status"],
+                        "NOT_RUN",
+                    )
+                    self.assertIn(
+                        "M15_RECOVERY_RISK_REVALIDATED",
+                        {
+                            issue.get("code")
+                            for issue in order["risk_issues"]
+                            if isinstance(issue, dict)
+                        },
+                    )
+                    self.assertEqual(
+                        intent["metadata"]["m15_recovery_micro_receipt_sha256"],
                         producer_digests["receipt"],
                     )
                     self.assertEqual(
-                        final_recheck["forecast_binding_sha256"],
+                        intent["metadata"]["forecast_m15_recovery_binding_sha256"],
                         producer_digests["forecast"],
                     )
                     self.assertEqual(
-                        final_recheck["lane_binding_sha256"],
+                        intent["metadata"]["m15_recovery_lane_binding_sha256"],
                         producer_digests["lane"],
                     )
-                    guardian_recheck = final_boundary[
-                        "guardian_action_receipt_scope_recheck"
-                    ]
-                    self.assertEqual(guardian_recheck["status"], "PASSED")
-                    self.assertEqual(
-                        guardian_recheck["scope"],
-                        "GLOBAL_MARGIN_OBSERVATION",
-                    )
-                    self.assertFalse(guardian_recheck["global_safety"])
-                    self.assertTrue(guardian_recheck["digest_matches"])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import plistlib
@@ -18,6 +19,7 @@ from quant_rabbit.qr_trader_run_watchdog import WatchdogPaths, run_watchdog
 ROOT = Path(__file__).resolve().parents[1]
 PLIST = ROOT / "scripts" / "guardian" / "com.quantrabbit.qr-trader-run-watchdog.plist"
 WATCHDOG_SOURCE = ROOT / "src" / "quant_rabbit" / "qr_trader_run_watchdog.py"
+HEARTBEAT_SOURCE = ROOT / "scripts" / "qr_trader_heartbeat_watch.sh"
 
 
 class QRTraderRunWatchdogTest(unittest.TestCase):
@@ -50,9 +52,9 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, automation_dir, paths = _fixture(tmp, now=now)
             _write_automation(automation_dir)
-            _write_decision(root, _dt("2026-07-01T01:30:00+00:00"))
-            _write_journal(root, _dt("2026-07-01T01:29:00+00:00"))
-            _write_memory(automation_dir, _dt("2026-07-01T01:31:00+00:00"))
+            _write_decision(root, _dt("2026-06-30T20:30:00+00:00"))
+            _write_journal(root, _dt("2026-06-30T20:29:00+00:00"))
+            _write_memory(automation_dir, _dt("2026-06-30T20:31:00+00:00"))
 
             payload = run_watchdog(paths=paths, now_utc=now)
 
@@ -60,6 +62,162 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertTrue(payload["missed_expected_window"])
             self.assertIn("QR_TRADER_RUN_STALE", _issue_codes(payload))
             self.assertEqual(payload["severity"], "P0")
+
+    def test_valid_sealed_ai_supervision_is_preferred_run_evidence(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_decision(root, _dt("2026-07-01T02:59:00+00:00"))
+            _write_ai_regime_supervision(
+                root,
+                generated_at=_dt("2026-07-01T02:30:00+00:00"),
+                body_overrides={
+                    "pairs": {
+                        "EUR_USD": {
+                            "mode": "CAUTION",
+                            "reason": "bounded volatility transition review",
+                            "expires_at_utc": "2026-07-01T08:30:00+00:00",
+                        }
+                    }
+                },
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["status"], "OK")
+            self.assertEqual(payload["expected_cadence_minutes"], 360)
+            self.assertEqual(payload["grace_minutes"], 15)
+            self.assertEqual(payload["threshold_minutes"], 375)
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:30:00+00:00")
+            self.assertEqual(
+                payload["last_trader_run_source"],
+                "ai_regime_supervision.generated_at_utc",
+            )
+            self.assertEqual(
+                payload["latest_run_evidence"]["evidence_priority"],
+                "AI_REGIME_SUPERVISION",
+            )
+            self.assertTrue(
+                payload["latest_run_evidence"]["ai_regime_supervision"]["valid_sealed_artifact"]
+            )
+
+    def test_existing_invalid_ai_supervision_fails_closed_without_legacy_fallback(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        for authority, broker_mutation in (("TRADE", False), ("NONE", True)):
+            with self.subTest(authority=authority, broker_mutation=broker_mutation), tempfile.TemporaryDirectory() as tmp:
+                root, automation_dir, paths = _fixture(tmp, now=now)
+                _write_automation(automation_dir)
+                _write_decision(root, _dt("2026-07-01T02:58:00+00:00"))
+                _write_ai_regime_supervision(
+                    root,
+                    generated_at=_dt("2026-07-01T02:59:00+00:00"),
+                    authority=authority,
+                    broker_mutation_allowed=broker_mutation,
+                )
+
+                payload = run_watchdog(paths=paths, now_utc=now)
+
+                self.assertEqual(payload["status"], "BROKEN")
+                self.assertIsNone(payload["last_trader_run_source"])
+                self.assertEqual(
+                    payload["latest_run_evidence"]["evidence_priority"],
+                    "INVALID_AI_REGIME_SUPERVISION_FAIL_CLOSED",
+                )
+                self.assertFalse(
+                    payload["latest_run_evidence"]["ai_regime_supervision"]["valid_sealed_artifact"]
+                )
+                self.assertIn("AI_REGIME_SUPERVISION_INVALID", _issue_codes(payload))
+
+    def test_ai_supervision_consumer_rejects_invalid_boundary_shape_and_future_clock(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        cases = (
+            ({"schema_version": True}, "contract or schema_version"),
+            ({"ai_role": "ORDER_DECISION"}, "ai_role"),
+            ({"live_permission": True}, "live_permission"),
+            ({"pairs": []}, "pairs"),
+        )
+        for mutation, expected_reason in cases:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root, automation_dir, paths = _fixture(tmp, now=now)
+                _write_automation(automation_dir)
+                _write_decision(root, _dt("2026-07-01T02:58:00+00:00"))
+                _write_ai_regime_supervision(
+                    root,
+                    generated_at=_dt("2026-07-01T02:59:00+00:00"),
+                    body_overrides=mutation,
+                )
+
+                payload = run_watchdog(paths=paths, now_utc=now)
+
+                supervision = payload["latest_run_evidence"]["ai_regime_supervision"]
+                self.assertFalse(supervision["valid_sealed_artifact"])
+                self.assertIn(expected_reason, supervision["invalid_reason"])
+                self.assertEqual(
+                    payload["latest_run_evidence"]["evidence_priority"],
+                    "INVALID_AI_REGIME_SUPERVISION_FAIL_CLOSED",
+                )
+                self.assertEqual(payload["status"], "BROKEN")
+                self.assertIsNone(payload["last_trader_run_source"])
+                self.assertIn("AI_REGIME_SUPERVISION_INVALID", _issue_codes(payload))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_decision(root, _dt("2026-07-01T02:58:00+00:00"))
+            _write_ai_regime_supervision(
+                root,
+                generated_at=_dt("2026-07-01T03:00:01+00:00"),
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            supervision = payload["latest_run_evidence"]["ai_regime_supervision"]
+            self.assertFalse(supervision["valid_sealed_artifact"])
+            self.assertEqual(supervision["invalid_reason"], "generated_at_utc is future-dated")
+            self.assertEqual(payload["status"], "BROKEN")
+            self.assertIsNone(payload["last_trader_run_source"])
+            self.assertEqual(
+                payload["latest_run_evidence"]["evidence_priority"],
+                "INVALID_AI_REGIME_SUPERVISION_FAIL_CLOSED",
+            )
+            self.assertIn("AI_REGIME_SUPERVISION_INVALID", _issue_codes(payload))
+
+    def test_sealed_malformed_ai_supervision_pair_row_is_broken(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        valid_row = {
+            "mode": "GO",
+            "reason": "bounded six-hour review",
+            "expires_at_utc": "2026-07-01T08:59:00+00:00",
+        }
+        malformed_rows = (
+            {**valid_row, "units": 1000},
+            {key: value for key, value in valid_row.items() if key != "reason"},
+            {**valid_row, "mode": "PAUSE"},
+            {**valid_row, "mode": "go"},
+            {**valid_row, "reason": " "},
+            {**valid_row, "reason": " padded reason "},
+            {**valid_row, "expires_at_utc": "2026-07-01T08:59:00"},
+            {**valid_row, "expires_at_utc": "2026-07-01T09:00:00+00:00"},
+        )
+        for row in malformed_rows:
+            with self.subTest(row=row), tempfile.TemporaryDirectory() as tmp:
+                root, automation_dir, paths = _fixture(tmp, now=now)
+                _write_automation(automation_dir)
+                _write_decision(root, _dt("2026-07-01T02:58:00+00:00"))
+                _write_ai_regime_supervision(
+                    root,
+                    generated_at=_dt("2026-07-01T02:59:00+00:00"),
+                    body_overrides={"pairs": {"EUR_USD": row}},
+                )
+
+                payload = run_watchdog(paths=paths, now_utc=now)
+
+                supervision = payload["latest_run_evidence"]["ai_regime_supervision"]
+                self.assertEqual(payload["status"], "BROKEN")
+                self.assertFalse(supervision["valid_sealed_artifact"])
+                self.assertIsNone(payload["last_trader_run_source"])
+                self.assertIn("AI_REGIME_SUPERVISION_INVALID", _issue_codes(payload))
 
     def test_weekend_paused_trader_automation_is_ok(self) -> None:
         now = _dt("2026-07-03T21:30:00+00:00")  # Saturday 06:30 JST.
@@ -129,10 +287,10 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
 
             payload = run_watchdog(paths=paths, now_utc=now)
 
-            self.assertEqual(payload["status"], "STALE")
-            self.assertEqual(payload["runtime_status"], "STALE")
+            self.assertEqual(payload["status"], "BLOCKED")
+            self.assertEqual(payload["runtime_status"], "OK")
             self.assertEqual(payload["overall_status"], "BLOCKED")
-            self.assertEqual(payload["issue_status"], "P0")
+            self.assertEqual(payload["issue_status"], "P1")
             guardian_issues = payload["guardian_receipt"]["issues"]
             self.assertEqual(guardian_issues[0]["code"], "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER")
             self.assertEqual(guardian_issues[0]["severity"], "P1")
@@ -800,6 +958,20 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             report = paths.output_report.read_text(encoding="utf-8")
             self.assertIn("no_live_side_effects=true", report)
 
+    def test_heartbeat_uses_six_hour_supervisor_ceiling_and_sealed_artifact(self) -> None:
+        source = HEARTBEAT_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('QR_HEARTBEAT_MAX_SILENCE:-65100', source)
+        self.assertIn('data/ai_regime_supervision.json', source)
+        self.assertIn('QR_AI_REGIME_SUPERVISION_V1', source)
+        self.assertIn('type(v) is int', source)
+        self.assertIn('REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY', source)
+        self.assertIn('ai_order_authority', source)
+        self.assertIn('live_permission', source)
+        self.assertIn('broker_mutation_allowed', source)
+        self.assertIn('isinstance(p.get("pairs"),dict)', source)
+        self.assertIn('if [ "$supervision_present" -eq 0 ]', source)
+
     def test_launchd_plist_has_safe_defaults_and_lints_when_available(self) -> None:
         payload = plistlib.loads(PLIST.read_bytes())
 
@@ -847,7 +1019,7 @@ def _write_automation(
     status: str = "ACTIVE",
     model: str = "gpt-5.5",
     reasoning_effort: str = "high",
-    rrule: str = "FREQ=MINUTELY;INTERVAL=60;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA",
     cwds: list[str] | None = None,
 ) -> None:
     cwds = cwds or ["/Users/tossaki/App/QuantRabbit-live"]
@@ -876,6 +1048,39 @@ def _write_decision(root: Path, generated_at: datetime) -> None:
     (root / "docs" / "autotrade_cycle_report.md").write_text(
         f"# Autotrade Cycle Report\n\n- Generated at UTC: `{generated_at.isoformat()}`\n- Status: `NO_LIVE_READY_INTENT`\n",
         encoding="utf-8",
+    )
+
+
+def _write_ai_regime_supervision(
+    root: Path,
+    *,
+    generated_at: datetime,
+    authority: str = "NONE",
+    broker_mutation_allowed: bool = False,
+    body_overrides: dict | None = None,
+) -> None:
+    body = {
+        "contract": "QR_AI_REGIME_SUPERVISION_V1",
+        "schema_version": 1,
+        "generated_at_utc": generated_at.isoformat(),
+        "last_tuned_at_utc": generated_at.isoformat(),
+        "ai_role": "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
+        "ai_order_authority": authority,
+        "live_permission": False,
+        "broker_mutation_allowed": broker_mutation_allowed,
+        "pairs": {},
+    }
+    body.update(body_overrides or {})
+    raw = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    _write_json(
+        root / "data" / "ai_regime_supervision.json",
+        {**body, "contract_sha256": hashlib.sha256(raw).hexdigest()},
     )
 
 

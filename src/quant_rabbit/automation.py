@@ -12,7 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway, LiveOrderStageSummary
+from quant_rabbit.broker.execution import (
+    ACTIVE_FX_SESSION_BUCKETS_PER_DAY,
+    AI_ORDER_AUTHORITY,
+    LiveOrderGateway,
+    LiveOrderStageSummary,
+)
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionExecutionSummary, PositionProtectionGateway
 from quant_rabbit.analysis.market_status import (
@@ -144,6 +149,31 @@ ACCEPTED_GPT_VERIFIED_CYCLE_ACTIONS = ACCEPTED_GPT_GATEWAY_ACTIONS | frozenset(
 GPT_LIVE_ORDER_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING"})
 GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
 GPT_CAPITAL_ALLOCATION_SIZE_MULTIPLES = frozenset({0.5, 0.75, 1.0})
+
+
+def _ai_broker_mutation_authority_issue(action: str | None) -> dict[str, str]:
+    """Return the code-fixed fail-closed gate for every AI broker mutation.
+
+    ``AI_ORDER_AUTHORITY`` is deliberately imported from the live gateway
+    instead of read from the environment.  Even an unsupported future value
+    remains blocked here until a separately reviewed implementation replaces
+    this supervisor-only contract.
+    """
+
+    normalized = str(action or "UNKNOWN").strip().upper() or "UNKNOWN"
+    if AI_ORDER_AUTHORITY == "NONE":
+        code = "AI_ORDER_AUTHORITY_NONE"
+        message = (
+            f"AI action {normalized} may supervise or tune the deterministic bot, "
+            "but cannot mutate broker state while AI_ORDER_AUTHORITY=NONE"
+        )
+    else:
+        code = "AI_ORDER_AUTHORITY_UNSUPPORTED"
+        message = (
+            f"AI action {normalized} cannot mutate broker state because the code-level "
+            f"AI_ORDER_AUTHORITY value {AI_ORDER_AUTHORITY!r} has no reviewed mutation contract"
+        )
+    return {"severity": "BLOCK", "code": code, "message": message}
 
 # C-4 margin-aware basket truncation (2026-05-12, repaired 2026-05-15).
 # The basket builder stops adding fresh-entry lanes once cumulative
@@ -5052,7 +5082,14 @@ class AutoTradeCycle:
         already_canceled: tuple[str, ...] = (),
         allowed_order_ids: tuple[str, ...] | None = None,
     ) -> tuple[str, ...]:
-        if not send or not self.live_enabled or not gpt_summary.cancel_order_ids:
+        if (
+            not send
+            or not self.live_enabled
+            or not gpt_summary.cancel_order_ids
+            or gpt_summary.status != "ACCEPTED"
+            or not gpt_summary.allowed
+            or gpt_summary.action not in {"TRADE", "CANCEL_PENDING"}
+        ):
             return ()
         canceled: list[str] = []
         already = set(already_canceled)
@@ -5094,6 +5131,9 @@ class AutoTradeCycle:
             except (OSError, ValueError, json.JSONDecodeError):
                 preserved_current_thesis_ids = set()
                 preserved_active_recorded_thesis_ids = set()
+        authority_issue = _ai_broker_mutation_authority_issue(gpt_summary.action)
+        if authority_issue is not None:
+            return ()
         for order_id in gpt_summary.cancel_order_ids:
             if order_id in already:
                 continue
@@ -5150,7 +5190,7 @@ class AutoTradeCycle:
                 kind="gpt_decision",
                 receipt_path=self.gpt_decision_path,
             )
-            return self._write_gpt_close_gate_evidence_blocked(
+            return self._write_gpt_close_blocked(
                 gpt_summary,
                 issue=close_gate_issue,
                 snapshot=snapshot,
@@ -5170,6 +5210,14 @@ class AutoTradeCycle:
             if all(str(trade_id) not in open_trade_ids for trade_id in gpt_summary.close_trade_ids):
                 return self._write_stale_gpt_close_satisfied(gpt_summary, snapshot=close_snapshot)
         decision = self._gpt_close_position_decision(gpt_summary, snapshot=close_snapshot)
+        authority_issue = _ai_broker_mutation_authority_issue(gpt_summary.action)
+        if authority_issue is not None:
+            return self._write_gpt_close_blocked(
+                gpt_summary,
+                issue=authority_issue,
+                snapshot=close_snapshot,
+                send=send,
+            )
         execution = self._position_gateway().run(decision=decision, snapshot=close_snapshot, send=send)
         self._record_execution_ledger_receipt(
             kind="position_execution",
@@ -5366,7 +5414,7 @@ class AutoTradeCycle:
             }
         return None
 
-    def _write_gpt_close_gate_evidence_blocked(
+    def _write_gpt_close_blocked(
         self,
         gpt_summary: GptHandoffSummary,
         *,
@@ -5423,15 +5471,21 @@ class AutoTradeCycle:
             )
             for item in action.get("issues", []):
                 lines.append(f"  - `{item['severity']}` {item['code']}: {item['message']}")
-        lines.extend(
-            [
-                "",
-                "## Execution Contract",
-                "",
-                "- Accepted GPT CLOSE receipts must carry PASS close_gate_evidence for every named trade id.",
-                "- Missing or non-passing close-gate evidence blocks the broker close before PositionProtectionGateway.",
-            ]
-        )
+        lines.extend(["", "## Execution Contract", ""])
+        if issue.get("code") == "AI_ORDER_AUTHORITY_NONE":
+            lines.extend(
+                [
+                    "- AI is supervisor-only and cannot close, cancel, or otherwise mutate broker state.",
+                    "- Environment flags and accepted legacy receipts cannot override code-fixed AI_ORDER_AUTHORITY=NONE.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "- Accepted GPT CLOSE receipts must carry PASS close_gate_evidence for every named trade id.",
+                    "- Missing or non-passing close-gate evidence blocks the broker close before PositionProtectionGateway.",
+                ]
+            )
         self.position_execution_report_path.parent.mkdir(parents=True, exist_ok=True)
         self.position_execution_report_path.write_text("\n".join(lines) + "\n")
         self._record_execution_ledger_receipt(
