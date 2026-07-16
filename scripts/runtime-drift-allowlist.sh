@@ -93,6 +93,7 @@ data/fast_bot_scorecard.json|\
 data/fast_bot_learning_shadow.json|\
 data/fast_bot_learning_seat_ledger.jsonl|\
 data/fast_bot_learning_outcome_ledger.jsonl|\
+data/fast_bot_learning_due_cursor.json|\
 data/fast_bot_learning_scorecard.json|\
 data/contextual_technical_240m_forward_shadow.json|\
 data/contextual_technical_240m_forward_shadow_ledger.jsonl|\

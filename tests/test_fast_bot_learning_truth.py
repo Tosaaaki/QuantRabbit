@@ -8,8 +8,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quant_rabbit.fast_bot_learning import build_fast_bot_learning_shadow
+from quant_rabbit.fast_bot_learning import (
+    LEARNING_SELECTION_POLICY_V2,
+    _learning_seat_valid,
+    build_fast_bot_learning_shadow,
+)
 from quant_rabbit.fast_bot_learning_truth import (
+    _fair_rotating_due_selection,
+    _learning_seat_deep_valid,
     build_fast_bot_learning_scorecard,
     resolve_due_fast_bot_learning_outcomes_from_oanda,
     resolve_fast_bot_learning_seat,
@@ -21,6 +27,7 @@ NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 HASH = "a" * 64
 METHODS = ("BREAKOUT_FAILURE", "RANGE_ROTATION", "TREND_CONTINUATION")
 SIDES = ("LONG", "SHORT")
+TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 
 
 def _sha(value) -> str:
@@ -38,7 +45,7 @@ def _seal(body: dict) -> dict:
     return {**body, "contract_sha256": _sha(body)}
 
 
-def _six_candidate_seat() -> dict:
+def _candidate_seat(*, omit_cell: tuple[str, str] | None = None) -> dict:
     snapshot = {
         "fetched_at_utc": NOW.isoformat(),
         "quotes": {
@@ -66,9 +73,26 @@ def _six_candidate_seat() -> dict:
             "spread_pips": 0.8,
             "spread_to_m5_atr": 0.16,
             "failed_break_direction": "NONE",
+            "ai_supervision": {"mode": "UNSUPERVISED", "reason": "TEST"},
+            "timeframe_votes": {
+                timeframe: {
+                    "evidence_complete": True,
+                    "direction_score": 1 if side == "LONG" else -1,
+                    "observed_direction": "UP" if side == "LONG" else "DOWN",
+                    "phase": "TREND",
+                    "readiness": "ACTIVE",
+                    "location": "MIDDLE_THIRD",
+                    "structure": "BREAKOUT_ACTIVE",
+                    "trigger": "BREAKOUT_CLOSE",
+                    "extension": "BALANCED",
+                    "value_zone": "EQUILIBRIUM",
+                }
+                for timeframe in TIMEFRAMES
+            },
         }
         for method in METHODS
         for side in SIDES
+        if (side, method) != omit_cell
     ]
     regime = _seal(
         {
@@ -81,8 +105,72 @@ def _six_candidate_seat() -> dict:
     )
     shadow = build_fast_bot_learning_shadow(regime, snapshot, now_utc=NOW)
     seat = shadow["seats"][0]
+    return seat
+
+
+def _six_candidate_seat() -> dict:
+    seat = _candidate_seat()
     if len(seat["candidates"]) != 6:  # make failures explain the producer contract
         raise AssertionError("test requires all six pair/side/method candidates")
+    return seat
+
+
+def _legacy_v2_seat() -> dict:
+    seat = json.loads(json.dumps(_six_candidate_seat()))
+    seat_identity = {
+        "selection_policy": LEARNING_SELECTION_POLICY_V2,
+        "pair": seat["pair"],
+        "sampling_bucket_utc": seat["sampling_bucket_utc"],
+        "m1_closed_candle_utc": seat["m1_closed_candle_utc"],
+    }
+    seat_id = _sha(seat_identity)[:24]
+    seat["selection_policy"] = LEARNING_SELECTION_POLICY_V2
+    seat["seat_id"] = seat_id
+    seat["counterfactual_comparison_group_id"] = seat_id
+    for name in (
+        "arm_policy",
+        "valid_input_rejected_cells_retained",
+        "candidate_classes",
+        "candidate_blocker_facets",
+        "source_timeframe_votes_frozen",
+        "paired_direction_proof_requires_complete_six_cell_seat",
+        "complete_six_cell_seat",
+        "paired_direction_proof_eligible",
+    ):
+        seat.pop(name, None)
+    v2_classes = {"COST_BLOCKED", "CAUTION_TECHNICAL", "GO_CONTROL"}
+    for name in (
+        "eligible_counts",
+        "selected_counts",
+        "eligible_but_unselected_counts",
+    ):
+        seat[name] = {
+            key: value for key, value in seat[name].items() if key in v2_classes
+        }
+    for candidate in seat["candidates"]:
+        candidate["seat_id"] = seat_id
+        candidate["counterfactual_comparison_group_id"] = seat_id
+        identity = {
+            "seat_id": seat_id,
+            "side": candidate["side"],
+            "method": candidate["method"],
+            "candidate_class": candidate["candidate_class"],
+        }
+        candidate["candidate_id"] = _sha(identity)[:24]
+        for name in (
+            "cost_blocked",
+            "technical_blocked",
+            "supervisor_blocked",
+            "source_regime_evidence",
+            "source_regime_evidence_sha256",
+        ):
+            candidate.pop(name, None)
+        candidate_body = {
+            key: value for key, value in candidate.items() if key != "candidate_sha256"
+        }
+        candidate["candidate_sha256"] = _sha(candidate_body)
+    seat_body = {key: value for key, value in seat.items() if key != "contract_sha256"}
+    seat["contract_sha256"] = _sha(seat_body)
     return seat
 
 
@@ -114,6 +202,94 @@ def _path() -> list[S5BidAskCandle]:
 
 
 class FastBotLearningTruthTest(unittest.TestCase):
+    def test_due_rotation_reaches_thirteenth_failure_and_spreads_pairs(self) -> None:
+        due = [
+            (
+                NOW - timedelta(minutes=index + 1),
+                {
+                    "seat_id": f"seat-{index}",
+                    "pair": "EUR_USD" if index < 12 else "USD_JPY",
+                },
+            )
+            for index in range(13)
+        ]
+        first_offset, first_start, first = _fair_rotating_due_selection(due)
+        second_offset, second_start, second = _fair_rotating_due_selection(
+            due, last_start_seat_id=first_start
+        )
+
+        self.assertNotEqual(first_offset, second_offset)
+        self.assertNotEqual(first_start, second_start)
+        attempted = {str(item[1]["seat_id"]) for item in [*first, *second]}
+        self.assertEqual(len(attempted), 13)
+        self.assertTrue(
+            all(
+                {str(item[1]["pair"]) for item in selected} == {"EUR_USD", "USD_JPY"}
+                for selected in (first, second)
+            )
+        )
+
+    def test_partial_seat_is_scored_but_never_claims_paired_direction_proof(
+        self,
+    ) -> None:
+        seat = _candidate_seat(omit_cell=("SHORT", "RANGE_ROTATION"))
+        self.assertEqual(len(seat["candidates"]), 5)
+        self.assertTrue(_learning_seat_deep_valid(seat))
+        outcome = resolve_fast_bot_learning_seat(
+            seat,
+            _path(),
+            resolved_at_utc=NOW + timedelta(minutes=32),
+            truth_chunk_sha256=[HASH],
+        )
+
+        scorecard = build_fast_bot_learning_scorecard(
+            [seat], [outcome], as_of_utc=NOW + timedelta(minutes=32)
+        )
+
+        self.assertEqual(scorecard["paired_direction_proof_eligible_emitted_seats"], 0)
+        self.assertEqual(scorecard["paired_direction_proof_eligible_resolved_seats"], 0)
+        self.assertTrue(scorecard["groups"])
+        self.assertTrue(
+            all(
+                group["paired_direction_proof_eligible"] is False
+                for group in scorecard["groups"]
+            )
+        )
+
+    def test_legacy_v2_seat_and_mixed_policy_scorecard_remain_valid(self) -> None:
+        legacy = _legacy_v2_seat()
+        current = _six_candidate_seat()
+        self.assertNotIn("arm_policy", legacy)
+        self.assertTrue(_learning_seat_valid(legacy))
+        self.assertTrue(_learning_seat_deep_valid(legacy))
+        legacy_outcome = resolve_fast_bot_learning_seat(
+            legacy,
+            _path(),
+            resolved_at_utc=NOW + timedelta(minutes=32),
+            truth_chunk_sha256=[HASH],
+        )
+        current_outcome = resolve_fast_bot_learning_seat(
+            current,
+            _path(),
+            resolved_at_utc=NOW + timedelta(minutes=32),
+            truth_chunk_sha256=[HASH],
+        )
+
+        scorecard = build_fast_bot_learning_scorecard(
+            [legacy, current],
+            [legacy_outcome, current_outcome],
+            as_of_utc=NOW + timedelta(minutes=32),
+        )
+
+        self.assertEqual(scorecard["resolved_seats"], 2)
+        self.assertEqual(
+            {group["selection_policy"] for group in scorecard["groups"]},
+            {
+                LEARNING_SELECTION_POLICY_V2,
+                current["selection_policy"],
+            },
+        )
+
     def test_one_frozen_fetch_scores_six_candidates_and_all_eight_arms(self) -> None:
         seat = _six_candidate_seat()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -136,6 +312,11 @@ class FastBotLearningTruthTest(unittest.TestCase):
             self.assertEqual(result["status"], "RESOLVED")
             self.assertEqual(result["ledger_appended"], 1)
             self.assertEqual(fetch.call_count, 1)
+            cursor = json.loads(
+                (root / "outcome_due_cursor.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(cursor["last_start_seat_id"], seat["seat_id"])
+            self.assertEqual(cursor["order_authority"], "NONE")
             row = json.loads(outcome.read_text(encoding="utf-8"))
             self.assertEqual(len(row["candidates"]), 6)
             self.assertTrue(all(len(item["arms"]) == 8 for item in row["candidates"]))
@@ -181,8 +362,12 @@ class FastBotLearningTruthTest(unittest.TestCase):
         self.assertGreater(short_base["maximum_adverse_excursion_pips"], 0.0)
         self.assertEqual(long_base["time_to_fill_seconds"], 5.0)
         self.assertEqual(short_base["time_to_fill_seconds"], 5.0)
-        self.assertEqual(long_base["post_cost_realized_pips"], long_base["realized_pips"])
-        self.assertEqual(short_base["post_cost_realized_pips"], short_base["realized_pips"])
+        self.assertEqual(
+            long_base["post_cost_realized_pips"], long_base["realized_pips"]
+        )
+        self.assertEqual(
+            short_base["post_cost_realized_pips"], short_base["realized_pips"]
+        )
 
     def test_same_s5_fill_and_attached_exit_is_conservative_stop_first(self) -> None:
         candle = S5BidAskCandle(
@@ -209,22 +394,49 @@ class FastBotLearningTruthTest(unittest.TestCase):
             if arm["arm_id"] == "BASE"
         ]
         self.assertEqual(len(bases), 6)
-        self.assertTrue(
-            all("AMBIGUOUS_FILL_S5" in arm["exit_reason"] for arm in bases)
-        )
+        self.assertTrue(all("AMBIGUOUS_FILL_S5" in arm["exit_reason"] for arm in bases))
         self.assertTrue(all(arm["post_cost_realized_pips"] < 0.0 for arm in bases))
-        self.assertTrue(all(arm["maximum_favorable_excursion_pips"] == 0.0 for arm in bases))
+        self.assertTrue(
+            all(arm["maximum_favorable_excursion_pips"] == 0.0 for arm in bases)
+        )
 
     def test_tampered_candidate_or_arm_geometry_is_rejected(self) -> None:
         seat = _six_candidate_seat()
         tampered = json.loads(json.dumps(seat))
         tampered["candidates"][0]["arms"][0]["entry"] += 0.00001
         # Re-sealing only the seat cannot repair the candidate/arm commitment.
-        body = {key: value for key, value in tampered.items() if key != "contract_sha256"}
+        body = {
+            key: value for key, value in tampered.items() if key != "contract_sha256"
+        }
         tampered["contract_sha256"] = _sha(body)
         with self.assertRaisesRegex(ValueError, "invalid fast-bot learning seat"):
             resolve_fast_bot_learning_seat(
                 tampered,
+                _path(),
+                resolved_at_utc=NOW + timedelta(minutes=32),
+                truth_chunk_sha256=[HASH],
+            )
+
+    def test_resealed_caution_cannot_claim_execution_enabled(self) -> None:
+        seat = json.loads(json.dumps(_six_candidate_seat()))
+        candidate = seat["candidates"][0]
+        candidate["source_regime_evidence"]["execution_enabled"] = True
+        candidate["source_regime_evidence_sha256"] = _sha(
+            candidate["source_regime_evidence"]
+        )
+        candidate_body = {
+            key: value for key, value in candidate.items() if key != "candidate_sha256"
+        }
+        candidate["candidate_sha256"] = _sha(candidate_body)
+        seat_body = {
+            key: value for key, value in seat.items() if key != "contract_sha256"
+        }
+        seat["contract_sha256"] = _sha(seat_body)
+
+        self.assertFalse(_learning_seat_valid(seat))
+        with self.assertRaisesRegex(ValueError, "invalid fast-bot learning seat"):
+            resolve_fast_bot_learning_seat(
+                seat,
                 _path(),
                 resolved_at_utc=NOW + timedelta(minutes=32),
                 truth_chunk_sha256=[HASH],
@@ -278,7 +490,10 @@ class FastBotLearningTruthTest(unittest.TestCase):
             scorecard = root / "scorecard.json"
             shadow.write_text(json.dumps(seat, sort_keys=True) + "\n", encoding="utf-8")
             outcome.write_text(
-                json.dumps(valid, sort_keys=True) + "\n" + json.dumps(malformed, sort_keys=True) + "\n",
+                json.dumps(valid, sort_keys=True)
+                + "\n"
+                + json.dumps(malformed, sort_keys=True)
+                + "\n",
                 encoding="utf-8",
             )
             with patch(
@@ -310,7 +525,12 @@ class FastBotLearningTruthTest(unittest.TestCase):
         self.assertEqual(
             scorecard["grouping_dimensions"],
             [
+                "selection_policy",
+                "paired_direction_proof_eligible",
                 "candidate_class",
+                "cost_blocked",
+                "technical_blocked",
+                "supervisor_blocked",
                 "cost_pressure_bucket",
                 "pair",
                 "side",
@@ -320,6 +540,12 @@ class FastBotLearningTruthTest(unittest.TestCase):
             ],
         )
         self.assertTrue(scorecard["groups"])
+        self.assertTrue(
+            all(
+                group["paired_direction_proof_eligible"]
+                for group in scorecard["groups"]
+            )
+        )
         self.assertTrue(
             all(group["paired_count_vs_base"] == 1 for group in scorecard["groups"])
         )

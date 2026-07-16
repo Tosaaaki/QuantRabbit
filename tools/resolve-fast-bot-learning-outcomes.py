@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument(
         "--shadow-ledger",
         type=Path,
-        default=ROOT / "data" / "fast_bot_learning_shadow_ledger.jsonl",
+        default=ROOT / "data" / "fast_bot_learning_seat_ledger.jsonl",
     )
     parser.add_argument(
         "--outcome-ledger",
@@ -42,11 +42,16 @@ def main() -> int:
         scorecard_path=args.scorecard,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["status"] in {
-        "NO_DUE_SEATS",
-        "RESOLVED",
-        "RESOLVED_WITH_ERRORS",
-    } else 2
+    return (
+        0
+        if result["status"]
+        in {
+            "NO_DUE_SEATS",
+            "RESOLVED",
+            "RESOLVED_WITH_ERRORS",
+        }
+        else 2
+    )
 
 
 if __name__ == "__main__":

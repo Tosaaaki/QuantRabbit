@@ -20,13 +20,14 @@ from typing import Any, Callable, Mapping, Sequence
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.fast_bot_learning import (
-    CANDIDATE_CLASSES,
     CELL_ORDER,
-    LEARNING_ARM_SPECS,
     LEARNING_SEAT_CONTRACT,
     METHODS,
     SIDES,
     _learning_seat_valid,
+    _seat_arm_policy,
+    learning_arm_specs_for_policy,
+    learning_candidate_classes_for_selection_policy,
 )
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
@@ -38,6 +39,7 @@ CANDIDATE_OUTCOME_CONTRACT = "QR_FAST_BOT_LEARNING_CANDIDATE_OUTCOME_V1"
 ARM_OUTCOME_CONTRACT = "QR_FAST_BOT_LEARNING_ARM_OUTCOME_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_LEARNING_SCORECARD_V1"
 TRUTH_ADAPTER_CONTRACT = "QR_FAST_BOT_LEARNING_TRUTH_ADAPTER_V1"
+DUE_CURSOR_CONTRACT = "QR_FAST_BOT_LEARNING_DUE_CURSOR_V1"
 SCORING_POLICY = "QR_FAST_BOT_LEARNING_SPARSE_S5_CONSERVATIVE_V1"
 TRUTH_CHUNK_CANDLE_LIMIT = 4500
 MAX_DUE_PER_RUN = 12
@@ -116,7 +118,9 @@ def resolve_fast_bot_learning_seat(
             "live_permission": False,
             "broker_mutation_allowed": False,
         }
-        candidate_results.append(_seal_named(candidate_body, "candidate_outcome_sha256"))
+        candidate_results.append(
+            _seal_named(candidate_body, "candidate_outcome_sha256")
+        )
     body = {
         "contract": OUTCOME_CONTRACT,
         "schema_version": 1,
@@ -184,13 +188,18 @@ def _resolve_arm(
     mae: float | None = None
     evaluated_candles = 0
     for candle in path:
-        if fill_at is not None and candle.timestamp_utc >= fill_at + timedelta(seconds=hold):
+        if fill_at is not None and candle.timestamp_utc >= fill_at + timedelta(
+            seconds=hold
+        ):
             break
         evaluated_candles += 1
         newly_filled = False
         if fill_at is None:
             touched = candle.ask_l <= entry if side == "LONG" else candle.bid_h >= entry
-            if not touched or candle.timestamp_utc + timedelta(seconds=5) > fill_deadline:
+            if (
+                not touched
+                or candle.timestamp_utc + timedelta(seconds=5) > fill_deadline
+            ):
                 continue
             fill_at = candle.timestamp_utc
             newly_filled = True
@@ -253,7 +262,9 @@ def _resolve_arm(
                 pip_factor=pip_factor,
                 gap_allowed=True,
             )
-            exit_reason = "STOP_LOSS_GAP" if realized < -_round(sl_pips) else "STOP_LOSS"
+            exit_reason = (
+                "STOP_LOSS_GAP" if realized < -_round(sl_pips) else "STOP_LOSS"
+            )
             exit_at = candle.timestamp_utc
             break
         if tp_hit:
@@ -362,6 +373,7 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
     try:
         seats = _load_learning_seats(shadow_ledger_path)
         outcomes = _load_jsonl(outcome_ledger_path)
+        due_cursor = _load_due_cursor(_due_cursor_path(outcome_ledger_path))
     except ValueError as exc:
         return {
             **base,
@@ -400,7 +412,13 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
         if maturity <= now:
             due.append((maturity, seat))
     due.sort(key=lambda item: (item[0], str(item[1]["seat_id"])))
-    selected = [seat for _, seat in due[:MAX_DUE_PER_RUN]]
+    selection_offset, selection_start_seat_id, selected_due = (
+        _fair_rotating_due_selection(
+            due,
+            last_start_seat_id=due_cursor.get("last_start_seat_id"),
+        )
+    )
+    selected = [seat for _, seat in selected_due]
     if not selected:
         scorecard = build_fast_bot_learning_scorecard(seats, outcomes, as_of_utc=now)
         _write_json_atomic(scorecard_path, scorecard)
@@ -410,10 +428,32 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
             "broker_read": False,
             "due_count": len(due),
             "selected_due_count": 0,
+            "selection_offset": selection_offset,
+            "selection_start_seat_id": selection_start_seat_id,
             "outcome_identity_conflict_count": len(conflicts),
             "outcome_identity_conflicts": conflicts,
             "ledger_appended": 0,
             "scorecard_status": scorecard["status"],
+        }
+    try:
+        _write_due_cursor(
+            _due_cursor_path(outcome_ledger_path),
+            last_start_seat_id=selection_start_seat_id,
+            due_count=len(due),
+            selected_due_count=len(selected),
+            written_at_utc=now,
+        )
+    except OSError as exc:
+        return {
+            **base,
+            "status": "DUE_CURSOR_PERSISTENCE_FAILED_CLOSED",
+            "broker_read": False,
+            "due_count": len(due),
+            "selected_due_count": len(selected),
+            "selection_offset": selection_offset,
+            "selection_start_seat_id": selection_start_seat_id,
+            "ledger_appended": 0,
+            "error": f"{type(exc).__name__}: {exc}"[:320],
         }
     client = client_factory()
     resolved: list[dict[str, Any]] = []
@@ -448,7 +488,9 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
     try:
         append_result = _append_outcomes_once(outcome_ledger_path, resolved)
         all_outcomes = _load_jsonl(outcome_ledger_path)
-        scorecard = build_fast_bot_learning_scorecard(seats, all_outcomes, as_of_utc=now)
+        scorecard = build_fast_bot_learning_scorecard(
+            seats, all_outcomes, as_of_utc=now
+        )
         _write_json_atomic(scorecard_path, scorecard)
     except ValueError as exc:
         return {
@@ -471,6 +513,8 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
         "broker_read": True,
         "due_count": len(due),
         "selected_due_count": len(selected),
+        "selection_offset": selection_offset,
+        "selection_start_seat_id": selection_start_seat_id,
         "resolved_in_memory_count": len(resolved),
         "ledger_appended": append_result["appended"],
         "ledger_duplicate_outcome_identities_skipped": append_result[
@@ -481,6 +525,36 @@ def resolve_due_fast_bot_learning_outcomes_from_oanda(
         "errors": errors,
         "scorecard_status": scorecard["status"],
     }
+
+
+def _fair_rotating_due_selection(
+    due: Sequence[tuple[datetime, Mapping[str, Any]]],
+    *,
+    last_start_seat_id: Any = None,
+) -> tuple[int, str | None, list[tuple[datetime, Mapping[str, Any]]]]:
+    """Bound reads without allowing old failures or one pair to starve peers."""
+
+    if not due:
+        return 0, None, []
+    if len(due) <= MAX_DUE_PER_RUN:
+        return 0, str(due[0][1].get("seat_id") or ""), list(due)
+    seat_ids = [str(item[1].get("seat_id") or "") for item in due]
+    prior = str(last_start_seat_id or "")
+    offset = (seat_ids.index(prior) + 1) % len(due) if prior in seat_ids else 0
+    rotated = [*due[offset:], *due[:offset]]
+    selected: list[tuple[datetime, Mapping[str, Any]]] = []
+    deferred_same_pair: list[tuple[datetime, Mapping[str, Any]]] = []
+    seen_pairs: set[str] = set()
+    for item in rotated:
+        pair = str(item[1].get("pair") or "")
+        if pair and pair not in seen_pairs and len(selected) < MAX_DUE_PER_RUN:
+            selected.append(item)
+            seen_pairs.add(pair)
+        else:
+            deferred_same_pair.append(item)
+    if len(selected) < MAX_DUE_PER_RUN:
+        selected.extend(deferred_same_pair[: MAX_DUE_PER_RUN - len(selected)])
+    return offset, seat_ids[offset], selected
 
 
 def build_fast_bot_learning_scorecard(
@@ -512,7 +586,31 @@ def build_fast_bot_learning_scorecard(
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for seat, outcome in valid_outcomes:
         cost_bucket = str(seat["cost_context"]["cost_pressure_bucket"])
+        paired_direction_proof_eligible = _seat_paired_direction_proof_eligible(seat)
         for candidate in outcome["candidates"]:
+            source_candidate = next(
+                (
+                    item
+                    for item in seat["candidates"]
+                    if item.get("candidate_sha256") == candidate.get("candidate_sha256")
+                ),
+                {},
+            )
+            source_hard = {
+                str(item) for item in source_candidate.get("hard_blockers", []) or []
+            }
+            cost_blocked = bool(
+                source_candidate.get("cost_blocked") is True
+                or "SPREAD_ANOMALY" in source_hard
+            )
+            supervisor_blocked = bool(
+                source_candidate.get("supervisor_blocked") is True
+                or "AI_REGIME_SUPERVISOR_STOP" in source_hard
+            )
+            technical_blocked = bool(
+                source_candidate.get("technical_blocked") is True
+                or source_hard - {"SPREAD_ANOMALY", "AI_REGIME_SUPERVISOR_STOP"}
+            )
             arms = {str(arm["arm_id"]): arm for arm in candidate["arms"]}
             base = arms.get("BASE")
             if base is None:
@@ -520,7 +618,12 @@ def build_fast_bot_learning_scorecard(
             base_value = float(base["post_cost_realized_pips"])
             for arm in candidate["arms"]:
                 key = (
+                    str(seat["selection_policy"]),
+                    str(paired_direction_proof_eligible),
                     str(candidate["candidate_class"]),
+                    str(cost_blocked),
+                    str(technical_blocked),
+                    str(supervisor_blocked),
                     cost_bucket,
                     str(candidate["pair"]),
                     str(candidate["side"]),
@@ -531,7 +634,8 @@ def build_fast_bot_learning_scorecard(
                 grouped.setdefault(key, []).append(
                     {
                         "arm": arm,
-                        "paired_delta": float(arm["post_cost_realized_pips"]) - base_value,
+                        "paired_delta": float(arm["post_cost_realized_pips"])
+                        - base_value,
                     }
                 )
     groups = [_score_group(key, rows) for key, rows in sorted(grouped.items())]
@@ -543,8 +647,19 @@ def build_fast_bot_learning_scorecard(
         "status": "COLLECTING_COUNTERFACTUAL_EVIDENCE",
         "emitted_seats": len(valid_seats),
         "resolved_seats": len(valid_outcomes),
+        "paired_direction_proof_eligible_emitted_seats": sum(
+            _seat_paired_direction_proof_eligible(seat) for seat in valid_seats
+        ),
+        "paired_direction_proof_eligible_resolved_seats": sum(
+            _seat_paired_direction_proof_eligible(seat) for seat, _ in valid_outcomes
+        ),
         "grouping_dimensions": [
+            "selection_policy",
+            "paired_direction_proof_eligible",
             "candidate_class",
+            "cost_blocked",
+            "technical_blocked",
+            "supervisor_blocked",
             "cost_pressure_bucket",
             "pair",
             "side",
@@ -568,7 +683,9 @@ def build_fast_bot_learning_scorecard(
     return _seal(body)
 
 
-def _score_group(key: tuple[str, ...], rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _score_group(
+    key: tuple[str, ...], rows: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
     arms = [row["arm"] for row in rows]
     fills = [arm for arm in arms if arm["filled"] is True]
     values = [float(arm["post_cost_realized_pips"]) for arm in arms]
@@ -577,21 +694,24 @@ def _score_group(key: tuple[str, ...], rows: Sequence[Mapping[str, Any]]) -> dic
     losses = [value for value in fill_values if value < 0.0]
     gross_loss = abs(sum(losses))
     profit_factor: float | None = (
-        sum(wins) / gross_loss
-        if gross_loss > 0.0
-        else math.inf if wins else None
+        sum(wins) / gross_loss if gross_loss > 0.0 else math.inf if wins else None
     )
     deltas = [float(row["paired_delta"]) for row in rows]
     mfe = [float(arm["maximum_favorable_excursion_pips"]) for arm in fills]
     mae = [float(arm["maximum_adverse_excursion_pips"]) for arm in fills]
     return {
-        "candidate_class": key[0],
-        "cost_pressure_bucket": key[1],
-        "pair": key[2],
-        "side": key[3],
-        "method": key[4],
-        "horizon_lane": key[5],
-        "arm_id": key[6],
+        "selection_policy": key[0],
+        "paired_direction_proof_eligible": key[1] == "True",
+        "candidate_class": key[2],
+        "cost_blocked": key[3] == "True",
+        "technical_blocked": key[4] == "True",
+        "supervisor_blocked": key[5] == "True",
+        "cost_pressure_bucket": key[6],
+        "pair": key[7],
+        "side": key[8],
+        "method": key[9],
+        "horizon_lane": key[10],
+        "arm_id": key[11],
         "resolved": len(arms),
         "fills": len(fills),
         "unfilled": len(arms) - len(fills),
@@ -599,8 +719,12 @@ def _score_group(key: tuple[str, ...], rows: Sequence[Mapping[str, Any]]) -> dic
         "losses": len(losses),
         "fill_rate": _round(len(fills) / len(arms)) if arms else None,
         "net_post_cost_pips": _round(sum(values)),
-        "mean_post_cost_pips_per_resolved": _round(statistics.fmean(values)) if values else None,
-        "mean_post_cost_pips_per_fill": _round(statistics.fmean(fill_values)) if fill_values else None,
+        "mean_post_cost_pips_per_resolved": (
+            _round(statistics.fmean(values)) if values else None
+        ),
+        "mean_post_cost_pips_per_fill": (
+            _round(statistics.fmean(fill_values)) if fill_values else None
+        ),
         "profit_factor": (
             _round(profit_factor)
             if profit_factor is not None and math.isfinite(profit_factor)
@@ -610,13 +734,23 @@ def _score_group(key: tuple[str, ...], rows: Sequence[Mapping[str, Any]]) -> dic
         "mean_mae_pips": _round(statistics.fmean(mae)) if mae else None,
         "paired_count_vs_base": len(deltas),
         "net_paired_delta_pips_vs_base": _round(sum(deltas)),
-        "mean_paired_delta_pips_vs_base": _round(statistics.fmean(deltas)) if deltas else None,
+        "mean_paired_delta_pips_vs_base": (
+            _round(statistics.fmean(deltas)) if deltas else None
+        ),
     }
 
 
 def _validate_learning_seat(seat: Mapping[str, Any]) -> None:
     if not _learning_seat_deep_valid(seat):
         raise ValueError("invalid fast-bot learning seat")
+
+
+def _seat_paired_direction_proof_eligible(seat: Mapping[str, Any]) -> bool:
+    candidates = seat.get("candidates")
+    complete = isinstance(candidates, list) and len(candidates) == len(CELL_ORDER)
+    if "paired_direction_proof_eligible" in seat:
+        return complete and seat.get("paired_direction_proof_eligible") is True
+    return complete
 
 
 def _learning_seat_deep_valid(seat: Mapping[str, Any]) -> bool:
@@ -649,11 +783,21 @@ def _learning_seat_deep_valid(seat: Mapping[str, Any]) -> bool:
         return False
     candidate_ids: set[str] = set()
     cells: set[tuple[str, str]] = set()
-    expected_arm_ids = [spec[0] for spec in LEARNING_ARM_SPECS]
+    try:
+        expected_arm_ids = [
+            spec[0] for spec in learning_arm_specs_for_policy(_seat_arm_policy(seat))
+        ]
+        candidate_classes = learning_candidate_classes_for_selection_policy(
+            str(seat["selection_policy"])
+        )
+    except (KeyError, ValueError):
+        return False
     for candidate in candidates:
         if not isinstance(candidate, Mapping):
             return False
-        body = {key: value for key, value in candidate.items() if key != "candidate_sha256"}
+        body = {
+            key: value for key, value in candidate.items() if key != "candidate_sha256"
+        }
         cell = (str(candidate.get("side") or ""), str(candidate.get("method") or ""))
         arms = candidate.get("arms")
         if not bool(
@@ -662,7 +806,7 @@ def _learning_seat_deep_valid(seat: Mapping[str, Any]) -> bool:
             and cell not in cells
             and cell[0] in SIDES
             and cell[1] in METHODS
-            and candidate.get("candidate_class") in CANDIDATE_CLASSES
+            and candidate.get("candidate_class") in candidate_classes
             and isinstance(arms, list)
             and [arm.get("arm_id") for arm in arms if isinstance(arm, Mapping)]
             == expected_arm_ids
@@ -699,7 +843,9 @@ def _arm_input_valid(arm: Any, *, side: str) -> bool:
     )
 
 
-def _outcome_valid_for_seat(outcome: Mapping[str, Any], seat: Mapping[str, Any]) -> bool:
+def _outcome_valid_for_seat(
+    outcome: Mapping[str, Any], seat: Mapping[str, Any]
+) -> bool:
     try:
         if not _sealed_valid(outcome, OUTCOME_CONTRACT):
             return False
@@ -715,7 +861,9 @@ def _outcome_valid_for_seat(outcome: Mapping[str, Any], seat: Mapping[str, Any])
         candidates = outcome["candidates"]
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
-    expected_candidates = {str(row["candidate_sha256"]): row for row in seat["candidates"]}
+    expected_candidates = {
+        str(row["candidate_sha256"]): row for row in seat["candidates"]
+    }
     if not bool(
         outcome.get("scoring_policy") == SCORING_POLICY
         and outcome.get("seat_id") == seat.get("seat_id")
@@ -736,8 +884,7 @@ def _outcome_valid_for_seat(outcome: Mapping[str, Any], seat: Mapping[str, Any])
         and truth_no_tick_count == truth_grid_count - truth_candle_count
         and _sha256_text(outcome.get("truth_path_sha256"))
         and isinstance(truth_hashes, list)
-        and len(truth_hashes)
-        == math.ceil(truth_grid_count / TRUTH_CHUNK_CANDLE_LIMIT)
+        and len(truth_hashes) == math.ceil(truth_grid_count / TRUTH_CHUNK_CANDLE_LIMIT)
         and all(_sha256_text(item) for item in truth_hashes)
         and outcome.get("candidate_count") == len(expected_candidates)
         and outcome.get("candidate_class_cost_context") == seat.get("cost_context")
@@ -780,7 +927,9 @@ def _candidate_outcome_valid(
     truth_path_sha256: str,
     truth_chunk_sha256: Sequence[str],
 ) -> bool:
-    if not _sealed_named_valid(value, CANDIDATE_OUTCOME_CONTRACT, "candidate_outcome_sha256"):
+    if not _sealed_named_valid(
+        value, CANDIDATE_OUTCOME_CONTRACT, "candidate_outcome_sha256"
+    ):
         return False
     arms = value.get("arms")
     expected = {str(arm["arm_id"]): arm for arm in candidate["arms"]}
@@ -805,15 +954,23 @@ def _candidate_outcome_valid(
         return False
     seen: set[str] = set()
     for arm_outcome in arms:
-        arm_id = str(arm_outcome.get("arm_id") or "") if isinstance(arm_outcome, Mapping) else ""
+        arm_id = (
+            str(arm_outcome.get("arm_id") or "")
+            if isinstance(arm_outcome, Mapping)
+            else ""
+        )
         arm = expected.get(arm_id)
-        if arm is None or arm_id in seen or not _arm_outcome_valid(
-            arm_outcome,
-            arm=arm,
-            side=str(candidate["side"]),
-            generated=_parse_utc(seat["generated_at_utc"]),
-            truth_path_sha256=truth_path_sha256,
-            truth_chunk_sha256=truth_chunk_sha256,
+        if (
+            arm is None
+            or arm_id in seen
+            or not _arm_outcome_valid(
+                arm_outcome,
+                arm=arm,
+                side=str(candidate["side"]),
+                generated=_parse_utc(seat["generated_at_utc"]),
+                truth_path_sha256=truth_path_sha256,
+                truth_chunk_sha256=truth_chunk_sha256,
+            )
         ):
             return False
         seen.add(arm_id)
@@ -907,7 +1064,8 @@ def _arm_outcome_valid(
             and evaluated_grid_count == truth_grid_count
             and evaluated_candle_count == truth_candle_count
             and evaluated_no_tick_count == truth_no_tick_count
-            and value.get("evaluated_prefix_from_utc") == _ceil_s5(generated).isoformat()
+            and value.get("evaluated_prefix_from_utc")
+            == _ceil_s5(generated).isoformat()
             and value.get("evaluated_prefix_to_utc")
             == _floor_s5(expected_maturity).isoformat()
         )
@@ -948,33 +1106,30 @@ def _arm_outcome_valid(
     stop_pips = float(arm["stop_loss_pips"])
     tp_pips = float(arm["take_profit_pips"])
     if reason == "TAKE_PROFIT":
-        result_semantics = (
-            value.get("ambiguous_same_s5") is False
-            and math.isclose(realized, tp_pips, rel_tol=0.0, abs_tol=1e-6)
+        result_semantics = value.get("ambiguous_same_s5") is False and math.isclose(
+            realized, tp_pips, rel_tol=0.0, abs_tol=1e-6
         )
     elif reason in {"STOP_LOSS", "HORIZON_FULL_STOP_LOSS"}:
-        result_semantics = (
-            value.get("ambiguous_same_s5") is False
-            and math.isclose(realized, -stop_pips, rel_tol=0.0, abs_tol=1e-6)
+        result_semantics = value.get("ambiguous_same_s5") is False and math.isclose(
+            realized, -stop_pips, rel_tol=0.0, abs_tol=1e-6
         )
     elif reason in {
         "STOP_LOSS_AMBIGUOUS_FILL_S5",
         "STOP_LOSS_AMBIGUOUS_SAME_S5",
     }:
-        result_semantics = (
-            value.get("ambiguous_same_s5") is True
-            and math.isclose(realized, -stop_pips, rel_tol=0.0, abs_tol=1e-6)
+        result_semantics = value.get("ambiguous_same_s5") is True and math.isclose(
+            realized, -stop_pips, rel_tol=0.0, abs_tol=1e-6
         )
     else:
         result_semantics = (
-            reason in {
+            reason
+            in {
                 "STOP_LOSS_GAP",
                 "STOP_LOSS_GAP_AMBIGUOUS_FILL_S5",
                 "STOP_LOSS_GAP_AMBIGUOUS_SAME_S5",
             }
             and realized < -_round(stop_pips)
-            and value.get("ambiguous_same_s5")
-            is (reason != "STOP_LOSS_GAP")
+            and value.get("ambiguous_same_s5") is (reason != "STOP_LOSS_GAP")
         )
     return bool(
         reason in valid_reasons
@@ -983,7 +1138,9 @@ def _arm_outcome_valid(
         and _floor_s5(exit_at) == exit_at
         and fill_at + timedelta(seconds=5)
         <= generated + timedelta(seconds=int(arm["entry_ttl_seconds"]))
-        and math.isclose(time_to_fill, (fill_at - generated).total_seconds(), abs_tol=1e-6)
+        and math.isclose(
+            time_to_fill, (fill_at - generated).total_seconds(), abs_tol=1e-6
+        )
         and math.isfinite(mfe_number)
         and math.isfinite(mae_number)
         and mfe_number >= 0.0
@@ -1035,6 +1192,59 @@ def _load_learning_seats(path: Path) -> list[dict[str, Any]]:
     return seats
 
 
+def _due_cursor_path(outcome_ledger_path: Path) -> Path:
+    if outcome_ledger_path.name == "fast_bot_learning_outcome_ledger.jsonl":
+        return outcome_ledger_path.with_name("fast_bot_learning_due_cursor.json")
+    return outcome_ledger_path.with_name(f"{outcome_ledger_path.stem}_due_cursor.json")
+
+
+def _load_due_cursor(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("malformed learning due cursor") from exc
+    if not isinstance(value, Mapping) or not _sealed_valid(value, DUE_CURSOR_CONTRACT):
+        raise ValueError("invalid learning due cursor")
+    last_start = value.get("last_start_seat_id")
+    if (
+        not isinstance(last_start, str)
+        or not last_start
+        or value.get("order_authority") != "NONE"
+        or value.get("diagnostic_only") is not True
+        or value.get("live_permission") is not False
+        or value.get("broker_mutation_allowed") is not False
+    ):
+        raise ValueError("invalid learning due cursor")
+    return dict(value)
+
+
+def _write_due_cursor(
+    path: Path,
+    *,
+    last_start_seat_id: str | None,
+    due_count: int,
+    selected_due_count: int,
+    written_at_utc: datetime,
+) -> None:
+    if not last_start_seat_id:
+        raise OSError("learning due cursor requires a selected start identity")
+    body = {
+        "contract": DUE_CURSOR_CONTRACT,
+        "schema_version": 1,
+        "generated_at_utc": _aware_utc(written_at_utc).isoformat(),
+        "last_start_seat_id": last_start_seat_id,
+        "due_count_at_write": due_count,
+        "selected_due_count_at_write": selected_due_count,
+        "order_authority": "NONE",
+        "diagnostic_only": True,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+    }
+    _write_json_atomic(path, _seal(body))
+
+
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -1046,14 +1256,18 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
             try:
                 value = json.loads(line)
             except (json.JSONDecodeError, ValueError) as exc:
-                raise ValueError(f"malformed JSONL row {line_number} in {path}") from exc
+                raise ValueError(
+                    f"malformed JSONL row {line_number} in {path}"
+                ) from exc
             if not isinstance(value, dict):
                 raise ValueError(f"non-object JSONL row {line_number} in {path}")
             rows.append(value)
     return rows
 
 
-def _append_outcomes_once(path: Path, outcomes: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+def _append_outcomes_once(
+    path: Path, outcomes: Sequence[Mapping[str, Any]]
+) -> dict[str, int]:
     if not outcomes:
         return {"appended": 0, "duplicate_identity_count": 0}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1077,7 +1291,9 @@ def _append_outcomes_once(path: Path, outcomes: Sequence[Mapping[str, Any]]) -> 
                         f"invalid current-policy outcome row {line_number}"
                     )
                 if identity in seen:
-                    raise ValueError(f"duplicate current-policy outcome row {line_number}")
+                    raise ValueError(
+                        f"duplicate current-policy outcome row {line_number}"
+                    )
                 seen.add(identity)
         appended = 0
         duplicates = 0
@@ -1089,7 +1305,9 @@ def _append_outcomes_once(path: Path, outcomes: Sequence[Mapping[str, Any]]) -> 
             if identity in seen:
                 duplicates += 1
                 continue
-            handle.write(json.dumps(dict(outcome), ensure_ascii=False, sort_keys=True) + "\n")
+            handle.write(
+                json.dumps(dict(outcome), ensure_ascii=False, sort_keys=True) + "\n"
+            )
             seen.add(identity)
             appended += 1
         handle.flush()
@@ -1131,8 +1349,14 @@ def _validate_truth_path(
 
 def _candle_valid(candle: S5BidAskCandle) -> bool:
     values = (
-        candle.bid_o, candle.bid_h, candle.bid_l, candle.bid_c,
-        candle.ask_o, candle.ask_h, candle.ask_l, candle.ask_c,
+        candle.bid_o,
+        candle.bid_h,
+        candle.bid_l,
+        candle.bid_c,
+        candle.ask_o,
+        candle.ask_h,
+        candle.ask_l,
+        candle.ask_c,
     )
     return bool(
         all(math.isfinite(float(value)) and float(value) > 0.0 for value in values)
@@ -1225,7 +1449,11 @@ def _stop_realized(
 
 
 def _evaluated_grid_count(
-    *, generated: datetime, maturity: datetime, exit_reason: str, exit_at: datetime | None
+    *,
+    generated: datetime,
+    maturity: datetime,
+    exit_reason: str,
+    exit_at: datetime | None,
 ) -> int:
     first = _ceil_s5(generated)
     if exit_reason == "UNFILLED":
@@ -1241,13 +1469,21 @@ def _evaluated_grid_count(
 
 
 def _evaluated_prefix_end(
-    *, generated: datetime, maturity: datetime, exit_reason: str, exit_at: datetime | None
+    *,
+    generated: datetime,
+    maturity: datetime,
+    exit_reason: str,
+    exit_at: datetime | None,
 ) -> datetime:
     if exit_reason == "UNFILLED":
         return _floor_s5(maturity)
     if exit_at is None:
         raise ValueError("filled arm requires exit")
-    return exit_at if exit_reason == "HORIZON_FULL_STOP_LOSS" else exit_at + timedelta(seconds=5)
+    return (
+        exit_at
+        if exit_reason == "HORIZON_FULL_STOP_LOSS"
+        else exit_at + timedelta(seconds=5)
+    )
 
 
 def _grid_slot_count(generated: datetime, maturity: datetime) -> int:
@@ -1286,7 +1522,9 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with temp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        handle.write(
+            json.dumps(dict(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp, path)
@@ -1313,7 +1551,9 @@ def _sealed_valid(value: Mapping[str, Any], contract: str) -> bool:
     return str(value.get("contract_sha256") or "") == _canonical_sha(body)
 
 
-def _sealed_named_valid(value: Mapping[str, Any], contract: str, digest_key: str) -> bool:
+def _sealed_named_valid(
+    value: Mapping[str, Any], contract: str, digest_key: str
+) -> bool:
     if not isinstance(value, Mapping) or value.get("contract") != contract:
         return False
     body = {key: item for key, item in value.items() if key != digest_key}
@@ -1333,7 +1573,9 @@ def _canonical_sha(value: Any) -> str:
 
 def _sha256_text(value: Any) -> bool:
     text = str(value or "")
-    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
+    return len(text) == 64 and all(
+        character in "0123456789abcdef" for character in text
+    )
 
 
 __all__ = [

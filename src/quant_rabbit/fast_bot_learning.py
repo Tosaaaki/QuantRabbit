@@ -24,13 +24,48 @@ REGIME_CONTRACT = "QR_HIERARCHICAL_BOT_REGIME_V1"
 LEARNING_SHADOW_CONTRACT = "QR_FAST_BOT_LEARNING_SHADOW_V1"
 LEARNING_SEAT_CONTRACT = "QR_FAST_BOT_LEARNING_SEAT_V1"
 LEARNING_CANDIDATE_CONTRACT = "QR_FAST_BOT_LEARNING_CANDIDATE_V1"
-LEARNING_SELECTION_POLICY = "PAIR_UTC_10M_ALL_ELIGIBLE_CELLS_V2"
-LEARNING_ARM_POLICY = "QR_FAST_BOT_LEARNING_OFAT_ARMS_V1"
+LEARNING_SELECTION_POLICY_V2 = "PAIR_UTC_10M_ALL_ELIGIBLE_CELLS_V2"
+LEARNING_SELECTION_POLICY = "PAIR_UTC_10M_ALL_VALID_INPUT_CELLS_V3"
+SUPPORTED_LEARNING_SELECTION_POLICIES = (
+    LEARNING_SELECTION_POLICY_V2,
+    LEARNING_SELECTION_POLICY,
+)
+LEARNING_ARM_POLICY_V1 = "QR_FAST_BOT_LEARNING_OFAT_ARMS_V1"
+LEARNING_ARM_POLICY = LEARNING_ARM_POLICY_V1
 
 METHODS = ("BREAKOUT_FAILURE", "RANGE_ROTATION", "TREND_CONTINUATION")
 SIDES = ("LONG", "SHORT")
 CELL_ORDER = tuple((side, method) for method in METHODS for side in SIDES)
-CANDIDATE_CLASSES = ("COST_BLOCKED", "CAUTION_TECHNICAL", "GO_CONTROL")
+CANDIDATE_CLASSES_V2 = ("COST_BLOCKED", "CAUTION_TECHNICAL", "GO_CONTROL")
+CANDIDATE_CLASSES = (
+    "COST_BLOCKED",
+    "REJECTED_TECHNICAL",
+    "SUPERVISOR_BLOCKED",
+    "CAUTION_TECHNICAL",
+    "GO_CONTROL",
+)
+INVALID_INPUT_BLOCKER_PREFIXES = (
+    "FAST_CHART_PACKET_STALE",
+    "BROKER_SNAPSHOT_OR_QUOTES_STALE",
+    "PAIR_QUOTE_STALE_OR_FUTURE",
+    "TECHNICAL_INPUT_STALE",
+    "FAST_TECHNICAL_CANDLE_INTEGRITY_BLOCKED",
+    "FAST_TIMEFRAME_EVIDENCE_MISSING",
+    "FAST_CLOSED_CANDLE_STALE_OR_FUTURE",
+    "SPREAD_OR_M5_ATR_UNAVAILABLE",
+)
+TECHNICAL_BLOCKERS = frozenset(
+    {
+        "M5_FAILED_BREAK_DIRECTION_NOT_BOUND_TO_SIDE",
+        "OPERATING_RANGE_PHASE_NOT_CONFIRMED",
+        "RANGE_EDGE_LOCATION_DOES_NOT_SUPPORT_SIDE",
+        "M1_EXECUTION_DIRECTION_NOT_ALIGNED",
+        "OPERATING_DIRECTION_NOT_ALIGNED",
+        "FAST_TREND_PHASE_NOT_CONFIRMED",
+    }
+)
+COST_BLOCKER = "SPREAD_ANOMALY"
+SUPERVISOR_BLOCKER = "AI_REGIME_SUPERVISOR_STOP"
 MAX_CANDIDATES_PER_SEAT = len(CELL_ORDER)
 SAMPLING_BUCKET_SECONDS = 10 * 60
 QUOTE_MAX_AGE_SECONDS = 45
@@ -50,7 +85,7 @@ PROMOTION_BLOCKERS = (
 
 BASE_ENTRY_TTL_SECONDS = 90
 BASE_MAX_HOLD_SECONDS = 15 * 60
-LEARNING_ARM_SPECS = (
+LEARNING_ARM_SPECS_V1 = (
     ("BASE", 0.0, BASE_ENTRY_TTL_SECONDS, BASE_MAX_HOLD_SECONDS, 1.0, 1.0, "BASELINE"),
     (
         "ENTRY25",
@@ -100,6 +135,25 @@ LEARNING_ARM_SPECS = (
         "STOP_LOSS",
     ),
 )
+LEARNING_ARM_SPECS = LEARNING_ARM_SPECS_V1
+
+
+def learning_arm_specs_for_policy(
+    arm_policy: str,
+) -> tuple[tuple[Any, ...], ...]:
+    if arm_policy == LEARNING_ARM_POLICY_V1:
+        return LEARNING_ARM_SPECS_V1
+    raise ValueError("unsupported learning arm policy")
+
+
+def learning_candidate_classes_for_selection_policy(
+    selection_policy: str,
+) -> tuple[str, ...]:
+    if selection_policy == LEARNING_SELECTION_POLICY_V2:
+        return CANDIDATE_CLASSES_V2
+    if selection_policy == LEARNING_SELECTION_POLICY:
+        return CANDIDATE_CLASSES
+    raise ValueError("unsupported learning selection policy")
 
 
 def build_fast_bot_learning_shadow(
@@ -145,6 +199,15 @@ def build_fast_bot_learning_shadow(
         "maximum_candidates_per_seat": MAX_CANDIDATES_PER_SEAT,
         "maximum_candidates_per_utc_day": MAX_CANDIDATES_PER_UTC_DAY,
         "all_eligible_side_method_cells_emitted": True,
+        "valid_input_rejected_cells_retained": True,
+        "candidate_classes": list(CANDIDATE_CLASSES),
+        "candidate_blocker_facets": [
+            "cost_blocked",
+            "technical_blocked",
+            "supervisor_blocked",
+        ],
+        "source_timeframe_votes_frozen": True,
+        "paired_direction_proof_requires_complete_six_cell_seat": True,
         "future_truth_fetch_unit": "ONE_BID_ASK_PATH_PER_PAIR_10M_SEAT",
         "hot_ledger_retention_policy": HOT_LEDGER_RETENTION_POLICY,
         "learning_outcome_aggregation_status": LEARNING_OUTCOME_AGGREGATION_STATUS,
@@ -290,6 +353,27 @@ def build_fast_bot_learning_shadow(
                 "method": method,
                 "candidate_class": candidate_class,
             }
+            hard_blockers = sorted(
+                {str(item).upper() for item in row.get("hard_blockers", []) or []}
+            )
+            caution_reasons = sorted(
+                {str(item) for item in row.get("caution_reasons", []) or []}
+            )
+            blocker_facets = _blocker_facets(hard_blockers)
+            source_regime_evidence = {
+                "state": str(row.get("state") or "").upper(),
+                "execution_enabled": row.get("execution_enabled") is True,
+                "score": _finite_number(row.get("score")),
+                "hard_blockers": hard_blockers,
+                "caution_reasons": caution_reasons,
+                "failed_break_direction": str(row.get("failed_break_direction") or ""),
+                "ai_supervision": (
+                    dict(row["ai_supervision"])
+                    if isinstance(row.get("ai_supervision"), Mapping)
+                    else {}
+                ),
+                "timeframe_votes": _normalized_timeframe_votes(row),
+            }
             candidate_body = {
                 "contract": LEARNING_CANDIDATE_CONTRACT,
                 "schema_version": 1,
@@ -305,14 +389,13 @@ def build_fast_bot_learning_shadow(
                 ),
                 "top_one_selection_assumption": False,
                 "state_at_emission": str(row.get("state") or ""),
-                "hard_blockers": sorted(
-                    {str(item) for item in row.get("hard_blockers", []) or []}
-                ),
-                "caution_reasons": sorted(
-                    {str(item) for item in row.get("caution_reasons", []) or []}
-                ),
+                "hard_blockers": hard_blockers,
+                "caution_reasons": caution_reasons,
+                **blocker_facets,
                 "regime_score": _finite_number(row.get("score")),
                 "failed_break_direction": str(row.get("failed_break_direction") or ""),
+                "source_regime_evidence": source_regime_evidence,
+                "source_regime_evidence_sha256": _canonical_sha(source_regime_evidence),
                 "arm_policy": LEARNING_ARM_POLICY,
                 "arms": arms,
                 "frozen_bid_ask_truth_path_required": True,
@@ -351,11 +434,13 @@ def build_fast_bot_learning_shadow(
             for item in eligible_cells
             if (str(item["side"]), str(item["method"])) not in selected_cells
         ]
+        complete_six_cell_seat = len(candidates) == MAX_CANDIDATES_PER_SEAT
         seat_body = {
             "contract": LEARNING_SEAT_CONTRACT,
             "schema_version": 1,
             "seat_id": seat_id,
             **seat_identity,
+            "arm_policy": LEARNING_ARM_POLICY,
             "generated_at_utc": now.isoformat(),
             "regime_contract_sha256": str(regime_contract.get("contract_sha256") or ""),
             "broker_snapshot_sha256": _canonical_sha(broker_snapshot),
@@ -406,6 +491,17 @@ def build_fast_bot_learning_shadow(
             "always_on_counterfactual_shadow": True,
             "order_authority": "NONE",
             "all_eligible_side_method_cells_emitted": True,
+            "valid_input_rejected_cells_retained": True,
+            "candidate_classes": list(CANDIDATE_CLASSES),
+            "candidate_blocker_facets": [
+                "cost_blocked",
+                "technical_blocked",
+                "supervisor_blocked",
+            ],
+            "source_timeframe_votes_frozen": True,
+            "paired_direction_proof_requires_complete_six_cell_seat": True,
+            "complete_six_cell_seat": complete_six_cell_seat,
+            "paired_direction_proof_eligible": complete_six_cell_seat,
             "maximum_candidates_per_seat": MAX_CANDIDATES_PER_SEAT,
             "hot_ledger_retention_policy": HOT_LEDGER_RETENTION_POLICY,
             "learning_outcome_aggregation_status": (
@@ -429,6 +525,12 @@ def build_fast_bot_learning_shadow(
             "seat_count": len(seats),
             "candidate_count": sum(
                 int(seat.get("selected_candidate_count") or 0) for seat in seats
+            ),
+            "complete_six_cell_seat_count": sum(
+                seat.get("complete_six_cell_seat") is True for seat in seats
+            ),
+            "partial_valid_input_seat_count": sum(
+                seat.get("complete_six_cell_seat") is False for seat in seats
             ),
             "excluded_pair_counts": excluded_pair_counts,
             "seats": seats,
@@ -519,13 +621,60 @@ def run_fast_bot_learning_shadow(
 def _candidate_class(row: Mapping[str, Any]) -> str | None:
     state = str(row.get("state") or "").upper()
     hard = {str(item).upper() for item in row.get("hard_blockers", []) or []}
-    if state == "STOP" and hard == {"SPREAD_ANOMALY"}:
-        return "COST_BLOCKED"
+    if not _timeframe_votes_complete(row):
+        return None
+    if any(
+        any(item.startswith(prefix) for prefix in INVALID_INPUT_BLOCKER_PREFIXES)
+        for item in hard
+    ):
+        return None
+    known = {*TECHNICAL_BLOCKERS, COST_BLOCKER, SUPERVISOR_BLOCKER}
+    if hard - known:
+        return None
+    if state == "STOP":
+        if SUPERVISOR_BLOCKER in hard:
+            return "SUPERVISOR_BLOCKED"
+        if COST_BLOCKER in hard:
+            return "COST_BLOCKED"
+        # Input/quote validity is proved separately before a seat can be
+        # emitted.  A deterministic technical veto is therefore evidence to
+        # retain, not a reason to erase the opposite side or discarded method
+        # from the counterfactual cohort.
+        return "REJECTED_TECHNICAL"
     if state == "CAUTION" and not hard:
         return "CAUTION_TECHNICAL"
     if state == "GO" and not hard and row.get("execution_enabled") is True:
         return "GO_CONTROL"
     return None
+
+
+def _normalized_timeframe_votes(row: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = row.get("timeframe_votes")
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        str(name): dict(vote)
+        for name, vote in sorted(raw.items())
+        if isinstance(vote, Mapping)
+    }
+
+
+def _timeframe_votes_complete(row: Mapping[str, Any]) -> bool:
+    votes = _normalized_timeframe_votes(row)
+    required = {"M1", "M5", "M15", "M30", "H1", "H4", "D"}
+    return bool(
+        set(votes) == required
+        and all(vote.get("evidence_complete") is True for vote in votes.values())
+    )
+
+
+def _blocker_facets(hard_blockers: Sequence[str]) -> dict[str, bool]:
+    hard = {str(item).upper() for item in hard_blockers}
+    return {
+        "cost_blocked": COST_BLOCKER in hard,
+        "technical_blocked": bool(hard & TECHNICAL_BLOCKERS),
+        "supervisor_blocked": SUPERVISOR_BLOCKER in hard,
+    }
 
 
 def _validated_quote_context(
@@ -633,6 +782,7 @@ def _learning_arms(
     ask: float,
     spread_pips: float,
     m5_atr_pips: float,
+    arm_policy: str = LEARNING_ARM_POLICY,
 ) -> list[dict[str, Any]]:
     base_tp, base_sl = _shadow_geometry_pips(
         method,
@@ -648,7 +798,7 @@ def _learning_arms(
         tp_multiplier,
         sl_multiplier,
         changed_axis,
-    ) in LEARNING_ARM_SPECS:
+    ) in learning_arm_specs_for_policy(arm_policy):
         tp_pips = min(15.0, base_tp * tp_multiplier)
         sl_pips = min(30.0, base_sl * sl_multiplier)
         geometry = _rounded_passive_geometry(
@@ -867,8 +1017,17 @@ def _learning_seat_valid(value: Mapping[str, Any]) -> bool:
     eligible_cells = value.get("eligible_cells")
     unselected_cells = value.get("eligible_but_unselected_cells")
     unselected_counts = value.get("eligible_but_unselected_counts")
+    selection_policy = str(value.get("selection_policy") or "")
+    arm_policy = _seat_arm_policy(value)
+    try:
+        candidate_classes = learning_candidate_classes_for_selection_policy(
+            selection_policy
+        )
+        learning_arm_specs_for_policy(arm_policy)
+    except ValueError:
+        return False
     if (
-        value.get("selection_policy") != LEARNING_SELECTION_POLICY
+        selection_policy not in SUPPORTED_LEARNING_SELECTION_POLICIES
         or value.get("diagnostic_only") is not True
         or value.get("lifecycle") != "PERMANENT_ALWAYS_ON_COUNTERFACTUAL_SHADOW"
         or value.get("always_on_counterfactual_shadow") is not True
@@ -891,7 +1050,8 @@ def _learning_seat_valid(value: Mapping[str, Any]) -> bool:
         or not isinstance(unselected_cells, list)
         or unselected_cells
         or not isinstance(unselected_counts, Mapping)
-        or any(unselected_counts.get(name) != 0 for name in CANDIDATE_CLASSES)
+        or set(unselected_counts) != set(candidate_classes)
+        or any(unselected_counts.get(name) != 0 for name in candidate_classes)
         or not 1 <= len(candidates) <= MAX_CANDIDATES_PER_SEAT
         or len(candidates) != len(eligible_cells)
         or value.get("selected_candidate_count") != len(candidates)
@@ -899,6 +1059,15 @@ def _learning_seat_valid(value: Mapping[str, Any]) -> bool:
         or _parse_utc(value.get("m1_closed_candle_utc")) is None
     ):
         return False
+    if selection_policy == LEARNING_SELECTION_POLICY:
+        complete_six = len(candidates) == MAX_CANDIDATES_PER_SEAT
+        if (
+            value.get("paired_direction_proof_requires_complete_six_cell_seat")
+            is not True
+            or value.get("complete_six_cell_seat") is not complete_six
+            or value.get("paired_direction_proof_eligible") is not complete_six
+        ):
+            return False
     bucket = _parse_utc(value.get("sampling_bucket_utc"))
     m1_closed = _parse_utc(value.get("m1_closed_candle_utc"))
     seat_identity = {
@@ -938,7 +1107,13 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
         "method": value.get("method"),
         "candidate_class": value.get("candidate_class"),
     }
+    selection_policy = str(seat.get("selection_policy") or "")
+    arm_policy = _seat_arm_policy(seat)
     try:
+        candidate_classes = learning_candidate_classes_for_selection_policy(
+            selection_policy
+        )
+        arm_specs = learning_arm_specs_for_policy(arm_policy)
         expected_arms = _learning_arms(
             pair=str(seat["pair"]),
             side=str(value["side"]),
@@ -947,13 +1122,14 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
             ask=float(seat["quote_ask"]),
             spread_pips=float(seat["executable_spread_pips"]),
             m5_atr_pips=float(seat["m5_atr_pips"]),
+            arm_policy=arm_policy,
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
     common_valid = bool(
         value.get("contract") == LEARNING_CANDIDATE_CONTRACT
         and value.get("seat_id") == seat_id
-        and value.get("candidate_class") in CANDIDATE_CLASSES
+        and value.get("candidate_class") in candidate_classes
         and str(value.get("candidate_id") or "") == _canonical_sha(identity)[:24]
         and value.get("counterfactual_comparison_group_id") == seat_id
         and value.get("top_one_selection_assumption") is False
@@ -966,8 +1142,9 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
         and value.get("live_permission") is False
         and value.get("broker_mutation_allowed") is False
         and isinstance(arms, list)
+        and value.get("arm_policy") == arm_policy
         and [arm.get("arm_id") for arm in arms if isinstance(arm, Mapping)]
-        == [spec[0] for spec in LEARNING_ARM_SPECS]
+        == [spec[0] for spec in arm_specs]
         and arms == expected_arms
         and str(value.get("candidate_sha256") or "") == _canonical_sha(body)
     )
@@ -976,14 +1153,99 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
     candidate_class = str(value.get("candidate_class") or "")
     state = str(value.get("state_at_emission") or "")
     hard = {str(item) for item in value.get("hard_blockers", []) or []}
+    if selection_policy == LEARNING_SELECTION_POLICY_V2:
+        return bool(
+            (
+                candidate_class == "COST_BLOCKED"
+                and state == "STOP"
+                and hard == {"SPREAD_ANOMALY"}
+            )
+            or (
+                candidate_class == "CAUTION_TECHNICAL"
+                and state == "CAUTION"
+                and not hard
+            )
+            or (candidate_class == "GO_CONTROL" and state == "GO" and not hard)
+        )
+    source_evidence = value.get("source_regime_evidence")
+    if not isinstance(source_evidence, Mapping):
+        return False
+    execution_enabled = source_evidence.get("execution_enabled") is True
+    expected_source_evidence = {
+        "state": state,
+        "execution_enabled": execution_enabled,
+        "score": value.get("regime_score"),
+        "hard_blockers": sorted(hard),
+        "caution_reasons": sorted(
+            {str(item) for item in value.get("caution_reasons", []) or []}
+        ),
+        "failed_break_direction": str(value.get("failed_break_direction") or ""),
+        "ai_supervision": (
+            dict(source_evidence["ai_supervision"])
+            if isinstance(source_evidence.get("ai_supervision"), Mapping)
+            else {}
+        ),
+        "timeframe_votes": (
+            {
+                str(name): dict(vote)
+                for name, vote in sorted(source_evidence["timeframe_votes"].items())
+                if isinstance(vote, Mapping)
+            }
+            if isinstance(source_evidence.get("timeframe_votes"), Mapping)
+            else {}
+        ),
+    }
+    expected_facets = _blocker_facets(sorted(hard))
+    if not bool(
+        dict(source_evidence) == expected_source_evidence
+        and value.get("source_regime_evidence_sha256")
+        == _canonical_sha(expected_source_evidence)
+        and all(
+            value.get(name) is expected for name, expected in expected_facets.items()
+        )
+        and set(expected_source_evidence["timeframe_votes"])
+        == {"M1", "M5", "M15", "M30", "H1", "H4", "D"}
+        and all(
+            vote.get("evidence_complete") is True
+            for vote in expected_source_evidence["timeframe_votes"].values()
+        )
+    ):
+        return False
     return bool(
         (
+            candidate_class == "SUPERVISOR_BLOCKED"
+            and state == "STOP"
+            and not execution_enabled
+            and SUPERVISOR_BLOCKER in hard
+        )
+        or (
             candidate_class == "COST_BLOCKED"
             and state == "STOP"
-            and hard == {"SPREAD_ANOMALY"}
+            and not execution_enabled
+            and COST_BLOCKER in hard
+            and SUPERVISOR_BLOCKER not in hard
         )
-        or (candidate_class == "CAUTION_TECHNICAL" and state == "CAUTION" and not hard)
-        or (candidate_class == "GO_CONTROL" and state == "GO" and not hard)
+        or (
+            candidate_class == "REJECTED_TECHNICAL"
+            and state == "STOP"
+            and not execution_enabled
+            and COST_BLOCKER not in hard
+            and SUPERVISOR_BLOCKER not in hard
+            and bool(hard)
+            and hard <= TECHNICAL_BLOCKERS
+        )
+        or (
+            candidate_class == "CAUTION_TECHNICAL"
+            and state == "CAUTION"
+            and not execution_enabled
+            and not hard
+        )
+        or (
+            candidate_class == "GO_CONTROL"
+            and state == "GO"
+            and execution_enabled
+            and not hard
+        )
     )
 
 
@@ -992,6 +1254,21 @@ def _bucket_identity(value: Mapping[str, Any]) -> tuple[str, str]:
         str(value.get("pair") or ""),
         str(value.get("sampling_bucket_utc") or ""),
     )
+
+
+def _seat_arm_policy(value: Mapping[str, Any]) -> str:
+    explicit = str(value.get("arm_policy") or "")
+    if explicit:
+        return explicit
+    candidates = value.get("candidates")
+    if not isinstance(candidates, list):
+        return ""
+    policies = {
+        str(item.get("arm_policy") or "")
+        for item in candidates
+        if isinstance(item, Mapping) and str(item.get("arm_policy") or "")
+    }
+    return next(iter(policies)) if len(policies) == 1 else ""
 
 
 def _regime_snapshot_binding_valid(
@@ -1104,9 +1381,13 @@ def _price(pair: str, value: float) -> float:
 
 __all__ = [
     "LEARNING_ARM_POLICY",
+    "LEARNING_ARM_POLICY_V1",
     "LEARNING_ARM_SPECS",
+    "LEARNING_ARM_SPECS_V1",
     "LEARNING_SEAT_CONTRACT",
     "LEARNING_SHADOW_CONTRACT",
     "build_fast_bot_learning_shadow",
+    "learning_arm_specs_for_policy",
+    "learning_candidate_classes_for_selection_policy",
     "run_fast_bot_learning_shadow",
 ]

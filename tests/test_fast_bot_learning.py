@@ -24,6 +24,7 @@ from quant_rabbit.fast_bot_learning import (
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 METHODS = ("BREAKOUT_FAILURE", "RANGE_ROTATION", "TREND_CONTINUATION")
 SIDES = ("LONG", "SHORT")
+TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 
 
 def _canonical_sha(value) -> str:
@@ -88,6 +89,22 @@ def _row(
         "spread_pips": spread_pips,
         "spread_to_m5_atr": round(spread_pips / m5_atr_pips, 6),
         "failed_break_direction": "NONE",
+        "ai_supervision": {"mode": "UNSUPERVISED", "reason": "TEST"},
+        "timeframe_votes": {
+            timeframe: {
+                "evidence_complete": True,
+                "direction_score": 1 if side == "LONG" else -1,
+                "observed_direction": "UP" if side == "LONG" else "DOWN",
+                "phase": "TREND",
+                "readiness": "ACTIVE",
+                "location": "MIDDLE_THIRD",
+                "structure": "BREAKOUT_ACTIVE",
+                "trigger": "BREAKOUT_CLOSE",
+                "extension": "BALANCED",
+                "value_zone": "EQUILIBRIUM",
+            }
+            for timeframe in TIMEFRAMES
+        },
     }
 
 
@@ -113,6 +130,72 @@ def _spread(pair: str, bid: float, ask: float) -> float:
 
 
 class FastBotLearningTest(unittest.TestCase):
+    def test_valid_technical_stops_are_retained_with_exact_blocker_facets(self) -> None:
+        pair = "EUR_USD"
+        prices = {pair: (1.10000, 1.10008)}
+        snapshot = _snapshot(prices)
+        spread = _spread(pair, *prices[pair])
+        rows = [
+            _row(
+                pair,
+                "LONG",
+                "RANGE_ROTATION",
+                state="STOP",
+                spread_pips=spread,
+                hard_blockers=("RANGE_EDGE_LOCATION_DOES_NOT_SUPPORT_SIDE",),
+            ),
+            _row(
+                pair,
+                "SHORT",
+                "TREND_CONTINUATION",
+                state="STOP",
+                spread_pips=spread,
+                hard_blockers=(
+                    "SPREAD_ANOMALY",
+                    "OPERATING_DIRECTION_NOT_ALIGNED",
+                ),
+            ),
+            _row(
+                pair,
+                "LONG",
+                "BREAKOUT_FAILURE",
+                state="STOP",
+                spread_pips=spread,
+                hard_blockers=("FAST_TIMEFRAME_EVIDENCE_MISSING:M1,M5",),
+            ),
+        ]
+
+        shadow = build_fast_bot_learning_shadow(
+            _regime(snapshot, rows), snapshot, now_utc=NOW
+        )
+
+        self.assertEqual(shadow["candidate_count"], 2)
+        self.assertEqual(shadow["complete_six_cell_seat_count"], 0)
+        self.assertEqual(shadow["partial_valid_input_seat_count"], 1)
+        self.assertFalse(shadow["seats"][0]["complete_six_cell_seat"])
+        self.assertFalse(shadow["seats"][0]["paired_direction_proof_eligible"])
+        candidates = {
+            (item["side"], item["method"]): item
+            for item in shadow["seats"][0]["candidates"]
+        }
+        technical = candidates[("LONG", "RANGE_ROTATION")]
+        self.assertEqual(technical["candidate_class"], "REJECTED_TECHNICAL")
+        self.assertTrue(technical["technical_blocked"])
+        self.assertFalse(technical["cost_blocked"])
+        self.assertFalse(technical["supervisor_blocked"])
+        combined = candidates[("SHORT", "TREND_CONTINUATION")]
+        self.assertEqual(combined["candidate_class"], "COST_BLOCKED")
+        self.assertTrue(combined["technical_blocked"])
+        self.assertTrue(combined["cost_blocked"])
+        self.assertEqual(
+            set(combined["source_regime_evidence"]["timeframe_votes"]),
+            set(TIMEFRAMES),
+        )
+        self.assertNotIn(
+            ("LONG", "BREAKOUT_FAILURE"),
+            candidates,
+        )
+
     def test_separate_seats_collect_cost_caution_and_go_without_authority(self) -> None:
         prices = {
             "EUR_USD": (1.10000, 1.10040),
@@ -175,7 +258,7 @@ class FastBotLearningTest(unittest.TestCase):
 
         self.assertEqual(shadow["status"], "EMITTED")
         self.assertEqual(shadow["seat_count"], 2)
-        self.assertEqual(shadow["candidate_count"], 3)
+        self.assertEqual(shadow["candidate_count"], 4)
         classes = {
             candidate["candidate_class"]
             for seat in shadow["seats"]
@@ -183,7 +266,12 @@ class FastBotLearningTest(unittest.TestCase):
         }
         self.assertEqual(
             classes,
-            {"COST_BLOCKED", "CAUTION_TECHNICAL", "GO_CONTROL"},
+            {
+                "COST_BLOCKED",
+                "SUPERVISOR_BLOCKED",
+                "CAUTION_TECHNICAL",
+                "GO_CONTROL",
+            },
         )
         cost_seat = next(seat for seat in shadow["seats"] if seat["pair"] == "EUR_USD")
         self.assertEqual(cost_seat["eligible_counts"]["COST_BLOCKED"], 1)
@@ -279,6 +367,8 @@ class FastBotLearningTest(unittest.TestCase):
         ]
 
         self.assertEqual(seat["selected_candidate_count"], 6)
+        self.assertTrue(seat["complete_six_cell_seat"])
+        self.assertTrue(seat["paired_direction_proof_eligible"])
         self.assertEqual(seat["eligible_counts"]["CAUTION_TECHNICAL"], 6)
         self.assertEqual(
             seat["eligible_but_unselected_counts"]["CAUTION_TECHNICAL"],
