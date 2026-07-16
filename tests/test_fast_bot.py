@@ -11,10 +11,16 @@ from quant_rabbit.fast_bot import (
     AI_SUPERVISION_CONTRACT,
     ENTRY_ARM_SPREAD_FRACTIONS,
     ENTRY_EXPERIMENT_CONTRACT,
+    HORIZON_LANE,
+    REGIME_CONTRACT,
+    _append_signals_once,
     _entry_experiment_arms,
+    build_fast_bot_shadow,
     build_hierarchical_regime_contract,
     run_fast_bot_shadow,
 )
+from quant_rabbit.guardian_observation import CURRENT_M1_CONTRACT
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
@@ -209,6 +215,33 @@ class FastBotTest(unittest.TestCase):
                 self.assertEqual(trend["state"], "STOP")
                 self.assertIn(blocker, trend["hard_blockers"])
 
+    def test_blocked_all_pair_current_keeps_exact_28_stop_surface(self) -> None:
+        _, slow, snapshot = _inputs()
+        blocked = _seal_contract(
+            {
+                "contract": CURRENT_M1_CONTRACT,
+                "schema_version": 1,
+                "status": "BLOCKED",
+                "configured_pairs": [],
+                "charts": [],
+            }
+        )
+
+        contract = build_hierarchical_regime_contract(
+            fast_pair_charts=blocked,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            now_utc=NOW,
+        )
+
+        self.assertEqual(len(contract["rows"]), 28 * 2 * 3)
+        self.assertEqual({row["pair"] for row in contract["rows"]}, set(DEFAULT_TRADER_PAIRS))
+        self.assertTrue(all(row["state"] == "STOP" for row in contract["rows"]))
+        eur_trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+        self.assertIn("FAST_CHART_PACKET_STALE", eur_trend["hard_blockers"])
+        self.assertIn("FAST_TIMEFRAME_EVIDENCE_MISSING:M1,M5,M15", eur_trend["hard_blockers"])
+
     def test_arm_pips_are_recomputed_after_broker_tick_rounding(self) -> None:
         for pair, bid, ask in (
             ("EUR_USD", 1.10000, 1.10008),
@@ -274,6 +307,27 @@ class FastBotTest(unittest.TestCase):
         self.assertEqual(short["state"], "GO")
         self.assertEqual(long["state"], "STOP")
         self.assertIn("M5_FAILED_BREAK_DIRECTION_NOT_BOUND_TO_SIDE", long["hard_blockers"])
+
+    def test_breakout_failure_uses_retained_m5_after_fast_m1_split(self) -> None:
+        fast, slow, snapshot = _inputs(failed_break_short=True)
+        fast_views = fast["charts"][0]["views"]
+        retained_m5 = next(view for view in fast_views if view["granularity"] == "M5")
+        fast["charts"][0]["views"] = [
+            view for view in fast_views if view["granularity"] != "M5"
+        ]
+        slow["charts"][0]["views"].insert(0, retained_m5)
+
+        contract = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            now_utc=NOW,
+        )
+
+        short = _row(contract, side="SHORT", method="BREAKOUT_FAILURE")
+        self.assertEqual(short["failed_break_direction"], "SHORT")
+        self.assertEqual(short["state"], "GO")
 
     def test_ai_regime_stop_is_pair_level_not_trade_approval(self) -> None:
         fast, slow, snapshot = _inputs()
@@ -469,7 +523,8 @@ class FastBotTest(unittest.TestCase):
         self.assertFalse(shadow["ai_per_trade_approval_required"])
         signal = shadow["signals"][0]
         arms = signal["entry_experiment_arms"]
-        self.assertEqual(signal["schema_version"], 2)
+        self.assertEqual(signal["schema_version"], 3)
+        self.assertEqual(signal["horizon_lane"], HORIZON_LANE)
         self.assertEqual(signal["entry_experiment_contract"], ENTRY_EXPERIMENT_CONTRACT)
         self.assertEqual(
             [(arm["arm_id"], arm["spread_fraction_toward_market"]) for arm in arms],
@@ -488,6 +543,120 @@ class FastBotTest(unittest.TestCase):
         self.assertEqual(len(signal["signal_sha256"]), 64)
         self.assertFalse(signal["broker_mutation_allowed"])
         self.assertGreater(shadow["signals"][0]["take_profit"], shadow["signals"][0]["entry"])
+
+    def test_shadow_preserves_every_go_side_method_pair_and_horizon_identity(self) -> None:
+        rows = [
+            {
+                "pair": pair,
+                "side": side,
+                "method": method,
+                "state": "GO",
+                "execution_enabled": True,
+                "score": score,
+                "m1_closed_candle_utc": NOW.isoformat(),
+                "m5_atr_pips": 5.0,
+            }
+            for pair, side, method, score in (
+                ("EUR_USD", "LONG", "TREND_CONTINUATION", 6.0),
+                ("EUR_USD", "SHORT", "RANGE_ROTATION", 5.0),
+                ("EUR_USD", "LONG", "BREAKOUT_FAILURE", 7.0),
+                ("GBP_USD", "LONG", "TREND_CONTINUATION", 4.0),
+            )
+        ]
+        regime = _seal_contract(
+            {
+                "contract": REGIME_CONTRACT,
+                "schema_version": 1,
+                "generated_at_utc": NOW.isoformat(),
+                "rows": rows,
+            }
+        )
+        snapshot = {
+            "fetched_at_utc": NOW.isoformat(),
+            "quotes": {
+                pair: {
+                    "bid": bid,
+                    "ask": ask,
+                    "timestamp_utc": NOW.isoformat(),
+                }
+                for pair, bid, ask in (
+                    ("EUR_USD", 1.10000, 1.10008),
+                    ("GBP_USD", 1.30000, 1.30008),
+                )
+            },
+        }
+
+        shadow = build_fast_bot_shadow(regime, broker_snapshot=snapshot, now_utc=NOW)
+
+        self.assertEqual(len(shadow["signals"]), 4)
+        identities = {
+            (
+                signal["pair"],
+                signal["side"],
+                signal["method"],
+                signal["horizon_lane"],
+            )
+            for signal in shadow["signals"]
+        }
+        self.assertEqual(len(identities), 4)
+        self.assertEqual(len({signal["signal_id"] for signal in shadow["signals"]}), 4)
+        self.assertEqual(shadow["candidate_projection"], "ALL_GO_ROWS_NO_PAIR_OR_SIDE_NETTING")
+        self.assertEqual(shadow["candidate_count_by_horizon_lane"], {HORIZON_LANE: 4})
+        self.assertTrue(all(signal["schema_version"] == 3 for signal in shadow["signals"]))
+        self.assertTrue(all(signal["live_permission"] is False for signal in shadow["signals"]))
+        self.assertIn(
+            "HORIZON_AWARE_MULTI_GO_PORTFOLIO_FORWARD_PROOF_REQUIRED",
+            shadow["promotion_contract"]["blockers"],
+        )
+        self.assertNotIn(
+            "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+            shadow["promotion_contract"]["blockers"],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger = Path(temp_dir) / "shadow.jsonl"
+            self.assertEqual(_append_signals_once(ledger, shadow), 4)
+            self.assertEqual(_append_signals_once(ledger, shadow), 0)
+            self.assertEqual(len(ledger.read_text().splitlines()), 4)
+
+        legacy_source = shadow["signals"][0]
+        legacy_body = {
+            key: value
+            for key, value in legacy_source.items()
+            if key not in {"signal_sha256", "identity_contract", "horizon_lane"}
+        }
+        legacy_body["schema_version"] = 2
+        legacy_identity = {
+            "pair": legacy_body["pair"],
+            "m1_closed_candle_utc": legacy_body["m1_closed_candle_utc"],
+        }
+        legacy_body["signal_id"] = hashlib.sha256(
+            json.dumps(
+                legacy_identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        legacy = {
+            **legacy_body,
+            "signal_sha256": hashlib.sha256(
+                json.dumps(
+                    legacy_body,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger = Path(temp_dir) / "shadow.jsonl"
+            self.assertEqual(_append_signals_once(ledger, {"signals": [legacy]}), 1)
+            self.assertEqual(
+                _append_signals_once(ledger, {"signals": [legacy_source]}),
+                1,
+            )
+            self.assertEqual(len(ledger.read_text().splitlines()), 2)
 
 
 if __name__ == "__main__":

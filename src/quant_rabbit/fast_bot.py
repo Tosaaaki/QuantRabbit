@@ -21,6 +21,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from quant_rabbit.guardian_observation import (
+    CURRENT_M1_CONTRACT,
+    SLOW_RETENTION_CONTRACT,
+    validate_current_m1_contract,
+    validate_slow_retention_contract,
+)
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.strategy.failed_break_evidence import (
     build_m5_failed_break_evidence,
@@ -45,6 +52,7 @@ ENTRY_ARM_SPREAD_FRACTIONS = (
 )
 ENTRY_TTL_SECONDS = 90
 MAX_HOLD_SECONDS = 15 * 60
+HORIZON_LANE = "M1_EXECUTION_15M_HOLD"
 TIMEFRAME_ROLES = {
     "execution": ("M1",),
     "operating": ("M5", "M15", "M30"),
@@ -90,6 +98,8 @@ def build_hierarchical_regime_contract(
     """Build pair/side/method GO gates without a per-trade AI decision."""
 
     now = _aware_utc(now_utc or datetime.now(timezone.utc))
+    fast_pair_charts = _validated_fast_pair_charts(fast_pair_charts, now_utc=now)
+    slow_pair_charts = _validated_slow_pair_charts(slow_pair_charts)
     fast_generated = _parse_utc(fast_pair_charts.get("generated_at_utc"))
     slow_generated = _parse_utc(slow_pair_charts.get("generated_at_utc"))
     snapshot_at = _parse_utc(broker_snapshot.get("fetched_at_utc"))
@@ -120,8 +130,8 @@ def build_hierarchical_regime_contract(
     rows: list[dict[str, Any]] = []
     for pair in pairs:
         merged_views = _merged_views(fast_by_pair.get(pair), slow_by_pair.get(pair))
-        fast_chart = fast_by_pair.get(pair) or {}
-        m5_failed_break = build_m5_failed_break_evidence(fast_chart)
+        merged_chart = {"pair": pair, "views": list(merged_views.values())}
+        m5_failed_break = build_m5_failed_break_evidence(merged_chart)
         quote = quotes.get(pair) if isinstance(quotes.get(pair), Mapping) else {}
         quote_at = _parse_utc(quote.get("timestamp_utc"))
         spread = _spread_pips(pair, quote)
@@ -295,24 +305,16 @@ def build_fast_bot_shadow(
         and item.get("state") == "GO"
         and item.get("execution_enabled") is True
     ]
-    # One direction/method per pair avoids correlated duplicate orders from a
-    # single closed M1 observation.  Exact failed breaks outrank range, then
-    # continuation; the numeric score breaks ties.
-    priority = {"BREAKOUT_FAILURE": 3, "RANGE_ROTATION": 2, "TREND_CONTINUATION": 1}
-    selected: dict[str, dict[str, Any]] = {}
-    for row in go_rows:
-        pair = str(row.get("pair") or "")
-        rank = (priority.get(str(row.get("method") or ""), 0), float(row.get("score") or 0.0))
-        prior = selected.get(pair)
-        prior_rank = (
-            priority.get(str(prior.get("method") or ""), 0),
-            float(prior.get("score") or 0.0),
-        ) if prior else (-1, -1.0)
-        if rank > prior_rank:
-            selected[pair] = row
-
     signals: list[dict[str, Any]] = []
-    for pair, row in sorted(selected.items()):
+    for row in sorted(
+        go_rows,
+        key=lambda item: (
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        ),
+    ):
+        pair = str(row.get("pair") or "")
         quote = quotes.get(pair) if isinstance(quotes.get(pair), Mapping) else {}
         bid = _positive_number(quote.get("bid"))
         ask = _positive_number(quote.get("ask"))
@@ -358,18 +360,20 @@ def build_fast_bot_shadow(
         actual_tp_pips = float(primary["take_profit_pips"])
         actual_sl_pips = float(primary["stop_loss_pips"])
         identity = {
+            "identity_contract": "QR_FAST_BOT_SHADOW_IDENTITY_V3",
             "pair": pair,
             "m1_closed_candle_utc": row.get("m1_closed_candle_utc"),
+            "side": side,
+            "method": method,
+            "horizon_lane": HORIZON_LANE,
         }
         evidence_binding = {
             **identity,
-            "side": side,
-            "method": method,
             "regime_contract_sha256": regime_contract.get("contract_sha256"),
         }
         signal_body = {
             "contract": SIGNAL_CONTRACT,
-            "schema_version": 2,
+            "schema_version": 3,
             "signal_id": _canonical_sha(identity)[:24],
             **evidence_binding,
             "generated_at_utc": now.isoformat(),
@@ -408,6 +412,8 @@ def build_fast_bot_shadow(
         "live_permission": False,
         "broker_mutation_allowed": False,
         "ai_per_trade_approval_required": False,
+        "candidate_projection": "ALL_GO_ROWS_NO_PAIR_OR_SIDE_NETTING",
+        "candidate_count_by_horizon_lane": {HORIZON_LANE: len(signals)},
         "signals": signals,
         "promotion_contract": {
             "status": "BLOCKED_PENDING_FORWARD_PROOF",
@@ -420,7 +426,8 @@ def build_fast_bot_shadow(
             "blockers": [
                 "EXACT_OANDA_S5_BID_ASK_FORWARD_OUTCOMES_REQUIRED",
                 "POST_COST_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
-                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "HORIZON_AWARE_MULTI_GO_PORTFOLIO_FORWARD_PROOF_REQUIRED",
+                "COUNTERFACTUAL_LEARNING_OUTCOME_PROOF_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ],
         },
@@ -725,6 +732,32 @@ def _charts_by_pair(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     }
 
 
+def _validated_fast_pair_charts(
+    payload: Mapping[str, Any],
+    *,
+    now_utc: datetime,
+) -> Mapping[str, Any]:
+    if payload.get("contract") != CURRENT_M1_CONTRACT:
+        return payload
+    if validate_current_m1_contract(payload, now_utc=now_utc):
+        return payload
+    return {
+        "generated_at_utc": None,
+        "charts": [{"pair": pair, "views": []} for pair in DEFAULT_TRADER_PAIRS],
+    }
+
+
+def _validated_slow_pair_charts(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    if payload.get("contract") != SLOW_RETENTION_CONTRACT:
+        return payload
+    if validate_slow_retention_contract(payload):
+        return payload
+    return {
+        "generated_at_utc": None,
+        "charts": [{"pair": pair, "views": []} for pair in DEFAULT_TRADER_PAIRS],
+    }
+
+
 def _merged_views(fast_chart: Mapping[str, Any] | None, slow_chart: Mapping[str, Any] | None) -> dict[str, Mapping[str, Any]]:
     out: dict[str, Mapping[str, Any]] = {}
     for chart in (slow_chart, fast_chart):
@@ -836,7 +869,7 @@ def _append_signals_once(path: Path, shadow: Mapping[str, Any]) -> int:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
         seen: set[str] = set()
-        seen_identities: set[tuple[str, str]] = set()
+        seen_identities: set[tuple[str, str, str, str, str]] = set()
         for line in handle:
             try:
                 item = json.loads(line)
@@ -982,10 +1015,13 @@ def _sha256_text(value: Any) -> bool:
     return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
 
 
-def _signal_identity(signal: Mapping[str, Any]) -> tuple[str, str]:
+def _signal_identity(signal: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
     return (
         str(signal.get("pair") or ""),
         str(signal.get("m1_closed_candle_utc") or ""),
+        str(signal.get("side") or ""),
+        str(signal.get("method") or ""),
+        str(signal.get("horizon_lane") or ""),
     )
 
 

@@ -1295,6 +1295,14 @@ case "$QR_FAST_BOT_OUTCOME_ENABLED" in
     exit 2
     ;;
 esac
+export QR_FAST_BOT_LEARNING_ENABLED="${QR_FAST_BOT_LEARNING_ENABLED:-1}"
+case "$QR_FAST_BOT_LEARNING_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_FAST_BOT_LEARNING_ENABLED=${QR_FAST_BOT_LEARNING_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
 guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
@@ -1304,6 +1312,9 @@ guardian_execution_report="${QR_POSITION_GUARDIAN_EXECUTION_REPORT:-docs/positio
 guardian_charts="${QR_POSITION_GUARDIAN_PAIR_CHARTS:-data/position_guardian_pair_charts.json}"
 guardian_report="${QR_POSITION_GUARDIAN_PAIR_CHARTS_REPORT:-docs/position_guardian_pair_charts_report.md}"
 guardian_chart_freshness="${QR_POSITION_GUARDIAN_CHART_FRESHNESS:-data/position_guardian_chart_freshness.json}"
+guardian_all_pair_m1="${QR_POSITION_GUARDIAN_ALL_PAIR_M1:-data/position_guardian_all_pair_m1.json}"
+guardian_all_pair_m1_report="${QR_POSITION_GUARDIAN_ALL_PAIR_M1_REPORT:-docs/position_guardian_all_pair_m1_report.md}"
+guardian_slow_retention="${QR_POSITION_GUARDIAN_SLOW_RETENTION:-data/position_guardian_slow_retention.json}"
 guardian_trader_snapshot="${QR_POSITION_GUARDIAN_TRADER_SNAPSHOT:-data/position_guardian_trader_snapshot.json}"
 guardian_trigger_contract="${QR_POSITION_GUARDIAN_TRIGGER_CONTRACT:-data/guardian_trigger_contract.json}"
 guardian_order_intents="${QR_POSITION_GUARDIAN_ORDER_INTENTS:-data/order_intents.json}"
@@ -1312,6 +1323,17 @@ guardian_non_eurusd_frontier="${QR_POSITION_GUARDIAN_NON_EURUSD_FRONTIER:-data/n
 guardian_count="${QR_POSITION_GUARDIAN_CANDLE_COUNT:-120}"
 guardian_candidate_limit="${QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS:-6}"
 guardian_candle_close_grace_seconds="${QR_POSITION_GUARDIAN_CANDLE_CLOSE_GRACE_SECONDS:-5}"
+guardian_all_pair_observation_enabled="${QR_ALL_PAIR_OBSERVATION_ENABLED:-1}"
+guardian_observation_module="quant_rabbit.guardian_observation"
+guardian_all_pairs="EUR_USD,GBP_USD,AUD_USD,NZD_USD,USD_JPY,USD_CAD,USD_CHF,EUR_GBP,EUR_JPY,EUR_AUD,EUR_CAD,EUR_CHF,EUR_NZD,GBP_JPY,GBP_AUD,GBP_CAD,GBP_CHF,GBP_NZD,AUD_JPY,AUD_CAD,AUD_CHF,AUD_NZD,CAD_JPY,CAD_CHF,CHF_JPY,NZD_JPY,NZD_CAD,NZD_CHF"
+guardian_active_chart_wall_seconds=0
+guardian_active_chart_pair_count=0
+
+if [[ "$guardian_all_pair_observation_enabled" != "0" \
+  && "$guardian_all_pair_observation_enabled" != "1" ]]; then
+  echo "[run-position-guardian-live] QR_ALL_PAIR_OBSERVATION_ENABLED must be 0 or 1." >&2
+  exit 2
+fi
 
 if [[ ! "$guardian_candidate_limit" =~ ^[0-9]+$ ]] \
   || (( guardian_candidate_limit > 28 )); then
@@ -1411,16 +1433,22 @@ run_fast_bot_shadow() {
   if [[ "$QR_FAST_BOT_SHADOW_ENABLED" != "1" ]]; then
     return 0
   fi
-  local runner bot_status
+  local runner bot_status fast_charts slow_charts
   runner="${ROOT_DIR}/scripts/run-fast-bot-shadow.py"
   if [[ ! -f "$runner" ]]; then
     echo "[run-position-guardian-live] fast bot shadow runner is missing; no signal was admitted." >&2
     return 0
   fi
+  fast_charts="$guardian_charts"
+  slow_charts="${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_charts}"
+  if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
+    fast_charts="$guardian_all_pair_m1"
+    slow_charts="${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_slow_retention}"
+  fi
   set +e
   "$QR_PYTHON" "$runner" \
-    --fast-pair-charts "$guardian_charts" \
-    --slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_charts}" \
+    --fast-pair-charts "$fast_charts" \
+    --slow-pair-charts "$slow_charts" \
     --broker-snapshot "$guardian_snapshot" \
     --guardian-events "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}" \
     --ai-supervision "${QR_FAST_BOT_AI_SUPERVISION:-data/ai_regime_supervision.json}" \
@@ -1457,6 +1485,51 @@ resolve_fast_bot_shadow_outcomes() {
   fi
 }
 
+run_fast_bot_learning_shadow() {
+  if [[ "$QR_FAST_BOT_LEARNING_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local emitter learning_status
+  emitter="${ROOT_DIR}/tools/fast_bot_learning_shadow.py"
+  if [[ ! -f "$emitter" ]]; then
+    echo "[run-position-guardian-live] fast bot learning emitter is missing; counterfactual collection remains unavailable." >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$emitter" \
+    --regime-contract "${QR_FAST_BOT_REGIME_OUTPUT:-data/hierarchical_bot_regime.json}" \
+    --broker-snapshot "$guardian_snapshot" \
+    --output "${QR_FAST_BOT_LEARNING_OUTPUT:-data/fast_bot_learning_shadow.json}" \
+    --ledger "${QR_FAST_BOT_LEARNING_LEDGER:-data/fast_bot_learning_seat_ledger.jsonl}" >&2
+  learning_status="$?"
+  set -e
+  if [[ "$learning_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] fast bot learning shadow failed status=${learning_status}; primary and live permissions remain unchanged." >&2
+  fi
+}
+
+resolve_fast_bot_learning_outcomes() {
+  if [[ "$QR_FAST_BOT_LEARNING_ENABLED" != "1" ]]; then
+    return 0
+  fi
+  local resolver outcome_status
+  resolver="${ROOT_DIR}/tools/resolve-fast-bot-learning-outcomes.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo "[run-position-guardian-live] fast bot learning outcome resolver is missing; counterfactual promotion remains blocked." >&2
+    return 0
+  fi
+  set +e
+  "$QR_PYTHON" "$resolver" \
+    --shadow-ledger "${QR_FAST_BOT_LEARNING_LEDGER:-data/fast_bot_learning_seat_ledger.jsonl}" \
+    --outcome-ledger "${QR_FAST_BOT_LEARNING_OUTCOME_LEDGER:-data/fast_bot_learning_outcome_ledger.jsonl}" \
+    --scorecard "${QR_FAST_BOT_LEARNING_SCORECARD:-data/fast_bot_learning_scorecard.json}" >&2
+  outcome_status="$?"
+  set -e
+  if [[ "$outcome_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] fast bot learning outcome resolution failed status=${outcome_status}; primary and live permissions remain unchanged." >&2
+  fi
+}
+
 "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
 pair_scope="$(position_guardian_pair_scope \
   "$guardian_snapshot" \
@@ -1471,12 +1544,16 @@ IFS='|' read -r open_pairs trader_pairs candidate_pairs monitor_pairs hard_prior
 if [[ -n "$monitor_pairs" ]]; then
   refresh_due="$(chart_refresh_due "$guardian_charts" "$guardian_chart_freshness" "$monitor_pairs")"
   if [[ "$refresh_due" == "1" ]]; then
+    guardian_active_chart_started="$SECONDS"
     "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
       --pairs "$monitor_pairs" \
       --timeframes M1,M5,M15,M30,H1,H4,D \
       --count "$guardian_count" \
       --output "$guardian_charts" \
       --report "$guardian_report"
+    guardian_active_chart_wall_seconds="$((SECONDS - guardian_active_chart_started))"
+    IFS=',' read -r -a guardian_active_chart_pairs <<< "$monitor_pairs"
+    guardian_active_chart_pair_count="${#guardian_active_chart_pairs[@]}"
     freshness_summary="$(write_chart_freshness \
       "$guardian_charts" \
       "$guardian_chart_freshness" \
@@ -1497,6 +1574,18 @@ if [[ -n "$monitor_pairs" ]]; then
       "$guardian_candidate_limit" \
       "$effective_candidate_limit")"
     echo "[run-position-guardian-live] closed-candle chart refresh ${freshness_summary} pairs=${monitor_pairs}." >&2
+    if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
+      set +e
+      "$QR_PYTHON" -m "$guardian_observation_module" retain \
+        --source "$guardian_charts" \
+        --output "$guardian_slow_retention" \
+        --source-pairs "$monitor_pairs" >&2
+      guardian_retention_status="$?"
+      set -e
+      if [[ "$guardian_retention_status" -ne 0 ]]; then
+        echo "[run-position-guardian-live] slow-view retention rejected the active packet; previous sealed retention remains unchanged." >&2
+      fi
+    fi
   else
     echo "[run-position-guardian-live] closed-candle charts remain within M1 cadence; reused ${guardian_charts}." >&2
   fi
@@ -1512,6 +1601,66 @@ else
     "$effective_candidate_limit"
 fi
 
+if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
+  guardian_all_pair_due="$(
+    "$QR_PYTHON" -m "$guardian_observation_module" due \
+      --current "$guardian_all_pair_m1"
+  )"
+  if [[ "$guardian_all_pair_due" == "1" ]]; then
+    guardian_all_pair_raw="$(mktemp "${TMPDIR:-/tmp}/qr-guardian-all-pair-m1.XXXXXX.json")"
+    guardian_all_pair_started="$SECONDS"
+    set +e
+    "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
+      --pairs "$guardian_all_pairs" \
+      --timeframes M1 \
+      --count "$guardian_count" \
+      --output "$guardian_all_pair_raw" \
+      --report "$guardian_all_pair_m1_report" \
+      --require-complete
+    guardian_all_pair_fetch_status="$?"
+    set -e
+    guardian_all_pair_wall_seconds="$((SECONDS - guardian_all_pair_started))"
+
+    guardian_post_snapshot_started="$SECONDS"
+    set +e
+    "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
+    guardian_post_snapshot_status="$?"
+    set -e
+    guardian_post_snapshot_wall_seconds="$((SECONDS - guardian_post_snapshot_started))"
+
+    guardian_publish_status=1
+    if [[ "$guardian_all_pair_fetch_status" -eq 0 \
+      && "$guardian_post_snapshot_status" -eq 0 ]]; then
+      set +e
+      "$QR_PYTHON" -m "$guardian_observation_module" publish-current \
+        --source "$guardian_all_pair_raw" \
+        --snapshot "$guardian_snapshot" \
+        --output "$guardian_all_pair_m1" \
+        --active-pair-count "$guardian_active_chart_pair_count" \
+        --active-chart-wall-seconds "$guardian_active_chart_wall_seconds" \
+        --all-pair-m1-wall-seconds "$guardian_all_pair_wall_seconds" \
+        --post-chart-snapshot-wall-seconds "$guardian_post_snapshot_wall_seconds" \
+        --candle-close-grace-seconds "$guardian_candle_close_grace_seconds" >&2
+      guardian_publish_status="$?"
+      set -e
+    fi
+    if [[ "$guardian_publish_status" -ne 0 ]]; then
+      "$QR_PYTHON" -m "$guardian_observation_module" publish-blocked \
+        --output "$guardian_all_pair_m1" \
+        --reason "ALL_PAIR_M1_OR_POST_CHART_QUOTES_INVALID" \
+        --active-pair-count "$guardian_active_chart_pair_count" \
+        --active-chart-wall-seconds "$guardian_active_chart_wall_seconds" \
+        --all-pair-m1-wall-seconds "$guardian_all_pair_wall_seconds" \
+        --post-chart-snapshot-wall-seconds "$guardian_post_snapshot_wall_seconds" \
+        --candle-close-grace-seconds "$guardian_candle_close_grace_seconds" >&2
+      echo "[run-position-guardian-live] exact-28 current-M1 observation blocked; slow retention was not erased." >&2
+    else
+      echo "[run-position-guardian-live] sealed exact-28 current-M1 observation with post-chart quotes." >&2
+    fi
+    rm -f "$guardian_all_pair_raw"
+  fi
+fi
+
 if [[ -z "$trader_pairs" ]]; then
   write_monitor_only_artifacts \
     "$guardian_snapshot" \
@@ -1522,6 +1671,8 @@ if [[ -z "$trader_pairs" ]]; then
   run_guardian_event_router
   run_fast_bot_shadow
   resolve_fast_bot_shadow_outcomes
+  run_fast_bot_learning_shadow
+  resolve_fast_bot_learning_outcomes
   emit_technical_forecast_forward_shadow
   resolve_technical_forecast_forward_outcomes
   emit_contextual_technical_forward_shadow
@@ -1553,6 +1704,8 @@ fi
 run_guardian_event_router
 run_fast_bot_shadow
 resolve_fast_bot_shadow_outcomes
+run_fast_bot_learning_shadow
+resolve_fast_bot_learning_outcomes
 emit_technical_forecast_forward_shadow
 resolve_technical_forecast_forward_outcomes
 emit_contextual_technical_forward_shadow

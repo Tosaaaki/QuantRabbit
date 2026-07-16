@@ -16,6 +16,7 @@ from quant_rabbit.fast_bot_truth import (
 )
 from quant_rabbit.fast_bot import (
     ENTRY_EXPERIMENT_CONTRACT,
+    HORIZON_LANE,
     SIGNAL_CONTRACT,
     _entry_experiment_arms,
     _shadow_geometry_pips,
@@ -93,6 +94,82 @@ def _signal_v2(
         "side": "LONG",
         "method": "RANGE_ROTATION",
         "m1_closed_candle_utc": (generated - timedelta(minutes=1)).isoformat(),
+        "regime_contract_sha256": "b" * 64,
+        "generated_at_utc": generated.isoformat(),
+        "quote_timestamp_utc": generated.isoformat(),
+        "quote_bid": bid,
+        "quote_ask": ask,
+        "spread_pips": spread,
+        "m5_atr_pips": m5_atr,
+        "geometry_policy": "METHOD_SPREAD_M5_ATR_V1",
+        "order_type": "LIMIT",
+        "entry_reference": "PASSIVE_NEAR_SIDE",
+        "entry": primary["entry"],
+        "take_profit": primary["take_profit"],
+        "stop_loss": primary["stop_loss"],
+        "take_profit_pips": primary["take_profit_pips"],
+        "stop_loss_pips": primary["stop_loss_pips"],
+        "reward_risk": round(
+            primary["take_profit_pips"] / primary["stop_loss_pips"],
+            6,
+        ),
+        "entry_ttl_seconds": 90,
+        "max_hold_seconds": 900,
+        "entry_experiment_contract": ENTRY_EXPERIMENT_CONTRACT,
+        "entry_experiment_arms": arms,
+        "attached_take_profit_required": True,
+        "attached_stop_loss_required": True,
+        "shadow_only": True,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+    }
+    return _reseal_signal(body)
+
+
+def _signal_v3(
+    *,
+    generated: datetime = NOW,
+    side: str = "LONG",
+    method: str = "RANGE_ROTATION",
+    bid: float = 1.1000,
+    ask: float = 1.1002,
+) -> dict:
+    spread = round((ask - bid) * 10000, 6)
+    m5_atr = 5.0
+    tp_pips, sl_pips = _shadow_geometry_pips(
+        method,
+        spread=spread,
+        m5_atr=m5_atr,
+    )
+    arms = _entry_experiment_arms(
+        pair="EUR_USD",
+        side=side,
+        bid=bid,
+        ask=ask,
+        tp_pips=tp_pips,
+        sl_pips=sl_pips,
+    )
+    primary = arms[0]
+    identity = {
+        "identity_contract": "QR_FAST_BOT_SHADOW_IDENTITY_V3",
+        "pair": "EUR_USD",
+        "m1_closed_candle_utc": (generated - timedelta(minutes=1)).isoformat(),
+        "side": side,
+        "method": method,
+        "horizon_lane": HORIZON_LANE,
+    }
+    identity_raw = json.dumps(
+        identity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    body = {
+        "contract": SIGNAL_CONTRACT,
+        "schema_version": 3,
+        "signal_id": hashlib.sha256(identity_raw).hexdigest()[:24],
+        **identity,
         "regime_contract_sha256": "b" * 64,
         "generated_at_utc": generated.isoformat(),
         "quote_timestamp_utc": generated.isoformat(),
@@ -591,7 +668,8 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertEqual(
             scorecard["promotion_blockers"],
             [
-                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "HORIZON_AWARE_MULTI_GO_PORTFOLIO_FORWARD_PROOF_REQUIRED",
+                "COUNTERFACTUAL_LEARNING_OUTCOME_PROOF_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ],
         )
@@ -672,15 +750,8 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertLess(scorecard["one_sided_95_daily_mean_lower_pips"], 0.0)
         self.assertFalse(scorecard["forward_evidence_passed"])
 
-    def test_same_pair_m1_identity_is_counted_once(self) -> None:
+    def test_duplicate_signal_sha_is_counted_once(self) -> None:
         first = _signal(signal_id="first")
-        second_body = {
-            **_signal(signal_id="second", generated=NOW + timedelta(seconds=30)),
-            "m1_closed_candle_utc": first["m1_closed_candle_utc"],
-        }
-        second_body.pop("signal_sha256")
-        raw = json.dumps(second_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        second = {**second_body, "signal_sha256": hashlib.sha256(raw).hexdigest()}
         first_outcome = resolve_fast_bot_signal(
             first,
             _complete_truth(_candle(5, ask_l=1.0999, bid_h=1.1004)),
@@ -689,7 +760,7 @@ class FastBotTruthTest(unittest.TestCase):
         )
 
         scorecard = build_fast_bot_scorecard(
-            [first, second],
+            [first, dict(first)],
             [first_outcome],
             as_of_utc=NOW + timedelta(days=1),
         )
@@ -698,6 +769,169 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertEqual(scorecard["resolved_signals"], 1)
         self.assertEqual(scorecard["duplicate_identity_signals_ignored"], 1)
         self.assertIsNone(scorecard["one_sided_95_mean_lower_pips"])
+
+    def test_legacy_v1_and_v2_duplicate_pair_m1_seats_still_collapse(self) -> None:
+        cases = (
+            (
+                "v1",
+                _signal(signal_id="legacy-v1-first"),
+                _signal(
+                    signal_id="legacy-v1-second",
+                    generated=NOW + timedelta(seconds=30),
+                ),
+            ),
+            (
+                "v2",
+                _signal_v2(signal_id="legacy-v2-first"),
+                _signal_v2(
+                    signal_id="legacy-v2-second",
+                    generated=NOW + timedelta(seconds=30),
+                ),
+            ),
+        )
+        for schema, first, second_seed in cases:
+            with self.subTest(schema=schema):
+                second = _reseal_signal(
+                    {
+                        **second_seed,
+                        "m1_closed_candle_utc": first["m1_closed_candle_utc"],
+                    }
+                )
+                self.assertNotEqual(
+                    first["signal_sha256"],
+                    second["signal_sha256"],
+                )
+                first_outcome = resolve_fast_bot_signal(
+                    first,
+                    _complete_truth(),
+                    resolved_at_utc=NOW + timedelta(minutes=20),
+                    truth_chunk_sha256=["a" * 64],
+                )
+
+                scorecard = build_fast_bot_scorecard(
+                    [first, second],
+                    [first_outcome],
+                    as_of_utc=NOW + timedelta(days=1),
+                )
+
+                self.assertEqual(scorecard["emitted_signals"], 1)
+                self.assertEqual(scorecard["resolved_signals"], 1)
+                self.assertEqual(
+                    scorecard["duplicate_identity_signals_ignored"],
+                    1,
+                )
+
+    def test_v3_four_side_method_seats_resolve_once_without_netting(self) -> None:
+        generated = NOW - timedelta(minutes=20)
+        signals = [
+            _signal_v3(generated=generated, side="LONG", method="RANGE_ROTATION"),
+            _signal_v3(generated=generated, side="SHORT", method="RANGE_ROTATION"),
+            _signal_v3(
+                generated=generated,
+                side="LONG",
+                method="TREND_CONTINUATION",
+            ),
+            _signal_v3(
+                generated=generated,
+                side="SHORT",
+                method="BREAKOUT_FAILURE",
+            ),
+        ]
+        truth = _complete_truth(generated=generated)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shadow_path = root / "shadow.jsonl"
+            outcome_path = root / "outcomes.jsonl"
+            scorecard_path = root / "scorecard.json"
+            shadow_path.write_text(
+                "".join(json.dumps(signal) + "\n" for signal in signals),
+                encoding="utf-8",
+            )
+            with patch(
+                "quant_rabbit.fast_bot_truth.fetch_frozen_s5_truth",
+                return_value=(truth, ["b" * 64]),
+            ) as fetch:
+                first = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW,
+                )
+                second = resolve_due_fast_bot_outcomes_from_oanda(
+                    shadow_ledger_path=shadow_path,
+                    outcome_ledger_path=outcome_path,
+                    scorecard_path=scorecard_path,
+                    client_factory=object,
+                    clock=lambda: NOW + timedelta(seconds=30),
+                )
+            outcomes = [
+                json.loads(line) for line in outcome_path.read_text().splitlines()
+            ]
+            scorecard = json.loads(scorecard_path.read_text())
+
+        self.assertEqual(fetch.call_count, 4)
+        self.assertEqual(first["due_count"], 4)
+        self.assertEqual(first["ledger_appended"], 4)
+        self.assertEqual(second["status"], "NO_DUE_SIGNALS")
+        self.assertEqual(second["ledger_appended"], 0)
+        self.assertEqual(len(outcomes), 4)
+        self.assertEqual({row["schema_version"] for row in outcomes}, {3})
+        self.assertEqual(scorecard["emitted_signals"], 4)
+        self.assertEqual(scorecard["resolved_signals"], 4)
+        self.assertEqual(scorecard["duplicate_identity_signals_ignored"], 0)
+
+    def test_v3_corrupt_identity_geometry_or_seal_is_rejected(self) -> None:
+        signal = _signal_v3()
+        bad_horizon = _reseal_signal(
+            {**signal, "horizon_lane": "M1_EXECUTION_5M_HOLD"}
+        )
+        bad_id = _reseal_signal({**signal, "signal_id": "0" * 24})
+        bad_arm = json.loads(json.dumps(signal))
+        bad_arm["entry_experiment_arms"][1]["entry"] += 0.00001
+        bad_arm = _reseal_signal(bad_arm)
+        bad_seal = {**signal, "regime_contract_sha256": "c" * 64}
+
+        for defect, malformed in {
+            "horizon": bad_horizon,
+            "canonical_id": bad_id,
+            "entry_arm": bad_arm,
+            "seal": bad_seal,
+        }.items():
+            with self.subTest(defect=defect):
+                with self.assertRaisesRegex(ValueError, "invalid fast-bot signal"):
+                    resolve_fast_bot_signal(
+                        malformed,
+                        _complete_truth(),
+                        resolved_at_utc=NOW + timedelta(minutes=20),
+                        truth_chunk_sha256=["a" * 64],
+                    )
+
+    def test_legacy_v2_and_v3_same_pair_m1_are_both_scoreable(self) -> None:
+        v2 = _signal_v2(generated=NOW)
+        v3 = _signal_v3(generated=NOW)
+        truth = _complete_truth()
+        outcomes = [
+            resolve_fast_bot_signal(
+                signal,
+                truth,
+                resolved_at_utc=NOW + timedelta(minutes=20),
+                truth_chunk_sha256=["a" * 64],
+            )
+            for signal in (v2, v3)
+        ]
+
+        scorecard = build_fast_bot_scorecard(
+            [v2, v3],
+            outcomes,
+            as_of_utc=NOW + timedelta(days=1),
+        )
+
+        self.assertEqual({row["schema_version"] for row in outcomes}, {2, 3})
+        self.assertEqual(scorecard["emitted_signals"], 2)
+        self.assertEqual(scorecard["resolved_signals"], 2)
+        self.assertEqual(scorecard["duplicate_identity_signals_ignored"], 0)
 
     def test_no_due_signals_does_not_open_oanda_client(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

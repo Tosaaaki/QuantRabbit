@@ -1396,9 +1396,11 @@ class LiveWrapperTest(unittest.TestCase):
                 pair_call[pair_call.index("--timeframes") + 1],
                 "M1,M5,M15,M30,H1,H4,D",
             )
+            wrapper_text = GUARDIAN_WRAPPER.read_text()
+            self.assertIn('fast_charts="$guardian_all_pair_m1"', wrapper_text)
             self.assertIn(
-                '--slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_charts}"',
-                GUARDIAN_WRAPPER.read_text(),
+                'slow_charts="${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_slow_retention}"',
+                wrapper_text,
             )
             management_call = next(call for call in calls if "position-management" in call)
             execution_call = next(call for call in calls if "position-execution" in call)
@@ -2633,6 +2635,95 @@ class LiveWrapperTest(unittest.TestCase):
                 expected,
             )
 
+    def test_position_guardian_seals_exact_28_m1_and_retains_slow_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc).isoformat()
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": now,
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {
+                        pair: {
+                            "bid": 100.0 if pair.endswith("_JPY") else 1.0,
+                            "ask": 100.01 if pair.endswith("_JPY") else 1.0001,
+                            "timestamp_utc": now,
+                        }
+                        for pair in DEFAULT_TRADER_PAIRS
+                    },
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=2,
+            )
+            env["QR_ALL_PAIR_OBSERVATION_ENABLED"] = "1"
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            pair_calls = [call for call in calls if "pair-charts" in call]
+            self.assertEqual(len(pair_calls), 2)
+            active = next(
+                call
+                for call in pair_calls
+                if call[call.index("--timeframes") + 1] == "M1,M5,M15,M30,H1,H4,D"
+            )
+            all_pair = next(
+                call
+                for call in pair_calls
+                if call[call.index("--timeframes") + 1] == "M1"
+            )
+            self.assertEqual(len(active[active.index("--pairs") + 1].split(",")), 2)
+            self.assertEqual(
+                all_pair[all_pair.index("--pairs") + 1].split(","),
+                list(DEFAULT_TRADER_PAIRS),
+            )
+            self.assertIn("--require-complete", all_pair)
+            self.assertEqual(sum("broker-snapshot" in call for call in calls), 2)
+            current = json.loads(
+                (root / "data" / "position_guardian_all_pair_m1.json").read_text()
+            )
+            retained = json.loads(
+                (root / "data" / "position_guardian_slow_retention.json").read_text()
+            )
+            self.assertEqual(current["status"], "CURRENT")
+            self.assertEqual([row["pair"] for row in current["charts"]], list(DEFAULT_TRADER_PAIRS))
+            self.assertEqual(current["request_metrics"]["total_candle_requests"], 42)
+            self.assertEqual(len(retained["charts"]), 28)
+            self.assertEqual(retained["pairs_complete"], 2)
+            self.assertFalse(current["live_permission"])
+            self.assertFalse(retained["live_permission"])
+            self.assertIn("sealed exact-28 current-M1 observation", result.stderr)
+
+    def test_position_guardian_runs_permanent_counterfactual_learning_without_send(self) -> None:
+        wrapper = GUARDIAN_WRAPPER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'export QR_FAST_BOT_LEARNING_ENABLED="${QR_FAST_BOT_LEARNING_ENABLED:-1}"',
+            wrapper,
+        )
+        self.assertIn('tools/fast_bot_learning_shadow.py', wrapper)
+        self.assertIn('tools/resolve-fast-bot-learning-outcomes.py', wrapper)
+        self.assertIn('data/fast_bot_learning_seat_ledger.jsonl', wrapper)
+        self.assertIn('data/fast_bot_learning_outcome_ledger.jsonl', wrapper)
+        self.assertEqual(wrapper.count("run_fast_bot_learning_shadow"), 3)
+        self.assertEqual(wrapper.count("resolve_fast_bot_learning_outcomes"), 3)
+        learning_block = wrapper[
+            wrapper.index("run_fast_bot_learning_shadow()") :
+            wrapper.index('"$QR_PYTHON" -m quant_rabbit.cli broker-snapshot')
+        ]
+        self.assertNotIn("--send", learning_block)
+        self.assertNotIn("--confirm-live", learning_block)
+
     def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3068,6 +3159,10 @@ if args and args[0] == "-":
     sys.argv = ["-", *args[1:]]
     exec(compile(source, "<guardian-helper>", "exec"), {"__name__": "__main__"})
     raise SystemExit(0)
+if args[:2] == ["-m", "quant_rabbit.guardian_observation"]:
+    from quant_rabbit.guardian_observation import main as guardian_observation_main
+
+    raise SystemExit(guardian_observation_main(args[2:]))
 
 capture = Path(os.environ["QR_FAKE_GUARDIAN_CAPTURE"])
 capture.parent.mkdir(parents=True, exist_ok=True)
@@ -3206,6 +3301,7 @@ raise SystemExit(0)
             "QR_FAKE_GUARDIAN_CAPTURE": str(capture),
             "QR_FAKE_GUARDIAN_SNAPSHOT": str(snapshot_source),
             "QR_POSITION_GUARDIAN_MAX_CANDIDATE_PAIRS": str(candidate_limit),
+            "QR_ALL_PAIR_OBSERVATION_ENABLED": "0",
         }
     )
     return env, capture

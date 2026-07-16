@@ -18,6 +18,7 @@ from quant_rabbit.fast_bot import (
     ENTRY_ARM_SPREAD_FRACTIONS,
     ENTRY_EXPERIMENT_CONTRACT,
     ENTRY_TTL_SECONDS,
+    HORIZON_LANE,
     MAX_HOLD_SECONDS,
     METHODS,
     SIGNAL_CONTRACT,
@@ -41,6 +42,7 @@ TRUTH_CHUNK_CANDLE_LIMIT = 4500
 # attached-stop boundary from minting a GAP label that its sealed validator
 # cannot reproduce.  A future price-decimal contract should replace this.
 OUTCOME_PIP_ROUND_DIGITS = 6
+SIGNAL_IDENTITY_CONTRACT_V3 = "QR_FAST_BOT_SHADOW_IDENTITY_V3"
 
 
 def resolve_fast_bot_signal(
@@ -95,7 +97,7 @@ def resolve_fast_bot_signal(
     if len(normalized_truth_hashes) != expected_chunk_count:
         raise ValueError("truth chunk hash count does not cover the exact request")
     experiment: dict[str, Any] | None = None
-    if signal.get("schema_version") == 2:
+    if signal.get("schema_version") in {2, 3}:
         arm_results = []
         for arm in signal.get("entry_experiment_arms", []):
             arm_result = _resolve_entry_hypothesis(
@@ -135,7 +137,7 @@ def resolve_fast_bot_signal(
         }
     body = {
         "contract": OUTCOME_CONTRACT,
-        "schema_version": 2 if experiment is not None else 1,
+        "schema_version": int(signal["schema_version"]),
         "scoring_policy": SCORING_POLICY,
         "signal_id": str(signal["signal_id"]),
         "pair": str(signal["pair"]),
@@ -537,7 +539,8 @@ def build_fast_bot_scorecard(
         "promotion_allowed": False,
         "promotion_blockers": (
             [
-                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "HORIZON_AWARE_MULTI_GO_PORTFOLIO_FORWARD_PROOF_REQUIRED",
+                "COUNTERFACTUAL_LEARNING_OUTCOME_PROOF_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ]
             if passed
@@ -546,7 +549,8 @@ def build_fast_bot_scorecard(
                 "MINIMUM_10_ACTIVE_DAYS_NOT_MET" if len(active_days) < 10 else None,
                 "POST_COST_EXPECTANCY_LOWER_BOUND_NOT_POSITIVE" if lower is None or lower <= 0.0 else None,
                 "PROFIT_FACTOR_1_25_NOT_MET" if profit_factor is None or profit_factor < 1.25 else None,
-                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "HORIZON_AWARE_MULTI_GO_PORTFOLIO_FORWARD_PROOF_REQUIRED",
+                "COUNTERFACTUAL_LEARNING_OUTCOME_PROOF_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ]
         ),
@@ -567,7 +571,7 @@ def _build_entry_experiment_scorecard(
     resolved_experiments: list[tuple[str, Mapping[str, Any]]] = []
     experiment_days: set[str] = set()
     for signal in signals:
-        if signal.get("schema_version") != 2:
+        if signal.get("schema_version") not in {2, 3}:
             continue
         outcome = outcomes_by_signal_sha.get(str(signal.get("signal_sha256") or ""))
         experiment = outcome.get("entry_experiment") if isinstance(outcome, Mapping) else None
@@ -826,7 +830,7 @@ def _fast_bot_outcome_valid_for_signal(
     expected_maturity = generated + timedelta(
         seconds=int(signal["entry_ttl_seconds"]) + int(signal["max_hold_seconds"])
     )
-    expected_schema = 2 if signal.get("schema_version") == 2 else 1
+    expected_schema = int(signal.get("schema_version") or 0)
     if (
         outcome.get("schema_version") != expected_schema
         or outcome.get("scoring_policy") != SCORING_POLICY
@@ -1108,7 +1112,8 @@ def resolve_due_fast_bot_outcomes_from_oanda(
         identity = _current_outcome_identity(outcome)
         if identity is not None:
             current_rows_by_identity.setdefault(identity, []).append(outcome)
-    resolved_ids: set[str] = set()
+    resolved_identities: set[tuple[str, str]] = set()
+    conflict_identities: set[tuple[str, str]] = set()
     outcome_identity_conflicts: list[dict[str, Any]] = []
     for signal in signals:
         identity = _signal_outcome_identity(signal)
@@ -1123,8 +1128,9 @@ def resolve_due_fast_bot_outcomes_from_oanda(
             )
         ]
         if len(valid_rows) == 1:
-            resolved_ids.add(str(signal.get("signal_id") or ""))
+            resolved_identities.add(identity)
         elif current_rows:
+            conflict_identities.add(identity)
             outcome_identity_conflicts.append(
                 {
                     "signal_id": str(signal.get("signal_id") or ""),
@@ -1139,16 +1145,13 @@ def resolve_due_fast_bot_outcomes_from_oanda(
                     ),
                 }
             )
-    conflict_signal_ids = {
-        str(item["signal_id"]) for item in outcome_identity_conflicts
-    }
     due = []
     for signal in signals:
-        signal_id = str(signal.get("signal_id") or "")
+        identity = _signal_outcome_identity(signal)
         if (
             not _fast_bot_signal_valid(signal)
-            or signal_id in resolved_ids
-            or signal_id in conflict_signal_ids
+            or identity in resolved_identities
+            or identity in conflict_identities
         ):
             continue
         generated = _parse_utc(signal["generated_at_utc"])
@@ -1315,7 +1318,7 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
     )
     common_valid = bool(
         signal.get("contract") == SIGNAL_CONTRACT
-        and schema in {1, 2}
+        and schema in {1, 2, 3}
         and digest_ok
         and len(signal_id) == 24
         and all(character in "0123456789abcdef" for character in signal_id)
@@ -1346,7 +1349,7 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
         return False
     if schema == 1:
         return True
-    return _fast_bot_v2_geometry_valid(
+    if not _fast_bot_v2_geometry_valid(
         signal,
         pair=pair,
         side=side,
@@ -1356,6 +1359,28 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
         stop_loss=sl,
         take_profit_pips=tp_pips,
         stop_loss_pips=sl_pips,
+    ):
+        return False
+    return schema == 2 or _fast_bot_v3_identity_valid(signal)
+
+
+def _fast_bot_v3_identity_valid(signal: Mapping[str, Any]) -> bool:
+    """Bind every V3 side/method seat to its canonical horizon identity."""
+
+    identity = {
+        "identity_contract": SIGNAL_IDENTITY_CONTRACT_V3,
+        "pair": str(signal.get("pair") or ""),
+        "m1_closed_candle_utc": str(
+            signal.get("m1_closed_candle_utc") or ""
+        ),
+        "side": str(signal.get("side") or ""),
+        "method": str(signal.get("method") or ""),
+        "horizon_lane": HORIZON_LANE,
+    }
+    return bool(
+        signal.get("identity_contract") == SIGNAL_IDENTITY_CONTRACT_V3
+        and signal.get("horizon_lane") == HORIZON_LANE
+        and signal.get("signal_id") == _canonical_sha(identity)[:24]
     )
 
 
@@ -1371,7 +1396,7 @@ def _fast_bot_v2_geometry_valid(
     take_profit_pips: float,
     stop_loss_pips: float,
 ) -> bool:
-    """Require the v2 quote, geometry, and experiment to reproduce exactly."""
+    """Require the shared V2/V3 quote geometry and arms to reproduce exactly."""
 
     try:
         bid = float(signal["quote_bid"])
@@ -1450,24 +1475,34 @@ def _one_sided_95_mean_lower(values: Sequence[float]) -> float | None:
 def _dedupe_signal_identities(
     signals: Sequence[Mapping[str, Any]],
 ) -> list[Mapping[str, Any]]:
-    """Keep the first immutable hypothesis for each pair/closed-M1 seat.
+    """Preserve legacy M1 seats while keeping every distinct V3 GO seat."""
 
-    Revision-1 signals briefly included the whole regime-contract digest in
-    ``signal_id``.  A quote-only 30-second refresh could therefore append the
-    same M1 seat twice.  The append-only ledger is preserved, while both due
-    resolution and scorecards ignore every later duplicate identity.
-    """
-
-    seen: set[tuple[str, str]] = set()
+    seen_shas: set[str] = set()
+    seen_identities: set[tuple[str, ...]] = set()
     out: list[Mapping[str, Any]] = []
     for signal in signals:
-        identity = (
-            str(signal.get("pair") or ""),
-            str(signal.get("m1_closed_candle_utc") or ""),
-        )
-        if identity in seen:
+        signal_sha = str(signal.get("signal_sha256") or "")
+        if signal_sha in seen_shas:
             continue
-        seen.add(identity)
+        if signal.get("schema_version") == 3:
+            identity = (
+                "V3",
+                str(signal.get("pair") or ""),
+                str(signal.get("m1_closed_candle_utc") or ""),
+                str(signal.get("side") or ""),
+                str(signal.get("method") or ""),
+                str(signal.get("horizon_lane") or ""),
+            )
+        else:
+            identity = (
+                "LEGACY",
+                str(signal.get("pair") or ""),
+                str(signal.get("m1_closed_candle_utc") or ""),
+            )
+        if identity in seen_identities:
+            continue
+        seen_shas.add(signal_sha)
+        seen_identities.add(identity)
         out.append(signal)
     return out
 
@@ -1515,13 +1550,11 @@ def _current_outcome_identity(
     outcome: Mapping[str, Any],
 ) -> tuple[str, str] | None:
     signal_sha = str(outcome.get("signal_sha256") or "")
-    signal_id = str(outcome.get("signal_id") or "")
     policy = str(outcome.get("scoring_policy") or "")
     if (
         outcome.get("contract") != OUTCOME_CONTRACT
         or policy != SCORING_POLICY
         or not _sha256_text(signal_sha)
-        or not signal_id
     ):
         return None
     return (signal_sha, policy)

@@ -83,10 +83,17 @@ data/technical_forecast_forward_outcome_ledger.jsonl|\
 data/technical_forecast_forward_scorecard.json|\
 data/hierarchical_bot_regime.json|\
 data/ai_regime_supervision.json|\
+data/position_guardian_all_pair_m1.json|\
+data/position_guardian_slow_retention.json|\
+docs/position_guardian_all_pair_m1_report.md|\
 data/fast_bot_shadow.json|\
 data/fast_bot_shadow_ledger.jsonl|\
 data/fast_bot_outcome_ledger.jsonl|\
 data/fast_bot_scorecard.json|\
+data/fast_bot_learning_shadow.json|\
+data/fast_bot_learning_seat_ledger.jsonl|\
+data/fast_bot_learning_outcome_ledger.jsonl|\
+data/fast_bot_learning_scorecard.json|\
 data/contextual_technical_240m_forward_shadow.json|\
 data/contextual_technical_240m_forward_shadow_ledger.jsonl|\
 data/contextual_technical_240m_forward_outcome_ledger.jsonl|\
