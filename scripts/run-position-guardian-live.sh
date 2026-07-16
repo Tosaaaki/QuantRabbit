@@ -1328,6 +1328,11 @@ guardian_observation_module="quant_rabbit.guardian_observation"
 guardian_all_pairs="EUR_USD,GBP_USD,AUD_USD,NZD_USD,USD_JPY,USD_CAD,USD_CHF,EUR_GBP,EUR_JPY,EUR_AUD,EUR_CAD,EUR_CHF,EUR_NZD,GBP_JPY,GBP_AUD,GBP_CAD,GBP_CHF,GBP_NZD,AUD_JPY,AUD_CAD,AUD_CHF,AUD_NZD,CAD_JPY,CAD_CHF,CHF_JPY,NZD_JPY,NZD_CAD,NZD_CHF"
 guardian_active_chart_wall_seconds=0
 guardian_active_chart_pair_count=0
+fast_bot_episode_handoff_spool="${QR_FAST_BOT_EPISODE_HANDOFF_SPOOL:-data/fast_bot_episode_handoffs}"
+fast_bot_episode_output="${QR_FAST_BOT_EPISODE_OUTPUT:-data/fast_bot_episode_state.json}"
+fast_bot_episode_ledger="${QR_FAST_BOT_EPISODE_LEDGER:-data/fast_bot_episode_ledger.jsonl}"
+fast_bot_episode_source_archive="${QR_FAST_BOT_EPISODE_SOURCE_ARCHIVE:-data/fast_bot_episode_sources}"
+fast_bot_episode_handoff=""
 
 if [[ "$guardian_all_pair_observation_enabled" != "0" \
   && "$guardian_all_pair_observation_enabled" != "1" ]]; then
@@ -1430,11 +1435,15 @@ resolve_contextual_technical_forward_outcomes() {
 }
 
 run_fast_bot_shadow() {
+  discard_fast_bot_episode_handoff
   if [[ "$QR_FAST_BOT_SHADOW_ENABLED" != "1" ]]; then
     return 0
   fi
-  local runner bot_status fast_charts slow_charts
+  local runner launcher bot_status reservation_status publish_status
+  local fast_charts slow_charts handoff_path
+  local -a bot_args
   runner="${ROOT_DIR}/scripts/run-fast-bot-shadow.py"
+  launcher="${ROOT_DIR}/scripts/launch-fast-bot-episode-worker.py"
   if [[ ! -f "$runner" ]]; then
     echo "[run-position-guardian-live] fast bot shadow runner is missing; no signal was admitted." >&2
     return 0
@@ -1445,23 +1454,167 @@ run_fast_bot_shadow() {
     fast_charts="$guardian_all_pair_m1"
     slow_charts="${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_slow_retention}"
   fi
+  handoff_path=""
+  if [[ -f "$launcher" ]]; then
+    if ! mkdir -p "$fast_bot_episode_handoff_spool"; then
+      echo "[run-position-guardian-live] could not prepare fast bot episode spool; primary shadow continues without episode collection." >&2
+    else
+      set +e
+      handoff_path="$(
+        "$QR_PYTHON" "$launcher" \
+          --reserve \
+          --spool "$fast_bot_episode_handoff_spool" \
+          --output "$fast_bot_episode_output" \
+          --ledger "$fast_bot_episode_ledger" \
+          --source-archive "$fast_bot_episode_source_archive" \
+          --producer-pid "$$"
+      )"
+      reservation_status="$?"
+      set -e
+      if [[ "$reservation_status" -eq 0 \
+        && "$handoff_path" =~ /\.handoff-[1-9][0-9]*-[0-9a-f]{64}-[0-9a-f]{16}\.tmp$ \
+        && -f "$handoff_path" ]]; then
+        # The EXIT/INT/TERM traps own only this invisible publication temp.
+        # A final handoff is owned by the persistent spool and is never
+        # removed by the Guardian process.
+        fast_bot_episode_handoff="$handoff_path"
+      elif [[ "$reservation_status" -eq 75 ]]; then
+        handoff_path=""
+        echo "[run-position-guardian-live] fast bot episode spool is at capacity; primary shadow continues without episode collection." >&2
+      else
+        handoff_path=""
+        echo "[run-position-guardian-live] fast bot episode spool reservation failed status=${reservation_status}; primary shadow continues without episode collection." >&2
+      fi
+    fi
+  else
+    echo "[run-position-guardian-live] fast bot episode launcher is missing; primary shadow continues without episode collection." >&2
+  fi
+  bot_args=(
+    --fast-pair-charts "$fast_charts"
+    --slow-pair-charts "$slow_charts"
+    --broker-snapshot "$guardian_snapshot"
+    --guardian-events "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}"
+    --ai-supervision "${QR_FAST_BOT_AI_SUPERVISION:-data/ai_regime_supervision.json}"
+    --regime-output "${QR_FAST_BOT_REGIME_OUTPUT:-data/hierarchical_bot_regime.json}"
+    --output "${QR_FAST_BOT_SHADOW_OUTPUT:-data/fast_bot_shadow.json}"
+    --ledger "${QR_FAST_BOT_SHADOW_LEDGER:-data/fast_bot_shadow_ledger.jsonl}"
+    --report "${QR_FAST_BOT_SHADOW_REPORT:-docs/fast_bot_shadow_report.md}"
+  )
+  if [[ -n "$handoff_path" ]]; then
+    bot_args+=(--episode-handoff "$handoff_path")
+  fi
   set +e
-  "$QR_PYTHON" "$runner" \
-    --fast-pair-charts "$fast_charts" \
-    --slow-pair-charts "$slow_charts" \
-    --broker-snapshot "$guardian_snapshot" \
-    --guardian-events "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}" \
-    --ai-supervision "${QR_FAST_BOT_AI_SUPERVISION:-data/ai_regime_supervision.json}" \
-    --regime-output "${QR_FAST_BOT_REGIME_OUTPUT:-data/hierarchical_bot_regime.json}" \
-    --output "${QR_FAST_BOT_SHADOW_OUTPUT:-data/fast_bot_shadow.json}" \
-    --ledger "${QR_FAST_BOT_SHADOW_LEDGER:-data/fast_bot_shadow_ledger.jsonl}" \
-    --report "${QR_FAST_BOT_SHADOW_REPORT:-docs/fast_bot_shadow_report.md}" >&2
+  "$QR_PYTHON" "$runner" "${bot_args[@]}" >&2
   bot_status="$?"
   set -e
   if [[ "$bot_status" -ne 0 ]]; then
+    discard_fast_bot_episode_handoff
     echo "[run-position-guardian-live] fast bot shadow failed status=${bot_status}; live permission remains false." >&2
+  elif [[ -z "$handoff_path" ]]; then
+    :
+  elif [[ ! -s "$handoff_path" ]]; then
+    discard_fast_bot_episode_handoff
+    echo "[run-position-guardian-live] fast bot shadow produced no sealed episode handoff; episode collection skipped." >&2
+  else
+    set +e
+    "$QR_PYTHON" "$launcher" \
+      --publish "$handoff_path" \
+      --spool "$fast_bot_episode_handoff_spool" \
+      --output "$fast_bot_episode_output" \
+      --ledger "$fast_bot_episode_ledger" \
+      --source-archive "$fast_bot_episode_source_archive" >&2
+    publish_status="$?"
+    set -e
+    if [[ "$publish_status" -eq 0 ]]; then
+      # Atomic publication moved the invisible temp to a durable final name.
+      # The detached worker now owns it, including all retry decisions.
+      fast_bot_episode_handoff=""
+    else
+      # Keep the complete outer temp.  Once this Guardian PID is gone, a
+      # worker can validate its seal and promote it without losing the exact
+      # point-in-time cycle.  Inner atomic-writer temps remain disposable.
+      fast_bot_episode_handoff=""
+      echo "[run-position-guardian-live] fast bot episode handoff publication deferred status=${publish_status}; sealed outer temp remains queued for recovery and primary shadow remains valid." >&2
+    fi
   fi
 }
+
+discard_fast_bot_episode_handoff() {
+  if [[ -n "$fast_bot_episode_handoff" ]]; then
+    rm -f "$fast_bot_episode_handoff" || true
+  fi
+  fast_bot_episode_handoff=""
+}
+
+release_guardian_lock_before_episode() {
+  local owner_token current_token current_pid
+  owner_token="${QR_AUTOTRADE_LOCK_OWNER_TOKEN:-}"
+  qr_live_lock_release
+  current_token=""
+  current_pid=""
+  if [[ -f "${QR_AUTOTRADE_LOCK_DIR}/token" ]]; then
+    current_token="$(cat "${QR_AUTOTRADE_LOCK_DIR}/token" 2>/dev/null || true)"
+  fi
+  if [[ -f "${QR_AUTOTRADE_LOCK_DIR}/pid" ]]; then
+    current_pid="$(cat "${QR_AUTOTRADE_LOCK_DIR}/pid" 2>/dev/null || true)"
+  fi
+  if [[ -n "$owner_token" && "$current_token" == "$owner_token" ]] \
+    || [[ -z "$current_token" && "$current_pid" == "$$" ]]; then
+    echo "[run-position-guardian-live] shared live lock release was not confirmed; episode collection skipped fail-closed." >&2
+    return 1
+  fi
+  export QR_AUTOTRADE_LOCK_HELD=0
+  unset QR_AUTOTRADE_LOCK_OWNER_TOKEN
+  QR_LIVE_LOCK_TOKEN=""
+  return 0
+}
+
+launch_fast_bot_episode_worker_after_lock() {
+  local launcher launch_status
+  launcher="${ROOT_DIR}/scripts/launch-fast-bot-episode-worker.py"
+  if [[ ! -f "$launcher" ]]; then
+    echo "[run-position-guardian-live] fast bot episode launcher is missing; persistent handoffs remain queued." >&2
+    return 0
+  fi
+  if [[ "${QR_AUTOTRADE_LOCK_HELD:-0}" != "0" ]]; then
+    echo "[run-position-guardian-live] shared live lock is still marked held; persistent episode handoffs remain queued fail-closed." >&2
+    return 0
+  fi
+  set +e
+  (
+    export QR_LIVE_ENABLED=0
+    export QR_AUTOTRADE_LOCK_HELD=0
+    unset QR_AUTOTRADE_LOCK_OWNER_TOKEN
+    "$QR_PYTHON" "$launcher" \
+      --launch \
+      --spool "$fast_bot_episode_handoff_spool" \
+      --output "$fast_bot_episode_output" \
+      --ledger "$fast_bot_episode_ledger" \
+      --source-archive "$fast_bot_episode_source_archive" \
+      --log "${QR_FAST_BOT_EPISODE_WORKER_LOG:-logs/fast_bot_episode_worker.log}" >&2
+  )
+  launch_status="$?"
+  set -e
+  if [[ "$launch_status" -ne 0 ]]; then
+    echo "[run-position-guardian-live] fast bot episode worker launch failed status=${launch_status}; persistent handoffs remain queued." >&2
+  fi
+  return 0
+}
+
+finish_guardian_cycle_with_episode() {
+  if release_guardian_lock_before_episode; then
+    launch_fast_bot_episode_worker_after_lock
+  else
+    discard_fast_bot_episode_handoff
+  fi
+  return 0
+}
+
+# The helper's original trap releases the shared lock. Extend it so a normal
+# error or signal also removes a sealed handoff that was never consumed.
+trap 'discard_fast_bot_episode_handoff; qr_live_lock_release' EXIT
+trap 'discard_fast_bot_episode_handoff; qr_live_lock_release; exit 130' INT
+trap 'discard_fast_bot_episode_handoff; qr_live_lock_release; exit 143' TERM
 
 resolve_fast_bot_shadow_outcomes() {
   if [[ "$QR_FAST_BOT_OUTCOME_ENABLED" != "1" ]]; then
@@ -1678,6 +1831,7 @@ if [[ -z "$trader_pairs" ]]; then
   emit_contextual_technical_forward_shadow
   resolve_contextual_technical_forward_outcomes
   echo "[run-position-guardian-live] no trader-owned open positions; completed read-only monitor scope pairs=${monitor_pairs:-none}." >&2
+  finish_guardian_cycle_with_episode
   exit 0
 fi
 
@@ -1710,3 +1864,4 @@ emit_technical_forecast_forward_shadow
 resolve_technical_forecast_forward_outcomes
 emit_contextual_technical_forward_shadow
 resolve_contextual_technical_forward_outcomes
+finish_guardian_cycle_with_episode

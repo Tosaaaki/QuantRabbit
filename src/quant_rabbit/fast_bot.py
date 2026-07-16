@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -36,6 +37,8 @@ from quant_rabbit.strategy.failed_break_evidence import (
 
 
 REGIME_CONTRACT = "QR_HIERARCHICAL_BOT_REGIME_V1"
+EPISODE_HANDOFF_CONTRACT = "QR_FAST_BOT_EPISODE_HANDOFF_V1"
+MAX_EPISODE_HANDOFF_BYTES = 64 * 1024 * 1024
 SHADOW_CONTRACT = "QR_FAST_BOT_FORWARD_SHADOW_V1"
 SIGNAL_CONTRACT = "QR_FAST_BOT_SHADOW_SIGNAL_V1"
 AI_SUPERVISION_CONTRACT = "QR_AI_REGIME_SUPERVISION_V1"
@@ -59,6 +62,7 @@ TIMEFRAME_ROLES = {
     "structure": ("H1", "H4"),
     "anchor": ("D",),
 }
+TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 METHODS = ("BREAKOUT_FAILURE", "RANGE_ROTATION", "TREND_CONTINUATION")
 SIDES = ("LONG", "SHORT")
 SIDE_DIRECTION = {"LONG": "UP", "SHORT": "DOWN"}
@@ -130,6 +134,13 @@ def build_hierarchical_regime_contract(
     rows: list[dict[str, Any]] = []
     for pair in pairs:
         merged_views = _merged_views(fast_by_pair.get(pair), slow_by_pair.get(pair))
+        source_timeframe_clocks = {
+            timeframe: _latest_complete_candle_close_time(
+                merged_views.get(timeframe),
+                timeframe=timeframe,
+            )
+            for timeframe in TIMEFRAMES
+        }
         merged_chart = {"pair": pair, "views": list(merged_views.values())}
         m5_failed_break = build_m5_failed_break_evidence(merged_chart)
         quote = quotes.get(pair) if isinstance(quotes.get(pair), Mapping) else {}
@@ -227,6 +238,10 @@ def build_hierarchical_regime_contract(
                         "hard_blockers": sorted(set(hard)),
                         "caution_reasons": sorted(set(caution)),
                         "timeframe_votes": evaluated["timeframe_votes"],
+                        "source_timeframe_clocks": source_timeframe_clocks,
+                        "source_timeframe_clocks_sha256": _canonical_sha(
+                            source_timeframe_clocks
+                        ),
                         "m1_closed_candle_utc": _latest_complete_candle_close_time(
                             merged_views.get("M1"),
                             timeframe="M1",
@@ -448,27 +463,58 @@ def run_fast_bot_shadow(
     shadow_ledger_path: Path,
     report_path: Path,
     now_utc: datetime | None = None,
+    episode_handoff_path: Path | None = None,
 ) -> dict[str, Any]:
     """Read current artifacts and atomically persist the bot shadow cycle."""
 
+    cycle_now = _aware_utc(now_utc or datetime.now(timezone.utc))
     fast = _read_object(fast_pair_charts_path)
     slow = _read_object(slow_pair_charts_path)
     snapshot = _read_object(broker_snapshot_path)
     events = _read_object(guardian_events_path)
     supervision = _read_object(ai_supervision_path) if ai_supervision_path else {}
+    validated_fast = _validated_fast_pair_charts(fast, now_utc=cycle_now)
+    validated_slow = _validated_slow_pair_charts(slow)
     contract = build_hierarchical_regime_contract(
-        fast_pair_charts=fast,
-        slow_pair_charts=slow,
+        fast_pair_charts=validated_fast,
+        slow_pair_charts=validated_slow,
         broker_snapshot=snapshot,
         guardian_events=events,
         ai_supervision=supervision,
-        now_utc=now_utc,
+        now_utc=cycle_now,
     )
-    shadow = build_fast_bot_shadow(contract, broker_snapshot=snapshot, now_utc=now_utc)
+    # Persist the exact sealed source before an episode binds its SHA.  A
+    # crash may leave a source without a child event, but never a child event
+    # whose source contract was not durably published.
     _write_json_atomic(regime_output_path, contract)
+    shadow = build_fast_bot_shadow(contract, broker_snapshot=snapshot, now_utc=cycle_now)
     _write_json_atomic(shadow_output_path, shadow)
     appended = _append_signals_once(shadow_ledger_path, shadow)
     _write_report(report_path, contract=contract, shadow=shadow, appended=appended)
+    episode_handoff: Mapping[str, Any] | None = None
+    if episode_handoff_path is not None:
+        # Freeze the exact validated inputs used above.  The episode process
+        # runs only after the Guardian releases the shared live lock, when the
+        # canonical chart paths may already belong to the next cycle.
+        episode_handoff = _seal(
+            {
+                "contract": EPISODE_HANDOFF_CONTRACT,
+                "schema_version": 1,
+                "cycle_generated_at_utc": cycle_now.isoformat(),
+                "regime_contract_sha256": contract.get("contract_sha256"),
+                "fast_pair_charts_sha256": _canonical_sha(validated_fast),
+                "slow_pair_charts_sha256": _canonical_sha(validated_slow),
+                "regime_contract": dict(contract),
+                "fast_pair_charts": dict(validated_fast),
+                "slow_pair_charts": dict(validated_slow),
+                "diagnostic_only": True,
+                "shadow_only": True,
+                "order_authority": "NONE",
+                "live_permission": False,
+                "broker_mutation_allowed": False,
+            }
+        )
+        _write_json_atomic(episode_handoff_path, episode_handoff)
     return {
         "status": shadow.get("status"),
         "go_gate_count": sum(
@@ -478,6 +524,10 @@ def run_fast_bot_shadow(
         "ledger_appended": appended,
         "ai_wake_required": contract.get("ai_wake_required"),
         "ai_wake_reasons": contract.get("ai_wake_reasons"),
+        "episode_handoff": str(episode_handoff_path) if episode_handoff is not None else None,
+        "episode_handoff_sha256": (
+            episode_handoff.get("contract_sha256") if episode_handoff is not None else None
+        ),
         "shadow_only": True,
         "live_permission": False,
         "broker_mutation": False,
@@ -486,6 +536,117 @@ def run_fast_bot_shadow(
         "shadow_ledger": str(shadow_ledger_path),
         "report": str(report_path),
     }
+
+
+def load_fast_bot_episode_handoff(path: Path) -> dict[str, Any]:
+    """Load and verify one primary-produced, cycle-sealed episode handoff."""
+
+    try:
+        initial = path.lstat()
+    except OSError as error:
+        raise ValueError("episode handoff is unreadable") from error
+    if (
+        not stat.S_ISREG(initial.st_mode)
+        or initial.st_size <= 0
+        or initial.st_size > MAX_EPISODE_HANDOFF_BYTES
+    ):
+        raise ValueError("episode handoff size is invalid")
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_dev != initial.st_dev
+            or before.st_ino != initial.st_ino
+            or before.st_size != initial.st_size
+            or before.st_mtime_ns != initial.st_mtime_ns
+            or before.st_size <= 0
+            or before.st_size > MAX_EPISODE_HANDOFF_BYTES
+        ):
+            raise ValueError("episode handoff changed before read")
+        chunks: list[bytes] = []
+        remaining = MAX_EPISODE_HANDOFF_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(descriptor)
+    except OSError as error:
+        raise ValueError("episode handoff is unreadable") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        not raw
+        or len(raw) > MAX_EPISODE_HANDOFF_BYTES
+        or len(raw) != before.st_size
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise ValueError("episode handoff changed during read")
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError("episode handoff JSON is invalid") from error
+    if not isinstance(value, dict) or set(value) != {
+        "contract",
+        "schema_version",
+        "cycle_generated_at_utc",
+        "regime_contract_sha256",
+        "fast_pair_charts_sha256",
+        "slow_pair_charts_sha256",
+        "regime_contract",
+        "fast_pair_charts",
+        "slow_pair_charts",
+        "diagnostic_only",
+        "shadow_only",
+        "order_authority",
+        "live_permission",
+        "broker_mutation_allowed",
+        "contract_sha256",
+    }:
+        raise ValueError("episode handoff shape is invalid")
+    if not _sealed_contract_valid(value, EPISODE_HANDOFF_CONTRACT):
+        raise ValueError("episode handoff seal is invalid")
+    if isinstance(value.get("schema_version"), bool) or value.get("schema_version") != 1:
+        raise ValueError("episode handoff schema is invalid")
+    regime = value.get("regime_contract")
+    fast = value.get("fast_pair_charts")
+    slow = value.get("slow_pair_charts")
+    cycle = _parse_utc(value.get("cycle_generated_at_utc"))
+    if (
+        not isinstance(regime, Mapping)
+        or not isinstance(fast, Mapping)
+        or not isinstance(slow, Mapping)
+        or cycle is None
+        or not _sealed_contract_valid(regime, REGIME_CONTRACT)
+        or regime.get("generated_at_utc") != value.get("cycle_generated_at_utc")
+        or value.get("regime_contract_sha256") != regime.get("contract_sha256")
+        or value.get("fast_pair_charts_sha256") != _canonical_sha(fast)
+        or value.get("slow_pair_charts_sha256") != _canonical_sha(slow)
+        or value.get("diagnostic_only") is not True
+        or value.get("shadow_only") is not True
+        or value.get("order_authority") != "NONE"
+        or value.get("live_permission") is not False
+        or value.get("broker_mutation_allowed") is not False
+    ):
+        raise ValueError("episode handoff binding is invalid")
+    return value
 
 
 def _evaluate_method(
@@ -945,6 +1106,19 @@ def _read_object(path: Path | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     _write_text_atomic(path, json.dumps(dict(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
@@ -952,8 +1126,33 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
 def _write_text_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(text, encoding="utf-8")
-    os.replace(temp, path)
+    try:
+        descriptor = os.open(
+            temp,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_TRUNC
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+        directory_descriptor = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _seal(value: Mapping[str, Any]) -> dict[str, Any]:

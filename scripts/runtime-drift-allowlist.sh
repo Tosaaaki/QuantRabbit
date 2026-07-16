@@ -88,6 +88,16 @@ data/position_guardian_slow_retention.json|\
 docs/position_guardian_all_pair_m1_report.md|\
 data/fast_bot_shadow.json|\
 data/fast_bot_shadow_ledger.jsonl|\
+data/fast_bot_episode_state.json|\
+data/fast_bot_episode_state.json.pending|\
+data/fast_bot_episode_ledger.jsonl|\
+data/fast_bot_episode_handoffs/.owner.json|\
+data/fast_bot_episode_handoffs/.metadata.lock|\
+data/fast_bot_episode_handoffs/.worker.lock|\
+data/fast_bot_episode_handoffs/.handoff-*.tmp|\
+data/fast_bot_episode_handoffs/handoff-*.json|\
+data/fast_bot_episode_sources/.owner.json|\
+data/fast_bot_episode_sources/*.json.gz|\
 data/fast_bot_outcome_ledger.jsonl|\
 data/fast_bot_scorecard.json|\
 data/fast_bot_learning_shadow.json|\

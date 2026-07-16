@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import json
+import os
+import fcntl
+import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.fast_bot import (
     AI_SUPERVISION_CONTRACT,
     ENTRY_ARM_SPREAD_FRACTIONS,
     ENTRY_EXPERIMENT_CONTRACT,
+    EPISODE_HANDOFF_CONTRACT,
     HORIZON_LANE,
     REGIME_CONTRACT,
     _append_signals_once,
     _entry_experiment_arms,
+    _write_text_atomic,
     build_fast_bot_shadow,
     build_hierarchical_regime_contract,
+    load_fast_bot_episode_handoff,
     run_fast_bot_shadow,
 )
 from quant_rabbit.guardian_observation import CURRENT_M1_CONTRACT
@@ -25,6 +34,8 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D": 1440}
+EPISODE_WORKER = Path(__file__).resolve().parents[1] / "scripts" / "launch-fast-bot-episode-worker.py"
+EPISODE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run-fast-bot-episode-shadow.py"
 
 
 def _candles(timeframe: str, *, failed_break_short: bool = False) -> list[dict]:
@@ -138,7 +149,1144 @@ def _seal_contract(body: dict) -> dict:
     return {**body, "contract_sha256": hashlib.sha256(raw).hexdigest()}
 
 
+def _episode_worker_env(**overrides: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["QR_LIVE_ENABLED"] = "0"
+    env["QR_AUTOTRADE_LOCK_HELD"] = "0"
+    env.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+    env.update(overrides)
+    return env
+
+
+def _run_episode_worker_cli(*args: object, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(EPISODE_WORKER), *(str(arg) for arg in args)],
+        cwd=EPISODE_WORKER.parents[1],
+        env=env or _episode_worker_env(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=10,
+    )
+
+
+def _load_episode_worker_module():
+    spec = importlib.util.spec_from_file_location("quant_rabbit_episode_worker_test", EPISODE_WORKER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("episode worker module is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_episode_runner_module():
+    spec = importlib.util.spec_from_file_location(
+        "quant_rabbit_episode_runner_test",
+        EPISODE_RUNNER,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("episode runner module is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _episode_destinations(root: Path) -> tuple[Path, Path, Path]:
+    return (
+        root / "episode.json",
+        root / "episode.jsonl",
+        root / "sources",
+    )
+
+
+def _episode_destination_args(root: Path) -> tuple[object, ...]:
+    output, ledger, source_archive = _episode_destinations(root)
+    return (
+        "--output",
+        output,
+        "--ledger",
+        ledger,
+        "--source-archive",
+        source_archive,
+    )
+
+
+def _ensure_test_spool_owner(root: Path, spool: Path) -> str:
+    worker_module = _load_episode_worker_module()
+    output, ledger, source_archive = _episode_destinations(root)
+    return worker_module._ensure_spool_owner(
+        spool=spool,
+        output=output,
+        ledger=ledger,
+        source_archive=source_archive,
+    )
+
+
+def _write_episode_handoff(
+    root: Path,
+    spool: Path,
+    *,
+    now: datetime,
+    suffix: str,
+) -> Path:
+    fast, slow, snapshot = _inputs()
+    inputs = {
+        "fast": fast,
+        "slow": slow,
+        "snapshot": snapshot,
+        "events": {"events": []},
+    }
+    paths: dict[str, Path] = {}
+    for name, payload in inputs.items():
+        path = root / f"{suffix}-{name}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        paths[name] = path
+    spool.mkdir(parents=True, exist_ok=True)
+    owner_id = _ensure_test_spool_owner(root, spool)
+    handoff = spool / (
+        f".handoff-{os.getpid()}-{owner_id}-{suffix}.tmp"
+    )
+    run_fast_bot_shadow(
+        fast_pair_charts_path=paths["fast"],
+        slow_pair_charts_path=paths["slow"],
+        broker_snapshot_path=paths["snapshot"],
+        guardian_events_path=paths["events"],
+        ai_supervision_path=None,
+        regime_output_path=root / f"{suffix}-regime.json",
+        shadow_output_path=root / f"{suffix}-shadow.json",
+        shadow_ledger_path=root / f"{suffix}-shadow.jsonl",
+        report_path=root / f"{suffix}-report.md",
+        now_utc=now,
+        episode_handoff_path=handoff,
+    )
+    return handoff
+
+
 class FastBotTest(unittest.TestCase):
+    def test_atomic_text_failure_removes_private_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "state.json"
+            atomic_temp = root / f".state.json.{os.getpid()}.tmp"
+            with patch("quant_rabbit.fast_bot.os.replace", side_effect=OSError("boom")):
+                with self.assertRaises(OSError):
+                    _write_text_atomic(target, "sealed\n")
+            self.assertFalse(target.exists())
+            self.assertFalse(atomic_temp.exists())
+
+    def test_atomic_text_fsyncs_file_and_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "state.json"
+            with patch("quant_rabbit.fast_bot.os.fsync", wraps=os.fsync) as fsync:
+                _write_text_atomic(target, "sealed\n")
+            self.assertEqual(target.read_text(), "sealed\n")
+            self.assertGreaterEqual(fsync.call_count, 2)
+
+    def test_episode_handoff_loader_rejects_unbounded_or_nonregular_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            oversized = root / "oversized.json"
+            with oversized.open("wb") as handle:
+                handle.truncate(64 * 1024 * 1024 + 1)
+            with self.assertRaisesRegex(ValueError, "size is invalid"):
+                load_fast_bot_episode_handoff(oversized)
+
+            target = root / "target.json"
+            target.write_text("{}\n")
+            symlink = root / "handoff-link.json"
+            symlink.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "size is invalid"):
+                load_fast_bot_episode_handoff(symlink)
+
+            fifo = root / "handoff.fifo"
+            os.mkfifo(fifo)
+            with self.assertRaisesRegex(ValueError, "size is invalid"):
+                load_fast_bot_episode_handoff(fifo)
+
+    def test_episode_spool_cleans_only_dead_pid_temps_and_enforces_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            dead_outer = spool / f".handoff-999999-{owner_id}-dead.tmp"
+            live_outer = (
+                spool / f".handoff-{os.getpid()}-{owner_id}-live.tmp"
+            )
+            dead_atomic = spool / ".state.json.999999.tmp"
+            for path in (dead_outer, live_outer, dead_atomic):
+                path.write_text("partial\n")
+
+            available = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+
+            self.assertEqual(available.returncode, 0, available.stderr)
+            self.assertTrue(dead_outer.exists())
+            self.assertFalse(dead_atomic.exists())
+            self.assertTrue(live_outer.exists())
+
+            recovered = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                "--output",
+                Path(temp_dir) / "episode.json",
+                "--ledger",
+                Path(temp_dir) / "episode.jsonl",
+                "--source-archive",
+                root / "sources",
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+            self.assertFalse(dead_outer.exists())
+            self.assertTrue(live_outer.exists())
+
+            for index in range(64):
+                (
+                    spool
+                    / f"handoff-{index}-{owner_id}-999999-{index:016x}.json"
+                ).write_text("{}\n")
+            count_full = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(count_full.returncode, 75, count_full.stderr)
+
+            for path in spool.glob("handoff-*.json"):
+                path.unlink()
+            for index in range(8):
+                large = (
+                    spool
+                    / f"handoff-{index}-{owner_id}-999999-{index:016x}.json"
+                )
+                with large.open("wb") as handle:
+                    handle.truncate(64 * 1024 * 1024)
+            bytes_full = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(bytes_full.returncode, 75, bytes_full.stderr)
+
+    def test_episode_spool_reservation_is_bounded_and_mismatch_is_nonmutating(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            _ensure_test_spool_owner(root, spool)
+            foreign_atomic = spool / ".state.json.999999.tmp"
+            foreign_atomic.write_text("foreign\n")
+
+            wrong_root = root / "wrong-destinations"
+            mismatch = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                spool,
+                *_episode_destination_args(wrong_root),
+            )
+            self.assertEqual(mismatch.returncode, 1, mismatch.stderr)
+            self.assertTrue(foreign_atomic.exists())
+
+            foreign_atomic.unlink()
+            reservations: list[Path] = []
+            for _ in range(8):
+                reserved = _run_episode_worker_cli(
+                    "--reserve",
+                    "--spool",
+                    spool,
+                    *_episode_destination_args(root),
+                )
+                self.assertEqual(reserved.returncode, 0, reserved.stderr)
+                reservations.append(Path(reserved.stdout.strip()))
+            self.assertEqual(len(set(reservations)), 8)
+            self.assertTrue(all(path.is_file() for path in reservations))
+
+            byte_cap = _run_episode_worker_cli(
+                "--reserve",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(byte_cap.returncode, 75, byte_cap.stderr)
+
+            for path in reservations:
+                path.unlink()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            for index in range(63):
+                (
+                    spool
+                    / f"handoff-{index}-{owner_id}-999999-{index:016x}.json"
+                ).write_text("{}\n")
+            count_boundary = _run_episode_worker_cli(
+                "--reserve",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(count_boundary.returncode, 0, count_boundary.stderr)
+            count_temp = Path(count_boundary.stdout.strip())
+            count_temp.write_text("{}\n")
+            count_publish = _run_episode_worker_cli(
+                "--publish",
+                count_temp,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(count_publish.returncode, 0, count_publish.stderr)
+            self.assertEqual(len(list(spool.glob("handoff-*.json"))), 64)
+
+            for path in spool.glob("handoff-*.json"):
+                path.unlink()
+            for index in range(7):
+                large = (
+                    spool
+                    / f"handoff-{index}-{owner_id}-999999-{index:016x}.json"
+                )
+                with large.open("wb") as handle:
+                    handle.truncate(64 * 1024 * 1024)
+            byte_boundary = _run_episode_worker_cli(
+                "--reserve",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(byte_boundary.returncode, 0, byte_boundary.stderr)
+            byte_temp = Path(byte_boundary.stdout.strip())
+            with byte_temp.open("wb") as handle:
+                handle.truncate(64 * 1024 * 1024)
+            byte_publish = _run_episode_worker_cli(
+                "--publish",
+                byte_temp,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(byte_publish.returncode, 0, byte_publish.stderr)
+            self.assertEqual(
+                sum(path.stat().st_size for path in spool.glob("handoff-*.json")),
+                512 * 1024 * 1024,
+            )
+
+    def test_episode_spool_recovers_over_cap_outer_and_surfaces_nonregular(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            for index in range(9):
+                (
+                    spool
+                    / f".handoff-999999-{owner_id}-{index:016x}.tmp"
+                ).write_text("{}\n")
+
+            with (
+                patch.object(
+                    worker_module,
+                    "load_fast_bot_episode_handoff",
+                    return_value={"sealed": True},
+                ),
+                patch("builtins.print"),
+            ):
+                promoted, discarded = worker_module.recover_stale_outer_handoffs(
+                    spool,
+                    owner_id=owner_id,
+                )
+            self.assertEqual((promoted, discarded), (9, 0))
+            self.assertEqual(len(list(spool.glob("handoff-*.json"))), 9)
+
+            for path in spool.glob("handoff-*.json"):
+                path.unlink()
+            fifo = spool / f".handoff-999999-{owner_id}-fifo.tmp"
+            os.mkfifo(fifo)
+            surfaced = _run_episode_worker_cli(
+                "--launch",
+                "--spool",
+                spool,
+                "--log",
+                root / "worker.log",
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(surfaced.returncode, 1, surfaced.stderr)
+            self.assertTrue(fifo.exists())
+            self.assertIn("spool operation failed:", surfaced.stderr)
+
+    def test_episode_spool_recovers_only_exact_owner_crash_temp(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "recoverable-spool"
+            spool.mkdir()
+            output, ledger, source_archive = _episode_destinations(root)
+            expected = worker_module._spool_owner_contract(
+                spool=spool,
+                output=output,
+                ledger=ledger,
+                source_archive=source_archive,
+            )
+            owner_id = expected["owner_id"]
+            crash_temp = (
+                spool
+                / f"..owner.json-{owner_id}-0000000000000001.999999.tmp"
+            )
+            crash_temp.write_bytes(
+                worker_module._canonical_json_bytes(expected) + b"\n"
+            )
+
+            recovered = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+            self.assertFalse(crash_temp.exists())
+            self.assertEqual(
+                worker_module._read_spool_owner(spool / ".owner.json"),
+                expected,
+            )
+
+            foreign_spool = root / "foreign-spool"
+            foreign_spool.mkdir()
+            foreign_expected = worker_module._spool_owner_contract(
+                spool=foreign_spool,
+                output=output,
+                ledger=ledger,
+                source_archive=source_archive,
+            )
+            foreign_temp = foreign_spool / (
+                f"..owner.json-{foreign_expected['owner_id']}-"
+                "0000000000000001.999999.tmp"
+            )
+            foreign_temp.write_bytes(
+                worker_module._canonical_json_bytes(foreign_expected) + b"\n"
+            )
+            foreign = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                foreign_spool,
+                *_episode_destination_args(root / "wrong"),
+            )
+            self.assertEqual(foreign.returncode, 1, foreign.stderr)
+            self.assertTrue(foreign_temp.exists())
+            self.assertFalse((foreign_spool / ".owner.json").exists())
+
+            torn_spool = root / "torn-spool"
+            torn_spool.mkdir()
+            torn_expected = worker_module._spool_owner_contract(
+                spool=torn_spool,
+                output=output,
+                ledger=ledger,
+                source_archive=source_archive,
+            )
+            torn_owner_id = torn_expected["owner_id"]
+            empty_temp = torn_spool / (
+                f"..owner.json-{torn_owner_id}-"
+                "0000000000000001.999999.tmp"
+            )
+            partial_temp = torn_spool / (
+                f"..owner.json-{torn_owner_id}-"
+                "0000000000000002.999999.tmp"
+            )
+            empty_temp.touch()
+            partial_temp.write_text("{partial")
+            torn_recovered = _run_episode_worker_cli(
+                "--check-capacity",
+                "--spool",
+                torn_spool,
+                "--output",
+                output,
+                "--ledger",
+                ledger,
+                "--source-archive",
+                source_archive,
+            )
+            self.assertEqual(torn_recovered.returncode, 0, torn_recovered.stderr)
+            self.assertFalse(empty_temp.exists())
+            self.assertFalse(partial_temp.exists())
+            self.assertEqual(
+                worker_module._read_spool_owner(torn_spool / ".owner.json"),
+                torn_expected,
+            )
+
+    def test_episode_worker_lock_busy_and_invalid_inputs_remain_durable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            temp_handoff = _write_episode_handoff(
+                root,
+                spool,
+                now=NOW,
+                suffix="lockbusy",
+            )
+            published = _run_episode_worker_cli(
+                "--publish",
+                temp_handoff,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(published.returncode, 0, published.stderr)
+            final_handoff = Path(published.stdout.strip())
+
+            lock_path = spool / ".worker.lock"
+            lock_descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                busy = _run_episode_worker_cli(
+                    "--worker",
+                    "--spool",
+                    spool,
+                    "--output",
+                    root / "episode.json",
+                    "--ledger",
+                    root / "episode.jsonl",
+                    "--source-archive",
+                    root / "sources",
+                )
+            finally:
+                os.close(lock_descriptor)
+            self.assertEqual(busy.returncode, 75, busy.stderr)
+            self.assertTrue(final_handoff.exists())
+
+            final_handoff.write_text("{invalid\n")
+            invalid = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                "--output",
+                root / "episode.json",
+                "--ledger",
+                root / "episode.jsonl",
+                "--source-archive",
+                root / "sources",
+            )
+            self.assertEqual(invalid.returncode, 1, invalid.stderr)
+            self.assertTrue(final_handoff.exists())
+
+    def test_episode_spool_owner_mismatch_retains_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            temp_handoff = _write_episode_handoff(
+                root,
+                spool,
+                now=NOW,
+                suffix="owner",
+            )
+            published = _run_episode_worker_cli(
+                "--publish",
+                temp_handoff,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(published.returncode, 0, published.stderr)
+            final_handoff = Path(published.stdout.strip())
+
+            wrong_root = root / "wrong-destinations"
+            mismatch = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                *_episode_destination_args(wrong_root),
+            )
+
+            self.assertEqual(mismatch.returncode, 1, mismatch.stderr)
+            self.assertIn("operation failed: ValueError", mismatch.stderr)
+            self.assertTrue(final_handoff.exists())
+            self.assertFalse((wrong_root / "episode.json").exists())
+            self.assertFalse((wrong_root / "episode.jsonl").exists())
+
+    def test_episode_spool_metadata_busy_is_nonblocking_and_outer_temp_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            temp_handoff = _write_episode_handoff(
+                root,
+                spool,
+                now=NOW,
+                suffix="recover",
+            )
+            owner_id = _ensure_test_spool_owner(root, spool)
+            metadata_lock = spool / ".metadata.lock"
+            lock_descriptor = os.open(metadata_lock, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                busy = _run_episode_worker_cli(
+                    "--publish",
+                    temp_handoff,
+                    "--spool",
+                    spool,
+                    *_episode_destination_args(root),
+                )
+            finally:
+                os.close(lock_descriptor)
+            self.assertEqual(busy.returncode, 75, busy.stderr)
+            self.assertTrue(temp_handoff.exists())
+
+            stale_handoff = (
+                spool / f".handoff-999999-{owner_id}-recover.tmp"
+            )
+            os.replace(temp_handoff, stale_handoff)
+            worker = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                "--output",
+                root / "episode.json",
+                "--ledger",
+                root / "episode.jsonl",
+                "--source-archive",
+                root / "sources",
+            )
+
+            self.assertEqual(worker.returncode, 0, worker.stderr)
+            self.assertFalse(stale_handoff.exists())
+            self.assertFalse(list(spool.glob("handoff-*.json")))
+            self.assertIn(f"spool recovered {stale_handoff.name}", worker.stderr)
+
+    def test_episode_worker_refuses_live_lock_environment_and_keeps_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            handoff = spool / "handoff-queued.json"
+            handoff.write_text("queued\n")
+
+            result = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                env=_episode_worker_env(QR_AUTOTRADE_LOCK_HELD="1"),
+            )
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertTrue(handoff.exists())
+            self.assertIn("refuses the shared live lock", result.stderr)
+
+    def test_episode_launcher_rejects_fifo_log_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            handoff = (
+                spool
+                / f"handoff-1-{owner_id}-999999-0000000000000001.json"
+            )
+            handoff.write_text("queued\n")
+            log_path = root / "worker.fifo"
+            os.mkfifo(log_path)
+
+            result = _run_episode_worker_cli(
+                "--launch",
+                "--spool",
+                spool,
+                "--log",
+                log_path,
+                *_episode_destination_args(root),
+            )
+
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertTrue(handoff.exists())
+            self.assertIn("spool operation failed:", result.stderr)
+
+    def test_episode_launcher_rotates_bounded_regular_log(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            (
+                spool
+                / f"handoff-1-{owner_id}-999999-0000000000000001.json"
+            ).write_text("queued\n")
+            log_path = root / "worker.log"
+            with log_path.open("wb") as handle:
+                handle.truncate(worker_module.MAX_WORKER_LOG_BYTES)
+
+            with (
+                patch.object(worker_module.subprocess, "Popen") as popen,
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_LIVE_ENABLED": "0",
+                        "QR_AUTOTRADE_LOCK_HELD": "0",
+                    },
+                    clear=False,
+                ),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                result = worker_module.launch_worker(
+                    spool=spool,
+                    output=root / "episode.json",
+                    ledger=root / "episode.jsonl",
+                    source_archive=root / "sources",
+                    log_path=log_path,
+                )
+
+            self.assertEqual(result, 0)
+            popen.assert_called_once()
+            self.assertTrue(log_path.is_file())
+            self.assertEqual(log_path.stat().st_size, 0)
+            self.assertEqual(
+                log_path.with_name("worker.log.1").stat().st_size,
+                worker_module.MAX_WORKER_LOG_BYTES,
+            )
+
+    def test_recovered_pending_batch_replays_same_handoff_before_delete(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            handoff_path = (
+                spool
+                / f"handoff-1-{owner_id}-999999-0000000000000001.json"
+            )
+            handoff_path.write_text("{}\n")
+            sealed = {
+                "cycle_generated_at_utc": NOW.isoformat(),
+                "contract_sha256": "a" * 64,
+                "regime_contract": {},
+                "fast_pair_charts": {},
+                "slow_pair_charts": {},
+            }
+            with (
+                patch.object(
+                    worker_module,
+                    "load_fast_bot_episode_handoff",
+                    return_value=sealed,
+                ),
+                patch.object(
+                    worker_module,
+                    "run_fast_bot_episode_shadow",
+                    side_effect=[
+                        {"status": "RECOVERED_PENDING_BATCH"},
+                        {"status": "NO_NEW_EVENT"},
+                    ],
+                ) as run_episode,
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_LIVE_ENABLED": "0",
+                        "QR_AUTOTRADE_LOCK_HELD": "0",
+                    },
+                    clear=False,
+                ),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                result = worker_module.run_worker(
+                    spool=spool,
+                    output=root / "episode.json",
+                    ledger=root / "episode.jsonl",
+                    source_archive=root / "sources",
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(run_episode.call_count, 2)
+            self.assertFalse(handoff_path.exists())
+
+    def test_episode_worker_consumes_sealed_handoffs_in_cycle_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            first_temp = _write_episode_handoff(
+                root,
+                spool,
+                now=NOW,
+                suffix="first",
+            )
+            second_temp = _write_episode_handoff(
+                root,
+                spool,
+                now=NOW + timedelta(seconds=30),
+                suffix="second",
+            )
+            first_publish = _run_episode_worker_cli(
+                "--publish",
+                first_temp,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            second_publish = _run_episode_worker_cli(
+                "--publish",
+                second_temp,
+                "--spool",
+                spool,
+                *_episode_destination_args(root),
+            )
+            self.assertEqual(first_publish.returncode, 0, first_publish.stderr)
+            self.assertEqual(second_publish.returncode, 0, second_publish.stderr)
+            first_name = Path(first_publish.stdout.strip()).name
+            second_name = Path(second_publish.stdout.strip()).name
+
+            worker = _run_episode_worker_cli(
+                "--worker",
+                "--spool",
+                spool,
+                "--output",
+                root / "episode.json",
+                "--ledger",
+                root / "episode.jsonl",
+                "--source-archive",
+                root / "sources",
+            )
+
+            self.assertEqual(worker.returncode, 0, worker.stderr)
+            self.assertFalse(list(spool.glob("handoff-*.json")))
+            self.assertLess(worker.stderr.index(first_name), worker.stderr.index(second_name))
+            state = json.loads((root / "episode.json").read_text())
+            self.assertIn(state["status"], {"NO_NEW_EVENT", "UPDATED"})
+            self.assertEqual(
+                datetime.fromisoformat(state["generated_at_utc"]),
+                NOW + timedelta(seconds=30),
+            )
+            self.assertIn("spool_delay_seconds=", worker.stderr)
+
+    def test_primary_seals_same_validated_packets_for_post_lock_episode(self) -> None:
+        fast, slow, snapshot = _inputs()
+        invalid_fast = _seal_contract(
+            {
+                "contract": CURRENT_M1_CONTRACT,
+                "schema_version": 1,
+                "status": "CURRENT",
+                "configured_pairs": ["EUR_USD"],
+                "charts": fast["charts"],
+            }
+        )
+        invalid_fast["contract_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = {
+                "fast": root / "fast.json",
+                "slow": root / "slow.json",
+                "snapshot": root / "snapshot.json",
+                "events": root / "events.json",
+            }
+            paths["fast"].write_text(json.dumps(invalid_fast), encoding="utf-8")
+            paths["slow"].write_text(json.dumps(slow), encoding="utf-8")
+            paths["snapshot"].write_text(json.dumps(snapshot), encoding="utf-8")
+            paths["events"].write_text(json.dumps({"events": []}), encoding="utf-8")
+            result = run_fast_bot_shadow(
+                fast_pair_charts_path=paths["fast"],
+                slow_pair_charts_path=paths["slow"],
+                broker_snapshot_path=paths["snapshot"],
+                guardian_events_path=paths["events"],
+                ai_supervision_path=None,
+                regime_output_path=root / "regime.json",
+                shadow_output_path=root / "shadow.json",
+                shadow_ledger_path=root / "shadow.jsonl",
+                report_path=root / "report.md",
+                now_utc=NOW,
+                episode_handoff_path=root / "episode-handoff.json",
+            )
+
+            handoff = load_fast_bot_episode_handoff(root / "episode-handoff.json")
+            episode_fast = handoff["fast_pair_charts"]
+            regime = json.loads((root / "regime.json").read_text())
+            self.assertEqual(handoff["contract"], EPISODE_HANDOFF_CONTRACT)
+            self.assertEqual(handoff["cycle_generated_at_utc"], NOW.isoformat())
+            self.assertEqual(handoff["regime_contract"], regime)
+            self.assertEqual(handoff["regime_contract_sha256"], regime["contract_sha256"])
+            self.assertEqual(result["episode_handoff_sha256"], handoff["contract_sha256"])
+            self.assertEqual(len(episode_fast["charts"]), 28)
+            self.assertTrue(all(not chart["views"] for chart in episode_fast["charts"]))
+            self.assertTrue(handoff["diagnostic_only"])
+            self.assertEqual(handoff["order_authority"], "NONE")
+            self.assertFalse(handoff["live_permission"])
+            self.assertFalse(handoff["broker_mutation_allowed"])
+
+    def test_primary_has_no_synchronous_episode_side_effect(self) -> None:
+        fast, slow, snapshot = _inputs()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, payload in (
+                ("fast", fast),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+            result = run_fast_bot_shadow(
+                fast_pair_charts_path=root / "fast.json",
+                slow_pair_charts_path=root / "slow.json",
+                broker_snapshot_path=root / "snapshot.json",
+                guardian_events_path=root / "events.json",
+                ai_supervision_path=None,
+                regime_output_path=root / "regime.json",
+                shadow_output_path=root / "shadow.json",
+                shadow_ledger_path=root / "shadow.jsonl",
+                report_path=root / "report.md",
+                now_utc=NOW,
+                episode_handoff_path=root / "episode-handoff.json",
+            )
+
+            self.assertNotIn("episode_status", result)
+            self.assertNotIn("episode_events_appended", result)
+            self.assertTrue((root / "shadow.json").exists())
+            self.assertTrue((root / "shadow.jsonl").exists())
+            self.assertTrue((root / "episode-handoff.json").exists())
+            self.assertFalse((root / "episode.json").exists())
+            self.assertFalse((root / "episode.jsonl").exists())
+            shadow = json.loads((root / "shadow.json").read_text())
+            self.assertTrue(shadow["shadow_only"])
+            self.assertFalse(shadow["live_permission"])
+
+    def test_dedicated_episode_runner_uses_sealed_cycle_after_sources_change(self) -> None:
+        fast, slow, snapshot = _inputs()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, payload in (
+                ("fast", fast),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+            handoff_path = root / "episode-handoff.json"
+            regime_path = root / "regime.json"
+            run_fast_bot_shadow(
+                fast_pair_charts_path=root / "fast.json",
+                slow_pair_charts_path=root / "slow.json",
+                broker_snapshot_path=root / "snapshot.json",
+                guardian_events_path=root / "events.json",
+                ai_supervision_path=None,
+                regime_output_path=regime_path,
+                shadow_output_path=root / "shadow.json",
+                shadow_ledger_path=root / "shadow.jsonl",
+                report_path=root / "report.md",
+                now_utc=NOW,
+                episode_handoff_path=handoff_path,
+            )
+            (root / "fast.json").write_text('{"next_cycle":true}\n')
+            (root / "slow.json").write_text('{"next_cycle":true}\n')
+            regime_path.write_text('{"next_cycle":true}\n')
+            env = os.environ.copy()
+            env.update({"QR_LIVE_ENABLED": "0", "QR_AUTOTRADE_LOCK_HELD": "0"})
+            env.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+
+            result = subprocess.run(
+                [
+                    str(Path(__file__).resolve().parents[1] / "scripts" / "run-fast-bot-episode-shadow.py"),
+                    "--handoff",
+                    str(handoff_path),
+                    "--output",
+                    str(root / "episode.json"),
+                    "--ledger",
+                    str(root / "episode.jsonl"),
+                    "--source-archive",
+                    str(root / "episode-sources"),
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            state = json.loads((root / "episode.json").read_text())
+            self.assertEqual(state["generated_at_utc"], NOW.isoformat())
+            self.assertTrue(state["diagnostic_only"])
+            self.assertFalse(state["live_permission"])
+
+    def test_dedicated_episode_runner_rejects_any_live_lock_and_reports_busy(self) -> None:
+        fast, slow, snapshot = _inputs()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, payload in (
+                ("fast", fast),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(
+                    json.dumps(payload),
+                    encoding="utf-8",
+                )
+            handoff_path = root / "episode-handoff.json"
+            run_fast_bot_shadow(
+                fast_pair_charts_path=root / "fast.json",
+                slow_pair_charts_path=root / "slow.json",
+                broker_snapshot_path=root / "snapshot.json",
+                guardian_events_path=root / "events.json",
+                ai_supervision_path=None,
+                regime_output_path=root / "regime.json",
+                shadow_output_path=root / "shadow.json",
+                shadow_ledger_path=root / "shadow.jsonl",
+                report_path=root / "report.md",
+                now_utc=NOW,
+                episode_handoff_path=handoff_path,
+            )
+            command = [
+                sys.executable,
+                str(EPISODE_RUNNER),
+                "--handoff",
+                str(handoff_path),
+                "--output",
+                str(root / "episode.json"),
+                "--ledger",
+                str(root / "episode.jsonl"),
+                "--source-archive",
+                str(root / "episode-sources"),
+            ]
+
+            held = subprocess.run(
+                command,
+                env=_episode_worker_env(QR_AUTOTRADE_LOCK_HELD="2"),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(held.returncode, 2, held.stderr)
+
+            ledger_descriptor = os.open(
+                root / "episode.jsonl",
+                os.O_RDWR | os.O_CREAT,
+                0o600,
+            )
+            try:
+                fcntl.flock(ledger_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                busy = subprocess.run(
+                    command,
+                    env=_episode_worker_env(),
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            finally:
+                os.close(ledger_descriptor)
+            self.assertEqual(busy.returncode, 75, busy.stderr)
+            self.assertEqual(json.loads(busy.stdout)["status"], "LOCK_BUSY")
+
+    def test_dedicated_episode_runner_replays_recovery_and_fails_closed(self) -> None:
+        runner_module = _load_episode_runner_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            sealed_handoff = {
+                "cycle_generated_at_utc": NOW.isoformat(),
+                "regime_contract": {"sealed": True},
+                "fast_pair_charts": {"fast": True},
+                "slow_pair_charts": {"slow": True},
+            }
+            argv = [
+                str(EPISODE_RUNNER),
+                "--handoff",
+                str(root / "handoff.json"),
+                "--output",
+                str(root / "episode.json"),
+                "--ledger",
+                str(root / "episode.jsonl"),
+                "--source-archive",
+                str(root / "sources"),
+            ]
+            environment = {
+                "QR_LIVE_ENABLED": "0",
+                "QR_AUTOTRADE_LOCK_HELD": "0",
+                "QR_AUTOTRADE_LOCK_OWNER_TOKEN": "",
+            }
+
+            with (
+                patch.object(
+                    runner_module,
+                    "load_fast_bot_episode_handoff",
+                    return_value=sealed_handoff,
+                ),
+                patch.object(
+                    runner_module,
+                    "run_fast_bot_episode_shadow",
+                    side_effect=[
+                        {"status": "RECOVERED_PENDING_BATCH"},
+                        {"status": "NO_NEW_EVENT"},
+                    ],
+                ) as run_episode,
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, environment, clear=False),
+                patch("builtins.print"),
+            ):
+                recovered = runner_module.main()
+
+            self.assertEqual(recovered, 0)
+            self.assertEqual(run_episode.call_count, 2)
+            first_call, second_call = run_episode.call_args_list
+            self.assertEqual(first_call.kwargs, second_call.kwargs)
+
+            for statuses in (
+                [
+                    {"status": "RECOVERED_PENDING_BATCH"},
+                    {"status": "RECOVERED_PENDING_BATCH"},
+                ],
+                [{"status": "LEDGER_INVALID"}],
+                [{}],
+            ):
+                with self.subTest(statuses=statuses):
+                    with (
+                        patch.object(
+                            runner_module,
+                            "load_fast_bot_episode_handoff",
+                            return_value=sealed_handoff,
+                        ),
+                        patch.object(
+                            runner_module,
+                            "run_fast_bot_episode_shadow",
+                            side_effect=statuses,
+                        ),
+                        patch.object(sys, "argv", argv),
+                        patch.dict(os.environ, environment, clear=False),
+                        patch("builtins.print"),
+                    ):
+                        self.assertEqual(runner_module.main(), 1)
+
+    def test_episode_handoff_rejects_nested_cycle_tamper(self) -> None:
+        fast, slow, snapshot = _inputs()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, payload in (
+                ("fast", fast),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(
+                    json.dumps(payload),
+                    encoding="utf-8",
+                )
+            handoff_path = root / "episode-handoff.json"
+            run_fast_bot_shadow(
+                fast_pair_charts_path=root / "fast.json",
+                slow_pair_charts_path=root / "slow.json",
+                broker_snapshot_path=root / "snapshot.json",
+                guardian_events_path=root / "events.json",
+                ai_supervision_path=None,
+                regime_output_path=root / "regime.json",
+                shadow_output_path=root / "shadow.json",
+                shadow_ledger_path=root / "shadow.jsonl",
+                report_path=root / "report.md",
+                now_utc=NOW,
+                episode_handoff_path=handoff_path,
+            )
+            tampered = json.loads(handoff_path.read_text())
+            tampered["fast_pair_charts"]["charts"][0]["pair"] = "GBP_USD"
+            handoff_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "seal|binding"):
+                load_fast_bot_episode_handoff(handoff_path)
+
     def test_passive_entry_arms_never_round_onto_opposite_quote(self) -> None:
         long_arms = _entry_experiment_arms(
             pair="EUR_USD",

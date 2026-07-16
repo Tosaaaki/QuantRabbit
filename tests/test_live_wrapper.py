@@ -2724,6 +2724,333 @@ class LiveWrapperTest(unittest.TestCase):
         self.assertNotIn("--send", learning_block)
         self.assertNotIn("--confirm-live", learning_block)
 
+    def test_position_guardian_records_closed_candle_episodes_without_send(self) -> None:
+        wrapper = GUARDIAN_WRAPPER.read_text(encoding="utf-8")
+        launcher = (ROOT / "scripts" / "launch-fast-bot-episode-worker.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('data/fast_bot_episode_state.json', wrapper)
+        self.assertIn('data/fast_bot_episode_ledger.jsonl', wrapper)
+        self.assertIn('data/fast_bot_episode_sources', wrapper)
+        self.assertIn('data/fast_bot_episode_handoffs', wrapper)
+        fast_bot_block = wrapper[
+            wrapper.index("run_fast_bot_shadow()") :
+            wrapper.index("resolve_fast_bot_shadow_outcomes()")
+        ]
+        self.assertIn("--episode-handoff", fast_bot_block)
+        self.assertIn("--reserve", fast_bot_block)
+        self.assertNotIn("--episode-output", fast_bot_block)
+        self.assertNotIn("--episode-ledger", fast_bot_block)
+        self.assertNotIn("--episode-source-archive", fast_bot_block)
+        self.assertNotIn("--send", fast_bot_block)
+        self.assertNotIn("--confirm-live", fast_bot_block)
+        launch_block = wrapper[
+            wrapper.index("launch_fast_bot_episode_worker_after_lock()") :
+            wrapper.index("resolve_fast_bot_shadow_outcomes()")
+        ]
+        self.assertIn("scripts/launch-fast-bot-episode-worker.py", launch_block)
+        self.assertIn("--launch", launch_block)
+        self.assertIn("--spool", launch_block)
+        self.assertIn("--output", launch_block)
+        self.assertIn("--ledger", launch_block)
+        self.assertIn("--source-archive", launch_block)
+        self.assertIn("--log", launch_block)
+        self.assertIn("export QR_LIVE_ENABLED=0", launch_block)
+        self.assertIn("export QR_AUTOTRADE_LOCK_HELD=0", launch_block)
+        self.assertIn("unset QR_AUTOTRADE_LOCK_OWNER_TOKEN", launch_block)
+        self.assertNotIn("--send", launch_block)
+        self.assertNotIn("--confirm-live", launch_block)
+        self.assertNotIn(") &", launch_block)
+        self.assertIn("subprocess.Popen(", launcher)
+        self.assertIn("stdin=subprocess.DEVNULL", launcher)
+        self.assertIn("start_new_session=True", launcher)
+        self.assertIn("close_fds=True", launcher)
+        finish_block = wrapper[
+            wrapper.index("finish_guardian_cycle_with_episode()") :
+            wrapper.index("resolve_fast_bot_shadow_outcomes()")
+        ]
+        self.assertLess(
+            finish_block.index("release_guardian_lock_before_episode"),
+            finish_block.index("launch_fast_bot_episode_worker_after_lock"),
+        )
+        self.assertEqual(wrapper.count("finish_guardian_cycle_with_episode"), 3)
+
+    def test_position_guardian_runs_episode_after_lock_release_on_both_success_paths(self) -> None:
+        for trader_owned, episode_exit in ((False, 0), (True, 7)):
+            with self.subTest(trader_owned=trader_owned, episode_exit=episode_exit):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    positions = (
+                        [{"trade_id": "t1", "pair": "EUR_USD", "owner": "trader"}]
+                        if trader_owned
+                        else []
+                    )
+                    env, capture = _guardian_wrapper_env(
+                        root,
+                        snapshot={
+                            "fetched_at_utc": "2026-07-16T00:00:00+00:00",
+                            "positions": positions,
+                            "orders": [],
+                            "quotes": {},
+                        },
+                        trigger_contract={"entries": []},
+                        candidate_limit=0,
+                    )
+                    scripts = root / "scripts"
+                    scripts.mkdir()
+                    for name in (
+                        "run-fast-bot-shadow.py",
+                        "launch-fast-bot-episode-worker.py",
+                    ):
+                        path = scripts / name
+                        path.write_text("# fake runner\n")
+                        path.chmod(0o755)
+                    marker = root / "episode-marker.json"
+                    env.update(
+                        {
+                            "QR_FAKE_FAST_BOT_EPISODE_MARKER": str(marker),
+                            "QR_FAKE_FAST_BOT_EPISODE_EXIT": str(episode_exit),
+                        }
+                    )
+
+                    result = subprocess.run(
+                        ["bash", str(GUARDIAN_WRAPPER)],
+                        env=env,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    marker_payload = json.loads(marker.read_text())
+                    self.assertFalse(marker_payload["lock_exists"])
+                    self.assertEqual(marker_payload["lock_held"], "0")
+                    self.assertFalse(marker_payload["owner_token_present"])
+                    self.assertEqual(marker_payload["live_enabled"], "0")
+                    self.assertTrue(marker_payload["handoff_exists"])
+                    calls = [json.loads(line) for line in capture.read_text().splitlines()]
+                    episode_calls = [
+                        call
+                        for call in calls
+                        if call
+                        and Path(call[0]).name
+                        == "launch-fast-bot-episode-worker.py"
+                    ]
+                    reserve_call = next(
+                        call for call in episode_calls if "--reserve" in call
+                    )
+                    publish_call = next(
+                        call for call in episode_calls if "--publish" in call
+                    )
+                    launch_call = next(
+                        call for call in episode_calls if "--launch" in call
+                    )
+                    for option in (
+                        "--spool",
+                        "--output",
+                        "--ledger",
+                        "--source-archive",
+                    ):
+                        expected = reserve_call[reserve_call.index(option) + 1]
+                        self.assertEqual(
+                            publish_call[publish_call.index(option) + 1],
+                            expected,
+                        )
+                        self.assertEqual(
+                            launch_call[launch_call.index(option) + 1],
+                            expected,
+                        )
+                    self.assertRegex(
+                        reserve_call[reserve_call.index("--producer-pid") + 1],
+                        r"^[1-9][0-9]*$",
+                    )
+                    self.assertEqual(
+                        sum(
+                            bool(call)
+                            and Path(call[0]).name == "launch-fast-bot-episode-worker.py"
+                            and "--launch" in call
+                            for call in calls
+                        ),
+                        1,
+                    )
+                    self.assertFalse(
+                        any(
+                            bool(call)
+                            and Path(call[0]).name == "run-fast-bot-episode-shadow.py"
+                            for call in calls
+                        )
+                    )
+                    if episode_exit:
+                        self.assertIn(
+                            f"fast bot episode worker launch failed status={episode_exit}",
+                            result.stderr,
+                        )
+
+    def test_position_guardian_never_runs_stale_episode_after_primary_failure_or_disable(self) -> None:
+        for primary_enabled in (True, False):
+            with self.subTest(primary_enabled=primary_enabled):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    env, capture = _guardian_wrapper_env(
+                        root,
+                        snapshot={
+                            "fetched_at_utc": "2026-07-16T00:00:00+00:00",
+                            "positions": [],
+                            "orders": [],
+                            "quotes": {},
+                        },
+                        trigger_contract={"entries": []},
+                        candidate_limit=0,
+                    )
+                    scripts = root / "scripts"
+                    scripts.mkdir()
+                    for name in (
+                        "run-fast-bot-shadow.py",
+                        "launch-fast-bot-episode-worker.py",
+                    ):
+                        path = scripts / name
+                        path.write_text("# fake runner\n")
+                        path.chmod(0o755)
+                    marker = root / "episode-marker.json"
+                    env["QR_FAKE_FAST_BOT_EPISODE_MARKER"] = str(marker)
+                    if primary_enabled:
+                        env["QR_FAKE_FAST_BOT_PRIMARY_EXIT"] = "9"
+                    else:
+                        env["QR_FAST_BOT_SHADOW_ENABLED"] = "0"
+
+                    result = subprocess.run(
+                        ["bash", str(GUARDIAN_WRAPPER)],
+                        env=env,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(marker.exists())
+                    calls = [json.loads(line) for line in capture.read_text().splitlines()]
+                    self.assertFalse(
+                        any(
+                            bool(call)
+                            and Path(call[0]).name == "run-fast-bot-episode-shadow.py"
+                            for call in calls
+                        )
+                    )
+                    if primary_enabled:
+                        self.assertIn("fast bot shadow failed status=9", result.stderr)
+
+    def test_handoff_allocation_failure_does_not_skip_primary_fast_bot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-16T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=0,
+            )
+            scripts = root / "scripts"
+            scripts.mkdir()
+            for name in (
+                "run-fast-bot-shadow.py",
+                "launch-fast-bot-episode-worker.py",
+            ):
+                path = scripts / name
+                path.write_text("# fake runner\n")
+                path.chmod(0o755)
+            env["QR_FAST_BOT_EPISODE_HANDOFF_SPOOL"] = "/dev/null"
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(
+                sum(
+                    bool(call)
+                    and Path(call[0]).name == "run-fast-bot-shadow.py"
+                    for call in calls
+                ),
+                1,
+            )
+            self.assertFalse(
+                any(
+                    bool(call)
+                    and Path(call[0]).name == "run-fast-bot-episode-shadow.py"
+                    for call in calls
+                )
+            )
+            self.assertIn(
+                "primary shadow continues without episode collection",
+                result.stderr,
+            )
+
+    def test_handoff_publish_busy_keeps_outer_temp_for_worker_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-16T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=0,
+            )
+            scripts = root / "scripts"
+            scripts.mkdir()
+            for name in (
+                "run-fast-bot-shadow.py",
+                "launch-fast-bot-episode-worker.py",
+            ):
+                path = scripts / name
+                path.write_text("# fake runner\n")
+                path.chmod(0o755)
+            env["QR_FAKE_FAST_BOT_PUBLISH_EXIT"] = "75"
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            outer_temps = list(
+                (root / "data" / "fast_bot_episode_handoffs").glob(
+                    ".handoff-*.tmp"
+                )
+            )
+            self.assertEqual(len(outer_temps), 1)
+            self.assertTrue(outer_temps[0].read_text())
+            self.assertIn("publication deferred status=75", result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(
+                sum(
+                    bool(call)
+                    and Path(call[0]).name == "run-fast-bot-shadow.py"
+                    for call in calls
+                ),
+                1,
+            )
+
     def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3168,6 +3495,68 @@ capture = Path(os.environ["QR_FAKE_GUARDIAN_CAPTURE"])
 capture.parent.mkdir(parents=True, exist_ok=True)
 with capture.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(args) + "\n")
+
+script_name = Path(args[0]).name if args else ""
+if script_name == "run-fast-bot-shadow.py":
+    handoff_value = value_after(args, "--episode-handoff")
+    if handoff_value:
+        handoff = Path(handoff_value)
+        handoff.parent.mkdir(parents=True, exist_ok=True)
+        handoff.write_text('{"fake_sealed_cycle":"current"}\n')
+    raise SystemExit(int(os.environ.get("QR_FAKE_FAST_BOT_PRIMARY_EXIT", "0")))
+if script_name == "launch-fast-bot-episode-worker.py":
+    if "--reserve" in args:
+        capacity_exit = int(os.environ.get("QR_FAKE_FAST_BOT_CAPACITY_EXIT", "0"))
+        if capacity_exit == 0:
+            spool = Path(value_after(args, "--spool"))
+            spool.mkdir(parents=True, exist_ok=True)
+            reserved = spool.resolve() / (
+                f".handoff-{os.getpid()}-{'a' * 64}-0000000000000001.tmp"
+            )
+            reserved.touch(exist_ok=False)
+            print(reserved)
+        raise SystemExit(capacity_exit)
+    if "--check-capacity" in args:
+        capacity_exit = int(os.environ.get("QR_FAKE_FAST_BOT_CAPACITY_EXIT", "0"))
+        if capacity_exit == 0:
+            print("a" * 64)
+        raise SystemExit(capacity_exit)
+    if "--publish" in args:
+        publish_exit = int(os.environ.get("QR_FAKE_FAST_BOT_PUBLISH_EXIT", "0"))
+        if publish_exit:
+            raise SystemExit(publish_exit)
+        source = Path(value_after(args, "--publish"))
+        spool = Path(value_after(args, "--spool"))
+        spool.mkdir(parents=True, exist_ok=True)
+        os.replace(source, spool / "handoff-fake.json")
+        raise SystemExit(0)
+    if "--launch" not in args:
+        raise SystemExit(64)
+    spool = Path(value_after(args, "--spool"))
+    handoffs = sorted(spool.glob("handoff-*.json")) if spool.is_dir() else []
+    if not handoffs:
+        raise SystemExit(0)
+    marker_value = os.environ.get("QR_FAKE_FAST_BOT_EPISODE_MARKER")
+    if marker_value:
+        marker = Path(marker_value)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "lock_exists": Path(os.environ["QR_AUTOTRADE_LOCK_DIR"]).exists(),
+                    "lock_held": os.environ.get("QR_AUTOTRADE_LOCK_HELD"),
+                    "owner_token_present": bool(os.environ.get("QR_AUTOTRADE_LOCK_OWNER_TOKEN")),
+                    "live_enabled": os.environ.get("QR_LIVE_ENABLED"),
+                    "handoff_exists": all(path.is_file() for path in handoffs),
+                }
+            )
+            + "\n"
+        )
+    episode_exit = int(os.environ.get("QR_FAKE_FAST_BOT_EPISODE_EXIT", "0"))
+    if episode_exit == 0:
+        for handoff in handoffs:
+            handoff.unlink()
+    raise SystemExit(episode_exit)
 
 if len(args) < 3 or args[:2] != ["-m", "quant_rabbit.cli"]:
     raise SystemExit(64)

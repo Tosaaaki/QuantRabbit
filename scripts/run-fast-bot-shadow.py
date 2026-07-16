@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--regime-output", type=Path, default=ROOT / "data" / "hierarchical_bot_regime.json")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "fast_bot_shadow.json")
     parser.add_argument("--ledger", type=Path, default=ROOT / "data" / "fast_bot_shadow_ledger.jsonl")
+    parser.add_argument("--episode-handoff", type=Path)
     parser.add_argument("--report", type=Path, default=ROOT / "docs" / "fast_bot_shadow_report.md")
     args = parser.parse_args()
     result = run_fast_bot_shadow(
@@ -38,6 +39,7 @@ def main() -> int:
         shadow_output_path=args.output,
         shadow_ledger_path=args.ledger,
         report_path=args.report,
+        episode_handoff_path=args.episode_handoff,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
