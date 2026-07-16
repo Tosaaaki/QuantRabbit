@@ -122,6 +122,7 @@ def build_hierarchical_regime_contract(
         fast_chart = fast_by_pair.get(pair) or {}
         m5_failed_break = build_m5_failed_break_evidence(fast_chart)
         quote = quotes.get(pair) if isinstance(quotes.get(pair), Mapping) else {}
+        quote_at = _parse_utc(quote.get("timestamp_utc"))
         spread = _spread_pips(pair, quote)
         m5_atr = _view_atr_pips(merged_views.get("M5"))
         spread_to_m5_atr = (
@@ -131,10 +132,24 @@ def build_hierarchical_regime_contract(
         )
         common_hard: list[str] = []
         common_caution: list[str] = []
-        if fast_generated is None or _age_seconds(now, fast_generated) > FAST_CHART_MAX_AGE_SECONDS:
+        if not _timestamp_current(
+            now,
+            fast_generated,
+            max_age_seconds=FAST_CHART_MAX_AGE_SECONDS,
+        ):
             common_hard.append("FAST_CHART_PACKET_STALE")
-        if snapshot_at is None or _age_seconds(now, snapshot_at) > QUOTE_MAX_AGE_SECONDS:
+        if not _timestamp_current(
+            now,
+            snapshot_at,
+            max_age_seconds=QUOTE_MAX_AGE_SECONDS,
+        ):
             common_hard.append("BROKER_SNAPSHOT_OR_QUOTES_STALE")
+        if not _timestamp_current(
+            now,
+            quote_at,
+            max_age_seconds=QUOTE_MAX_AGE_SECONDS,
+        ):
+            common_hard.append("PAIR_QUOTE_STALE_OR_FUTURE")
         if pair in stale_pairs:
             common_hard.append("TECHNICAL_INPUT_STALE")
         if any(_view_integrity_blocked(merged_views.get(tf)) for tf in ("M1", "M5", "M15")):
@@ -301,7 +316,16 @@ def build_fast_bot_shadow(
         bid = _positive_number(quote.get("bid"))
         ask = _positive_number(quote.get("ask"))
         quote_at = _parse_utc(quote.get("timestamp_utc"))
-        if bid is None or ask is None or ask <= bid or quote_at is None:
+        if (
+            bid is None
+            or ask is None
+            or ask <= bid
+            or not _timestamp_current(
+                now,
+                quote_at,
+                max_age_seconds=QUOTE_MAX_AGE_SECONDS,
+            )
+        ):
             continue
         # Persist and derive every price-dependent field from the same broker
         # precision.  This keeps the append-only signal fully reproducible even
@@ -330,6 +354,8 @@ def build_fast_bot_shadow(
         entry = float(primary["entry"])
         tp = float(primary["take_profit"])
         sl = float(primary["stop_loss"])
+        actual_tp_pips = float(primary["take_profit_pips"])
+        actual_sl_pips = float(primary["stop_loss_pips"])
         identity = {
             "pair": pair,
             "m1_closed_candle_utc": row.get("m1_closed_candle_utc"),
@@ -357,9 +383,9 @@ def build_fast_bot_shadow(
             "entry": _price(pair, entry),
             "take_profit": _price(pair, tp),
             "stop_loss": _price(pair, sl),
-            "take_profit_pips": round(tp_pips, 6),
-            "stop_loss_pips": round(sl_pips, 6),
-            "reward_risk": round(tp_pips / sl_pips, 6),
+            "take_profit_pips": actual_tp_pips,
+            "stop_loss_pips": actual_sl_pips,
+            "reward_risk": round(actual_tp_pips / actual_sl_pips, 6),
             "entry_ttl_seconds": ENTRY_TTL_SECONDS,
             "max_hold_seconds": MAX_HOLD_SECONDS,
             "entry_experiment_contract": ENTRY_EXPERIMENT_CONTRACT,
@@ -633,6 +659,10 @@ def _entry_experiment_arms(
             if side == "LONG"
             else entry + sl_pips * pip_size
         )
+        rounded_tp = _price(pair, tp)
+        rounded_sl = _price(pair, sl)
+        actual_tp_pips = round(abs(rounded_tp - entry) * instrument_pip_factor(pair), 6)
+        actual_sl_pips = round(abs(entry - rounded_sl) * instrument_pip_factor(pair), 6)
         arms.append(
             {
                 "arm_id": arm_id,
@@ -645,10 +675,10 @@ def _entry_experiment_arms(
                 "entry_reference": "PASSIVE_SPREAD_FRACTION",
                 "execution_truth": "OANDA_S5_BID_ASK_TOUCH",
                 "entry": entry,
-                "take_profit": _price(pair, tp),
-                "stop_loss": _price(pair, sl),
-                "take_profit_pips": round(tp_pips, 6),
-                "stop_loss_pips": round(sl_pips, 6),
+                "take_profit": rounded_tp,
+                "stop_loss": rounded_sl,
+                "take_profit_pips": actual_tp_pips,
+                "stop_loss_pips": actual_sl_pips,
                 "entry_ttl_seconds": ENTRY_TTL_SECONDS,
                 "max_hold_seconds": MAX_HOLD_SECONDS,
             }
@@ -939,6 +969,19 @@ def _aware_utc(value: datetime) -> datetime:
 
 def _age_seconds(now: datetime, then: datetime) -> float:
     return max(0.0, (now - then).total_seconds())
+
+
+def _timestamp_current(
+    now: datetime,
+    then: datetime | None,
+    *,
+    max_age_seconds: float,
+    max_future_skew_seconds: float = 0.0,
+) -> bool:
+    if then is None:
+        return False
+    age_seconds = (now - then).total_seconds()
+    return -max_future_skew_seconds <= age_seconds <= max_age_seconds
 
 
 def _positive_number(value: Any) -> float | None:

@@ -181,6 +181,61 @@ class FastBotTest(unittest.TestCase):
             },
         )
 
+    def test_future_packet_snapshot_and_pair_quote_fail_closed(self) -> None:
+        cases = (
+            ("fast", "FAST_CHART_PACKET_STALE"),
+            ("snapshot", "BROKER_SNAPSHOT_OR_QUOTES_STALE"),
+            ("quote", "PAIR_QUOTE_STALE_OR_FUTURE"),
+        )
+        for target, blocker in cases:
+            with self.subTest(target=target):
+                fast, slow, snapshot = _inputs()
+                if target == "fast":
+                    fast["generated_at_utc"] = (NOW + timedelta(seconds=1)).isoformat()
+                elif target == "snapshot":
+                    snapshot["fetched_at_utc"] = (NOW + timedelta(seconds=1)).isoformat()
+                else:
+                    snapshot["quotes"]["EUR_USD"]["timestamp_utc"] = (
+                        NOW + timedelta(seconds=1)
+                    ).isoformat()
+                contract = build_hierarchical_regime_contract(
+                    fast_pair_charts=fast,
+                    slow_pair_charts=slow,
+                    broker_snapshot=snapshot,
+                    guardian_events={"events": []},
+                    now_utc=NOW,
+                )
+                trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+                self.assertEqual(trend["state"], "STOP")
+                self.assertIn(blocker, trend["hard_blockers"])
+
+    def test_arm_pips_are_recomputed_after_broker_tick_rounding(self) -> None:
+        for pair, bid, ask in (
+            ("EUR_USD", 1.10000, 1.10008),
+            ("USD_JPY", 150.000, 150.008),
+        ):
+            with self.subTest(pair=pair):
+                arms = _entry_experiment_arms(
+                    pair=pair,
+                    side="LONG",
+                    bid=bid,
+                    ask=ask,
+                    tp_pips=6.05,
+                    sl_pips=3.05,
+                )
+                pip_factor = 100 if pair.endswith("_JPY") else 10000
+                for arm in arms:
+                    self.assertAlmostEqual(
+                        arm["take_profit_pips"],
+                        abs(arm["take_profit"] - arm["entry"]) * pip_factor,
+                        places=6,
+                    )
+                    self.assertAlmostEqual(
+                        arm["stop_loss_pips"],
+                        abs(arm["entry"] - arm["stop_loss"]) * pip_factor,
+                        places=6,
+                    )
+
     def test_technical_stale_event_stops_fast_entry_and_wakes_ai_only_for_change(self) -> None:
         fast, slow, snapshot = _inputs()
         contract = build_hierarchical_regime_contract(

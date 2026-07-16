@@ -1392,8 +1392,14 @@ class LiveWrapperTest(unittest.TestCase):
                 pair_call[pair_call.index("--pairs") + 1],
                 "EUR_USD,GBP_USD,USD_JPY,AUD_CAD,AUD_USD",
             )
-            self.assertEqual(pair_call[pair_call.index("--timeframes") + 1], "M1,M5,M15")
-            self.assertNotIn("M30", pair_call)
+            self.assertEqual(
+                pair_call[pair_call.index("--timeframes") + 1],
+                "M1,M5,M15,M30,H1,H4,D",
+            )
+            self.assertIn(
+                '--slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_charts}"',
+                GUARDIAN_WRAPPER.read_text(),
+            )
             management_call = next(call for call in calls if "position-management" in call)
             execution_call = next(call for call in calls if "position-execution" in call)
             self.assertEqual(
@@ -2951,7 +2957,15 @@ def value_after(args, name, default=None):
 
 
 def integrity_blocked_view(pair, timeframe, now, chart_mode):
-    duration = {"M1": 60, "M5": 300, "M15": 900}[timeframe]
+    duration = {
+        "M1": 60,
+        "M5": 300,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H4": 14400,
+        "D": 86400,
+    }[timeframe]
     latest_epoch = int(now.timestamp())
     latest_epoch -= latest_epoch % duration
     if chart_mode in {"FUTURE", "INTEGRITY_BLOCKED_FUTURE_CLOCK"}:
@@ -3070,7 +3084,15 @@ if command == "broker-snapshot":
 elif command == "pair-charts":
     pairs = [item for item in str(value_after(args, "--pairs", "")).split(",") if item]
     timeframes = [item for item in str(value_after(args, "--timeframes", "")).split(",") if item]
-    durations = {"M1": 60, "M5": 300, "M15": 900}
+    durations = {
+        "M1": 60,
+        "M5": 300,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H4": 14400,
+        "D": 86400,
+    }
     now = datetime.now(timezone.utc)
     chart_mode = str(os.environ.get("QR_FAKE_GUARDIAN_CHART_MODE") or "FRESH").upper()
     if chart_mode not in {

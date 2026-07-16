@@ -1420,7 +1420,7 @@ run_fast_bot_shadow() {
   set +e
   "$QR_PYTHON" "$runner" \
     --fast-pair-charts "$guardian_charts" \
-    --slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-data/pair_charts.json}" \
+    --slow-pair-charts "${QR_FAST_BOT_SLOW_PAIR_CHARTS:-$guardian_charts}" \
     --broker-snapshot "$guardian_snapshot" \
     --guardian-events "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}" \
     --ai-supervision "${QR_FAST_BOT_AI_SUPERVISION:-data/ai_regime_supervision.json}" \
@@ -1473,7 +1473,7 @@ if [[ -n "$monitor_pairs" ]]; then
   if [[ "$refresh_due" == "1" ]]; then
     "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
       --pairs "$monitor_pairs" \
-      --timeframes M1,M5,M15 \
+      --timeframes M1,M5,M15,M30,H1,H4,D \
       --count "$guardian_count" \
       --output "$guardian_charts" \
       --report "$guardian_report"
