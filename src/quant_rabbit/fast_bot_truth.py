@@ -14,7 +14,17 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
-from quant_rabbit.fast_bot import METHODS, SIGNAL_CONTRACT
+from quant_rabbit.fast_bot import (
+    ENTRY_ARM_SPREAD_FRACTIONS,
+    ENTRY_EXPERIMENT_CONTRACT,
+    ENTRY_TTL_SECONDS,
+    MAX_HOLD_SECONDS,
+    METHODS,
+    SIGNAL_CONTRACT,
+    _entry_experiment_arms,
+    _shadow_geometry_pips,
+)
+from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
 
@@ -52,8 +62,104 @@ def resolve_fast_bot_signal(
     sl_pips = float(signal["stop_loss_pips"])
     ttl = int(signal["entry_ttl_seconds"])
     hold = int(signal["max_hold_seconds"])
-    fill_deadline = generated + timedelta(seconds=ttl)
-    maturity = fill_deadline + timedelta(seconds=hold)
+    primary = _resolve_entry_hypothesis(
+        side=side,
+        generated=generated,
+        resolved=resolved,
+        candles=candles,
+        entry=entry,
+        take_profit=tp,
+        stop_loss=sl,
+        take_profit_pips=tp_pips,
+        stop_loss_pips=sl_pips,
+        entry_ttl_seconds=ttl,
+        max_hold_seconds=hold,
+    )
+    maturity = _parse_utc(primary["maturity_at_utc"])
+    experiment: dict[str, Any] | None = None
+    if signal.get("schema_version") == 2:
+        arm_results = []
+        for arm in signal.get("entry_experiment_arms", []):
+            arm_result = _resolve_entry_hypothesis(
+                side=side,
+                generated=generated,
+                resolved=resolved,
+                candles=candles,
+                entry=float(arm["entry"]),
+                take_profit=float(arm["take_profit"]),
+                stop_loss=float(arm["stop_loss"]),
+                take_profit_pips=float(arm["take_profit_pips"]),
+                stop_loss_pips=float(arm["stop_loss_pips"]),
+                entry_ttl_seconds=int(arm["entry_ttl_seconds"]),
+                max_hold_seconds=int(arm["max_hold_seconds"]),
+            )
+            arm_results.append(
+                {
+                    "arm_id": str(arm["arm_id"]),
+                    "spread_fraction_toward_market": float(
+                        arm["spread_fraction_toward_market"]
+                    ),
+                    "effective_spread_fraction_toward_market": float(
+                        arm["effective_spread_fraction_toward_market"]
+                    ),
+                    "entry": float(arm["entry"]),
+                    "take_profit": float(arm["take_profit"]),
+                    "stop_loss": float(arm["stop_loss"]),
+                    **arm_result,
+                }
+            )
+        experiment = {
+            "contract": ENTRY_EXPERIMENT_CONTRACT,
+            "precommitted_in_signal": True,
+            "automatic_parameter_change_allowed": False,
+            "arms": arm_results,
+        }
+    body = {
+        "contract": OUTCOME_CONTRACT,
+        "schema_version": 2 if experiment is not None else 1,
+        "signal_id": str(signal["signal_id"]),
+        "pair": str(signal["pair"]),
+        "side": side,
+        "method": str(signal["method"]),
+        "signal_generated_at_utc": generated.isoformat(),
+        "resolved_at_utc": resolved.isoformat(),
+        "maturity_at_utc": maturity.isoformat(),
+        "filled": primary["filled"],
+        "fill_at_utc": primary["fill_at_utc"],
+        "exit_at_utc": primary["exit_at_utc"],
+        "exit_reason": primary["exit_reason"],
+        "realized_pips": primary["realized_pips"],
+        "ambiguous_same_s5": primary["ambiguous_same_s5"],
+        "truth_source": "OANDA_S5_BID_ASK",
+        "truth_candle_count": primary["truth_candle_count"],
+        "truth_chunk_sha256": [str(item) for item in truth_chunk_sha256],
+        "signal_sha256": str(signal["signal_sha256"]),
+        "shadow_only": True,
+        "live_permission": False,
+        "broker_mutation": False,
+        **({"entry_experiment": experiment} if experiment is not None else {}),
+    }
+    return _seal(body)
+
+
+def _resolve_entry_hypothesis(
+    *,
+    side: str,
+    generated: datetime,
+    resolved: datetime,
+    candles: Sequence[S5BidAskCandle],
+    entry: float,
+    take_profit: float,
+    stop_loss: float,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+    entry_ttl_seconds: int,
+    max_hold_seconds: int,
+) -> dict[str, Any]:
+    """Score one precommitted entry geometry on the same frozen S5 path."""
+
+    fill_deadline = generated + timedelta(seconds=entry_ttl_seconds)
+    maturity = fill_deadline + timedelta(seconds=max_hold_seconds)
     if resolved < maturity:
         raise ValueError("fast-bot signal is not mature")
     ordered = sorted(
@@ -86,43 +192,35 @@ def resolve_fast_bot_signal(
             if not filled or candle.timestamp_utc > fill_deadline:
                 continue
             fill_at = candle.timestamp_utc
-        if candle.timestamp_utc >= fill_at + timedelta(seconds=hold):
+        if candle.timestamp_utc >= fill_at + timedelta(seconds=max_hold_seconds):
             break
         if side == "LONG":
-            tp_hit = candle.bid_h >= tp
-            sl_hit = candle.bid_l <= sl
+            tp_hit = candle.bid_h >= take_profit
+            sl_hit = candle.bid_l <= stop_loss
         else:
-            tp_hit = candle.ask_l <= tp
-            sl_hit = candle.ask_h >= sl
+            tp_hit = candle.ask_l <= take_profit
+            sl_hit = candle.ask_h >= stop_loss
         if tp_hit and sl_hit:
             ambiguous = True
             exit_reason = "STOP_LOSS_AMBIGUOUS_SAME_S5"
-            realized_pips = -sl_pips
+            realized_pips = -stop_loss_pips
             exit_at = candle.timestamp_utc
             break
         if sl_hit:
             exit_reason = "STOP_LOSS"
-            realized_pips = -sl_pips
+            realized_pips = -stop_loss_pips
             exit_at = candle.timestamp_utc
             break
         if tp_hit:
             exit_reason = "TAKE_PROFIT"
-            realized_pips = tp_pips
+            realized_pips = take_profit_pips
             exit_at = candle.timestamp_utc
             break
     if fill_at is not None and exit_at is None:
         exit_reason = "HORIZON_FULL_STOP_LOSS"
-        realized_pips = -sl_pips
-        exit_at = min(fill_at + timedelta(seconds=hold), resolved)
-    body = {
-        "contract": OUTCOME_CONTRACT,
-        "schema_version": 1,
-        "signal_id": str(signal["signal_id"]),
-        "pair": str(signal["pair"]),
-        "side": side,
-        "method": str(signal["method"]),
-        "signal_generated_at_utc": generated.isoformat(),
-        "resolved_at_utc": resolved.isoformat(),
+        realized_pips = -stop_loss_pips
+        exit_at = min(fill_at + timedelta(seconds=max_hold_seconds), resolved)
+    return {
         "maturity_at_utc": maturity.isoformat(),
         "filled": fill_at is not None,
         "fill_at_utc": fill_at.isoformat() if fill_at else None,
@@ -130,15 +228,8 @@ def resolve_fast_bot_signal(
         "exit_reason": exit_reason,
         "realized_pips": round(realized_pips, 6),
         "ambiguous_same_s5": ambiguous,
-        "truth_source": "OANDA_S5_BID_ASK",
         "truth_candle_count": observed,
-        "truth_chunk_sha256": [str(item) for item in truth_chunk_sha256],
-        "signal_sha256": str(signal["signal_sha256"]),
-        "shadow_only": True,
-        "live_permission": False,
-        "broker_mutation": False,
     }
-    return _seal(body)
 
 
 def build_fast_bot_scorecard(
@@ -190,6 +281,10 @@ def build_fast_bot_scorecard(
         and profit_factor is not None
         and profit_factor >= 1.25
     )
+    entry_experiment = _build_entry_experiment_scorecard(
+        emitted,
+        by_signal,
+    )
     body = {
         "contract": SCORECARD_CONTRACT,
         "schema_version": 1,
@@ -217,21 +312,187 @@ def build_fast_bot_scorecard(
         "live_permission": False,
         "promotion_allowed": False,
         "promotion_blockers": (
-            ["SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED"]
+            [
+                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
+            ]
             if passed
             else [
                 "MINIMUM_100_EXACT_S5_FILLS_NOT_MET" if len(fills) < 100 else None,
                 "MINIMUM_10_ACTIVE_DAYS_NOT_MET" if len(active_days) < 10 else None,
                 "POST_COST_EXPECTANCY_LOWER_BOUND_NOT_POSITIVE" if lower is None or lower <= 0.0 else None,
                 "PROFIT_FACTOR_1_25_NOT_MET" if profit_factor is None or profit_factor < 1.25 else None,
+                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ]
         ),
+        "entry_experiment": entry_experiment,
         "shadow_only": True,
         "broker_mutation": False,
     }
     body["promotion_blockers"] = [item for item in body["promotion_blockers"] if item]
     return _seal(body)
+
+
+def _build_entry_experiment_scorecard(
+    signals: Sequence[Mapping[str, Any]],
+    outcomes_by_signal_sha: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Aggregate paired, precommitted arms without changing primary metrics."""
+
+    resolved_experiments: list[Mapping[str, Any]] = []
+    experiment_days: set[str] = set()
+    for signal in signals:
+        if signal.get("schema_version") != 2:
+            continue
+        outcome = outcomes_by_signal_sha.get(str(signal.get("signal_sha256") or ""))
+        experiment = outcome.get("entry_experiment") if isinstance(outcome, Mapping) else None
+        if (
+            not isinstance(experiment, Mapping)
+            or experiment.get("contract") != ENTRY_EXPERIMENT_CONTRACT
+            or experiment.get("precommitted_in_signal") is not True
+            or not isinstance(experiment.get("arms"), list)
+            or not _entry_experiment_outcome_matches_signal(signal, experiment)
+        ):
+            continue
+        resolved_experiments.append(experiment)
+        experiment_days.add(
+            _parse_utc(signal["generated_at_utc"]).date().isoformat()
+        )
+
+    arms: list[dict[str, Any]] = []
+    for arm_id, fraction in ENTRY_ARM_SPREAD_FRACTIONS:
+        rows = []
+        paired_deltas = []
+        for experiment in resolved_experiments:
+            matched = [
+                row
+                for row in experiment["arms"]
+                if isinstance(row, Mapping) and row.get("arm_id") == arm_id
+            ]
+            if len(matched) == 1:
+                rows.append(matched[0])
+                primary = [
+                    row
+                    for row in experiment["arms"]
+                    if isinstance(row, Mapping)
+                    and row.get("arm_id") == ENTRY_ARM_SPREAD_FRACTIONS[0][0]
+                ]
+                if len(primary) == 1:
+                    paired_deltas.append(
+                        float(matched[0].get("realized_pips") or 0.0)
+                        - float(primary[0].get("realized_pips") or 0.0)
+                    )
+        filled = [row for row in rows if row.get("filled") is True]
+        values_per_signal = [float(row.get("realized_pips") or 0.0) for row in rows]
+        values_per_fill = [float(row.get("realized_pips") or 0.0) for row in filled]
+        wins = [value for value in values_per_fill if value > 0.0]
+        losses = [value for value in values_per_fill if value < 0.0]
+        gross_profit = sum(wins)
+        gross_loss = abs(sum(losses))
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 0.0
+            else math.inf if gross_profit > 0.0 else None
+        )
+        delta_lower = _one_sided_95_mean_lower(paired_deltas)
+        arms.append(
+            {
+                "arm_id": arm_id,
+                "spread_fraction_toward_market": fraction,
+                "paired_signals_vs_near_side": len(paired_deltas),
+                "resolved_signals": len(rows),
+                "filled_signals": len(filled),
+                "unfilled_signals": len(rows) - len(filled),
+                "fill_rate": round(len(filled) / len(rows), 6) if rows else None,
+                "wins": len(wins),
+                "losses": len(losses),
+                "net_pips": round(sum(values_per_signal), 6),
+                "net_delta_pips_vs_near_side": round(sum(paired_deltas), 6),
+                "mean_pips_per_signal": (
+                    round(statistics.fmean(values_per_signal), 6)
+                    if values_per_signal
+                    else None
+                ),
+                "mean_pips_per_fill": (
+                    round(statistics.fmean(values_per_fill), 6)
+                    if values_per_fill
+                    else None
+                ),
+                "mean_delta_pips_vs_near_side": (
+                    round(statistics.fmean(paired_deltas), 6)
+                    if paired_deltas
+                    else None
+                ),
+                "one_sided_95_delta_lower_pips": (
+                    round(delta_lower, 6)
+                    if delta_lower is not None and math.isfinite(delta_lower)
+                    else None
+                ),
+                "profit_factor": (
+                    round(profit_factor, 6)
+                    if profit_factor is not None and math.isfinite(profit_factor)
+                    else "INF" if profit_factor == math.inf else None
+                ),
+            }
+        )
+    resolved_count = len(resolved_experiments)
+    active_days = len(experiment_days)
+    return {
+        "contract": ENTRY_EXPERIMENT_CONTRACT,
+        "status": (
+            "REVIEW_READY"
+            if resolved_count >= 100 and active_days >= 10
+            else "COLLECTING_PAIRED_FORWARD_EVIDENCE"
+        ),
+        "resolved_precommitted_signals": resolved_count,
+        "active_days": active_days,
+        "review_ready": resolved_count >= 100 and active_days >= 10,
+        "automatic_parameter_change_allowed": False,
+        "selected_arm_id": None,
+        "arms": arms,
+    }
+
+
+def _entry_experiment_outcome_matches_signal(
+    signal: Mapping[str, Any],
+    experiment: Mapping[str, Any],
+) -> bool:
+    """Bind every scored arm back to its immutable, pre-outcome geometry."""
+
+    expected_arms = signal.get("entry_experiment_arms")
+    observed_arms = experiment.get("arms")
+    if (
+        experiment.get("automatic_parameter_change_allowed") is not False
+        or not isinstance(expected_arms, list)
+        or not isinstance(observed_arms, list)
+        or len(expected_arms) != len(observed_arms)
+    ):
+        return False
+    for expected, observed in zip(expected_arms, observed_arms):
+        if not isinstance(expected, Mapping) or not isinstance(observed, Mapping):
+            return False
+        for key in (
+            "arm_id",
+            "spread_fraction_toward_market",
+            "effective_spread_fraction_toward_market",
+            "entry",
+            "take_profit",
+            "stop_loss",
+        ):
+            if observed.get(key) != expected.get(key):
+                return False
+        try:
+            realized_pips = float(observed["realized_pips"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+        if (
+            not isinstance(observed.get("filled"), bool)
+            or not math.isfinite(realized_pips)
+            or not str(observed.get("exit_reason") or "")
+        ):
+            return False
+    return True
 
 
 def resolve_due_fast_bot_outcomes_from_oanda(
@@ -343,6 +604,10 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
         signal_body = {key: item for key, item in signal.items() if key != "signal_sha256"}
         signal_sha = str(signal["signal_sha256"])
         regime_sha = str(signal["regime_contract_sha256"])
+        raw_schema = signal["schema_version"]
+        if isinstance(raw_schema, bool) or not isinstance(raw_schema, int):
+            return False
+        schema = raw_schema
         signal_id = str(signal["signal_id"])
         pair = str(signal["pair"])
         side = str(signal.get("side") or "")
@@ -372,9 +637,9 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
         abs((generated - quote_at).total_seconds()) <= 45.0
         and 0.0 <= (generated - m1_closed).total_seconds() <= 120.0
     )
-    return bool(
+    common_valid = bool(
         signal.get("contract") == SIGNAL_CONTRACT
-        and signal.get("schema_version") == 1
+        and schema in {1, 2}
         and digest_ok
         and len(signal_id) == 24
         and all(character in "0123456789abcdef" for character in signal_id)
@@ -398,8 +663,92 @@ def _fast_bot_signal_valid(signal: Mapping[str, Any]) -> bool:
             rel_tol=0.0,
             abs_tol=1e-6,
         )
-        and ttl == 90
-        and hold == 15 * 60
+        and ttl == ENTRY_TTL_SECONDS
+        and hold == MAX_HOLD_SECONDS
+    )
+    if not common_valid:
+        return False
+    if schema == 1:
+        return True
+    return _fast_bot_v2_geometry_valid(
+        signal,
+        pair=pair,
+        side=side,
+        method=method,
+        entry=entry,
+        take_profit=tp,
+        stop_loss=sl,
+        take_profit_pips=tp_pips,
+        stop_loss_pips=sl_pips,
+    )
+
+
+def _fast_bot_v2_geometry_valid(
+    signal: Mapping[str, Any],
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    entry: float,
+    take_profit: float,
+    stop_loss: float,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+) -> bool:
+    """Require the v2 quote, geometry, and experiment to reproduce exactly."""
+
+    try:
+        bid = float(signal["quote_bid"])
+        ask = float(signal["quote_ask"])
+        spread = float(signal["spread_pips"])
+        m5_atr = float(signal["m5_atr_pips"])
+        arms = signal["entry_experiment_arms"]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    if (
+        not all(math.isfinite(value) and value > 0.0 for value in (bid, ask, spread, m5_atr))
+        or ask <= bid
+        or signal.get("geometry_policy") != "METHOD_SPREAD_M5_ATR_V1"
+        or signal.get("entry_experiment_contract") != ENTRY_EXPERIMENT_CONTRACT
+        or not isinstance(arms, list)
+    ):
+        return False
+    observed_spread = round(
+        (ask - bid) * float(instrument_pip_factor(pair)),
+        6,
+    )
+    expected_tp_pips, expected_sl_pips = _shadow_geometry_pips(
+        method,
+        spread=spread,
+        m5_atr=m5_atr,
+    )
+    expected_arms = _entry_experiment_arms(
+        pair=pair,
+        side=side,
+        bid=bid,
+        ask=ask,
+        tp_pips=expected_tp_pips,
+        sl_pips=expected_sl_pips,
+    )
+    primary = expected_arms[0]
+    return bool(
+        math.isclose(spread, observed_spread, rel_tol=0.0, abs_tol=1e-6)
+        and math.isclose(
+            take_profit_pips,
+            round(expected_tp_pips, 6),
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        and math.isclose(
+            stop_loss_pips,
+            round(expected_sl_pips, 6),
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        and entry == float(primary["entry"])
+        and take_profit == float(primary["take_profit"])
+        and stop_loss == float(primary["stop_loss"])
+        and arms == expected_arms
     )
 
 

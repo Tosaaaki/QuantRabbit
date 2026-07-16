@@ -9,7 +9,9 @@ from pathlib import Path
 
 from quant_rabbit.fast_bot import (
     AI_SUPERVISION_CONTRACT,
-    build_fast_bot_shadow,
+    ENTRY_ARM_SPREAD_FRACTIONS,
+    ENTRY_EXPERIMENT_CONTRACT,
+    _entry_experiment_arms,
     build_hierarchical_regime_contract,
     run_fast_bot_shadow,
 )
@@ -131,6 +133,29 @@ def _seal_contract(body: dict) -> dict:
 
 
 class FastBotTest(unittest.TestCase):
+    def test_passive_entry_arms_never_round_onto_opposite_quote(self) -> None:
+        long_arms = _entry_experiment_arms(
+            pair="EUR_USD",
+            side="LONG",
+            bid=1.10000,
+            ask=1.10001,
+            tp_pips=3.0,
+            sl_pips=3.0,
+        )
+        short_arms = _entry_experiment_arms(
+            pair="EUR_USD",
+            side="SHORT",
+            bid=1.10000,
+            ask=1.10001,
+            tp_pips=3.0,
+            sl_pips=3.0,
+        )
+
+        self.assertTrue(all(arm["entry"] < 1.10001 for arm in long_arms))
+        self.assertTrue(all(arm["entry"] > 1.10000 for arm in short_arms))
+        self.assertTrue(all(arm["entry"] == 1.10000 for arm in long_arms))
+        self.assertTrue(all(arm["entry"] == 1.10001 for arm in short_arms))
+
     def test_hierarchical_trend_gate_is_bot_owned_and_go(self) -> None:
         fast, slow, snapshot = _inputs()
         contract = build_hierarchical_regime_contract(
@@ -305,6 +330,23 @@ class FastBotTest(unittest.TestCase):
         self.assertFalse(shadow["broker_mutation_allowed"])
         self.assertFalse(shadow["ai_per_trade_approval_required"])
         signal = shadow["signals"][0]
+        arms = signal["entry_experiment_arms"]
+        self.assertEqual(signal["schema_version"], 2)
+        self.assertEqual(signal["entry_experiment_contract"], ENTRY_EXPERIMENT_CONTRACT)
+        self.assertEqual(
+            [(arm["arm_id"], arm["spread_fraction_toward_market"]) for arm in arms],
+            list(ENTRY_ARM_SPREAD_FRACTIONS),
+        )
+        self.assertEqual(signal["entry"], arms[0]["entry"])
+        self.assertEqual(signal["take_profit"], arms[0]["take_profit"])
+        self.assertEqual(signal["stop_loss"], arms[0]["stop_loss"])
+        self.assertEqual(signal["quote_bid"], arms[0]["entry"])
+        self.assertTrue(
+            all(
+                signal["quote_bid"] <= arm["entry"] < signal["quote_ask"]
+                for arm in arms
+            )
+        )
         self.assertEqual(len(signal["signal_sha256"]), 64)
         self.assertFalse(signal["broker_mutation_allowed"])
         self.assertGreater(shadow["signals"][0]["take_profit"], shadow["signals"][0]["entry"])

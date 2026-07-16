@@ -12,7 +12,12 @@ from quant_rabbit.fast_bot_truth import (
     resolve_due_fast_bot_outcomes_from_oanda,
     resolve_fast_bot_signal,
 )
-from quant_rabbit.fast_bot import SIGNAL_CONTRACT
+from quant_rabbit.fast_bot import (
+    ENTRY_EXPERIMENT_CONTRACT,
+    SIGNAL_CONTRACT,
+    _entry_experiment_arms,
+    _shadow_geometry_pips,
+)
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 
 
@@ -53,6 +58,78 @@ def _signal(*, signal_id: str = "signal-1", generated: datetime = NOW, side: str
     }
     raw = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return {**body, "signal_sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _signal_v2(
+    *,
+    signal_id: str = "signal-v2",
+    generated: datetime = NOW,
+) -> dict:
+    bid = 1.1000
+    ask = 1.1002
+    spread = 2.0
+    m5_atr = 5.0
+    tp_pips, sl_pips = _shadow_geometry_pips(
+        "RANGE_ROTATION",
+        spread=spread,
+        m5_atr=m5_atr,
+    )
+    arms = _entry_experiment_arms(
+        pair="EUR_USD",
+        side="LONG",
+        bid=bid,
+        ask=ask,
+        tp_pips=tp_pips,
+        sl_pips=sl_pips,
+    )
+    primary = arms[0]
+    body = {
+        "contract": SIGNAL_CONTRACT,
+        "schema_version": 2,
+        "signal_id": hashlib.sha256(signal_id.encode("utf-8")).hexdigest()[:24],
+        "pair": "EUR_USD",
+        "side": "LONG",
+        "method": "RANGE_ROTATION",
+        "m1_closed_candle_utc": (generated - timedelta(minutes=1)).isoformat(),
+        "regime_contract_sha256": "b" * 64,
+        "generated_at_utc": generated.isoformat(),
+        "quote_timestamp_utc": generated.isoformat(),
+        "quote_bid": bid,
+        "quote_ask": ask,
+        "spread_pips": spread,
+        "m5_atr_pips": m5_atr,
+        "geometry_policy": "METHOD_SPREAD_M5_ATR_V1",
+        "order_type": "LIMIT",
+        "entry_reference": "PASSIVE_NEAR_SIDE",
+        "entry": primary["entry"],
+        "take_profit": primary["take_profit"],
+        "stop_loss": primary["stop_loss"],
+        "take_profit_pips": tp_pips,
+        "stop_loss_pips": sl_pips,
+        "reward_risk": round(tp_pips / sl_pips, 6),
+        "entry_ttl_seconds": 90,
+        "max_hold_seconds": 900,
+        "entry_experiment_contract": ENTRY_EXPERIMENT_CONTRACT,
+        "entry_experiment_arms": arms,
+        "attached_take_profit_required": True,
+        "attached_stop_loss_required": True,
+        "shadow_only": True,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+    }
+    return _reseal_signal(body)
+
+
+def _reseal_signal(body: dict) -> dict:
+    unsealed = {key: value for key, value in body.items() if key != "signal_sha256"}
+    raw = json.dumps(
+        unsealed,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return {**unsealed, "signal_sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def _candle(
@@ -108,6 +185,70 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertEqual(outcome["exit_reason"], "STOP_LOSS_AMBIGUOUS_SAME_S5")
         self.assertEqual(outcome["realized_pips"], -3.0)
         self.assertTrue(outcome["ambiguous_same_s5"])
+
+    def test_v2_precommitted_entry_arms_share_one_frozen_s5_path(self) -> None:
+        signal = _signal_v2()
+        outcome = resolve_fast_bot_signal(
+            signal,
+            _complete_truth(
+                _candle(
+                    5,
+                    ask_l=1.10008,
+                    bid_h=1.1008,
+                    bid_l=1.10005,
+                )
+            ),
+            resolved_at_utc=NOW + timedelta(minutes=20),
+        )
+        arms = {
+            arm["arm_id"]: arm
+            for arm in outcome["entry_experiment"]["arms"]
+        }
+
+        self.assertFalse(outcome["filled"])
+        self.assertFalse(arms["PASSIVE_NEAR_SIDE"]["filled"])
+        self.assertFalse(arms["PASSIVE_QUARTER_SPREAD"]["filled"])
+        self.assertTrue(arms["PASSIVE_MID_SPREAD"]["filled"])
+        self.assertTrue(arms["PASSIVE_THREE_QUARTER_SPREAD"]["filled"])
+        self.assertEqual(arms["PASSIVE_MID_SPREAD"]["exit_reason"], "TAKE_PROFIT")
+        self.assertFalse(
+            outcome["entry_experiment"]["automatic_parameter_change_allowed"]
+        )
+
+        scorecard = build_fast_bot_scorecard(
+            [signal],
+            [outcome],
+            as_of_utc=NOW + timedelta(days=1),
+        )
+        score_arms = {
+            arm["arm_id"]: arm
+            for arm in scorecard["entry_experiment"]["arms"]
+        }
+        self.assertEqual(scorecard["resolved_signals"], 1)
+        self.assertEqual(scorecard["filled_signals"], 0)
+        self.assertEqual(score_arms["PASSIVE_NEAR_SIDE"]["filled_signals"], 0)
+        self.assertEqual(score_arms["PASSIVE_MID_SPREAD"]["filled_signals"], 1)
+        self.assertEqual(score_arms["PASSIVE_MID_SPREAD"]["net_pips"], 6.0)
+        self.assertEqual(
+            score_arms["PASSIVE_MID_SPREAD"]["net_delta_pips_vs_near_side"],
+            6.0,
+        )
+        self.assertFalse(
+            scorecard["entry_experiment"]["automatic_parameter_change_allowed"]
+        )
+        self.assertIsNone(scorecard["entry_experiment"]["selected_arm_id"])
+
+    def test_v2_resealed_arm_tampering_is_rejected(self) -> None:
+        signal = _signal_v2()
+        signal["entry_experiment_arms"][1]["entry"] += 0.00001
+        tampered = _reseal_signal(signal)
+
+        with self.assertRaisesRegex(ValueError, "invalid fast-bot signal"):
+            resolve_fast_bot_signal(
+                tampered,
+                _complete_truth(_candle(5)),
+                resolved_at_utc=NOW + timedelta(minutes=20),
+            )
 
     def test_filled_unresolved_horizon_is_full_stop_not_market_close(self) -> None:
         outcome = resolve_fast_bot_signal(
@@ -173,7 +314,10 @@ class FastBotTruthTest(unittest.TestCase):
         self.assertFalse(scorecard["promotion_allowed"])
         self.assertEqual(
             scorecard["promotion_blockers"],
-            ["SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED"],
+            [
+                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
+                "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
+            ],
         )
 
     def test_same_pair_m1_identity_is_counted_once(self) -> None:

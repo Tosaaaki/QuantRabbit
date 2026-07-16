@@ -32,6 +32,19 @@ REGIME_CONTRACT = "QR_HIERARCHICAL_BOT_REGIME_V1"
 SHADOW_CONTRACT = "QR_FAST_BOT_FORWARD_SHADOW_V1"
 SIGNAL_CONTRACT = "QR_FAST_BOT_SHADOW_SIGNAL_V1"
 AI_SUPERVISION_CONTRACT = "QR_AI_REGIME_SUPERVISION_V1"
+ENTRY_EXPERIMENT_CONTRACT = "QR_FAST_BOT_PASSIVE_ENTRY_EXPERIMENT_V1"
+# These are canonical quartiles of the observed executable spread, not tuned
+# price literals.  They precommit a maker-aggressiveness grid from the quote's
+# passive near side toward (but never through) the opposite side.  Forward
+# paired S5 evidence should replace the grid if a later experiment changes it.
+ENTRY_ARM_SPREAD_FRACTIONS = (
+    ("PASSIVE_NEAR_SIDE", 0.0),
+    ("PASSIVE_QUARTER_SPREAD", 0.25),
+    ("PASSIVE_MID_SPREAD", 0.50),
+    ("PASSIVE_THREE_QUARTER_SPREAD", 0.75),
+)
+ENTRY_TTL_SECONDS = 90
+MAX_HOLD_SECONDS = 15 * 60
 TIMEFRAME_ROLES = {
     "execution": ("M1",),
     "operating": ("M5", "M15", "M30"),
@@ -290,15 +303,33 @@ def build_fast_bot_shadow(
         quote_at = _parse_utc(quote.get("timestamp_utc"))
         if bid is None or ask is None or ask <= bid or quote_at is None:
             continue
+        # Persist and derive every price-dependent field from the same broker
+        # precision.  This keeps the append-only signal fully reproducible even
+        # when an upstream JSON number carried extra binary precision.
+        bid = _price(pair, bid)
+        ask = _price(pair, ask)
         side = str(row["side"])
         method = str(row["method"])
-        spread = float(row.get("spread_pips") or 0.0)
-        atr = float(row.get("m5_atr_pips") or 0.0)
+        spread = round(
+            (ask - bid) * float(instrument_pip_factor(pair)),
+            6,
+        )
+        atr = round(float(row.get("m5_atr_pips") or 0.0), 6)
+        if spread <= 0.0 or atr <= 0.0:
+            continue
         tp_pips, sl_pips = _shadow_geometry_pips(method, spread=spread, m5_atr=atr)
-        pip_size = 1.0 / float(instrument_pip_factor(pair))
-        entry = bid if side == "LONG" else ask
-        tp = entry + tp_pips * pip_size if side == "LONG" else entry - tp_pips * pip_size
-        sl = entry - sl_pips * pip_size if side == "LONG" else entry + sl_pips * pip_size
+        entry_arms = _entry_experiment_arms(
+            pair=pair,
+            side=side,
+            bid=bid,
+            ask=ask,
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
+        )
+        primary = entry_arms[0]
+        entry = float(primary["entry"])
+        tp = float(primary["take_profit"])
+        sl = float(primary["stop_loss"])
         identity = {
             "pair": pair,
             "m1_closed_candle_utc": row.get("m1_closed_candle_utc"),
@@ -310,29 +341,36 @@ def build_fast_bot_shadow(
             "regime_contract_sha256": regime_contract.get("contract_sha256"),
         }
         signal_body = {
-                "contract": SIGNAL_CONTRACT,
-                "schema_version": 1,
-                "signal_id": _canonical_sha(identity)[:24],
-                **evidence_binding,
-                "generated_at_utc": now.isoformat(),
-                "quote_timestamp_utc": quote_at.isoformat(),
-                "order_type": "LIMIT",
-                "entry_reference": "PASSIVE_NEAR_SIDE",
-                "entry": _price(pair, entry),
-                "take_profit": _price(pair, tp),
-                "stop_loss": _price(pair, sl),
-                "take_profit_pips": round(tp_pips, 6),
-                "stop_loss_pips": round(sl_pips, 6),
-                "reward_risk": round(tp_pips / sl_pips, 6),
-                "entry_ttl_seconds": 90,
-                "max_hold_seconds": 15 * 60,
-                "attached_take_profit_required": True,
-                "attached_stop_loss_required": True,
-                "regime_score": row.get("score"),
-                "shadow_only": True,
-                "live_permission": False,
-                "broker_mutation_allowed": False,
-            }
+            "contract": SIGNAL_CONTRACT,
+            "schema_version": 2,
+            "signal_id": _canonical_sha(identity)[:24],
+            **evidence_binding,
+            "generated_at_utc": now.isoformat(),
+            "quote_timestamp_utc": quote_at.isoformat(),
+            "quote_bid": bid,
+            "quote_ask": ask,
+            "spread_pips": round(spread, 6),
+            "m5_atr_pips": round(atr, 6),
+            "geometry_policy": "METHOD_SPREAD_M5_ATR_V1",
+            "order_type": "LIMIT",
+            "entry_reference": "PASSIVE_NEAR_SIDE",
+            "entry": _price(pair, entry),
+            "take_profit": _price(pair, tp),
+            "stop_loss": _price(pair, sl),
+            "take_profit_pips": round(tp_pips, 6),
+            "stop_loss_pips": round(sl_pips, 6),
+            "reward_risk": round(tp_pips / sl_pips, 6),
+            "entry_ttl_seconds": ENTRY_TTL_SECONDS,
+            "max_hold_seconds": MAX_HOLD_SECONDS,
+            "entry_experiment_contract": ENTRY_EXPERIMENT_CONTRACT,
+            "entry_experiment_arms": entry_arms,
+            "attached_take_profit_required": True,
+            "attached_stop_loss_required": True,
+            "regime_score": row.get("score"),
+            "shadow_only": True,
+            "live_permission": False,
+            "broker_mutation_allowed": False,
+        }
         signals.append({**signal_body, "signal_sha256": _canonical_sha(signal_body)})
     body = {
         "contract": SHADOW_CONTRACT,
@@ -355,6 +393,7 @@ def build_fast_bot_shadow(
             "blockers": [
                 "EXACT_OANDA_S5_BID_ASK_FORWARD_OUTCOMES_REQUIRED",
                 "POST_COST_EXPECTANCY_LOWER_BOUND_NOT_PROVEN",
+                "OVERLAPPING_AI_TRADER_ENTRY_AUTHORITY_RETIREMENT_REQUIRED",
                 "SEPARATE_CONTENT_ADDRESSED_LIVE_PROMOTION_REQUIRED",
             ],
         },
@@ -543,6 +582,78 @@ def _shadow_geometry_pips(method: str, *, spread: float, m5_atr: float) -> tuple
         tp = max(2.0, spread * 3.0, m5_atr * 0.6)
         sl = max(3.0, spread * 4.0, m5_atr * 0.8)
     return min(tp, 15.0), min(sl, 30.0)
+
+
+def _entry_experiment_arms(
+    *,
+    pair: str,
+    side: str,
+    bid: float,
+    ask: float,
+    tp_pips: float,
+    sl_pips: float,
+) -> list[dict[str, Any]]:
+    """Freeze passive spread-quartile entries before any outcome is known."""
+
+    if side not in SIDES or ask <= bid or tp_pips <= 0.0 or sl_pips <= 0.0:
+        raise ValueError("invalid passive entry experiment geometry")
+    pip_size = 1.0 / float(instrument_pip_factor(pair))
+    quote_width = ask - bid
+    price_digits = 3 if pair.endswith("_JPY") else 5
+    price_tick = 10.0 ** (-price_digits)
+    arms: list[dict[str, Any]] = []
+    for arm_id, fraction in ENTRY_ARM_SPREAD_FRACTIONS:
+        raw_entry = (
+            bid + quote_width * fraction
+            if side == "LONG"
+            else ask - quote_width * fraction
+        )
+        rounded_entry = _price(pair, raw_entry)
+        # A rounded passive target must never land on the opposite quote and
+        # become marketable.  When the spread is too narrow to represent all
+        # quartiles, arms intentionally collapse to the nearest passive tick.
+        entry = (
+            max(bid, min(rounded_entry, ask - price_tick))
+            if side == "LONG"
+            else min(ask, max(rounded_entry, bid + price_tick))
+        )
+        entry = _price(pair, entry)
+        effective_fraction = (
+            (entry - bid) / quote_width
+            if side == "LONG"
+            else (ask - entry) / quote_width
+        )
+        tp = (
+            entry + tp_pips * pip_size
+            if side == "LONG"
+            else entry - tp_pips * pip_size
+        )
+        sl = (
+            entry - sl_pips * pip_size
+            if side == "LONG"
+            else entry + sl_pips * pip_size
+        )
+        arms.append(
+            {
+                "arm_id": arm_id,
+                "spread_fraction_toward_market": fraction,
+                "effective_spread_fraction_toward_market": round(
+                    effective_fraction,
+                    6,
+                ),
+                "order_type": "LIMIT",
+                "entry_reference": "PASSIVE_SPREAD_FRACTION",
+                "execution_truth": "OANDA_S5_BID_ASK_TOUCH",
+                "entry": entry,
+                "take_profit": _price(pair, tp),
+                "stop_loss": _price(pair, sl),
+                "take_profit_pips": round(tp_pips, 6),
+                "stop_loss_pips": round(sl_pips, 6),
+                "entry_ttl_seconds": ENTRY_TTL_SECONDS,
+                "max_hold_seconds": MAX_HOLD_SECONDS,
+            }
+        )
+    return arms
 
 
 def _ai_pair_state(value: Mapping[str, Any] | None, *, pair: str, now: datetime) -> dict[str, Any]:
