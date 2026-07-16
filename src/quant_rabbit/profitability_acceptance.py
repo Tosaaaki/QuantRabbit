@@ -46,7 +46,7 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.risk import (
     FORECAST_LIVE_PRECISION_MIN_SAMPLES,
-    FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+    FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 )
 from quant_rabbit.strategy.projection_ledger import compute_hit_rates
 
@@ -2702,7 +2702,7 @@ def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dic
             _finding(
                 priority="P1",
                 code="PROJECTION_LEDGER_MISSING",
-                message="projection ledger is missing, so 90% prediction evidence cannot be audited",
+                message="projection ledger is missing, so payoff-aware forecast evidence cannot be audited",
                 next_action="Record and verify projection outcomes before treating any forecast as high precision.",
                 evidence={"path": str(path)},
             )
@@ -2730,13 +2730,13 @@ def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dic
     }
     edges = projection_precision_edge_summary(
         filtered,
-        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_wilson_lower=FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
         min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
         limit=20,
     )
     gaps = projection_precision_gap_summary(
         filtered,
-        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_wilson_lower=FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
         min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
         limit=20,
     )
@@ -2770,9 +2770,9 @@ def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dic
                 priority="P1",
                 code="NO_PROJECTION_ECONOMIC_PRECISION_EDGE",
                 message="no projection bucket currently clears economic live precision",
-                next_action="Mine more pair/direction/regime evidence before claiming 90% forecast support.",
+                next_action="Mine more pair/direction/regime evidence before claiming payoff-aware forecast support.",
                 evidence={
-                    "min_wilson_lower": FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+                    "min_wilson_lower": FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
                     "min_samples": FORECAST_LIVE_PRECISION_MIN_SAMPLES,
                 },
             )

@@ -8204,6 +8204,16 @@ def _capital_allocation_market_price_bound(
     audited_exit_p95 = _nonnegative_float(
         cost_floor.get("audited_protected_exit_adverse_p95_pips")
     )
+    take_profit_exit_p95 = _nonnegative_float(
+        cost_floor.get("take_profit_exit_adverse_p95_pips")
+    )
+    stop_loss_exit_p95 = _nonnegative_float(
+        cost_floor.get("stop_loss_exit_adverse_p95_pips")
+    )
+    if take_profit_exit_p95 is None:
+        take_profit_exit_p95 = audited_exit_p95
+    if stop_loss_exit_p95 is None:
+        stop_loss_exit_p95 = audited_exit_p95
     financing_per_unit = _nonnegative_float(
         cost_floor.get("financing_adverse_stress_jpy_per_unit")
     )
@@ -8230,6 +8240,8 @@ def _capital_allocation_market_price_bound(
         and cost_digest_valid
         and entry_slippage_p95 is not None
         and audited_exit_p95 is not None
+        and take_profit_exit_p95 is not None
+        and stop_loss_exit_p95 is not None
         and financing_per_unit is not None
     )
     raw_hit_rate = metadata.get("forecast_directional_economic_hit_rate")
@@ -8319,15 +8331,27 @@ def _capital_allocation_market_price_bound(
     monetary_per_price = units * quote_to_jpy
     pip_factor = instrument_pip_factor(intent.pair)
     current_spread_pips = spread * pip_factor
-    exit_stress_pips = max(
-        current_spread_pips,
-        float(audited_exit_p95),
+    # Entry and TP/SL prices are already executable-side prices, so the normal
+    # bid/ask spread is in the geometry.  Only separately observed protected-
+    # order slippage belongs here, and TP/SL tails must remain outcome-specific.
+    take_profit_exit_stress_pips = float(take_profit_exit_p95)
+    stop_loss_exit_stress_pips = float(stop_loss_exit_p95)
+    take_profit_exit_stress_jpy = (
+        take_profit_exit_stress_pips * units / pip_factor * quote_to_jpy
     )
-    exit_stress_jpy = (
-        exit_stress_pips * units / pip_factor * quote_to_jpy
+    stop_loss_exit_stress_jpy = (
+        stop_loss_exit_stress_pips * units / pip_factor * quote_to_jpy
     )
     financing_stress_jpy = float(financing_per_unit) * units
-    outcome_cost_jpy = exit_stress_jpy + financing_stress_jpy
+    win_outcome_cost_jpy = take_profit_exit_stress_jpy + financing_stress_jpy
+    loss_outcome_cost_jpy = stop_loss_exit_stress_jpy + financing_stress_jpy
+    expected_outcome_cost_jpy = (
+        float(wilson_lower) * win_outcome_cost_jpy
+        + (1.0 - float(wilson_lower)) * loss_outcome_cost_jpy
+    )
+    # Compatibility field consumed by the final loss-cap recheck.  It is the
+    # loss-path cost, not a probability-weighted expected cost.
+    outcome_cost_jpy = loss_outcome_cost_jpy
     total_range_price = (
         intent.tp - intent.sl
         if intent.side == Side.LONG
@@ -8410,7 +8434,7 @@ def _capital_allocation_market_price_bound(
         )
     risk_distance = risk_cap_jpy / monetary_per_price
     ev_raw_risk_cap_jpy = (
-        float(wilson_lower) * total_range_jpy - outcome_cost_jpy
+        float(wilson_lower) * total_range_jpy - expected_outcome_cost_jpy
     )
     ev_zero_entry = (
         intent.sl + ev_raw_risk_cap_jpy / monetary_per_price
@@ -8487,17 +8511,16 @@ def _capital_allocation_market_price_bound(
     worst_reward_jpy = (
         abs(intent.tp - worst_fill_entry) * monetary_per_price
     )
-    worst_net_risk_jpy = worst_risk_jpy + outcome_cost_jpy
-    worst_net_reward_jpy = worst_reward_jpy - outcome_cost_jpy
+    worst_net_risk_jpy = worst_risk_jpy + loss_outcome_cost_jpy
+    worst_net_reward_jpy = worst_reward_jpy - win_outcome_cost_jpy
     worst_reward_risk = (
         worst_net_reward_jpy / worst_net_risk_jpy
         if worst_net_risk_jpy > 0.0 and worst_net_reward_jpy > 0.0
         else None
     )
     worst_ev_lower_jpy = (
-        float(wilson_lower) * worst_reward_jpy
-        - (1.0 - float(wilson_lower)) * worst_risk_jpy
-        - outcome_cost_jpy
+        float(wilson_lower) * worst_net_reward_jpy
+        - (1.0 - float(wilson_lower)) * worst_net_risk_jpy
     )
     full_kelly_fraction = (
         float(wilson_lower)
@@ -8541,8 +8564,8 @@ def _capital_allocation_market_price_bound(
     )
     next_risk_jpy = abs(next_adverse_entry - intent.sl) * monetary_per_price
     next_reward_jpy = abs(intent.tp - next_adverse_entry) * monetary_per_price
-    next_net_risk_jpy = next_risk_jpy + outcome_cost_jpy
-    next_net_reward_jpy = next_reward_jpy - outcome_cost_jpy
+    next_net_risk_jpy = next_risk_jpy + loss_outcome_cost_jpy
+    next_net_reward_jpy = next_reward_jpy - win_outcome_cost_jpy
     next_geometry = bool(
         intent.sl < next_adverse_entry < intent.tp
         if intent.side == Side.LONG
@@ -8556,9 +8579,8 @@ def _capital_allocation_market_price_bound(
         else None
     )
     next_ev_jpy = (
-        float(wilson_lower) * next_reward_jpy
-        - (1.0 - float(wilson_lower)) * next_risk_jpy
-        - outcome_cost_jpy
+        float(wilson_lower) * next_net_reward_jpy
+        - (1.0 - float(wilson_lower)) * next_net_risk_jpy
     )
     next_full_kelly = (
         float(wilson_lower)
@@ -8647,10 +8669,23 @@ def _capital_allocation_market_price_bound(
         "market_entry_adverse_p95_pips": entry_slippage_p95,
         "audited_protected_exit_adverse_p95_pips": audited_exit_p95,
         "fresh_spread_pips": current_spread_pips,
-        "exit_execution_stress_pips": exit_stress_pips,
-        "exit_execution_stress_jpy": exit_stress_jpy,
+        "take_profit_exit_adverse_p95_pips": take_profit_exit_p95,
+        "stop_loss_exit_adverse_p95_pips": stop_loss_exit_p95,
+        "take_profit_exit_execution_stress_pips": (
+            take_profit_exit_stress_pips
+        ),
+        "stop_loss_exit_execution_stress_pips": stop_loss_exit_stress_pips,
+        "take_profit_exit_execution_stress_jpy": take_profit_exit_stress_jpy,
+        "stop_loss_exit_execution_stress_jpy": stop_loss_exit_stress_jpy,
+        # Backward-readable aliases for the protected loss path.  Frozen-proof
+        # validation below uses the explicit win/loss fields for new proofs.
+        "exit_execution_stress_pips": stop_loss_exit_stress_pips,
+        "exit_execution_stress_jpy": stop_loss_exit_stress_jpy,
         "financing_adverse_stress_jpy_per_unit": financing_per_unit,
         "financing_stress_jpy": financing_stress_jpy,
+        "win_outcome_cost_jpy": win_outcome_cost_jpy,
+        "loss_outcome_cost_jpy": loss_outcome_cost_jpy,
+        "expected_outcome_cost_jpy": expected_outcome_cost_jpy,
         "outcome_cost_jpy": outcome_cost_jpy,
         "economic_hit_rate": hit_rate,
         "economic_samples": samples,
@@ -10406,8 +10441,17 @@ def _capital_allocation_numeric_proof_is_frozen(
             return parsed if math.isfinite(parsed) else None
 
         outcome_cost = finite_number(price_bound.get("outcome_cost_jpy"))
-        exit_execution_cost = finite_number(
+        loss_outcome_cost = finite_number(
+            price_bound.get("loss_outcome_cost_jpy")
+        )
+        win_outcome_cost = finite_number(
+            price_bound.get("win_outcome_cost_jpy")
+        )
+        stop_loss_execution_cost = finite_number(
             price_bound.get("exit_execution_stress_jpy")
+        )
+        take_profit_execution_cost = finite_number(
+            price_bound.get("take_profit_exit_execution_stress_jpy")
         )
         financing_cost = finite_number(
             price_bound.get("financing_stress_jpy")
@@ -10451,13 +10495,31 @@ def _capital_allocation_numeric_proof_is_frozen(
         cost_identities_valid = bool(
             outcome_cost is not None
             and outcome_cost > 0.0
-            and exit_execution_cost is not None
-            and exit_execution_cost >= 0.0
+            and loss_outcome_cost is not None
+            and loss_outcome_cost > 0.0
+            and win_outcome_cost is not None
+            and win_outcome_cost >= 0.0
+            and stop_loss_execution_cost is not None
+            and stop_loss_execution_cost >= 0.0
+            and take_profit_execution_cost is not None
+            and take_profit_execution_cost >= 0.0
             and financing_cost is not None
             and financing_cost >= 0.0
             and math.isclose(
                 outcome_cost,
-                exit_execution_cost + financing_cost,
+                loss_outcome_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and math.isclose(
+                loss_outcome_cost,
+                stop_loss_execution_cost + financing_cost,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            )
+            and math.isclose(
+                win_outcome_cost,
+                take_profit_execution_cost + financing_cost,
                 rel_tol=1e-12,
                 abs_tol=1e-9,
             )
@@ -10483,25 +10545,25 @@ def _capital_allocation_numeric_proof_is_frozen(
             }
             and math.isclose(
                 float(worst_net_risk),
-                float(worst_gross_risk) + outcome_cost,
+                float(worst_gross_risk) + loss_outcome_cost,
                 rel_tol=1e-12,
                 abs_tol=1e-9,
             )
             and math.isclose(
                 float(worst_net_reward),
-                float(worst_gross_reward) - outcome_cost,
+                float(worst_gross_reward) - win_outcome_cost,
                 rel_tol=1e-12,
                 abs_tol=1e-9,
             )
             and math.isclose(
                 float(next_net_risk),
-                float(next_gross_risk) + outcome_cost,
+                float(next_gross_risk) + loss_outcome_cost,
                 rel_tol=1e-12,
                 abs_tol=1e-9,
             )
             and math.isclose(
                 float(next_net_reward),
-                float(next_gross_reward) - outcome_cost,
+                float(next_gross_reward) - win_outcome_cost,
                 rel_tol=1e-12,
                 abs_tol=1e-9,
             )

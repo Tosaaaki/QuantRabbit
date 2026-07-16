@@ -674,7 +674,7 @@ class RiskEngineTest(unittest.TestCase):
                 == "M15_RECOVERY_NEGATIVE_CURRENT_GEOMETRY_EXPECTANCY"
             )
             self.assertIn("JPY <= 0", negative_issue.message)
-            self.assertIn("spread=", negative_issue.message)
+            self.assertIn("spread is already embedded", negative_issue.message)
             self.assertNotIn("M15_RECOVERY_EVIDENCE_WEIGHTED_RR", negative_codes)
 
     def test_m15_recovery_limit_vehicle_fails_common_binding_and_risk(self) -> None:
@@ -2821,7 +2821,7 @@ class RiskEngineTest(unittest.TestCase):
                 "forecast_directional_calibration_name": "directional_forecast_up",
                 "forecast_directional_hit_rate": 1.0,
                 "forecast_directional_samples": 80,
-                "forecast_directional_economic_hit_rate": 0.50,
+                "forecast_directional_economic_hit_rate": 0.20,
                 "forecast_directional_economic_samples": 160,
                 "forecast_directional_timeout_rate": 0.50,
                 "forecast_directional_timeout_count": 80,
@@ -2833,7 +2833,113 @@ class RiskEngineTest(unittest.TestCase):
         codes = {issue.code: issue for issue in decision.issues}
         self.assertFalse(decision.allowed)
         self.assertIn("FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE", codes)
-        self.assertIn("economic_hit_rate=0.50", codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"].message)
+        self.assertIn("economic_hit_rate=0.20", codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"].message)
+
+    def test_directional_precision_uses_current_payoff_break_even(self) -> None:
+        from quant_rabbit.risk import (
+            RiskMetrics,
+            _forecast_directional_bucket_clears_current_geometry,
+        )
+
+        metadata = {
+            "forecast_directional_hit_rate": 0.55,
+            "forecast_directional_samples": 100,
+            "forecast_directional_economic_hit_rate": 0.55,
+            "forecast_directional_economic_samples": 100,
+            "forecast_directional_timeout_rate": 0.0,
+        }
+        profitable, profitable_required = (
+            _forecast_directional_bucket_clears_current_geometry(
+                metadata,
+                {},
+                RiskMetrics(
+                    entry_price=1.0,
+                    loss_pips=10.0,
+                    reward_pips=20.0,
+                    risk_jpy=100.0,
+                    reward_jpy=200.0,
+                    reward_risk=2.0,
+                    spread_pips=1.0,
+                    jpy_per_pip=10.0,
+                ),
+            )
+        )
+        unprofitable, unprofitable_required = (
+            _forecast_directional_bucket_clears_current_geometry(
+                metadata,
+                {},
+                RiskMetrics(
+                    entry_price=1.0,
+                    loss_pips=10.0,
+                    reward_pips=1.0,
+                    risk_jpy=100.0,
+                    reward_jpy=10.0,
+                    reward_risk=0.1,
+                    spread_pips=1.0,
+                    jpy_per_pip=10.0,
+                ),
+            )
+        )
+
+        self.assertTrue(profitable)
+        self.assertAlmostEqual(profitable_required, 1.0 / 3.0)
+        self.assertFalse(unprofitable)
+        self.assertAlmostEqual(unprofitable_required, 100.0 / 110.0)
+
+    def test_projection_support_uses_current_payoff_not_fixed_accuracy(self) -> None:
+        from quant_rabbit.risk import (
+            RiskMetrics,
+            _forecast_selected_direction_has_audited_support,
+        )
+
+        support = {
+            "ok": True,
+            "direction": "UP",
+            "aligned_projection_count": 1,
+            "best_aligned_hit_rate": 0.55,
+            "best_aligned_samples": 100,
+            "signals": [
+                {
+                    "name": "technical_projection",
+                    "direction": "UP",
+                    "confidence": 0.75,
+                    "hit_rate": 0.55,
+                    "samples": 100,
+                    "economic_hit_rate": 0.55,
+                    "economic_samples": 100,
+                    "target_pips": 10.0,
+                }
+            ],
+        }
+
+        def metrics(reward_jpy: float) -> RiskMetrics:
+            return RiskMetrics(
+                entry_price=1.0,
+                loss_pips=10.0,
+                reward_pips=reward_jpy / 10.0,
+                risk_jpy=100.0,
+                reward_jpy=reward_jpy,
+                reward_risk=reward_jpy / 100.0,
+                spread_pips=1.0,
+                jpy_per_pip=10.0,
+            )
+
+        self.assertTrue(
+            _forecast_selected_direction_has_audited_support(
+                {},
+                support,
+                direction="UP",
+                metrics=metrics(200.0),
+            )
+        )
+        self.assertFalse(
+            _forecast_selected_direction_has_audited_support(
+                {},
+                support,
+                direction="UP",
+                metrics=metrics(10.0),
+            )
+        )
 
     def test_directional_timeout_rate_without_economic_rate_blocks_live_send(self) -> None:
         intent = OrderIntent(
@@ -2937,6 +3043,47 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", dry_codes)
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_NOT_EXECUTABLE_FOR_LIVE"], "BLOCK")
+
+    def test_authenticated_learning_scout_can_execute_unclear_pair_forecast(self) -> None:
+        from quant_rabbit.risk import (
+            _forecast_executable_live_readiness_issues,
+        )
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17330,
+            sl=1.17450,
+            thesis="bounded technical orientation learning",
+            market_context=MarketContext(
+                regime="PRE_TREND",
+                narrative="pair forecast is unclear but technical side is ranked",
+                chart_story="passive retest learning vehicle",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="bound technical stop",
+            ),
+            metadata={
+                "forecast_direction": "UNCLEAR",
+                "forecast_confidence": 0.0,
+                "predictive_scout": True,
+                "predictive_scout_source": "FORECAST_ORIENTATION_LEARNING",
+            },
+        )
+
+        with patch(
+            "quant_rabbit.risk._forecast_learning_scout_forward_evidence_supported",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _forecast_executable_live_readiness_issues(
+                    intent,
+                    for_live_send=True,
+                ),
+                [],
+            )
 
     def test_unclear_forecast_limit_allows_same_side_unselected_projection_support_for_live_send(self) -> None:
         intent = OrderIntent(

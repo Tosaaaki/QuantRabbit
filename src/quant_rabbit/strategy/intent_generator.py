@@ -965,20 +965,17 @@ FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES = _env_int(
     max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES),
     minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
 )
-# Live precision proof (2026-06-20).
+# Projection probability fallback (2026-07-16).
 #
-# Current ledger audit found the root failure in the user's "90% accuracy"
-# request: some projection buckets touch their target >90% of the time only
-# because the target is sub-pip and cannot pay spread. Live support must
-# therefore prove both (a) a Wilson lower-bound hit rate at or above the
-# operator's 90% target and (b) a non-micro target width for target-bearing
-# signals such as liquidity sweeps. These constants are policy floors over
-# current projection-ledger truth; replace them only after realized execution
-# expectancy shows a different break-even precision/target-width surface.
-FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER = _env_float(
-    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
-    0.90,
-    minimum=0.50,
+# There is no fixed live win-rate requirement. Candidate construction and
+# opposite-signal diagnostics can run before executable geometry exists, so
+# those no-geometry paths use 50% as an above-chance evidence classifier. Once
+# entry/TP/SL exist, the explicit required probability replaces (rather than
+# being maxed with) this fallback in every live authorization.
+FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER = _env_float(
+    "QR_FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER",
+    0.50,
+    minimum=0.0,
 )
 FORECAST_LIVE_PRECISION_MIN_SAMPLES = _env_int(
     "QR_FORECAST_LIVE_PRECISION_MIN_SAMPLES",
@@ -4387,13 +4384,35 @@ def _enrich_projection_support_precision(item: dict[str, Any], signal: Any | Non
     return item
 
 
-def _forecast_support_signal_clears_live_precision(signal: dict[str, Any]) -> bool:
+def _forecast_support_signal_clears_live_precision(
+    signal: dict[str, Any],
+    *,
+    required_wilson_lower: float | None = None,
+) -> bool:
+    probability_floor = (
+        FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+        if required_wilson_lower is None
+        else max(0.0, min(1.0, required_wilson_lower))
+    )
     return support_signal_clears_live_precision(
         signal,
-        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_wilson_lower=probability_floor,
         min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
         min_target_pips=FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS,
     )
+
+
+def _forecast_required_wilson_lower(metrics: Any | None) -> float:
+    reward_jpy = _optional_float(getattr(metrics, "reward_jpy", None))
+    risk_jpy = _optional_float(getattr(metrics, "risk_jpy", None))
+    if (
+        reward_jpy is None
+        or reward_jpy <= 0.0
+        or risk_jpy is None
+        or risk_jpy <= 0.0
+    ):
+        return FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+    return risk_jpy / (risk_jpy + reward_jpy)
 
 
 def _dedupe_forecast_projection_support(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4443,6 +4462,10 @@ def _forecast_market_support_for_forecast(
         "best_unselected_hit_rate": None,
         "best_unselected_samples": 0,
         "bootstrap_projection_support": False,
+        "range_box_calibration_ok": False,
+        "range_box_wilson_lower": None,
+        "range_box_economic_wilson_lower": None,
+        "range_side_permission_granted": False,
         "reason": "",
         "signals": [],
         "unselected_signals": [],
@@ -4456,6 +4479,50 @@ def _forecast_market_support_for_forecast(
             regime=regime,
         )
     )
+    if direction == "RANGE":
+        range_hit_rate = _optional_float(out.get("directional_hit_rate"))
+        range_samples = _optional_int(out.get("directional_samples")) or 0
+        range_lower = hit_rate_wilson_lower(range_hit_rate, range_samples)
+        range_economic_hit_rate = _optional_float(
+            out.get("directional_economic_hit_rate")
+        )
+        range_economic_samples = (
+            _optional_int(out.get("directional_economic_samples")) or 0
+        )
+        range_economic_lower = hit_rate_wilson_lower(
+            range_economic_hit_rate,
+            range_economic_samples,
+        )
+        out.update(
+            {
+                # This proves only that the box/rail state survives its
+                # calibrated horizon.  Side still comes from executable rail
+                # geometry and an optional side-specific projection; never
+                # relabel box-hold probability as UP/DOWN permission.
+                "range_box_calibration_ok": bool(
+                    range_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+                    and range_lower is not None
+                    and range_lower > 0.5
+                    and (
+                        range_economic_hit_rate is None
+                        or (
+                            range_economic_samples
+                            >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+                            and range_economic_lower is not None
+                            and range_economic_lower > 0.5
+                        )
+                    )
+                ),
+                "range_box_wilson_lower": (
+                    round(range_lower, 4) if range_lower is not None else None
+                ),
+                "range_box_economic_wilson_lower": (
+                    round(range_economic_lower, 4)
+                    if range_economic_lower is not None
+                    else None
+                ),
+            }
+        )
     if direction not in {"UP", "DOWN"} or not projection_signals:
         unselected = _forecast_unselected_projection_support(
             pair=pair,
@@ -4479,9 +4546,19 @@ def _forecast_market_support_for_forecast(
                     ),
                 }
             )
-            out["reason"] = f"forecast {direction or 'NONE'} has no executable direction; audited projection unselected"
+            out["reason"] = (
+                "RANGE is executable only through rail/box geometry; audited "
+                "side projection remains unselected until the lane binds its rail side"
+                if direction == "RANGE"
+                else f"forecast {direction or 'NONE'} has no executable direction; audited projection unselected"
+            )
             return out
-        out["reason"] = "no directional projection support"
+        out["reason"] = (
+            "RANGE box calibration is separate from side permission; executable "
+            "rail geometry may proceed without directional projection support"
+            if direction == "RANGE"
+            else "no directional projection support"
+        )
         return out
 
     bootstrap = _forecast_bootstrap_projection_support(
@@ -6737,7 +6814,12 @@ class IntentGenerator:
             risk_issues.append(dict(self_improvement_guardian_issue))
             live_blockers = (*live_blockers, self_improvement_guardian_issue["message"])
             risk_allowed = False
-        forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
+        forecast_live_issue = _forecast_live_readiness_issue(
+            intent,
+            intent.metadata or {},
+            method,
+            metrics=getattr(risk, "metrics", None),
+        )
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
             live_blockers = (*live_blockers, forecast_live_issue["message"])
@@ -11680,7 +11762,12 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, Any] 
     from advertising LIVE_READY lanes while the audit says close discipline is
     still system-negative.
     """
-    payload = _load_json_dict(data_root / "self_improvement_audit.json")
+    # capture-economics/memory/acceptance are refreshed earlier in the same
+    # cycle.  A P0 computed before those inputs must not contaminate the next
+    # intent board for one whole cycle; verifier/gateway will consume the newly
+    # recomputed audit later in this lock generation.  Other self-improvement
+    # gates already use this dependency-fresh boundary.
+    payload = _fresh_self_improvement_audit_payload(data_root)
     if not payload:
         return None
     for item in payload.get("findings", []) or []:
@@ -13800,6 +13887,8 @@ def _forecast_live_readiness_issue(
     intent: OrderIntent,
     metadata: dict[str, Any],
     method: TradeMethod | None,
+    *,
+    metrics: Any | None = None,
 ) -> dict[str, str] | None:
     if not _require_forecast_for_live_active():
         return None
@@ -13844,7 +13933,12 @@ def _forecast_live_readiness_issue(
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
             return None
-        if _forecast_market_support_override(intent, metadata, min_confidence=min_confidence):
+        if _forecast_market_support_override(
+            intent,
+            metadata,
+            min_confidence=min_confidence,
+            metrics=metrics,
+        ):
             return None
         if direction:
             return {
@@ -13898,7 +13992,12 @@ def _forecast_live_readiness_issue(
         )
         if weak_trend_issue is not None:
             return weak_trend_issue
-        if _forecast_market_support_override(intent, metadata, min_confidence=min_confidence):
+        if _forecast_market_support_override(
+            intent,
+            metadata,
+            min_confidence=min_confidence,
+            metrics=metrics,
+        ):
             return None
         return {
             "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
@@ -13914,7 +14013,12 @@ def _forecast_live_readiness_issue(
         return adverse_path_issue
     if recovery_reversal_hedge:
         return None
-    weak_calibration_issue = _forecast_directional_hit_rate_issue(intent, metadata, direction=direction)
+    weak_calibration_issue = _forecast_directional_hit_rate_issue(
+        intent,
+        metadata,
+        direction=direction,
+        metrics=metrics,
+    )
     if weak_calibration_issue is not None:
         return weak_calibration_issue
     return None
@@ -14017,6 +14121,7 @@ def _forecast_directional_hit_rate_issue(
     metadata: dict[str, Any],
     *,
     direction: str,
+    metrics: Any | None = None,
 ) -> dict[str, str] | None:
     if direction not in {"UP", "DOWN"}:
         return None
@@ -14028,6 +14133,7 @@ def _forecast_directional_hit_rate_issue(
         intent,
         metadata,
         min_confidence=_forecast_live_min_confidence(metadata),
+        metrics=metrics,
     ):
         return None
     hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
@@ -14039,17 +14145,30 @@ def _forecast_directional_hit_rate_issue(
     lower = hit_rate_wilson_lower(hit_rate, samples)
     economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(metadata, support)
     economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+    reward_jpy = _optional_float(getattr(metrics, "reward_jpy", None))
+    risk_jpy = _optional_float(getattr(metrics, "risk_jpy", None))
+    required_lower = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+    if (
+        reward_jpy is not None
+        and reward_jpy > 0.0
+        and risk_jpy is not None
+        and risk_jpy > 0.0
+    ):
+        # RiskMetrics is executable-side entry -> TP/SL geometry, so normal
+        # spread is already embedded.  Use the exact payoff break-even instead
+        # of demanding 90% accuracy from every reward/risk shape.
+        required_lower = risk_jpy / (risk_jpy + reward_jpy)
     if (
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
-        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and lower > required_lower
         and (
             economic_hit_rate is None
             or (
                 economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
                 and economic_lower is not None
-                and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+                and economic_lower > required_lower
             )
         )
     ):
@@ -14068,9 +14187,11 @@ def _forecast_directional_hit_rate_issue(
             f"economic_hit_rate={0.0 if economic_hit_rate is None else economic_hit_rate:.2f}, "
             f"economic_Wilson95_lower={0.0 if economic_lower is None else economic_lower:.2f} "
             f"over {economic_samples} economic sample(s); "
-            f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
-            f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. Keep this forecast dry-run "
-            "until the calibrated direction proves 90%+ precision or independent live evidence replaces it."
+            f"current executable TP/SL requires Wilson95_lower>"
+            f"{required_lower:.2f} for positive geometry expectancy and samples>="
+            f"{FORECAST_LIVE_PRECISION_MIN_SAMPLES}. Keep this forecast dry-run "
+            "until calibrated probability clears its actual payoff break-even or "
+            "independent live evidence replaces it."
         ),
         "severity": "WARN",
     }
@@ -14314,6 +14435,7 @@ def _forecast_market_support_override(
     *,
     min_confidence: float,
     method: TradeMethod | None = None,
+    metrics: Any | None = None,
 ) -> bool:
     resolved_method = method
     if resolved_method is None and intent.market_context is not None:
@@ -14324,6 +14446,7 @@ def _forecast_market_support_override(
         min_confidence=min_confidence,
         order_type=intent.order_type,
         method=resolved_method,
+        required_wilson_lower=_forecast_required_wilson_lower(metrics),
     )
 
 
@@ -14501,6 +14624,7 @@ def _forecast_market_support_has_strong_directional_signal(
     *,
     direction: str,
     forecast_horizon_min: float | None = None,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     if not bool(support.get("ok")):
         return False
@@ -14529,7 +14653,10 @@ def _forecast_market_support_has_strong_directional_signal(
             confidence >= FORECAST_STRONG_DIRECTIONAL_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_STRONG_DIRECTIONAL_MIN_HIT_RATE
             and samples >= FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES
-            and _forecast_support_signal_clears_live_precision(signal)
+            and _forecast_support_signal_clears_live_precision(
+                signal,
+                required_wilson_lower=required_wilson_lower,
+            )
         ):
             return True
     return False
@@ -14540,6 +14667,7 @@ def _forecast_market_support_has_current_directional_signal(
     *,
     direction: str,
     forecast_horizon_min: float | None = None,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     directional_signals = [
         signal
@@ -14553,7 +14681,10 @@ def _forecast_market_support_has_current_directional_signal(
             signal,
             forecast_horizon_min=forecast_horizon_min,
         )
-        and _forecast_support_signal_clears_live_precision(signal)
+        and _forecast_support_signal_clears_live_precision(
+            signal,
+            required_wilson_lower=required_wilson_lower,
+        )
         for signal in directional_signals
     )
 
@@ -14562,6 +14693,7 @@ def _forecast_market_support_has_current_timing_signal(
     support: dict[str, Any],
     *,
     forecast_horizon_min: float | None = None,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     timing_signals = [
         signal
@@ -14573,7 +14705,10 @@ def _forecast_market_support_has_current_timing_signal(
             signal,
             forecast_horizon_min=forecast_horizon_min,
         )
-        and _forecast_support_signal_clears_live_precision(signal)
+        and _forecast_support_signal_clears_live_precision(
+            signal,
+            required_wilson_lower=required_wilson_lower,
+        )
         for signal in timing_signals
     )
 
@@ -14639,7 +14774,7 @@ def _forecast_directional_bucket_clears_live_precision(
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
-        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and lower >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
     )
     if not headline_ok:
         return False
@@ -14650,7 +14785,7 @@ def _forecast_directional_bucket_clears_live_precision(
     return (
         economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and economic_lower is not None
-        and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and economic_lower >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
     )
 
 
@@ -14684,6 +14819,7 @@ def _forecast_market_support_allows_side(
     min_confidence: float,
     order_type: OrderType | None = None,
     method: TradeMethod | None = None,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     if side not in {Side.LONG.value, Side.SHORT.value}:
         return False
@@ -14710,6 +14846,7 @@ def _forecast_market_support_allows_side(
         min_confidence=min_confidence,
         forecast_horizon_min=forecast_horizon_min,
         order_type=order_type,
+        required_wilson_lower=required_wilson_lower,
     ):
         return True
     if _forecast_unclear_unselected_projection_support_allows_side(
@@ -14720,6 +14857,7 @@ def _forecast_market_support_allows_side(
         forecast_horizon_min=forecast_horizon_min,
         order_type=order_type,
         chart_direction_bias=chart_direction_bias,
+        required_wilson_lower=required_wilson_lower,
     ):
         return True
     expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
@@ -14781,6 +14919,7 @@ def _forecast_market_support_allows_side(
         and _forecast_market_support_has_current_timing_signal(
             support,
             forecast_horizon_min=forecast_horizon_min,
+            required_wilson_lower=required_wilson_lower,
         )
     )
     known_weak_direction_bucket = _forecast_directional_bucket_is_known_weak(
@@ -14805,6 +14944,7 @@ def _forecast_market_support_allows_side(
         order_type=order_type,
         method=method,
         known_weak_direction_bucket=known_weak_direction_bucket,
+        required_wilson_lower=required_wilson_lower,
     ):
         return True
     if breakout_proof and timing_evidence and confidence >= support_floor and not known_weak_direction_bucket:
@@ -14827,6 +14967,7 @@ def _forecast_market_support_allows_side(
             support,
             direction=direction,
             forecast_horizon_min=forecast_horizon_min,
+            required_wilson_lower=required_wilson_lower,
         )
     )
     if strong_directional_projection:
@@ -14842,6 +14983,7 @@ def _forecast_market_support_allows_side(
             support,
             direction=direction,
             forecast_horizon_min=forecast_horizon_min,
+            required_wilson_lower=required_wilson_lower,
         ):
             return False
         return (
@@ -14858,6 +15000,7 @@ def _forecast_market_support_allows_side(
         and _forecast_market_support_has_current_timing_signal(
             support,
             forecast_horizon_min=forecast_horizon_min,
+            required_wilson_lower=required_wilson_lower,
         )
     )
 
@@ -14874,6 +15017,7 @@ def _forecast_breakout_failure_limit_support_allows_side(
     order_type: OrderType | None,
     method: TradeMethod | None,
     known_weak_direction_bucket: bool,
+    required_wilson_lower: float,
 ) -> bool:
     """Allow passive failed-break retests to use strong current projection proof."""
 
@@ -14907,6 +15051,7 @@ def _forecast_breakout_failure_limit_support_allows_side(
         support,
         direction=direction,
         forecast_horizon_min=forecast_horizon_min,
+        required_wilson_lower=required_wilson_lower,
     )
 
 
@@ -14920,6 +15065,7 @@ def _forecast_range_unselected_projection_support_allows_side(
     min_confidence: float,
     forecast_horizon_min: float | None,
     order_type: OrderType | None,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     """Allow weak RANGE rail LIMITs when an audited sweep supports the same side.
 
@@ -14960,7 +15106,10 @@ def _forecast_range_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
-            and _forecast_support_signal_clears_live_precision(signal)
+            and _forecast_support_signal_clears_live_precision(
+                signal,
+                required_wilson_lower=required_wilson_lower,
+            )
         ):
             return True
     return False
@@ -14975,6 +15124,7 @@ def _forecast_unclear_unselected_projection_support_allows_side(
     forecast_horizon_min: float | None,
     order_type: OrderType | None,
     chart_direction_bias: str,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     """Allow only passive LIMIT entries when audited projection resolves UNCLEAR.
 
@@ -15012,7 +15162,10 @@ def _forecast_unclear_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
-            and _forecast_support_signal_clears_live_precision(signal)
+            and _forecast_support_signal_clears_live_precision(
+                signal,
+                required_wilson_lower=required_wilson_lower,
+            )
         )
         if not strong_enough:
             continue

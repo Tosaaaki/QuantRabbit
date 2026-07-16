@@ -808,13 +808,9 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["primary_rank_support"]["validation_profit_factor"], 2.45916)
         self.assertTrue(assessment["primary_rank_support"]["rank_only"])
         self.assertFalse(assessment["primary_rank_support"]["live_grade_ready"])
-        self.assertIn(
-            "VALIDATION_WIN_RATE_BELOW_90_PERCENT",
+        self.assertEqual(
             assessment["primary_rank_support"]["live_gap_reasons"],
-        )
-        self.assertIn(
-            "VALIDATION_WILSON95_LOWER_BELOW_90_PERCENT",
-            assessment["primary_rank_support"]["live_gap_reasons"],
+            ["INSUFFICIENT_MULTI_WEEK_ACTIVE_DAYS"],
         )
         self.assertEqual(
             assessment["live_gap"]["live_grade_metrics"]["validation_win_rate"],
@@ -949,7 +945,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         )
         self.assertFalse(assessment["primary_rank_support"]["live_grade_ready"])
         self.assertIn(
-            "VALIDATION_WIN_RATE_BELOW_90_PERCENT",
+            "INSUFFICIENT_MULTI_WEEK_ACTIVE_DAYS",
             assessment["primary_rank_support"]["live_gap_reasons"],
         )
         self.assertEqual(assessment["rule_source"]["dynamic_rule_count"], 1)

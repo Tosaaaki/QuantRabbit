@@ -2519,16 +2519,59 @@ class MarketReadOverlayTest(unittest.TestCase):
         self.assertEqual(max_multiple, 1.0)
         self.assertEqual(
             evidence["ev_lower"]["additional_cost_jpy"],
-            20.0,
+            0.0,
         )
-        self.assertEqual(evidence["ev_lower"]["net_risk_jpy_snapshot"], 320.0)
-        self.assertEqual(evidence["ev_lower"]["net_reward_jpy_snapshot"], 380.0)
+        self.assertEqual(evidence["ev_lower"]["net_risk_jpy_snapshot"], 300.0)
+        self.assertEqual(evidence["ev_lower"]["net_reward_jpy_snapshot"], 400.0)
         p_lower = evidence["probability"]["economic_wilson95_lower"]
         self.assertAlmostEqual(
             evidence["ev_lower"]["value_jpy_snapshot"],
-            p_lower * 400.0 - (1.0 - p_lower) * 300.0 - 20.0,
+            p_lower * 400.0 - (1.0 - p_lower) * 300.0,
             places=8,
         )
+
+        outcome_specific_cost = _synthetic_execution_cost_floor(
+            scope_key="EUR_USD|SHORT|TREND_CONTINUATION|MARKET"
+        )
+        outcome_specific_cost.pop("proof_sha256")
+        outcome_specific_cost.update(
+            {
+                "market_entry_adverse_p95_pips": 0.2,
+                "take_profit_exit_adverse_p95_pips": 0.0,
+                "stop_loss_exit_adverse_p95_pips": 3.0,
+                "audited_protected_exit_adverse_p95_pips": 3.0,
+                "financing_adverse_stress_jpy_per_unit": 0.001,
+            }
+        )
+        outcome_specific_cost["proof_sha256"] = canonical_json_sha256(
+            outcome_specific_cost
+        )
+        asymmetric, _ = (
+            market_read_overlay_module._capital_allocation_numeric_ceiling(
+                intent=intent,
+                metadata=metadata,
+                risk_metrics=risk_metrics,
+                account_nav_jpy=100_000.0,
+                broker_bid=1.1000,
+                broker_ask=1.1002,
+                broker_quote_to_jpy=100.0,
+                predictive_scout=False,
+                hedge=False,
+                execution_cost_floor=outcome_specific_cost,
+            )
+        )
+        cost = asymmetric["ev_lower"]
+        self.assertEqual(cost["win_additional_cost_jpy"], 3.0)
+        self.assertEqual(cost["loss_additional_cost_jpy"], 33.0)
+        self.assertEqual(
+            cost["take_profit_exit_execution_stress_pips"],
+            0.0,
+        )
+        self.assertEqual(
+            cost["stop_loss_exit_execution_stress_pips"],
+            3.0,
+        )
+        self.assertNotIn("fresh_spread_sized_exit_stress_pips", cost)
 
         wrong_scope_evidence, wrong_scope_multiple = (
             market_read_overlay_module._capital_allocation_numeric_ceiling(
@@ -2984,7 +3027,7 @@ class MarketReadOverlayTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
             snapshot = json.loads(paths["snapshot"].read_text())
-            snapshot["account"]["nav_jpy"] = 4_000.0
+            snapshot["account"]["nav_jpy"] = 3_400.0
             paths["snapshot"].write_text(json.dumps(snapshot))
             _reprepare(paths)
 
@@ -4852,10 +4895,19 @@ class MarketReadOverlayTest(unittest.TestCase):
     def test_stale_overlay_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _prepared_paths(Path(tmp))
-            _write_overlay(paths, authored_at=NOW - timedelta(minutes=16))
+            _write_overlay(paths, authored_at=NOW - timedelta(minutes=61))
 
             with self.assertRaisesRegex(MarketReadOverlayError, "MARKET_READ_OVERLAY_STALE"):
                 _apply(paths)
+
+    def test_overlay_survives_one_hour_ai_cycle_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _prepared_paths(Path(tmp))
+            _write_overlay(paths, authored_at=NOW - timedelta(minutes=23))
+
+            summary = _apply(paths)
+
+            self.assertEqual(summary.action, "TRADE")
 
     def test_latest_truly_resolved_v2_prediction_must_be_reviewed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5098,7 +5150,7 @@ class MarketReadOverlayTest(unittest.TestCase):
 
     def test_authenticated_predictive_limit_still_expires_with_overlay_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            observed_at = NOW - timedelta(minutes=15, seconds=1)
+            observed_at = NOW - timedelta(minutes=60, seconds=1)
             baseline = _baseline()
             baseline["generated_at_utc"] = observed_at.isoformat()
             paths = _prepared_paths(

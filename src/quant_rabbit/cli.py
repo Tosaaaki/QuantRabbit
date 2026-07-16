@@ -9694,7 +9694,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         from quant_rabbit.risk import (
             FORECAST_LIVE_PRECISION_MIN_SAMPLES,
-            FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+            FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
         )
         from quant_rabbit.regime_family_contradiction_truth import (
             TRUTH_ADAPTER_CONTRACT,
@@ -9850,7 +9850,7 @@ def main(argv: list[str] | None = None) -> int:
                     for sig, by_pair in hr.items()
                     if not str(sig or "").startswith("directional_forecast")
                 },
-                min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+                min_wilson_lower=FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
                 min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
             ),
             "economic_precision_gaps": projection_precision_gap_summary(
@@ -9859,7 +9859,7 @@ def main(argv: list[str] | None = None) -> int:
                     for sig, by_pair in hr.items()
                     if not str(sig or "").startswith("directional_forecast")
                 },
-                min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+                min_wilson_lower=FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
                 min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
             ),
         }, indent=2, ensure_ascii=False))

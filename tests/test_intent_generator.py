@@ -11285,6 +11285,43 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_refreshed_capture_clears_prior_cycle_profitability_p0(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _self_improvement_profitability_p0_issue,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            audit_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": audit_at.isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                            }
+                        ],
+                    }
+                )
+            )
+            (data_root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            audit_at + timedelta(minutes=10)
+                        ).isoformat(),
+                        "status": "NEGATIVE_EXPECTANCY",
+                    }
+                )
+            )
+
+            self.assertIsNone(
+                _self_improvement_profitability_p0_issue(data_root)
+            )
+
     def test_inactive_position_guardian_p0_blocks_fresh_live_ready_generation(self) -> None:
         # Regression from USD_JPY 472792: once self-improvement proves the fast
         # profit-capture guardian is inactive, generate-intents must stop
@@ -12124,7 +12161,7 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
             self.assertIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
-            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertIn(
                 MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
                 result["live_blocker_codes"],
@@ -14076,7 +14113,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "layer": "forecast",
                                 "code": "PROJECTION_ECONOMIC_PRECISION_WEAK",
                                 "message": (
-                                    "2 projection bucket(s) clear headline Wilson 90% precision "
+                                    "2 projection bucket(s) clear the audit-only Wilson precision floor "
                                     "but fail economic precision after TIMEOUT/no-touch penalties"
                                 ),
                             }

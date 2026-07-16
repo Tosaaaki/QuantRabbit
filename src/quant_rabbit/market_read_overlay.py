@@ -44,7 +44,7 @@ from quant_rabbit.predictive_scout import (
 )
 from quant_rabbit.risk import (
     FORECAST_LIVE_PRECISION_MIN_SAMPLES,
-    FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+    FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
     RiskPolicy,
 )
 from quant_rabbit.strategy.forecast_technical_context import (
@@ -74,7 +74,14 @@ from quant_rabbit.strategy.regime_family_weighting import (
 MARKET_READ_OVERLAY_SCHEMA_VERSION = 2
 CODEX_MARKET_READ_AUTHOR = "CODEX_MARKET_READ"
 DETERMINISTIC_BASELINE_AUTHOR = "DETERMINISTIC_BASELINE"
-DEFAULT_OVERLAY_MAX_AGE_SECONDS = 15 * 60
+# The scheduled AI trader is hourly and its evidence refresh can legitimately
+# take longer than fifteen minutes before the wrapper reacquires the live lock.
+# The overlay is content-addressed to the exact baseline/evidence packet below,
+# while the verifier and gateway still re-read current quotes, intents, broker
+# truth, and Guardian state before any POST.  Keep the human/model reasoning
+# receipt usable for one scheduling interval instead of expiring it inside its
+# own pipeline.
+DEFAULT_OVERLAY_MAX_AGE_SECONDS = 60 * 60
 CAPITAL_ALLOCATION_SIZE_MULTIPLES = (0.5, 0.75, 1.0)
 CAPITAL_ALLOCATION_SIZE_RATIOS = {
     0.5: (1, 2),
@@ -380,7 +387,7 @@ def projection_calibration_evidence(
         "thresholds": {
             "precision_floor_min_samples": FORECAST_LIVE_PRECISION_MIN_SAMPLES,
             "precision_floor_min_wilson95_lower": (
-                FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+                FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
             ),
         },
         "usage_policy": {
@@ -680,10 +687,10 @@ def _projection_calibration_row(
         >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and selected_payload["hit_rate_wilson95_lower"] is not None
         and selected_payload["hit_rate_wilson95_lower"]
-        >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
         and selected_payload["economic_hit_rate_wilson95_lower"] is not None
         and selected_payload["economic_hit_rate_wilson95_lower"]
-        >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
     )
     exact_pair_regime_precision_context = bool(
         regime is not None
@@ -2812,7 +2819,7 @@ def _validate_trade_source_freshness(
     # authenticated predictive SCOUT is different: it carries one immutable
     # passive LIMIT entry plus signed creation/expiry geometry and is expressly
     # forbidden from repricing after the trigger crosses.  Let that receipt use
-    # the same 15-minute window as the AI overlay.  The gateway still fetches a
+    # the same one-scheduling-interval window as the AI overlay.  The gateway still fetches a
     # fresh broker snapshot, rechecks passivity/risk/margin/duplicates, rejects
     # a crossed trigger, and checks the SCOUT TTL immediately before POST.
     from quant_rabbit.guardian_events import DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS
@@ -6354,6 +6361,19 @@ def _capital_allocation_numeric_ceiling(
     audited_exit_adverse_p95_pips = _strict_nonnegative_number(
         cost_floor.get("audited_protected_exit_adverse_p95_pips")
     )
+    take_profit_exit_adverse_p95_pips = _strict_nonnegative_number(
+        cost_floor.get("take_profit_exit_adverse_p95_pips")
+    )
+    stop_loss_exit_adverse_p95_pips = _strict_nonnegative_number(
+        cost_floor.get("stop_loss_exit_adverse_p95_pips")
+    )
+    # Older content-addressed fixtures exposed only the conservative combined
+    # protected-exit p95.  Production surfaces expose both outcome-specific
+    # values; retain the combined field solely as a compatibility fallback.
+    if take_profit_exit_adverse_p95_pips is None:
+        take_profit_exit_adverse_p95_pips = audited_exit_adverse_p95_pips
+    if stop_loss_exit_adverse_p95_pips is None:
+        stop_loss_exit_adverse_p95_pips = audited_exit_adverse_p95_pips
     financing_stress_jpy_per_unit = _strict_nonnegative_number(
         cost_floor.get("financing_adverse_stress_jpy_per_unit")
     )
@@ -6373,6 +6393,8 @@ def _capital_allocation_numeric_ceiling(
         and cost_floor_digest_valid
         and market_entry_adverse_p95_pips is not None
         and audited_exit_adverse_p95_pips is not None
+        and take_profit_exit_adverse_p95_pips is not None
+        and stop_loss_exit_adverse_p95_pips is not None
         and financing_stress_jpy_per_unit is not None
         and cost_floor.get("spread_double_count_forbidden") is True
         and method_scope_consistent
@@ -6931,15 +6953,15 @@ def _capital_allocation_numeric_ceiling(
         if cost_floor_valid
         else None
     )
-    # The normal bid/ask spread is already present in executable entry/rail
-    # geometry.  This is a separate adverse-exit stress: use at least the fresh
-    # spread-sized shock, and never less than the audited broker-protection p95.
-    exit_execution_stress_pips = (
-        max(float(spread_pips), float(audited_exit_adverse_p95_pips))
-        if cost_floor_valid
-        and spread_pips is not None
-        and audited_exit_adverse_p95_pips is not None
-        else None
+    # Executable entry -> TP/SL geometry already contains the bid/ask spread.
+    # Charge only the separately measured adverse fill slippage here.  TP and
+    # SL have materially different observed tails (currently 0.0p vs 3.1p at
+    # p95), so applying the worse tail to both outcomes manufactures cost.
+    take_profit_exit_execution_stress_pips = (
+        take_profit_exit_adverse_p95_pips if cost_floor_valid else None
+    )
+    stop_loss_exit_execution_stress_pips = (
+        stop_loss_exit_adverse_p95_pips if cost_floor_valid else None
     )
     entry_slippage_stress_jpy = (
         entry_slippage_stress_pips * jpy_per_pip
@@ -6947,9 +6969,15 @@ def _capital_allocation_numeric_ceiling(
         and jpy_per_pip is not None
         else None
     )
-    exit_execution_stress_jpy = (
-        exit_execution_stress_pips * jpy_per_pip
-        if exit_execution_stress_pips is not None
+    take_profit_exit_execution_stress_jpy = (
+        take_profit_exit_execution_stress_pips * jpy_per_pip
+        if take_profit_exit_execution_stress_pips is not None
+        and jpy_per_pip is not None
+        else None
+    )
+    stop_loss_exit_execution_stress_jpy = (
+        stop_loss_exit_execution_stress_pips * jpy_per_pip
+        if stop_loss_exit_execution_stress_pips is not None
         and jpy_per_pip is not None
         else None
     )
@@ -6958,26 +6986,40 @@ def _capital_allocation_numeric_ceiling(
         if financing_stress_jpy_per_unit is not None and units is not None
         else None
     )
-    outcome_cost_jpy = (
-        exit_execution_stress_jpy + financing_stress_jpy
-        if exit_execution_stress_jpy is not None
+    win_additional_cost_jpy = (
+        entry_slippage_stress_jpy
+        + take_profit_exit_execution_stress_jpy
+        + financing_stress_jpy
+        if entry_slippage_stress_jpy is not None
+        and take_profit_exit_execution_stress_jpy is not None
+        and financing_stress_jpy is not None
+        else None
+    )
+    loss_additional_cost_jpy = (
+        entry_slippage_stress_jpy
+        + stop_loss_exit_execution_stress_jpy
+        + financing_stress_jpy
+        if entry_slippage_stress_jpy is not None
+        and stop_loss_exit_execution_stress_jpy is not None
         and financing_stress_jpy is not None
         else None
     )
     additional_cost_jpy = (
-        entry_slippage_stress_jpy + outcome_cost_jpy
-        if entry_slippage_stress_jpy is not None
-        and outcome_cost_jpy is not None
+        p_lower * win_additional_cost_jpy
+        + (1.0 - p_lower) * loss_additional_cost_jpy
+        if p_lower is not None
+        and win_additional_cost_jpy is not None
+        and loss_additional_cost_jpy is not None
         else None
     )
     net_reward_jpy = (
-        reward_jpy - additional_cost_jpy
-        if reward_jpy is not None and additional_cost_jpy is not None
+        reward_jpy - win_additional_cost_jpy
+        if reward_jpy is not None and win_additional_cost_jpy is not None
         else None
     )
     net_risk_jpy = (
-        risk_jpy + additional_cost_jpy
-        if risk_jpy is not None and additional_cost_jpy is not None
+        risk_jpy + loss_additional_cost_jpy
+        if risk_jpy is not None and loss_additional_cost_jpy is not None
         else None
     )
     net_reward_risk = (
@@ -6989,13 +7031,11 @@ def _capital_allocation_numeric_ceiling(
         else None
     )
     ev_lower_jpy = (
-        p_lower * reward_jpy
-        - (1.0 - p_lower) * risk_jpy
-        - additional_cost_jpy
+        p_lower * net_reward_jpy
+        - (1.0 - p_lower) * net_risk_jpy
         if p_lower is not None
-        and reward_jpy is not None
-        and risk_jpy is not None
-        and additional_cost_jpy is not None
+        and net_reward_jpy is not None
+        and net_risk_jpy is not None
         else None
     )
     full_kelly_risk_fraction = (
@@ -7344,7 +7384,7 @@ def _capital_allocation_numeric_ceiling(
             "formula": (
                 None
                 if range_tp_contract_authorized
-                else "p_lower*reward_jpy-(1-p_lower)*risk_jpy-additional_cost_jpy"
+                else "p_lower*net_reward_jpy-(1-p_lower)*net_risk_jpy"
             ),
             "risk_jpy_snapshot": _rounded_evidence_number(risk_jpy),
             "reward_jpy_snapshot": _rounded_evidence_number(reward_jpy),
@@ -7367,14 +7407,23 @@ def _capital_allocation_numeric_ceiling(
             "audited_protected_exit_adverse_p95_pips": (
                 _rounded_evidence_number(audited_exit_adverse_p95_pips)
             ),
-            "fresh_spread_sized_exit_stress_pips": _rounded_evidence_number(
-                spread_pips
+            "take_profit_exit_adverse_p95_pips": _rounded_evidence_number(
+                take_profit_exit_adverse_p95_pips
             ),
-            "exit_execution_stress_pips": _rounded_evidence_number(
-                exit_execution_stress_pips
+            "stop_loss_exit_adverse_p95_pips": _rounded_evidence_number(
+                stop_loss_exit_adverse_p95_pips
             ),
-            "exit_execution_stress_jpy": _rounded_evidence_number(
-                exit_execution_stress_jpy
+            "take_profit_exit_execution_stress_pips": _rounded_evidence_number(
+                take_profit_exit_execution_stress_pips
+            ),
+            "stop_loss_exit_execution_stress_pips": _rounded_evidence_number(
+                stop_loss_exit_execution_stress_pips
+            ),
+            "take_profit_exit_execution_stress_jpy": _rounded_evidence_number(
+                take_profit_exit_execution_stress_jpy
+            ),
+            "stop_loss_exit_execution_stress_jpy": _rounded_evidence_number(
+                stop_loss_exit_execution_stress_jpy
             ),
             "financing_adverse_stress_jpy_per_unit": (
                 _rounded_evidence_number(financing_stress_jpy_per_unit)
@@ -7382,7 +7431,12 @@ def _capital_allocation_numeric_ceiling(
             "financing_stress_jpy": _rounded_evidence_number(
                 financing_stress_jpy
             ),
-            "outcome_cost_jpy": _rounded_evidence_number(outcome_cost_jpy),
+            "win_additional_cost_jpy": _rounded_evidence_number(
+                win_additional_cost_jpy
+            ),
+            "loss_additional_cost_jpy": _rounded_evidence_number(
+                loss_additional_cost_jpy
+            ),
             "additional_cost_jpy": _rounded_evidence_number(
                 additional_cost_jpy
             ),

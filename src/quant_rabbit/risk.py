@@ -260,10 +260,10 @@ FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE = _env_float_or(
     0.60,
     minimum=0.0,
 )
-FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER = _env_float_or(
-    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
-    0.90,
-    minimum=0.50,
+FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER = _env_float_or(
+    "QR_FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER",
+    0.50,
+    minimum=0.0,
 )
 FORECAST_LIVE_PRECISION_MIN_SAMPLES = max(
     FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
@@ -876,8 +876,12 @@ def _m15_recovery_evidence_weighted_expectancy_jpy(
     A fixed 1R gate discards the interaction between hit rate and payoff.  For
     the bounded M15 recovery route, the producer and this RiskEngine have
     already revalidated an exact-vehicle TP cohort and its Wilson lower bound.
-    Apply that lower bound to the *current* TP/SL geometry, after charging one
-    current spread to both the winning and losing paths.  This can relax only
+    Apply that lower bound to the *current executable-side* TP/SL geometry.
+    RiskMetrics starts a LONG at ask / SHORT at bid and measures the protected
+    exit level from that executable entry, so the normal spread is already in
+    both reward and loss distances.  Charging it again here understates the
+    reward and overstates the loss.  Separately audited slippage/financing is
+    enforced by allocation and the final pre-POST check.  This can relax only
     the generic RR floor; every loss, margin, freshness, event, GPT, Guardian,
     allocation, and final pre-POST check remains in force.
     """
@@ -914,9 +918,8 @@ def _m15_recovery_evidence_weighted_expectancy_jpy(
         or losses != 0
     ):
         return None
-    spread_cost_jpy = max(0.0, metrics.spread_pips * metrics.jpy_per_pip)
-    net_reward_jpy = max(0.0, metrics.reward_jpy - spread_cost_jpy)
-    net_loss_jpy = metrics.risk_jpy + spread_cost_jpy
+    net_reward_jpy = max(0.0, metrics.reward_jpy)
+    net_loss_jpy = metrics.risk_jpy
     if net_reward_jpy <= 0.0 or net_loss_jpy <= 0.0:
         return None
     expectancy = lower * net_reward_jpy - (1.0 - lower) * net_loss_jpy
@@ -1410,26 +1413,49 @@ def _forecast_learning_scout_forward_evidence_supported(
     )
 
 
-def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
+def _forecast_support_signal_clears_live_precision(
+    signal: dict,
+    *,
+    required_wilson_lower: float | None = None,
+) -> bool:
+    probability_floor = (
+        FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+        if required_wilson_lower is None
+        else max(0.0, min(1.0, required_wilson_lower))
+    )
     return support_signal_clears_live_precision(
         signal,
-        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_wilson_lower=probability_floor,
         min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
         min_target_pips=FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS,
     )
+
+
+def _forecast_required_wilson_lower(metrics: RiskMetrics | None) -> float:
+    if (
+        metrics is None
+        or metrics.reward_jpy <= 0.0
+        or metrics.risk_jpy <= 0.0
+    ):
+        return FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+    return metrics.risk_jpy / (metrics.risk_jpy + metrics.reward_jpy)
 
 
 def _forecast_market_support_has_current_directional_signal(
     support: dict,
     *,
     direction: str,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> bool:
     for signal in support.get("signals") or []:
         if not isinstance(signal, dict):
             continue
         if str(signal.get("direction") or "").upper() != direction:
             continue
-        if _forecast_support_signal_clears_live_precision(signal):
+        if _forecast_support_signal_clears_live_precision(
+            signal,
+            required_wilson_lower=required_wilson_lower,
+        ):
             return True
     return False
 
@@ -1439,6 +1465,7 @@ def _forecast_selected_direction_has_audited_support(
     support: dict,
     *,
     direction: str,
+    metrics: RiskMetrics | None = None,
 ) -> bool:
     if _forecast_directional_bucket_is_known_weak(metadata, support):
         return False
@@ -1466,6 +1493,7 @@ def _forecast_selected_direction_has_audited_support(
     return _forecast_market_support_has_current_directional_signal(
         support,
         direction=direction,
+        required_wilson_lower=_forecast_required_wilson_lower(metrics),
     )
 
 
@@ -1501,7 +1529,7 @@ def _forecast_directional_bucket_clears_live_precision(metadata: dict, support: 
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
-        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and lower >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
     )
     if not headline_ok:
         return False
@@ -1512,7 +1540,53 @@ def _forecast_directional_bucket_clears_live_precision(metadata: dict, support: 
     return (
         economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and economic_lower is not None
-        and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and economic_lower >= FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER
+    )
+
+
+def _forecast_directional_bucket_clears_current_geometry(
+    metadata: dict,
+    support: dict,
+    metrics: RiskMetrics | None,
+) -> tuple[bool, float]:
+    """Check calibrated probability against this trade's break-even payoff."""
+
+    if (
+        metrics is None
+        or metrics.reward_jpy <= 0.0
+        or metrics.risk_jpy <= 0.0
+    ):
+        return (
+            _forecast_directional_bucket_clears_live_precision(metadata, support),
+            FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
+        )
+    # RiskMetrics measures executable-side entry -> TP/SL distances, so normal
+    # spread is already present.  A fixed 90% accuracy floor ignores payoff:
+    # larger winners can be positive below 90%, while tiny winners can still be
+    # negative at high accuracy.  Use the exact break-even probability here;
+    # allocation/pre-POST layers add audited slippage and financing afterward.
+    required = metrics.risk_jpy / (metrics.risk_jpy + metrics.reward_jpy)
+    hit_rate, samples, _ = _forecast_directional_hit_rate(metadata, support)
+    lower = hit_rate_wilson_lower(hit_rate, samples)
+    if (
+        hit_rate is None
+        or samples < FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        or lower is None
+        or lower <= required
+    ):
+        return False, required
+    economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(
+        metadata,
+        support,
+    )
+    if economic_hit_rate is None:
+        return _forecast_directional_timeout_rate(metadata, support) <= 0.0, required
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+    return (
+        economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and economic_lower is not None
+        and economic_lower > required,
+        required,
     )
 
 
@@ -1727,6 +1801,8 @@ def _forecast_unclear_unselected_projection_support_allows_side(
     intent: OrderIntent,
     metadata: dict,
     support: dict,
+    *,
+    metrics: RiskMetrics | None = None,
 ) -> bool:
     """Mirror intent_generator's UNCLEAR forecast passive LIMIT override."""
     if intent.side not in {Side.LONG, Side.SHORT}:
@@ -1763,7 +1839,12 @@ def _forecast_unclear_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
-            and _forecast_support_signal_clears_live_precision(signal)
+            and _forecast_support_signal_clears_live_precision(
+                signal,
+                required_wilson_lower=_forecast_required_wilson_lower(
+                    metrics
+                ),
+            )
         )
         if not strong_enough:
             continue
@@ -1986,6 +2067,7 @@ def _forecast_executable_live_readiness_issues(
     intent: OrderIntent,
     *,
     for_live_send: bool,
+    metrics: RiskMetrics | None = None,
 ) -> list[RiskIssue]:
     if not for_live_send:
         return []
@@ -1998,9 +2080,24 @@ def _forecast_executable_live_readiness_issues(
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
     ):
         return []
+    if _forecast_learning_scout_forward_evidence_supported(intent):
+        # The pair-level forecast may intentionally remain UNCLEAR while the
+        # content-addressed technical orientation model ranks one passive
+        # direction for forward learning.  Intent generation already accepts
+        # this exact contract; rejecting it here made every learning SCOUT
+        # impossible at the independent RiskEngine layer.  This exemption is
+        # authenticated by the model digest and exact LIMIT/TP/SL binding and
+        # does not bypass SCOUT policy, current-risk, GPT, Guardian, or gateway
+        # checks.
+        return []
     confidence = _to_float(metadata.get("forecast_confidence"))
     support = _forecast_market_support(metadata)
-    if _forecast_unclear_unselected_projection_support_allows_side(intent, metadata, support):
+    if _forecast_unclear_unselected_projection_support_allows_side(
+        intent,
+        metadata,
+        support,
+        metrics=metrics,
+    ):
         return []
     return [
         RiskIssue(
@@ -2021,6 +2118,7 @@ def _forecast_directional_hit_rate_weak_issue(
     direction: str,
     metadata: dict,
     support: dict,
+    required_wilson_lower: float = FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
 ) -> RiskIssue:
     hit_rate, samples, calibration_name = _forecast_directional_hit_rate(metadata, support)
     lower = hit_rate_wilson_lower(hit_rate, samples)
@@ -2035,8 +2133,9 @@ def _forecast_directional_hit_rate_weak_issue(
             f"economic_hit_rate={0.0 if economic_hit_rate is None else economic_hit_rate:.2f}, "
             f"economic_Wilson95_lower={0.0 if economic_lower is None else economic_lower:.2f} "
             f"over {economic_samples} economic sample(s); "
-            f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
-            f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. This bucket cannot "
+            f"current executable TP/SL requires Wilson95_lower>"
+            f"{required_wilson_lower:.2f} for positive geometry expectancy and "
+            f"samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. This bucket cannot "
             "authorize live send without independent audited projection support."
         ),
         severity="BLOCK",
@@ -2942,7 +3041,6 @@ class RiskEngine:
                     )
                 )
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
-        issues.extend(_forecast_executable_live_readiness_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
         issues.extend(_guardian_tuning_override_issues(intent, for_live_send=for_live_send))
@@ -3127,6 +3225,13 @@ class RiskEngine:
 
         issues.extend(self._same_pair_margin_concentration_issues(intent, snapshot, entry_price, quote_to_jpy, spec))
         metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy, snapshot)
+        issues.extend(
+            _forecast_executable_live_readiness_issues(
+                intent,
+                for_live_send=for_live_send,
+                metrics=metrics,
+            )
+        )
         issues.extend(self._margin_issues(snapshot, metrics))
         if for_live_send:
             account_payload: dict[str, object] = {}
@@ -3263,13 +3368,12 @@ class RiskEngine:
                 RiskIssue(
                     "M15_RECOVERY_NEGATIVE_CURRENT_GEOMETRY_EXPECTANCY",
                     "verified exact-vehicle TP Wilson lower bound applied to "
-                    "the current TP/SL geometry is non-positive after charging "
-                    "the current spread on both paths: "
+                    "the current executable-side TP/SL geometry is non-positive: "
                     f"{evidence_weighted_expectancy_jpy:.2f} JPY <= 0; "
                     f"reward/risk={metrics.reward_risk:.2f}x, "
                     f"reward={metrics.reward_jpy:.2f} JPY, "
-                    f"risk={metrics.risk_jpy:.2f} JPY, "
-                    f"spread={metrics.spread_pips:.2f}pip",
+                    f"risk={metrics.risk_jpy:.2f} JPY; normal spread is already "
+                    "embedded in these entry-to-exit distances",
                 )
             )
         elif metrics.reward_risk < active_min_rr:
@@ -3279,7 +3383,7 @@ class RiskEngine:
                     f"planned reward/risk {metrics.reward_risk:.2f}x is below "
                     f"the generic {active_min_rr:.2f}x floor, but the verified "
                     "exact-vehicle TP Wilson lower bound applied to current "
-                    "spread-adjusted TP/SL geometry remains positive at "
+                    "executable-side TP/SL geometry remains positive at "
                     f"{evidence_weighted_expectancy_jpy:.2f} JPY; permit only "
                     "the already bounded recovery size and retain all other gates",
                     severity="WARN",
@@ -3325,6 +3429,7 @@ class RiskEngine:
                 intent,
                 for_live_send=for_live_send,
                 m15_recovery_validation=m15_recovery_validation,
+                metrics=metrics,
             )
         )
         issues.extend(
@@ -3752,6 +3857,7 @@ class RiskEngine:
         *,
         for_live_send: bool,
         m15_recovery_validation: M15RecoveryMicroValidation | None = None,
+        metrics: RiskMetrics | None = None,
     ) -> list[RiskIssue]:
         if not for_live_send:
             return []
@@ -3798,8 +3904,33 @@ class RiskEngine:
             metadata,
             support,
             direction=direction,
+            metrics=metrics,
         ):
             return []
+        invalidation_first_rate, _, _ = (
+            _forecast_directional_invalidation_first(metadata, support)
+        )
+        _, directional_samples, _ = _forecast_directional_hit_rate(
+            metadata,
+            support,
+        )
+        if (
+            invalidation_first_rate is not None
+            and directional_samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+            and invalidation_first_rate
+            >= FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
+        ):
+            # Payoff-aware break-even replaces the blanket accuracy floor, but
+            # it cannot reinterpret a bucket that usually reaches the
+            # invalidation before the target as a profitable target-first path.
+            return [
+                _forecast_directional_bucket_issue(
+                    intent,
+                    direction=direction,
+                    metadata=metadata,
+                    support=support,
+                )
+            ]
         confidence = _to_float(metadata.get("forecast_confidence"))
         min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
         if confidence is None or confidence < min_confidence:
@@ -3811,13 +3942,21 @@ class RiskEngine:
                     min_confidence=min_confidence,
                 )
             ]
-        if not _forecast_directional_bucket_clears_live_precision(metadata, support):
+        geometry_clears, required_wilson_lower = (
+            _forecast_directional_bucket_clears_current_geometry(
+                metadata,
+                support,
+                metrics,
+            )
+        )
+        if not geometry_clears:
             return [
-                _forecast_directional_bucket_issue(
+                _forecast_directional_hit_rate_weak_issue(
                     intent,
                     direction=direction,
                     metadata=metadata,
                     support=support,
+                    required_wilson_lower=required_wilson_lower,
                 )
             ]
         return []

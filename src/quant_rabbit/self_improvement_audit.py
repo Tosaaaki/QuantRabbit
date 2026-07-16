@@ -374,11 +374,13 @@ FORECAST_ENTRY_GRADE_CONFIDENCE_MIN = _env_nonnegative_float(
     "QR_FORECAST_ENTRY_CONFIDENCE_MIN",
     0.55,
 )
-# Mirror the live precision gate so the audit explains the same economic
-# precision failure that intent generation and RiskEngine enforce.
+# Audit-only directional-information diagnostic.  This is intentionally
+# separate from the live order threshold: live permission derives its required
+# probability from that order's executable TP/SL payoff instead of importing
+# this descriptive above-chance benchmark.
 PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER = _env_nonnegative_float(
-    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
-    0.90,
+    "QR_SELF_IMPROVEMENT_PROJECTION_ECONOMIC_MIN_WILSON_LOWER",
+    0.50,
 )
 PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES = max(
     1,
@@ -4635,7 +4637,7 @@ def _projection_economic_precision_findings(*, run_id: str, path: Path) -> list[
                 "economic precision after TIMEOUT/no-touch penalties"
             ),
             next_action=(
-                "Do not use the named projection buckets as 90% high-turn live support. "
+                "Do not use the named projection buckets as payoff-aware live support. "
                 "Mine pair/direction/regime variants or tighten target/horizon geometry until "
                 "economic_hit_rate Wilson clears the same live precision floor."
             ),

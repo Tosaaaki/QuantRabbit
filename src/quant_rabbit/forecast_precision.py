@@ -22,10 +22,9 @@ from quant_rabbit.instruments import instrument_pip_factor
 _PIP_RE = re.compile(r"(?P<pips>\d+(?:\.\d+)?)\s*pip", re.IGNORECASE)
 
 # Ranking weights are advisory only; RiskEngine and LiveOrderGateway remain
-# executable authorities. Values are anchored to the 2026-06-20 TP5/SL4 audit:
-# a 90%+ Wilson lower-bound bucket gets enough score to outrank ordinary
-# history noise, while high-rotation MFE buckets get a smaller nudge because
-# they improve basket ordering but are not low-confidence live exceptions.
+# executable authorities.  High-rotation MFE buckets can improve basket
+# ordering but are not live exceptions; current TP/SL economics are checked
+# separately at entry time.
 TECHNICAL_HARVEST_PRECISION_SCORE_BONUS = 24.0
 TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS = 6.0
 TECHNICAL_HARVEST_ROTATION_SCORE_BONUS = 12.0
@@ -38,12 +37,14 @@ BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
 OANDA_UNIVERSAL_ROTATION_SCORE_BONUS = 10.0
 OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS = 2.0
 # OANDA universal rotation rows are mined from M5 candles and only rank lanes.
-# These floors describe the evidence gap required before such rows could even
-# be discussed as a 90% prediction replacement for normal live forecast gates.
-OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE = 0.90
-OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER = 0.90
+# These diagnostics require statistically directional and net-positive
+# validation.  They never replace the current order's payoff-derived threshold.
+OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE = 0.50
+OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER = 0.50
 OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS = 15
-OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE = 0.90
+OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE = 0.50
+OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_PROFIT_FACTOR = 1.0
+OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_AVG_REALIZED_PIPS = 0.0
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
 OANDA_UNIVERSAL_ROTATION_RULES_ENV = "QR_OANDA_UNIVERSAL_ROTATION_RULES"
@@ -1994,24 +1995,39 @@ def _oanda_universal_rotation_shape_allowed_for_method(shape: Any, method: str |
 def _oanda_universal_rotation_live_gap(rule: dict[str, Any]) -> dict[str, Any]:
     """Explain why an OANDA M5 rotation row remains rank-only.
 
-    The thresholds mirror the operator's 90% prediction objective and the
-    multi-week stability bar needed for a daily campaign route. They are
-    diagnostic only: this helper never grants live support.
+    The diagnostics require out-of-sample net-positive behavior and multi-day
+    coverage. They are rank context only: this helper never grants live support.
     """
 
     validation_win_rate = float(rule.get("validation_win_rate") or 0.0)
     wilson_lower = float(rule.get("validation_win_wilson95_lower") or 0.0)
     active_days = int(rule.get("active_days") or 0)
     positive_day_rate = float(rule.get("positive_day_rate") or 0.0)
+    validation_profit_factor = float(
+        rule.get("validation_profit_factor") or 0.0
+    )
+    validation_avg_realized_pips = float(
+        rule.get("validation_avg_realized_pips") or 0.0
+    )
     reasons: list[str] = []
     if validation_win_rate < OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE:
-        reasons.append("VALIDATION_WIN_RATE_BELOW_90_PERCENT")
+        reasons.append("VALIDATION_WIN_RATE_NOT_DIRECTIONAL")
     if wilson_lower < OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER:
-        reasons.append("VALIDATION_WILSON95_LOWER_BELOW_90_PERCENT")
+        reasons.append("VALIDATION_WILSON95_LOWER_NOT_ABOVE_CHANCE")
+    if (
+        validation_profit_factor
+        <= OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_PROFIT_FACTOR
+    ):
+        reasons.append("VALIDATION_PROFIT_FACTOR_NOT_POSITIVE")
+    if (
+        validation_avg_realized_pips
+        <= OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_AVG_REALIZED_PIPS
+    ):
+        reasons.append("VALIDATION_AVG_REALIZED_PIPS_NOT_POSITIVE")
     if active_days < OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS:
         reasons.append("INSUFFICIENT_MULTI_WEEK_ACTIVE_DAYS")
     if positive_day_rate < OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE:
-        reasons.append("DAILY_EXPECTANCY_BELOW_90_PERCENT")
+        reasons.append("POSITIVE_DAY_RATE_NOT_MAJORITY")
     return {
         "rank_only_reason": (
             "OANDA universal rotation is broad M5 candle evidence for ordering only; "
@@ -2022,12 +2038,23 @@ def _oanda_universal_rotation_live_gap(rule: dict[str, Any]) -> dict[str, Any]:
             "min_validation_wilson95_lower": OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER,
             "min_active_days": OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS,
             "min_positive_day_rate": OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE,
+            "min_validation_profit_factor": (
+                OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_PROFIT_FACTOR
+            ),
+            "min_validation_avg_realized_pips": (
+                OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_AVG_REALIZED_PIPS
+            ),
         },
         "live_grade_metrics": {
             "validation_win_rate": round(validation_win_rate, 6),
             "validation_wilson95_lower": round(wilson_lower, 6),
             "active_days": active_days,
             "positive_day_rate": round(positive_day_rate, 6),
+            "validation_profit_factor": round(validation_profit_factor, 6),
+            "validation_avg_realized_pips": round(
+                validation_avg_realized_pips,
+                6,
+            ),
         },
         "live_gap_reasons": reasons,
         "live_grade_ready": not reasons,

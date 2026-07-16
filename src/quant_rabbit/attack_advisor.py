@@ -1158,7 +1158,7 @@ def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], di
     try:
         from quant_rabbit.risk import (
             FORECAST_LIVE_PRECISION_MIN_SAMPLES,
-            FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+            FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
         )
         from quant_rabbit.strategy.projection_ledger import compute_hit_rates
 
@@ -1172,7 +1172,7 @@ def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], di
     }
     edges = projection_precision_edge_summary(
         filtered,
-        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_wilson_lower=FORECAST_NO_GEOMETRY_MIN_WILSON_LOWER,
         min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
         limit=10_000,
     )

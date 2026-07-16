@@ -7618,20 +7618,21 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
         codes = {item["code"]: item for item in payload["findings"]}
         self.assertEqual(summary.status, STATUS_BLOCKED)
-        self.assertNotIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
-        finding = codes["FORECAST_ARBITRATION_SAME_SIDE_PRECISION_WAIT"]
-        self.assertEqual(finding["priority"], "P2")
+        self.assertIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
+        self.assertNotIn("FORECAST_ARBITRATION_SAME_SIDE_PRECISION_WAIT", codes)
+        finding = codes["FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED"]
+        self.assertEqual(finding["priority"], "P1")
         diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
         self.assertEqual(diagnostics["same_side_lane_count"], 1)
-        self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 0)
+        self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 1)
         self.assertEqual(diagnostics["same_side_context_blocked_lane_count"], 0)
-        self.assertEqual(diagnostics["same_side_precision_wait_lane_count"], 1)
-        self.assertFalse(
-            diagnostics["same_side_precision_wait_lanes"][0]["top_unselected_signal"][
+        self.assertEqual(diagnostics["same_side_precision_wait_lane_count"], 0)
+        self.assertTrue(
+            diagnostics["same_side_actionable_repair_lanes"][0]["top_unselected_signal"][
                 "live_precision_ok"
             ]
         )
-        self.assertIn("same_side_precision_wait=`1`", report_text)
+        self.assertIn("same_side_actionable=`1`", report_text)
 
     def test_same_side_unselected_projection_with_context_blockers_is_not_actionable_repair(
         self,
