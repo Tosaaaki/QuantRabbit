@@ -5968,7 +5968,7 @@ def _profitability_findings(
                 code="DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG",
                 message=(
                     "historical profitability drag is dominated by non-gateway broker close losses, "
-                    "while the last-24h gateway-controllable window is positive"
+                    "while trader-attributed closes in the trailing window remain positive"
                 ),
                 next_action=(
                     "Keep auditing non-gateway close provenance, but do not let repaired non-gateway "
@@ -6143,11 +6143,11 @@ def _direct_or_manual_close_repair_evidence(
 ) -> dict[str, Any] | None:
     """Identify repaired profitability drag caused by non-gateway close provenance.
 
-    The 24h window already exists in this audit as the operational recovery
-    check. This helper does not create trade permission; it prevents old
-    direct/manual broker closes from remaining a P0 once removing that
-    non-gateway provenance makes the current audit window non-negative and the
-    last-24h gateway-controllable result is positive.
+    This helper does not create trade permission. It prevents direct/manual
+    broker closes from remaining a P0 once removing that non-gateway
+    provenance leaves positive trader-attributed closes in the trailing audit
+    window. The 24h window remains observation evidence and cannot let an
+    operator-owned outcome either block or prove trader recovery.
     """
     direct_metric = _combined_close_provenance_metric(
         effect,
@@ -6165,16 +6165,23 @@ def _direct_or_manual_close_repair_evidence(
     if net_without_direct < 0.0:
         return None
 
+    direct_trades = int(direct_metric.get("trades") or 0)
+    trader_attributed_trades = max(
+        0,
+        int(effect.get("closed_trades") or 0) - direct_trades,
+    )
+    # Manual/tagless outcomes must neither block nor prove trader recovery.
+    # Require positive trader-attributed closes in the trailing window, then
+    # treat the latest 24h window as observation only.  Requiring a separate
+    # positive 24h close deadlocks fresh entries when the only recent close is
+    # an operator action, which is exactly outside the trader's ownership.
+    if trader_attributed_trades <= 0 or net_without_direct <= 0.0:
+        return None
+
     recent_net = _maybe_float(effect_24h.get("net_jpy"))
     recent_expectancy = _maybe_float(effect_24h.get("expectancy_jpy"))
     recent_pf = _maybe_float(effect_24h.get("profit_factor"))
     recent_closed = int(effect_24h.get("closed_trades") or 0)
-    if recent_closed <= 0 or recent_net is None or recent_net <= 0.0:
-        return None
-    if recent_expectancy is not None and recent_expectancy <= 0.0:
-        return None
-    if recent_pf is not None and recent_pf <= 1.0:
-        return None
 
     recent_direct_market_close_loss = _combined_close_provenance_metric(
         {
@@ -6185,15 +6192,14 @@ def _direct_or_manual_close_repair_evidence(
         NON_GATEWAY_CLOSE_DRAG_PROVENANCES,
         metric_key="market_order_trade_close_loss_provenance_metrics",
     )
-    if int(recent_direct_market_close_loss.get("loss_trades") or 0) > 0:
-        return None
-
     return {
         "non_gateway_close_drag_provenances": list(NON_GATEWAY_CLOSE_DRAG_PROVENANCES),
         "non_gateway_close_drag_metric": direct_metric,
         "net_jpy": net,
         "net_without_non_gateway_close_drag_jpy": net_without_direct,
+        "trader_attributed_trades": trader_attributed_trades,
         "last_24h_net_jpy": recent_net,
+        "last_24h_closed_trades": recent_closed,
         "last_24h_profit_factor": recent_pf,
         "last_24h_expectancy_jpy": recent_expectancy,
         "last_24h_non_gateway_market_close_loss_trades": int(

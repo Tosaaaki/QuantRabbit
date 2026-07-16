@@ -8167,6 +8167,75 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(repair["net_without_non_gateway_close_drag_jpy"], 150.0)
         self.assertEqual(repair["last_24h_non_gateway_market_close_loss_trades"], 0)
 
+    def test_recent_manual_close_cannot_create_persistent_profitability_p0(self) -> None:
+        manual_metric = {
+            "trades": 1,
+            "net_jpy": -3834.4332,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 3834.4332,
+            "win_trades": 0,
+            "loss_trades": 1,
+        }
+        tp_metric = {
+            "trades": 2,
+            "net_jpy": 2293.5797,
+            "gross_profit_jpy": 2293.5797,
+            "gross_loss_jpy": 0.0,
+            "win_trades": 2,
+            "loss_trades": 0,
+        }
+        effect = {
+            "closed_trades": 3,
+            "net_jpy": -1540.8535,
+            "gross_profit_jpy": 2293.5797,
+            "gross_loss_jpy": 3834.4332,
+            "profit_factor": 0.5981535,
+            "expectancy_jpy": -513.6178,
+            "avg_win_jpy": 1146.78985,
+            "avg_loss_jpy_abs": 3834.4332,
+            "close_provenance_metrics": {
+                "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": manual_metric,
+                "TAKE_PROFIT_ORDER": tp_metric,
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": manual_metric,
+            },
+            "worst_segments": [],
+        }
+        effect_24h = {
+            "closed_trades": 1,
+            "net_jpy": -3834.4332,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 3834.4332,
+            "profit_factor": 0.0,
+            "expectancy_jpy": -3834.4332,
+            "avg_win_jpy": None,
+            "avg_loss_jpy_abs": 3834.4332,
+            "close_provenance_metrics": {
+                "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": manual_metric,
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": manual_metric,
+            },
+            "worst_segments": [],
+        }
+
+        findings = _profitability_findings(
+            run_id="recent-manual-close",
+            effect=effect,
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            previous_discipline_streak=9,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        self.assertIn("DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG", codes)
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        repair = codes["DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG"]["evidence"]
+        self.assertEqual(repair["trader_attributed_trades"], 2)
+        self.assertEqual(repair["last_24h_non_gateway_market_close_loss_trades"], 1)
+
     @staticmethod
     def _failed_trailing_effect() -> dict:
         return {

@@ -282,6 +282,45 @@ class ForecastTechnicalContextTest(unittest.TestCase):
             (False, "REGIME_FAMILY_WEIGHTING_CONTEXT_ROW_MISMATCH"),
         )
 
+    def test_phase_aware_regime_is_identical_in_context_and_weighting_receipt(self) -> None:
+        chart = copy.deepcopy(_chart())
+        for view in chart["views"]:
+            view["family_scores"] = {
+                "trend_score": 0.8,
+                "mean_rev_score": -0.6,
+                "breakout_score": 0.2,
+                "disagreement": 0.1,
+            }
+            if view["granularity"] == "M15":
+                view["market_state"] = {
+                    "evidence_complete": True,
+                    "phase": "PRE_RANGE",
+                    "readiness": "TRIGGERED",
+                    "confidence": 0.75,
+                }
+
+        context = build_forecast_technical_context(
+            chart,
+            pair="EUR_USD",
+            current_price=1.1,
+            spread_pips=0.5,
+        )
+
+        self.assertEqual(context["regime"]["by_timeframe"]["M15"], "RANGE")
+        self.assertEqual(context["regime"]["primary"], "RANGE")
+        self.assertEqual(
+            context["regime_family_weighting"]["source_identity"]["primary_regime"],
+            "RANGE",
+        )
+        self.assertEqual(
+            context["regime_family_weighting"]["by_timeframe"]["M15"]["regime_state"],
+            "RANGE",
+        )
+        self.assertEqual(
+            verify_forecast_technical_context(context, pair="EUR_USD"),
+            (True, None),
+        )
+
     def test_regime_atr_percentile_is_not_reinterpreted_as_fraction(self) -> None:
         chart = copy.deepcopy(_chart())
         chart["views"][1]["regime_reading"]["atr_percentile"] = 0.5

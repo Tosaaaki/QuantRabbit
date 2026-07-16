@@ -29,6 +29,7 @@ from quant_rabbit.strategy.tf_weights import (
 )
 from quant_rabbit.strategy.regime_family_weighting import (
     build_regime_family_weighting_receipt,
+    regime_family_state_from_view,
     verify_regime_family_weighting_context_binding,
     verify_regime_family_weighting_receipt,
 )
@@ -207,8 +208,8 @@ def build_forecast_technical_context(
         view = views.get(timeframe) or {}
         reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), Mapping) else {}
         indicators = view.get("indicators") if isinstance(view.get("indicators"), Mapping) else {}
-        regime_by_timeframe[timeframe] = _normalized_regime(
-            reading.get("state") or view.get("regime")
+        regime_by_timeframe[timeframe], _regime_confidence = (
+            regime_family_state_from_view(view)
         )
         reading_atr_percentile = reading.get("atr_percentile")
         atr_percentile = _round_or_none(

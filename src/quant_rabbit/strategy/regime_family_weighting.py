@@ -227,6 +227,20 @@ def _view_regime(view: Mapping[str, Any]) -> tuple[str, float | None]:
     return state, confidence
 
 
+def regime_family_state_from_view(
+    view: Mapping[str, Any],
+) -> tuple[str, float | None]:
+    """Return the canonical phase-aware regime used by family weighting.
+
+    Forecast technical context stores the same per-timeframe regime as the
+    weighting receipt.  Keeping this raw-view derivation in one function
+    prevents the context sibling and receipt from silently diverging when the
+    market-state phase model evolves.
+    """
+
+    return _view_regime(view)
+
+
 def _primary_regime(
     views: Mapping[str, Mapping[str, Any]],
     *,

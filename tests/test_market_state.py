@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 from quant_rabbit.analysis.market_state import (
     PHASES,
+    TAXONOMY_SECTIONS,
     classify_market_state,
+    market_state_taxonomy_contract,
     summarize_market_states,
 )
 
@@ -12,10 +14,19 @@ from quant_rabbit.analysis.market_state import (
 def _indicators(**updates):
     values = {
         "valid": True,
+        "candles_count": 200,
         "plus_di_14": 28.0,
         "minus_di_14": 14.0,
+        "adx_14": 30.0,
+        "choppiness_14": 35.0,
         "ema_slope_5": 2.0,
         "ema_slope_20": 1.0,
+        "supertrend_dir": 1,
+        "psar_dir": 1,
+        "ichimoku_cloud_pos": 1,
+        "rsi_14": 55.0,
+        "z_score_20": 0.2,
+        "half_life_60": 12.0,
         "atr_percentile_100": 0.5,
         "bb_squeeze": 0,
         "close": 1.1050,
@@ -70,6 +81,7 @@ def test_weak_trend_with_mean_reversion_dominance_is_pre_range() -> None:
     assert result.phase == "PRE_RANGE"
     assert result.momentum == "DECELERATING"
     assert result.strategy_family == "REVERSAL"
+    assert result.trend_maturity == "DECAYING"
 
 
 def test_breakout_pending_is_armed_pre_trend_not_unknown_or_no_trade() -> None:
@@ -83,6 +95,83 @@ def test_breakout_pending_is_armed_pre_trend_not_unknown_or_no_trade() -> None:
     assert result.volatility == "COMPRESSION"
     assert result.readiness == "ARMED"
     assert result.entry_mode == "STOP_ENTRY_AFTER_CONFIRMATION"
+
+
+def test_old_sweep_and_structure_event_are_not_permanent_triggers() -> None:
+    old_event = SimpleNamespace(
+        index=20,
+        close_confirmed=True,
+        kind="CHOCH_DOWN",
+    )
+    old_sweep = SimpleNamespace(index=30)
+    result = classify_market_state(
+        indicators=_indicators(),
+        regime_reading=_regime("TRANSITION"),
+        family_scores=_families(0.2, -0.8, 0.1),
+        structure=SimpleNamespace(last_event=old_event, liquidity=()),
+        smc=SimpleNamespace(sweeps=(old_sweep,), structure=None),
+        legacy_regime="FAILURE_RISK",
+    )
+    assert result.structure == "REVERSAL_STALE"
+    assert result.liquidity == "SWEEP_STALE"
+    assert result.trigger == "NONE"
+    assert result.readiness == "FORMING"
+
+
+def test_recent_sweep_and_close_break_create_expiring_trigger() -> None:
+    recent_event = SimpleNamespace(
+        index=194,
+        close_confirmed=True,
+        kind="BOS_UP",
+    )
+    recent_sweep = SimpleNamespace(index=198)
+    result = classify_market_state(
+        indicators=_indicators(),
+        regime_reading=_regime("BREAKOUT_PENDING", atr=10.0),
+        family_scores=_families(0.8, 0.1, 0.9),
+        structure=SimpleNamespace(last_event=recent_event, liquidity=()),
+        smc=SimpleNamespace(sweeps=(recent_sweep,), structure=None),
+        legacy_regime="TREND_UP",
+    )
+    assert result.structure == "BREAKOUT_ACTIVE"
+    assert result.liquidity == "SWEEP_ACTIVE"
+    assert result.trigger == "LIQUIDITY_SWEEP"
+    assert result.readiness == "TRIGGERED"
+
+
+def test_extended_sections_are_finite_and_exhaustive() -> None:
+    result = classify_market_state(
+        indicators=_indicators(
+            plus_di_14=10.0,
+            minus_di_14=30.0,
+            adx_14=45.0,
+            choppiness_14=70.0,
+            rsi_14=75.0,
+            z_score_20=2.5,
+            half_life_60=80.0,
+        ),
+        regime_reading=_regime("TREND_STRONG", atr=90.0),
+        family_scores=_families(0.8, 0.1, 0.2),
+        legacy_regime="TREND_UP",
+    )
+    assert result.direction_quality == "CONFLICT"
+    assert result.trend_strength == "EXTREME"
+    assert result.noise == "CHOPPY"
+    assert result.extension == "OVERBOUGHT"
+    assert result.mean_reversion_speed == "UNSTABLE"
+    assert result.trend_maturity == "EXHAUSTING"
+    for field_name, allowed in TAXONOMY_SECTIONS.items():
+        assert getattr(result, field_name) in allowed
+
+
+def test_taxonomy_contract_exposes_every_section_without_live_permission() -> None:
+    contract = market_state_taxonomy_contract()
+    assert contract["contract"] == "QR_MARKET_STATE_TAXONOMY_V2"
+    assert contract["grants_live_permission"] is False
+    assert contract["threshold_role"] == "REPLAY_SEED_NOT_LIVE_PERMISSION"
+    assert set(contract["sections"]) == set(TAXONOMY_SECTIONS)
+    assert contract["thresholds"]["structure_active_lookback_bars"] == 12
+    assert contract["thresholds"]["sweep_active_lookback_bars"] == 6
 
 
 def test_pair_summary_calls_lower_timeframe_transition_early_not_conflict() -> None:
@@ -102,3 +191,7 @@ def test_pair_summary_calls_lower_timeframe_transition_early_not_conflict() -> N
     ])
     assert summary["phase_alignment"] == "LOWER_TF_LEADING"
     assert summary["classified_timeframe_count"] == 2
+    assert summary["contract"] == "QR_MARKET_STATE_TAXONOMY_V2"
+    assert summary["opportunity_stage"] in {"TRIGGER_PRESENT", "SETUP_PRESENT"}
+    assert summary["grants_live_permission"] is False
+    assert summary["by_timeframe"]["M5"]["trend_maturity"] == "FORMING"

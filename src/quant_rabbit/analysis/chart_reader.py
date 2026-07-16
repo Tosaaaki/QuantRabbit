@@ -1043,6 +1043,12 @@ def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
             bits.append(f"Read={view.regime_reading.state}:{view.regime_reading.confidence:.2f}")
         if view.market_state is not None:
             bits.append(f"Phase={view.market_state.phase}/{view.market_state.readiness}")
+            bits.append(
+                f"Life={view.market_state.trend_maturity} "
+                f"DirQ={view.market_state.direction_quality} "
+                f"Trigger={view.market_state.trigger} "
+                f"Lq={view.market_state.liquidity}"
+            )
         if ind.regime_quantile is not None:
             bits.append(f"q={ind.regime_quantile}")
         if ind.ichimoku_cloud_pos:
