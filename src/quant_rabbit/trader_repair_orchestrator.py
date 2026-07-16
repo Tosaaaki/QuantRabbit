@@ -42,6 +42,7 @@ STATUS_APPROVAL_REQUIRED = "OPERATOR_APPROVAL_REQUIRED"
 STATUS_NO_REQUESTS = "NO_REPAIR_REQUESTS"
 STATUS_BLOCKED = "ORCHESTRATOR_BLOCKED"
 AUTOMATION_READY = "READY_FOR_CODEX_IMPLEMENTATION"
+READ_ONLY_EVIDENCE_WORK_STATUS = "READ_ONLY_EVIDENCE_WORK"
 AUTOMATION_OPERATOR_APPROVAL = "WAITING_FOR_OPERATOR_APPROVAL"
 AUTOMATION_LIVE_EVIDENCE_WINDOW = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 AUTOMATION_EVIDENCE = "WAITING_FOR_EVIDENCE"
@@ -519,6 +520,7 @@ def _loop_engineering_prompt(
         entry=entry,
         queue=queue,
     )
+    current_state["active_lane_evidence_work"] = _active_lane_evidence_work(entry)
     current_state["profitability_rca_summary"] = _profitability_rca_summary(
         acceptance=acceptance,
         target_firepower=target_firepower,
@@ -724,6 +726,81 @@ def _execution_frontier_summary(
     if unknown_owner:
         summary["unknown_owner_context"] = unknown_owner
     return summary
+
+
+def _active_lane_evidence_work(entry: dict[str, Any]) -> dict[str, Any]:
+    shortest = (
+        entry.get("shortest_live_ready_path")
+        if isinstance(entry.get("shortest_live_ready_path"), dict)
+        else {}
+    )
+    active_path = (
+        shortest.get("active_path")
+        if isinstance(shortest.get("active_path"), dict)
+        else {}
+    )
+    next_action = str(
+        active_path.get("next_action")
+        or shortest.get("first_next_step")
+        or shortest.get("next_action")
+        or ""
+    ).strip()
+    lane_id = str(active_path.get("lane_id") or shortest.get("lane_id") or "").strip()
+    if not lane_id or not next_action:
+        return {}
+    if active_path.get("live_permission") is True or shortest.get("live_permission") is True:
+        return {}
+
+    blocker_codes = _dedupe_strings(
+        list(active_path.get("blocker_codes") or [])
+        + list(shortest.get("blocker_codes") or [])
+    )
+    work = {
+        "status": READ_ONLY_EVIDENCE_WORK_STATUS,
+        "source": "trader_support_bot.entry_readiness.shortest_live_ready_path",
+        "lane_id": lane_id,
+        "pair": active_path.get("pair") or shortest.get("pair"),
+        "side": active_path.get("side") or shortest.get("side"),
+        "method": active_path.get("method") or shortest.get("method"),
+        "order_type": active_path.get("order_type") or shortest.get("order_type"),
+        "current_status": shortest.get("status") or active_path.get("status"),
+        "active_path_status": active_path.get("status"),
+        "selection_basis": shortest.get("selection_basis"),
+        "next_action": next_action,
+        "blocker_codes": blocker_codes[:24],
+        "suggested_commands": _active_lane_evidence_commands(next_action, blocker_codes),
+        "read_only": True,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+    }
+    return {key: value for key, value in work.items() if value not in (None, [], {})}
+
+
+def _active_lane_evidence_commands(next_action: str, blocker_codes: list[str]) -> list[str]:
+    text = " ".join([next_action, *blocker_codes]).upper()
+    commands: list[str] = []
+    if "VERIFY_TRIGGER_PROJECTIONS" in text or "FORECAST" in text or "PROJECTION" in text:
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections")
+    if "ENTRY_DROUGHT" in text or "ENTRY-FREQUENCY" in text or "ENTRY FREQUENCY" in text:
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli entry-frequency-recovery")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract")
+    if "FORECAST-PATTERN" in text or "FORECAST_PATTERN" in text or "RANGE_RAIL_GEOMETRY_REPAIR" in text:
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli forecast-pattern-refresh")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract")
+    if "RANGE_RAIL" in text or "RANGE-RAIL" in text:
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli guardian-trigger-contract")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli guardian-event-router")
+    if "EXACT_TP_PROOF_COLLECTION" in text or "TP_PROOF" in text or "PROOF" in text:
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli as-4x-proof-path")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli active-opportunity-board")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli non-eurusd-live-grade-frontier")
+        commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli active-trader-contract")
+    commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot")
+    commands.append("PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator")
+    return list(dict.fromkeys(commands))
 
 
 def _compact_frontier_lane(item: dict[str, Any]) -> dict[str, Any]:
@@ -2338,6 +2415,15 @@ def _codex_work_order(
 ) -> dict[str, Any]:
     proof_state = _work_order_proof_state(loop_prompt)
     if not selected:
+        read_only_work = _read_only_evidence_work_order(
+            proof_state=proof_state,
+            status=status,
+            trader_request=trader_request,
+            approval_boundary=approval_boundary,
+            loop_prompt=loop_prompt,
+        )
+        if read_only_work:
+            return read_only_work
         return {
             "status": "NO_ACTIONABLE_CODEX_WORK",
             "orchestrator_status": status,
@@ -2417,11 +2503,71 @@ def _work_order_proof_state(loop_prompt: dict[str, Any] | None) -> dict[str, Any
         "gateway_issue_codes",
         "proof_queue_empty_reason",
         "next_evidence_actions",
+        "active_lane_evidence_work",
     ]
     return {
         key: current_state.get(key)
         for key in keys
         if current_state.get(key) not in (None, [], {})
+    }
+
+
+def _read_only_evidence_work_order(
+    *,
+    proof_state: dict[str, Any],
+    status: str,
+    trader_request: str,
+    approval_boundary: dict[str, Any],
+    loop_prompt: dict[str, Any] | None,
+) -> dict[str, Any]:
+    active_work = proof_state.get("active_lane_evidence_work")
+    if not isinstance(active_work, dict) or not active_work.get("lane_id"):
+        return {}
+    commands = _dedupe_strings(active_work.get("suggested_commands")) or [
+        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-goal-loop-orchestrator",
+    ]
+    return {
+        "status": READ_ONLY_EVIDENCE_WORK_STATUS,
+        "orchestrator_status": status,
+        "trader_request": trader_request,
+        "objective": (
+            f"Advance read-only lane evidence for {active_work.get('lane_id')} "
+            "instead of stopping at NO_ACTIONABLE_CODEX_WORK."
+        ),
+        "selection_reason": (
+            "No READY_FOR_CODEX_IMPLEMENTATION repair request is selected, but the terminal "
+            "support/active-contract path exposes a concrete blocker-preserving next_action."
+        ),
+        "active_lane_evidence_work": active_work,
+        "suggested_commands": commands,
+        "targeted_test_commands": [],
+        "verification_commands": [
+            "python3 -m json.tool data/trader_support_bot.json >/dev/null",
+            "python3 -m json.tool data/trader_goal_loop_orchestrator.json >/dev/null",
+        ],
+        "final_verification_commands": [
+            "python3 -m json.tool data/trader_repair_orchestrator.json >/dev/null",
+        ],
+        "deliverables": [
+            "read_only_artifact_refresh_or_documented_wait_condition",
+            "no_live_side_effects",
+            "updated_support_goal_loop_orchestrator_artifacts",
+        ],
+        "proof_state": proof_state,
+        "commit_and_live_sync_required": False,
+        "quant_rabbit_code_may_call_model_api": False,
+        "approval_boundary": approval_boundary,
+        "live_side_effects": [],
+        "live_permission_allowed": False,
+        "automation_prompt": (
+            "Execute only the suggested read-only evidence commands when useful, then inspect the "
+            "refreshed support/goal-loop state. Do not send orders, cancel orders, close positions, "
+            "mutate launchd, relax gates, or treat this work order as live permission."
+        ),
+        "loop_prompt_version": (
+            loop_prompt.get("version") if isinstance(loop_prompt, dict) else None
+        ),
     }
 
 
@@ -2797,6 +2943,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Status: `{work_order.get('status')}`",
         f"- Selection reason: {work_order.get('selection_reason')}",
         f"- Objective: {work_order.get('objective')}",
+        f"- Suggested commands: `{', '.join(work_order.get('suggested_commands') or [])}`",
         f"- Evidence summary keys: `{', '.join(sorted((work_order.get('evidence_summary') or {}).keys()))}`",
         f"- Deliverables: `{', '.join(work_order.get('deliverables') or [])}`",
         f"- Final verification: `{', '.join(work_order.get('final_verification_commands') or [])}`",

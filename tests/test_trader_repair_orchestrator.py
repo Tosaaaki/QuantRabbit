@@ -11,6 +11,7 @@ from pathlib import Path
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND
 from quant_rabbit.trader_repair_orchestrator import (
+    READ_ONLY_EVIDENCE_WORK_STATUS,
     STATUS_APPROVAL_REQUIRED,
     STATUS_BLOCKED,
     STATUS_READY,
@@ -36,6 +37,109 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderRepairOrchestratorTest(unittest.TestCase):
+    def test_no_selected_repair_still_exports_active_lane_read_only_evidence_work(self) -> None:
+        now = datetime(2026, 7, 10, 0, 20, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            support.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "SUPPORT_BLOCKED",
+                        "repair_requests": [],
+                        "entry_readiness": {
+                            "live_ready_lanes": 0,
+                            "shortest_live_ready_path": {
+                                "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "LIMIT",
+                                "status": "ACTIVE_PATH_BLOCKED_NEAR_READY_LANE",
+                                "selection_basis": "active_trader_contract",
+                                "blocker_codes": [
+                                    "LIMIT_ENTRY_NOT_BELOW_MARKET",
+                                    "FORECAST_WATCH_ONLY",
+                                ],
+                                "first_next_step": (
+                                    "Consume range_rail_geometry_repair artifact: "
+                                    "WAIT_FOR_RANGE_RAIL_RECHECK. Follow-up evidence actions: "
+                                    "VERIFY_TRIGGER_PROJECTIONS, EXACT_TP_PROOF_COLLECTION. "
+                                    "Do not send."
+                                ),
+                                "active_path": {
+                                    "lane_id": "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+                                    "pair": "GBP_USD",
+                                    "side": "LONG",
+                                    "method": "RANGE_ROTATION",
+                                    "order_type": "LIMIT",
+                                    "status": "EVIDENCE_ACQUISITION",
+                                    "live_permission": False,
+                                    "blocker_codes": [
+                                        "LIMIT_ENTRY_NOT_BELOW_MARKET",
+                                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "LOCAL_TP_PROOF_BELOW_COLLECTION_FLOOR",
+                                    ],
+                                    "next_action": (
+                                        "Consume data/range_rail_geometry_repair.json for "
+                                        "range_trader:GBP_USD:LONG:RANGE_ROTATION: next safe action "
+                                        "is WAIT_FOR_RANGE_RAIL_RECHECK; Follow-up evidence actions: "
+                                        "VERIFY_TRIGGER_PROJECTIONS, EXACT_TP_PROOF_COLLECTION. "
+                                        "Do not send, cancel, close, or relax gates."
+                                    ),
+                                },
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now,
+            ).run()
+
+            self.assertEqual(summary.status, "NO_REPAIR_REQUESTS")
+            payload = json.loads(output.read_text())
+            work_order = payload["codex_work_order"]
+            self.assertEqual(work_order["status"], READ_ONLY_EVIDENCE_WORK_STATUS)
+            self.assertFalse(work_order["live_permission_allowed"])
+            self.assertEqual(work_order["live_side_effects"], [])
+            self.assertFalse(work_order["commit_and_live_sync_required"])
+            self.assertEqual(
+                work_order["active_lane_evidence_work"]["lane_id"],
+                "range_trader:GBP_USD:LONG:RANGE_ROTATION",
+            )
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections",
+                work_order["suggested_commands"],
+            )
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli range-rail-geometry-repair",
+                work_order["suggested_commands"],
+            )
+            self.assertIn(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli as-live-ready-evidence-loop",
+                work_order["suggested_commands"],
+            )
+            self.assertIn(
+                "active_lane_evidence_work",
+                work_order["proof_state"],
+            )
+            report_text = report.read_text()
+            self.assertIn(READ_ONLY_EVIDENCE_WORK_STATUS, report_text)
+            self.assertIn("verify-projections", report_text)
+
     def test_pending_cancel_review_waits_for_trader_receipt_not_codex_implementation(self) -> None:
         now = datetime(2026, 6, 25, 2, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
