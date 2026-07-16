@@ -63,7 +63,10 @@ def resolve_fast_bot_signal(
     if (
         not ordered
         or ordered[0].timestamp_utc > generated + timedelta(seconds=10)
-        or ordered[-1].timestamp_utc < maturity - timedelta(seconds=10)
+        or (
+            ordered[-1].timestamp_utc + timedelta(seconds=5)
+            < maturity - timedelta(seconds=10)
+        )
     ):
         raise ValueError("incomplete fast-bot S5 truth coverage")
     fill_at: datetime | None = None

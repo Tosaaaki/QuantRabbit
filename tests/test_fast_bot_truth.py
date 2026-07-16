@@ -247,6 +247,22 @@ class FastBotTruthTest(unittest.TestCase):
                 resolved_at_utc=NOW + timedelta(minutes=20),
             )
 
+    def test_complete_candle_end_can_satisfy_nine_second_tail_coverage(self) -> None:
+        generated = NOW + timedelta(microseconds=54940)
+        signal = _signal(generated=generated)
+
+        outcome = resolve_fast_bot_signal(
+            signal,
+            [
+                _candle(5, ask_l=1.0999),
+                _candle(980),
+            ],
+            resolved_at_utc=NOW + timedelta(minutes=20),
+        )
+
+        self.assertTrue(outcome["filled"])
+        self.assertEqual(outcome["exit_reason"], "HORIZON_FULL_STOP_LOSS")
+
     def test_immature_signal_cannot_be_scored(self) -> None:
         with self.assertRaisesRegex(ValueError, "fast-bot signal is not mature"):
             resolve_fast_bot_signal(

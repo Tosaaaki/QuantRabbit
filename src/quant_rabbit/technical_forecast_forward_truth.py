@@ -209,7 +209,14 @@ def fetch_frozen_s5_truth(
     time_to: datetime,
     chunk_candle_limit: int,
 ) -> tuple[list[S5BidAskCandle], list[str]]:
-    """Fetch a complete fixed interval in bounded S5 BA requests."""
+    """Fetch complete S5 candles wholly contained in a fixed interval.
+
+    OANDA rounds a non-grid ``from`` backward to the containing S5 candle.
+    That candle includes price action from before the decision timestamp.  A
+    non-grid ``to`` can likewise expose a candle whose close is after the
+    frozen horizon.  Aligning both request boundaries inward prevents either
+    look-behind or look-ahead from entering forward evidence.
+    """
 
     start = _aware_utc(time_from)
     end = _aware_utc(time_to)
@@ -217,12 +224,16 @@ def fetch_frozen_s5_truth(
         raise ValueError("truth interval must be positive")
     if chunk_candle_limit.__class__ is not int or not 1 <= chunk_candle_limit <= 5000:
         raise ValueError("chunk_candle_limit must be an exact integer inside 1..5000")
+    request_start = _ceil_s5_boundary(start)
+    request_end = _floor_s5_boundary(end)
+    if request_end <= request_start:
+        raise ValueError("truth interval contains no complete S5 candle")
     step = timedelta(seconds=5 * chunk_candle_limit)
-    cursor = start
+    cursor = request_start
     chunk_hashes: list[str] = []
     by_timestamp: dict[datetime, S5BidAskCandle] = {}
-    while cursor < end:
-        chunk_end = min(end, cursor + step)
+    while cursor < request_end:
+        chunk_end = min(request_end, cursor + step)
         payload = client.get_json(
             f"/v3/instruments/{pair}/candles",
             {
@@ -252,6 +263,19 @@ def fetch_frozen_s5_truth(
         cursor = chunk_end
     candles = [by_timestamp[timestamp] for timestamp in sorted(by_timestamp)]
     return candles, chunk_hashes
+
+
+def _floor_s5_boundary(value: datetime) -> datetime:
+    utc = _aware_utc(value)
+    return utc.replace(microsecond=0) - timedelta(seconds=utc.second % 5)
+
+
+def _ceil_s5_boundary(value: datetime) -> datetime:
+    utc = _aware_utc(value)
+    floored = _floor_s5_boundary(utc)
+    if utc == floored:
+        return floored
+    return floored + timedelta(seconds=5)
 
 
 def _parse_oanda_candle(value: Any, *, pair: str) -> S5BidAskCandle:

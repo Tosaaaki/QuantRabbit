@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
@@ -54,6 +54,29 @@ class TechnicalForecastForwardTruthTest(unittest.TestCase):
         self.assertEqual(len(hashes), 4)
         self.assertTrue(all(path == "/v3/instruments/EUR_USD/candles" for path, _ in client.calls))
         self.assertTrue(all(query["price"] == "BA" for _, query in client.calls))
+
+    def test_non_grid_interval_is_aligned_inward_to_complete_s5_candles(self) -> None:
+        client = _FakeClient()
+        start = datetime(2026, 7, 16, 12, 0, 1, 250000, tzinfo=timezone.utc)
+        end = start + timedelta(seconds=16.5)
+
+        candles, hashes = fetch_frozen_s5_truth(
+            client,
+            pair="EUR_USD",
+            time_from=start,
+            time_to=end,
+            chunk_candle_limit=4500,
+        )
+
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(len(hashes), 1)
+        query = client.calls[0][1]
+        self.assertEqual(query["from"], "2026-07-16T12:00:05.000000Z")
+        self.assertEqual(query["to"], "2026-07-16T12:00:15.000000Z")
+        self.assertEqual(
+            candles[0].timestamp_utc,
+            datetime(2026, 7, 16, 12, 0, 5, tzinfo=timezone.utc),
+        )
 
     def test_no_shadow_ledger_never_initializes_oanda(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
