@@ -400,6 +400,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 sum(len(row["arms"]) for row in vehicle["learning_seat"]["candidates"]),
             )
             self.assertGreater(vehicle["arm_count"], 6)
+            self.assertTrue(vehicle["causal_input_proof_eligible"])
+            self.assertTrue(vehicle["scorecard_eligible"])
+            self.assertEqual(vehicle["scorecard_ineligibility_reasons"], [])
             roles = {
                 (row["side"], row["method"]): row["episode_role"]
                 for row in vehicle["candidate_roles"]
@@ -500,6 +503,68 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             self.assertEqual(no_match["vehicle_projection_status"], "VERIFIED")
             self.assertEqual(no_match["handoff_confirmed_vehicle_count"], 0)
             self.assertEqual(no_match["vehicle_ledger_appended"], 0)
+            self.assertFalse(paths["vehicle_ledger"].exists())
+
+    def test_confirmed_without_frozen_seat_is_explicitly_unscored(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = _build_fixture(Path(temp_dir))
+            shadow_body = {
+                key: value
+                for key, value in paths["shadow"].items()
+                if key != "contract_sha256"
+            }
+            shadow_body.update(
+                {
+                    "status": "NO_ELIGIBLE_LEARNING_SEAT",
+                    "seat_count": 0,
+                    "candidate_count": 0,
+                    "complete_six_cell_seat_count": 0,
+                    "partial_valid_input_seat_count": 0,
+                    "excluded_pair_counts": {"QUOTE_OR_ATR_INVALID": 1},
+                    "seats": [],
+                }
+            )
+            empty_shadow = _seal(shadow_body)
+            handoff_body = {
+                key: value
+                for key, value in paths["handoff"].items()
+                if key != "contract_sha256"
+            }
+            handoff_body["prospective_vehicle_shadow"] = empty_shadow
+            handoff_body["prospective_vehicle_shadow_sha256"] = empty_shadow[
+                "contract_sha256"
+            ]
+            no_seat_handoff = _seal(handoff_body)
+
+            result = _run(
+                paths,
+                handoffs=[no_seat_handoff],
+                now=CONFIRMED_AT,
+                client_factory=lambda: (_ for _ in ()).throw(
+                    AssertionError("an unscored event has no due truth fetch")
+                ),
+            )
+
+            self.assertEqual(result["status"], "NO_DUE_VEHICLES")
+            self.assertEqual(result["vehicle_projection_status"], "VERIFIED")
+            self.assertEqual(result["handoff_confirmed_event_count"], 1)
+            self.assertEqual(result["handoff_confirmed_vehicle_count"], 0)
+            self.assertEqual(result["handoff_confirmed_unscored_count"], 1)
+            self.assertEqual(
+                result["handoff_confirmed_unscored_reason_counts"],
+                {"CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT": 1},
+            )
+            self.assertEqual(
+                result["handoff_confirmed_unscored_examples"][0]["reason"],
+                "CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT",
+            )
+            self.assertEqual(
+                result["handoff_confirmed_unscored_examples"][0][
+                    "prospective_shadow_status"
+                ],
+                "NO_ELIGIBLE_LEARNING_SEAT",
+            )
+            self.assertEqual(result["vehicle_ledger_appended"], 0)
             self.assertFalse(paths["vehicle_ledger"].exists())
 
     def test_mature_cycle_uses_one_path_and_separates_proof_from_bid_ask_mark(self) -> None:

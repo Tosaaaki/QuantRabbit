@@ -25,9 +25,13 @@ LEARNING_SHADOW_CONTRACT = "QR_FAST_BOT_LEARNING_SHADOW_V1"
 LEARNING_SEAT_CONTRACT = "QR_FAST_BOT_LEARNING_SEAT_V1"
 LEARNING_CANDIDATE_CONTRACT = "QR_FAST_BOT_LEARNING_CANDIDATE_V1"
 LEARNING_SELECTION_POLICY_V2 = "PAIR_UTC_10M_ALL_ELIGIBLE_CELLS_V2"
-LEARNING_SELECTION_POLICY = "PAIR_UTC_10M_ALL_VALID_INPUT_CELLS_V3"
+LEARNING_SELECTION_POLICY_V3 = "PAIR_UTC_10M_ALL_VALID_INPUT_CELLS_V3"
+LEARNING_SELECTION_POLICY = (
+    "PAIR_UTC_10M_ALL_STRUCTURAL_CELLS_WITH_INPUT_BLOCKED_SHADOW_V4"
+)
 SUPPORTED_LEARNING_SELECTION_POLICIES = (
     LEARNING_SELECTION_POLICY_V2,
+    LEARNING_SELECTION_POLICY_V3,
     LEARNING_SELECTION_POLICY,
 )
 LEARNING_ARM_POLICY_V1 = "QR_FAST_BOT_LEARNING_OFAT_ARMS_V1"
@@ -38,13 +42,14 @@ METHODS = ("BREAKOUT_FAILURE", "RANGE_ROTATION", "TREND_CONTINUATION")
 SIDES = ("LONG", "SHORT")
 CELL_ORDER = tuple((side, method) for method in METHODS for side in SIDES)
 CANDIDATE_CLASSES_V2 = ("COST_BLOCKED", "CAUTION_TECHNICAL", "GO_CONTROL")
-CANDIDATE_CLASSES = (
+CANDIDATE_CLASSES_V3 = (
     "COST_BLOCKED",
     "REJECTED_TECHNICAL",
     "SUPERVISOR_BLOCKED",
     "CAUTION_TECHNICAL",
     "GO_CONTROL",
 )
+CANDIDATE_CLASSES = (*CANDIDATE_CLASSES_V3, "INPUT_BLOCKED")
 INVALID_INPUT_BLOCKER_PREFIXES = (
     "FAST_CHART_PACKET_STALE",
     "BROKER_SNAPSHOT_OR_QUOTES_STALE",
@@ -165,6 +170,8 @@ def learning_candidate_classes_for_selection_policy(
 ) -> tuple[str, ...]:
     if selection_policy == LEARNING_SELECTION_POLICY_V2:
         return CANDIDATE_CLASSES_V2
+    if selection_policy == LEARNING_SELECTION_POLICY_V3:
+        return CANDIDATE_CLASSES_V3
     if selection_policy == LEARNING_SELECTION_POLICY:
         return CANDIDATE_CLASSES
     raise ValueError("unsupported learning selection policy")
@@ -214,11 +221,13 @@ def build_fast_bot_learning_shadow(
         "maximum_candidates_per_utc_day": MAX_CANDIDATES_PER_UTC_DAY,
         "all_eligible_side_method_cells_emitted": True,
         "valid_input_rejected_cells_retained": True,
+        "sealed_input_blocked_cells_retained": True,
         "candidate_classes": list(CANDIDATE_CLASSES),
         "candidate_blocker_facets": [
             "cost_blocked",
             "technical_blocked",
             "supervisor_blocked",
+            "input_blocked",
         ],
         "source_timeframe_votes_frozen": True,
         "paired_direction_proof_requires_complete_six_cell_seat": True,
@@ -374,6 +383,8 @@ def build_fast_bot_learning_shadow(
                 {str(item) for item in row.get("caution_reasons", []) or []}
             )
             blocker_facets = _blocker_facets(hard_blockers)
+            input_blockers = _input_blockers(hard_blockers)
+            causal_input_proof_eligible = not input_blockers
             source_regime_evidence = {
                 "state": str(row.get("state") or "").upper(),
                 "execution_enabled": row.get("execution_enabled") is True,
@@ -405,6 +416,7 @@ def build_fast_bot_learning_shadow(
                 "state_at_emission": str(row.get("state") or ""),
                 "hard_blockers": hard_blockers,
                 "caution_reasons": caution_reasons,
+                "input_blockers": input_blockers,
                 **blocker_facets,
                 "regime_score": _finite_number(row.get("score")),
                 "failed_break_direction": str(row.get("failed_break_direction") or ""),
@@ -413,6 +425,12 @@ def build_fast_bot_learning_shadow(
                 "arm_policy": LEARNING_ARM_POLICY,
                 "arms": arms,
                 "frozen_bid_ask_truth_path_required": True,
+                "exact_s5_shadow_scoring_allowed": True,
+                "technical_hypothesis_shadow_allowed": True,
+                "causal_input_proof_eligible": causal_input_proof_eligible,
+                "technical_hypothesis_proof_eligible": (
+                    causal_input_proof_eligible
+                ),
                 "lifecycle": "PERMANENT_ALWAYS_ON_COUNTERFACTUAL_SHADOW",
                 "order_authority": "NONE",
                 "diagnostic_only": True,
@@ -449,6 +467,13 @@ def build_fast_bot_learning_shadow(
             if (str(item["side"]), str(item["method"])) not in selected_cells
         ]
         complete_six_cell_seat = len(candidates) == MAX_CANDIDATES_PER_SEAT
+        causal_input_proof_eligible = bool(
+            complete_six_cell_seat
+            and all(
+                candidate.get("causal_input_proof_eligible") is True
+                for candidate in candidates
+            )
+        )
         seat_body = {
             "contract": LEARNING_SEAT_CONTRACT,
             "schema_version": 1,
@@ -511,11 +536,16 @@ def build_fast_bot_learning_shadow(
                 "cost_blocked",
                 "technical_blocked",
                 "supervisor_blocked",
+                "input_blocked",
             ],
             "source_timeframe_votes_frozen": True,
             "paired_direction_proof_requires_complete_six_cell_seat": True,
             "complete_six_cell_seat": complete_six_cell_seat,
-            "paired_direction_proof_eligible": complete_six_cell_seat,
+            "causal_input_proof_eligible": causal_input_proof_eligible,
+            "paired_direction_proof_eligible": causal_input_proof_eligible,
+            "sealed_input_blocked_cells_retained": True,
+            "exact_s5_shadow_scoring_allowed": True,
+            "technical_hypothesis_shadow_allowed": True,
             "maximum_candidates_per_seat": MAX_CANDIDATES_PER_SEAT,
             "hot_ledger_retention_policy": HOT_LEDGER_RETENTION_POLICY,
             "learning_outcome_aggregation_status": (
@@ -635,16 +665,20 @@ def run_fast_bot_learning_shadow(
 def _candidate_class(row: Mapping[str, Any]) -> str | None:
     state = str(row.get("state") or "").upper()
     hard = {str(item).upper() for item in row.get("hard_blockers", []) or []}
-    if not _timeframe_votes_complete(row):
+    input_blockers = set(_input_blockers(hard))
+    if not _timeframe_votes_structurally_valid(row):
         return None
-    if any(
-        any(item.startswith(prefix) for prefix in INVALID_INPUT_BLOCKER_PREFIXES)
-        for item in hard
-    ):
+    if not input_blockers and not _timeframe_votes_complete(row):
         return None
     known = {*TECHNICAL_BLOCKERS, COST_BLOCKER, SUPERVISOR_BLOCKER}
-    if hard - known:
+    if (hard - input_blockers) - known:
         return None
+    if input_blockers:
+        return (
+            "INPUT_BLOCKED"
+            if state == "STOP" and row.get("execution_enabled") is not True
+            else None
+        )
     if state == "STOP":
         if SUPERVISOR_BLOCKER in hard:
             return "SUPERVISOR_BLOCKED"
@@ -682,12 +716,32 @@ def _timeframe_votes_complete(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _timeframe_votes_structurally_valid(row: Mapping[str, Any]) -> bool:
+    votes = _normalized_timeframe_votes(row)
+    required = {"M1", "M5", "M15", "M30", "H1", "H4", "D"}
+    return set(votes) == required
+
+
+def _input_blockers(hard_blockers: Sequence[str]) -> list[str]:
+    return sorted(
+        {
+            str(item).upper()
+            for item in hard_blockers
+            if any(
+                str(item).upper().startswith(prefix)
+                for prefix in INVALID_INPUT_BLOCKER_PREFIXES
+            )
+        }
+    )
+
+
 def _blocker_facets(hard_blockers: Sequence[str]) -> dict[str, bool]:
     hard = {str(item).upper() for item in hard_blockers}
     return {
         "cost_blocked": COST_BLOCKER in hard,
         "technical_blocked": bool(hard & TECHNICAL_BLOCKERS),
         "supervisor_blocked": SUPERVISOR_BLOCKER in hard,
+        "input_blocked": bool(_input_blockers(hard)),
     }
 
 
@@ -1073,13 +1127,35 @@ def _learning_seat_valid(value: Mapping[str, Any]) -> bool:
         or _parse_utc(value.get("m1_closed_candle_utc")) is None
     ):
         return False
-    if selection_policy == LEARNING_SELECTION_POLICY:
+    if selection_policy in {
+        LEARNING_SELECTION_POLICY_V3,
+        LEARNING_SELECTION_POLICY,
+    }:
         complete_six = len(candidates) == MAX_CANDIDATES_PER_SEAT
+        paired_proof_eligible = complete_six
+        if selection_policy == LEARNING_SELECTION_POLICY:
+            paired_proof_eligible = bool(
+                complete_six
+                and all(
+                    isinstance(candidate, Mapping)
+                    and candidate.get("causal_input_proof_eligible") is True
+                    for candidate in candidates
+                )
+            )
         if (
             value.get("paired_direction_proof_requires_complete_six_cell_seat")
             is not True
             or value.get("complete_six_cell_seat") is not complete_six
-            or value.get("paired_direction_proof_eligible") is not complete_six
+            or value.get("paired_direction_proof_eligible")
+            is not paired_proof_eligible
+        ):
+            return False
+        if selection_policy == LEARNING_SELECTION_POLICY and (
+            value.get("sealed_input_blocked_cells_retained") is not True
+            or value.get("causal_input_proof_eligible")
+            is not paired_proof_eligible
+            or value.get("exact_s5_shadow_scoring_allowed") is not True
+            or value.get("technical_hypothesis_shadow_allowed") is not True
         ):
             return False
     bucket = _parse_utc(value.get("sampling_bucket_utc"))
@@ -1210,6 +1286,22 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
         ),
     }
     expected_facets = _blocker_facets(sorted(hard))
+    if selection_policy == LEARNING_SELECTION_POLICY_V3:
+        expected_facets.pop("input_blocked")
+    input_blockers = _input_blockers(sorted(hard))
+    timeframe_votes = expected_source_evidence["timeframe_votes"]
+    timeframe_evidence_valid = bool(
+        set(timeframe_votes) == {"M1", "M5", "M15", "M30", "H1", "H4", "D"}
+        and (
+            all(vote.get("evidence_complete") is True for vote in timeframe_votes.values())
+            if selection_policy == LEARNING_SELECTION_POLICY_V3
+            else bool(input_blockers)
+            or all(
+                vote.get("evidence_complete") is True
+                for vote in timeframe_votes.values()
+            )
+        )
+    )
     if not bool(
         dict(source_evidence) == expected_source_evidence
         and value.get("source_regime_evidence_sha256")
@@ -1217,14 +1309,26 @@ def _learning_candidate_valid(value: Any, *, seat: Mapping[str, Any]) -> bool:
         and all(
             value.get(name) is expected for name, expected in expected_facets.items()
         )
-        and set(expected_source_evidence["timeframe_votes"])
-        == {"M1", "M5", "M15", "M30", "H1", "H4", "D"}
-        and all(
-            vote.get("evidence_complete") is True
-            for vote in expected_source_evidence["timeframe_votes"].values()
-        )
+        and timeframe_evidence_valid
     ):
         return False
+    if selection_policy == LEARNING_SELECTION_POLICY and not bool(
+        value.get("input_blockers") == input_blockers
+        and value.get("input_blocked") is bool(input_blockers)
+        and value.get("exact_s5_shadow_scoring_allowed") is True
+        and value.get("technical_hypothesis_shadow_allowed") is True
+        and value.get("causal_input_proof_eligible") is (not input_blockers)
+        and value.get("technical_hypothesis_proof_eligible")
+        is (not input_blockers)
+    ):
+        return False
+    if input_blockers:
+        return bool(
+            selection_policy == LEARNING_SELECTION_POLICY
+            and candidate_class == "INPUT_BLOCKED"
+            and state == "STOP"
+            and not execution_enabled
+        )
     return bool(
         (
             candidate_class == "SUPERVISOR_BLOCKED"

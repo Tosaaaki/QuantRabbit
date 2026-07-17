@@ -33,6 +33,7 @@ from quant_rabbit.fast_bot_episode import (
 )
 from quant_rabbit.fast_bot_learning import (
     CELL_ORDER,
+    LEARNING_SELECTION_POLICY,
     LEARNING_SHADOW_CONTRACT,
 )
 from quant_rabbit.fast_bot_learning_truth import (
@@ -78,6 +79,7 @@ MAX_OUTCOME_LEDGER_BYTES = 128 * 1024 * 1024
 MAX_LEDGER_ROWS = 16_384
 MAX_DUE_PER_RUN = 12
 MAX_ERROR_COUNT = 20
+MAX_UNSCORED_EXAMPLES = 32
 ROUND_DIGITS = 6
 TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 TIMEFRAME_SECONDS = {
@@ -258,6 +260,12 @@ def run_fast_bot_episode_truth_cycle(
         "promotion_allowed": False,
         "primary_effect": False,
         "risk_effect": False,
+        "handoff_confirmed_event_count": 0,
+        "handoff_confirmed_vehicle_count": 0,
+        "handoff_confirmed_unscored_count": 0,
+        "handoff_confirmed_unscored_reason_counts": {},
+        "handoff_confirmed_unscored_examples": [],
+        "vehicle_ledger_idempotent": 0,
         "shadow_only": True,
         "live_permission": False,
         "broker_mutation_allowed": False,
@@ -347,13 +355,13 @@ def _run_locked(
         handoffs=handoffs,
         existing_vehicles=vehicles,
     )
+    projection_summary = _projection_summary(projected)
     if projected["conflicts"]:
         return {
             **base,
             "status": "VEHICLE_IDENTITY_CONFLICT",
             "vehicle_projection_status": "FAILED",
-            "handoff_confirmed_vehicle_count": projected["matched_count"],
-            "vehicle_ledger_idempotent": projected["idempotent_count"],
+            **projection_summary,
             "broker_read": False,
             "vehicle_ledger_appended": 0,
             "outcome_ledger_appended": 0,
@@ -376,8 +384,7 @@ def _run_locked(
             **base,
             "status": "OUTCOME_LEDGER_INVALID_FAIL_CLOSED",
             "vehicle_projection_status": "VERIFIED",
-            "handoff_confirmed_vehicle_count": projected["matched_count"],
-            "vehicle_ledger_idempotent": projected["idempotent_count"],
+            **projection_summary,
             "broker_read": False,
             "vehicle_ledger_appended": len(new_vehicles),
             "outcome_ledger_appended": 0,
@@ -416,8 +423,7 @@ def _run_locked(
             **base,
             "status": "OUTCOME_IDENTITY_CONFLICT",
             "vehicle_projection_status": "VERIFIED",
-            "handoff_confirmed_vehicle_count": projected["matched_count"],
-            "vehicle_ledger_idempotent": projected["idempotent_count"],
+            **projection_summary,
             "broker_read": False,
             "vehicle_ledger_appended": len(new_vehicles),
             "outcome_ledger_appended": 0,
@@ -445,8 +451,7 @@ def _run_locked(
             **base,
             "status": "PROJECTED_NO_DUE" if new_vehicles else "NO_DUE_VEHICLES",
             "vehicle_projection_status": "VERIFIED",
-            "handoff_confirmed_vehicle_count": projected["matched_count"],
-            "vehicle_ledger_idempotent": projected["idempotent_count"],
+            **projection_summary,
             "broker_read": False,
             "vehicle_ledger_appended": len(new_vehicles),
             "outcome_ledger_appended": 0,
@@ -470,8 +475,7 @@ def _run_locked(
             **base,
             "status": "RESOLVED_WITH_ERRORS",
             "vehicle_projection_status": "VERIFIED",
-            "handoff_confirmed_vehicle_count": projected["matched_count"],
-            "vehicle_ledger_idempotent": projected["idempotent_count"],
+            **projection_summary,
             "broker_read": False,
             "vehicle_ledger_appended": len(new_vehicles),
             "outcome_ledger_appended": 0,
@@ -534,8 +538,7 @@ def _run_locked(
         **base,
         "status": "RESOLVED_WITH_ERRORS" if errors else "RESOLVED",
         "vehicle_projection_status": "VERIFIED",
-        "handoff_confirmed_vehicle_count": projected["matched_count"],
-        "vehicle_ledger_idempotent": projected["idempotent_count"],
+        **projection_summary,
         "broker_read": True,
         "vehicle_ledger_appended": len(new_vehicles),
         "outcome_ledger_appended": len(resolved),
@@ -559,8 +562,11 @@ def _project_handoffs(
     new: list[dict[str, Any]] = []
     conflicts: list[dict[str, str]] = []
     batch_by_id: dict[str, dict[str, Any]] = {}
+    confirmed_event_count = 0
     matched_count = 0
     idempotent_count = 0
+    unscored_no_frozen_seat_count = 0
+    unscored_examples: list[dict[str, str]] = []
     for handoff in handoffs:
         _validate_v2_handoff(handoff)
         cycle = _parse_utc(handoff["cycle_generated_at_utc"])
@@ -580,11 +586,37 @@ def _project_handoffs(
             if isinstance(seat, Mapping)
         }
         for event in matched:
-            matched_count += 1
+            confirmed_event_count += 1
             pair = str(event["pair"])
             seat = seats_by_pair.get(pair)
             if seat is None:
-                raise ValueError(f"{pair}: confirmed episode has no frozen vehicle seat")
+                # The prospective learning cohort is intentionally narrower
+                # than the episode detector whenever exact quote/ATR/input
+                # requirements cannot freeze a six-cell seat.  A later
+                # confirmed episode must not fabricate or backfill that
+                # missing vehicle.  It is explicit unscored evidence, while
+                # the remaining seat-backed events stay projectable.
+                unscored_no_frozen_seat_count += 1
+                if len(unscored_examples) < MAX_UNSCORED_EXAMPLES:
+                    unscored_examples.append(
+                        {
+                            "pair": pair,
+                            "confirmed_event_sha256": str(
+                                event["event_sha256"]
+                            ),
+                            "handoff_contract_sha256": str(
+                                handoff["contract_sha256"]
+                            ),
+                            "prospective_shadow_status": str(
+                                shadow.get("status") or "UNKNOWN"
+                            ),
+                            "reason": (
+                                "CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"
+                            ),
+                        }
+                    )
+                continue
+            matched_count += 1
             vehicle = _build_vehicle(event=event, handoff=handoff, seat=seat)
             vehicle_id = str(vehicle["vehicle_id"])
             prior = existing_by_id.get(vehicle_id) or batch_by_id.get(vehicle_id)
@@ -605,8 +637,31 @@ def _project_handoffs(
     return {
         "new": new,
         "conflicts": conflicts,
+        "confirmed_event_count": confirmed_event_count,
         "matched_count": matched_count,
         "idempotent_count": idempotent_count,
+        "unscored_no_frozen_seat_count": unscored_no_frozen_seat_count,
+        "unscored_examples": unscored_examples,
+    }
+
+
+def _projection_summary(projected: Mapping[str, Any]) -> dict[str, Any]:
+    unscored = int(projected["unscored_no_frozen_seat_count"])
+    return {
+        "handoff_confirmed_event_count": int(
+            projected["confirmed_event_count"]
+        ),
+        "handoff_confirmed_vehicle_count": int(projected["matched_count"]),
+        "handoff_confirmed_unscored_count": unscored,
+        "handoff_confirmed_unscored_reason_counts": (
+            {"CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT": unscored}
+            if unscored
+            else {}
+        ),
+        "handoff_confirmed_unscored_examples": list(
+            projected["unscored_examples"]
+        ),
+        "vehicle_ledger_idempotent": int(projected["idempotent_count"]),
     }
 
 
@@ -719,6 +774,18 @@ def _build_vehicle(
             technical_hypothesis_evaluator_policy_sha
         ),
     }
+    input_proof_eligible = (
+        seat.get("causal_input_proof_eligible") is True
+        if seat.get("selection_policy") == LEARNING_SELECTION_POLICY
+        else True
+    )
+    scorecard_ineligibility_reasons = []
+    if event.get("late_detected") is True:
+        scorecard_ineligibility_reasons.append("LATE_DETECTED_EPISODE")
+    if not input_proof_eligible:
+        scorecard_ineligibility_reasons.append(
+            "INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY"
+        )
     body = {
         "contract": VEHICLE_CONTRACT,
         "schema_version": 1,
@@ -736,7 +803,9 @@ def _build_vehicle(
         "route_family": str(route["route_family"]),
         "route_candidate_methods": route_methods,
         "late_detected": event.get("late_detected") is True,
-        "scorecard_eligible": event.get("late_detected") is not True,
+        "causal_input_proof_eligible": input_proof_eligible,
+        "scorecard_eligible": not scorecard_ineligibility_reasons,
+        "scorecard_ineligibility_reasons": scorecard_ineligibility_reasons,
         "source_binding": source_binding,
         "source_binding_sha256": _canonical_sha(source_binding),
         "learning_seat_id": str(seat["seat_id"]),
@@ -1750,6 +1819,42 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         "vehicle_policy": VEHICLE_POLICY,
         "confirmed_event_sha256": value.get("confirmed_event_sha256"),
     }
+    input_proof_eligible = (
+        seat.get("causal_input_proof_eligible") is True
+        if seat.get("selection_policy") == LEARNING_SELECTION_POLICY
+        else True
+    )
+    expected_ineligibility_reasons = []
+    if value.get("late_detected") is True:
+        expected_ineligibility_reasons.append("LATE_DETECTED_EPISODE")
+    if not input_proof_eligible:
+        expected_ineligibility_reasons.append(
+            "INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY"
+        )
+    legacy_eligibility_contract = all(
+        key not in value
+        for key in (
+            "causal_input_proof_eligible",
+            "scorecard_ineligibility_reasons",
+        )
+    )
+    eligibility_contract_valid = bool(
+        (
+            legacy_eligibility_contract
+            and input_proof_eligible
+            and value.get("scorecard_eligible")
+            is (value.get("late_detected") is not True)
+        )
+        or (
+            not legacy_eligibility_contract
+            and value.get("causal_input_proof_eligible")
+            is input_proof_eligible
+            and value.get("scorecard_eligible")
+            is (not expected_ineligibility_reasons)
+            and value.get("scorecard_ineligibility_reasons")
+            == expected_ineligibility_reasons
+        )
+    )
     if not bool(
         value.get("schema_version") == 1
         and value.get("vehicle_policy") == VEHICLE_POLICY
@@ -1844,8 +1949,7 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         and _sha_text(source_binding.get("prospective_vehicle_shadow_sha256"))
         and maturity == _seat_maturity(seat)
         and value.get("learning_scoring_policy") == LEARNING_SCORING_POLICY
-        and value.get("scorecard_eligible")
-        is (value.get("late_detected") is not True)
+        and eligibility_contract_valid
         and _authority_is_zero(value)
     ):
         return False

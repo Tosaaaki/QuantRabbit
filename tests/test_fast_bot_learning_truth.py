@@ -11,6 +11,7 @@ from unittest.mock import patch
 from quant_rabbit.fast_bot_learning import (
     LEARNING_ARM_SPECS,
     LEARNING_SELECTION_POLICY_V2,
+    LEARNING_SELECTION_POLICY_V3,
     _learning_seat_valid,
     build_fast_bot_learning_shadow,
 )
@@ -175,6 +176,75 @@ def _legacy_v2_seat() -> dict:
     return seat
 
 
+def _legacy_v3_seat() -> dict:
+    seat = json.loads(json.dumps(_six_candidate_seat()))
+    seat_identity = {
+        "selection_policy": LEARNING_SELECTION_POLICY_V3,
+        "pair": seat["pair"],
+        "sampling_bucket_utc": seat["sampling_bucket_utc"],
+        "m1_closed_candle_utc": seat["m1_closed_candle_utc"],
+    }
+    seat_id = _sha(seat_identity)[:24]
+    seat["selection_policy"] = LEARNING_SELECTION_POLICY_V3
+    seat["seat_id"] = seat_id
+    seat["counterfactual_comparison_group_id"] = seat_id
+    seat["candidate_classes"] = [
+        "COST_BLOCKED",
+        "REJECTED_TECHNICAL",
+        "SUPERVISOR_BLOCKED",
+        "CAUTION_TECHNICAL",
+        "GO_CONTROL",
+    ]
+    seat["candidate_blocker_facets"] = [
+        "cost_blocked",
+        "technical_blocked",
+        "supervisor_blocked",
+    ]
+    v3_classes = set(seat["candidate_classes"])
+    for name in (
+        "eligible_counts",
+        "selected_counts",
+        "eligible_but_unselected_counts",
+    ):
+        seat[name] = {
+            key: value for key, value in seat[name].items() if key in v3_classes
+        }
+    for name in (
+        "sealed_input_blocked_cells_retained",
+        "causal_input_proof_eligible",
+        "exact_s5_shadow_scoring_allowed",
+        "technical_hypothesis_shadow_allowed",
+    ):
+        seat.pop(name, None)
+    seat["paired_direction_proof_eligible"] = True
+    for candidate in seat["candidates"]:
+        candidate["seat_id"] = seat_id
+        candidate["counterfactual_comparison_group_id"] = seat_id
+        identity = {
+            "seat_id": seat_id,
+            "side": candidate["side"],
+            "method": candidate["method"],
+            "candidate_class": candidate["candidate_class"],
+        }
+        candidate["candidate_id"] = _sha(identity)[:24]
+        for name in (
+            "input_blockers",
+            "input_blocked",
+            "exact_s5_shadow_scoring_allowed",
+            "technical_hypothesis_shadow_allowed",
+            "causal_input_proof_eligible",
+            "technical_hypothesis_proof_eligible",
+        ):
+            candidate.pop(name, None)
+        candidate_body = {
+            key: value for key, value in candidate.items() if key != "candidate_sha256"
+        }
+        candidate["candidate_sha256"] = _sha(candidate_body)
+    seat_body = {key: value for key, value in seat.items() if key != "contract_sha256"}
+    seat["contract_sha256"] = _sha(seat_body)
+    return seat
+
+
 def _path() -> list[S5BidAskCandle]:
     return [
         S5BidAskCandle(
@@ -257,12 +327,15 @@ class FastBotLearningTruthTest(unittest.TestCase):
             )
         )
 
-    def test_legacy_v2_seat_and_mixed_policy_scorecard_remain_valid(self) -> None:
+    def test_legacy_v2_v3_seats_and_mixed_policy_scorecard_remain_valid(self) -> None:
         legacy = _legacy_v2_seat()
+        legacy_v3 = _legacy_v3_seat()
         current = _six_candidate_seat()
         self.assertNotIn("arm_policy", legacy)
         self.assertTrue(_learning_seat_valid(legacy))
         self.assertTrue(_learning_seat_deep_valid(legacy))
+        self.assertTrue(_learning_seat_valid(legacy_v3))
+        self.assertTrue(_learning_seat_deep_valid(legacy_v3))
         legacy_outcome = resolve_fast_bot_learning_seat(
             legacy,
             _path(),
@@ -275,18 +348,25 @@ class FastBotLearningTruthTest(unittest.TestCase):
             resolved_at_utc=NOW + timedelta(minutes=32),
             truth_chunk_sha256=[HASH],
         )
+        legacy_v3_outcome = resolve_fast_bot_learning_seat(
+            legacy_v3,
+            _path(),
+            resolved_at_utc=NOW + timedelta(minutes=32),
+            truth_chunk_sha256=[HASH],
+        )
 
         scorecard = build_fast_bot_learning_scorecard(
-            [legacy, current],
-            [legacy_outcome, current_outcome],
+            [legacy, legacy_v3, current],
+            [legacy_outcome, legacy_v3_outcome, current_outcome],
             as_of_utc=NOW + timedelta(minutes=32),
         )
 
-        self.assertEqual(scorecard["resolved_seats"], 2)
+        self.assertEqual(scorecard["resolved_seats"], 3)
         self.assertEqual(
             {group["selection_policy"] for group in scorecard["groups"]},
             {
                 LEARNING_SELECTION_POLICY_V2,
+                LEARNING_SELECTION_POLICY_V3,
                 current["selection_policy"],
             },
         )

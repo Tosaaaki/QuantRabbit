@@ -169,7 +169,7 @@ class FastBotLearningTest(unittest.TestCase):
             _regime(snapshot, rows), snapshot, now_utc=NOW
         )
 
-        self.assertEqual(shadow["candidate_count"], 2)
+        self.assertEqual(shadow["candidate_count"], 3)
         self.assertEqual(shadow["complete_six_cell_seat_count"], 0)
         self.assertEqual(shadow["partial_valid_input_seat_count"], 1)
         self.assertFalse(shadow["seats"][0]["complete_six_cell_seat"])
@@ -191,10 +191,12 @@ class FastBotLearningTest(unittest.TestCase):
             set(combined["source_regime_evidence"]["timeframe_votes"]),
             set(TIMEFRAMES),
         )
-        self.assertNotIn(
-            ("LONG", "BREAKOUT_FAILURE"),
-            candidates,
-        )
+        input_blocked = candidates[("LONG", "BREAKOUT_FAILURE")]
+        self.assertEqual(input_blocked["candidate_class"], "INPUT_BLOCKED")
+        self.assertTrue(input_blocked["input_blocked"])
+        self.assertFalse(input_blocked["causal_input_proof_eligible"])
+        self.assertTrue(input_blocked["exact_s5_shadow_scoring_allowed"])
+        self.assertTrue(input_blocked["technical_hypothesis_shadow_allowed"])
 
     def test_separate_seats_collect_cost_caution_and_go_without_authority(self) -> None:
         prices = {
@@ -258,7 +260,7 @@ class FastBotLearningTest(unittest.TestCase):
 
         self.assertEqual(shadow["status"], "EMITTED")
         self.assertEqual(shadow["seat_count"], 2)
-        self.assertEqual(shadow["candidate_count"], 4)
+        self.assertEqual(shadow["candidate_count"], 5)
         classes = {
             candidate["candidate_class"]
             for seat in shadow["seats"]
@@ -271,6 +273,7 @@ class FastBotLearningTest(unittest.TestCase):
                 "SUPERVISOR_BLOCKED",
                 "CAUTION_TECHNICAL",
                 "GO_CONTROL",
+                "INPUT_BLOCKED",
             },
         )
         cost_seat = next(seat for seat in shadow["seats"] if seat["pair"] == "EUR_USD")
@@ -337,6 +340,71 @@ class FastBotLearningTest(unittest.TestCase):
                 "SEPARATE_FRESH_FORWARD_PROMOTION_CONTRACT_REQUIRED",
             ],
         )
+
+    def test_six_sealed_input_blocked_cells_keep_diagnostic_s5_seat(self) -> None:
+        pair = "EUR_NZD"
+        prices = {pair: (1.97000, 1.97020)}
+        snapshot = _snapshot(prices)
+        spread = _spread(pair, *prices[pair])
+        rows = []
+        for method in METHODS:
+            for side in SIDES:
+                row = _row(
+                    pair,
+                    side,
+                    method,
+                    state="STOP",
+                    spread_pips=spread,
+                    m5_atr_pips=8.0,
+                    hard_blockers=(
+                        "FAST_CHART_PACKET_STALE",
+                        "FAST_TIMEFRAME_EVIDENCE_MISSING:M1,M5",
+                        "SPREAD_ANOMALY",
+                    ),
+                )
+                row["timeframe_votes"]["M1"]["evidence_complete"] = False
+                row["timeframe_votes"]["M5"]["evidence_complete"] = False
+                rows.append(row)
+
+        shadow = build_fast_bot_learning_shadow(
+            _regime(snapshot, rows), snapshot, now_utc=NOW
+        )
+
+        self.assertEqual(shadow["status"], "EMITTED")
+        self.assertEqual(shadow["seat_count"], 1)
+        self.assertEqual(shadow["candidate_count"], 6)
+        seat = shadow["seats"][0]
+        self.assertTrue(seat["complete_six_cell_seat"])
+        self.assertFalse(seat["causal_input_proof_eligible"])
+        self.assertFalse(seat["paired_direction_proof_eligible"])
+        self.assertTrue(seat["exact_s5_shadow_scoring_allowed"])
+        self.assertTrue(seat["technical_hypothesis_shadow_allowed"])
+        self.assertEqual(
+            {candidate["candidate_class"] for candidate in seat["candidates"]},
+            {"INPUT_BLOCKED"},
+        )
+        self.assertTrue(
+            all(
+                candidate["input_blocked"] is True
+                and candidate["causal_input_proof_eligible"] is False
+                and candidate["primary_promotion_eligible"] is False
+                and candidate["exact_s5_shadow_scoring_allowed"] is True
+                and candidate["arms"]
+                and candidate["live_permission"] is False
+                and candidate["broker_mutation_allowed"] is False
+                for candidate in seat["candidates"]
+            )
+        )
+
+        clockless_rows = json.loads(json.dumps(rows))
+        for row in clockless_rows:
+            row["m1_closed_candle_utc"] = ""
+        clockless = build_fast_bot_learning_shadow(
+            _regime(snapshot, clockless_rows), snapshot, now_utc=NOW
+        )
+        self.assertEqual(clockless["status"], "NO_ELIGIBLE_LEARNING_SEAT")
+        self.assertEqual(clockless["seat_count"], 0)
+        self.assertEqual(clockless["excluded_pair_counts"], {"M1_IDENTITY_INVALID": 1})
 
     def test_all_six_cells_share_one_frozen_seat_without_unselected_candidates(
         self,

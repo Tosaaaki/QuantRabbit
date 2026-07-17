@@ -961,6 +961,16 @@ def run_worker(
             projection_verified = (
                 truth_result.get("vehicle_projection_status") == "VERIFIED"
             )
+            unscored_count = int(
+                truth_result.get("handoff_confirmed_unscored_count") or 0
+            )
+            if unscored_count:
+                print(
+                    "fast-bot episode truth left confirmed events explicitly "
+                    f"unscored: count={unscored_count} reasons="
+                    f"{json.dumps(truth_result.get('handoff_confirmed_unscored_reason_counts') or {}, sort_keys=True)}",
+                    file=sys.stderr,
+                )
             if pending_v2 and projection_verified:
                 # Vehicle durability is independent of later outcome fetches.
                 # Once verified, an outcome-side conflict must not resurrect
@@ -992,10 +1002,14 @@ def run_worker(
                     )
                 pending_v2.clear()
             if pending_v2:
+                truth_error = str(truth_result.get("error") or "").replace(
+                    "\n", " "
+                )[:320]
                 print(
                     "fast-bot episode truth cycle retained V2 handoffs: "
                     f"status={truth_status} vehicle_projection_status="
-                    f"{truth_result.get('vehicle_projection_status') or 'INVALID'}",
+                    f"{truth_result.get('vehicle_projection_status') or 'INVALID'}"
+                    f" error={truth_error or 'NONE'}",
                     file=sys.stderr,
                 )
             if truth_status == "LOCK_BUSY":

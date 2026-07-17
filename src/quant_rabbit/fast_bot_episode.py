@@ -407,6 +407,20 @@ def run_fast_bot_episode_shadow(
         ):
             status = "INVALID_REGIME_CONTRACT"
             blockers.append("EPISODE_REGIME_CONTRACT_CLOCK_INVALID")
+        elif _ledger_reaches_or_passes_cycle(events, cycle=now):
+            # A V2 handoff may remain in the spool after its episode pass while
+            # the independent vehicle projection retries.  Once a newer (or
+            # the same) acquisition cycle is already in the append-only
+            # ledger, deriving again from this older snapshot would be a
+            # retrospective state-machine input: an episode that was active
+            # on the first pass may since have become terminal, exposing a
+            # stale setup that was not eligible at its original information
+            # boundary.  Preserve the strict future-clock verifier and skip
+            # that non-causal replay instead of backfilling it.
+            status = "NO_NEW_EVENT"
+            blockers.append(
+                "EPISODE_HANDOFF_AT_OR_BEHIND_LEDGER_HEAD_SKIPPED_NO_BACKFILL"
+            )
         else:
             try:
                 new_events, derivation_blockers = _derive_events(
@@ -1326,8 +1340,13 @@ def _build_state(
         "contract": EPISODE_STATE_CONTRACT,
         "schema_version": 1,
         "generated_at_utc": now.isoformat(),
+        "generated_at_clock_semantics": "SEALED_SOURCE_CYCLE",
         "processed_at_utc": processed_at.isoformat(),
         "processing_delay_seconds": processing_delay_seconds,
+        "processing_delay_clock_semantics": (
+            "WORKER_START_MINUS_SEALED_SOURCE_CYCLE"
+        ),
+        "handoff_age_seconds_at_processing_start": processing_delay_seconds,
         "operationally_late": (
             processing_delay_seconds > LATE_DETECTION_GRACE_SECONDS
         ),
@@ -1373,9 +1392,20 @@ def _build_state(
         "accepted_and_rejected_paths_preserved": True,
         "signal_emission_counts_as_entry": False,
         "entry_requires_exact_execution_truth": True,
-        "truth_binding_status": "NOT_IMPLEMENTED",
+        "truth_binding_status": "V2_EXTERNAL_EXACT_S5_ADAPTER_AVAILABLE",
+        "truth_binding_scope": {
+            "inline_episode_state_machine": "NO_EXECUTION_TRUTH",
+            "v1_handoffs": "DRAIN_ONLY_UNBOUND_NO_BACKFILL",
+            "v2_seat_backed_confirmed_events": (
+                "EXTERNAL_EXACT_S5_VEHICLE_AND_OUTCOME_ADAPTER"
+            ),
+            "v2_confirmed_events_without_frozen_seat": (
+                "UNSCORED_NO_BACKFILL"
+            ),
+        },
         "promotion_blockers": [
-            "EPISODE_TO_EXACT_S5_TRUTH_BINDING_REQUIRED",
+            "V1_EPISODE_TRUTH_BINDING_INTENTIONALLY_UNAVAILABLE",
+            "V2_SEATLESS_CONFIRMED_EPISODES_UNSCORED_NO_BACKFILL",
             "EPISODE_CLUSTERED_FORWARD_SCORECARD_REQUIRED",
             "CHART_PACKET_TO_REGIME_REPLAY_PROOF_REQUIRED",
             "SEPARATE_ALLOWLISTED_RULE_COMPILER_CONTRACT_REQUIRED",
@@ -3118,6 +3148,21 @@ def _generated_on_utc_date(
         for event in events
         for generated in (_parse_utc(event.get("generated_at_utc")),)
         if generated is not None and generated.date() == target
+    )
+
+
+def _ledger_reaches_or_passes_cycle(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    cycle: datetime,
+) -> bool:
+    """Return whether deriving this cycle would rewind the ledger clock."""
+
+    return any(
+        generated >= cycle
+        for event in events
+        for generated in (_parse_utc(event.get("generated_at_utc")),)
+        if generated is not None
     )
 
 

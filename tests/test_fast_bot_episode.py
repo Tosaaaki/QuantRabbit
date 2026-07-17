@@ -466,7 +466,69 @@ class FastBotEpisodeTest(unittest.TestCase):
             self.assertTrue(event["late_detected"])
             self.assertEqual(state["processed_at_utc"], processed_at.isoformat())
             self.assertEqual(state["processing_delay_seconds"], 120.0)
+            self.assertEqual(
+                state["processing_delay_clock_semantics"],
+                "WORKER_START_MINUS_SEALED_SOURCE_CYCLE",
+            )
+            self.assertEqual(
+                state["handoff_age_seconds_at_processing_start"],
+                120.0,
+            )
             self.assertTrue(state["operationally_late"])
+            self.assertEqual(
+                state["truth_binding_status"],
+                "V2_EXTERNAL_EXACT_S5_ADAPTER_AVAILABLE",
+            )
+            self.assertEqual(
+                state["truth_binding_scope"][
+                    "v2_confirmed_events_without_frozen_seat"
+                ],
+                "UNSCORED_NO_BACKFILL",
+            )
+
+    def test_old_handoff_replay_is_skipped_behind_newer_ledger_head(self) -> None:
+        current = {"o": 110.0, "h": 160.0, "l": 99.0, "c": 106.0}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = self._run(root, current=current)
+            original_ledger = (root / "episode_ledger.jsonl").read_bytes()
+            stale_cycle = NOW - timedelta(seconds=10)
+            processed_at = NOW + timedelta(minutes=2)
+            fast, slow = _charts(current)
+
+            with patch(
+                "quant_rabbit.fast_bot_episode._derive_events",
+                side_effect=AssertionError(
+                    "an older retained handoff must never be re-derived"
+                ),
+            ):
+                replay = run_fast_bot_episode_shadow(
+                    regime_contract=_regime(
+                        stale_cycle,
+                        source_clocks=_chart_clocks(fast, slow),
+                    ),
+                    fast_pair_charts=fast,
+                    slow_pair_charts=slow,
+                    output_path=root / "episode_state.json",
+                    ledger_path=root / "episode_ledger.jsonl",
+                    source_archive_dir=root / "episode_sources",
+                    now_utc=stale_cycle,
+                    processed_at_utc=processed_at,
+                )
+
+            self.assertEqual(first["status"], "UPDATED")
+            self.assertEqual(replay["status"], "NO_NEW_EVENT")
+            self.assertEqual(replay["appended_events"], 0)
+            self.assertNotIn("EPISODE_LEDGER_FUTURE_CLOCK", replay["blockers"])
+            self.assertIn(
+                "EPISODE_HANDOFF_AT_OR_BEHIND_LEDGER_HEAD_SKIPPED_NO_BACKFILL",
+                replay["blockers"],
+            )
+            self.assertEqual(
+                (root / "episode_ledger.jsonl").read_bytes(),
+                original_ledger,
+            )
+            self.assertTrue(replay["ledger_head_verified"])
 
     def test_processing_clock_cannot_precede_sealed_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
