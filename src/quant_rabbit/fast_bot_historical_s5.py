@@ -13,9 +13,11 @@ import gzip
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import re
 import stat
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -32,11 +34,16 @@ SELECTION_POLICY = (
     "SUMMARY_PUBLISHED_ERROR_FREE_WIDEST_DECLARED_WINDOW_"
     "THEN_EARLIEST_FROM_THEN_RELATIVE_PATH_V1"
 )
+EXPLICIT_RUN_SELECTION_POLICY = (
+    "EXPLICIT_ALLOWED_RUN_IDS_EXACT_SET_THEN_" + SELECTION_POLICY
+)
+EXPLICIT_RUN_SCOPE_POLICY = "EXPLICIT_ALLOWED_RUN_IDS_EXACT_SET_V1"
 COVERAGE_POLICY = "SUMMARY_DECLARED_INTERVAL_PLUS_STRICT_FILE_SCAN_V1"
 TRUTH_RECEIPT_SCHEMA = "QR_OANDA_TRUTH_ACQUISITION_RECEIPT_V1"
 TRUTH_RECEIPT_FILE = "truth_acquisition_receipts.jsonl"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
+_RUN_ID_RE = re.compile(r"^\d{8}T\d{6}Z$")
 _OANDA_UTC_RE = re.compile(
     r"^(?P<seconds>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d{1,9}))?Z$"
@@ -69,6 +76,8 @@ _RECEIPT_KEYS = frozenset(
         "receipt_sha256",
     }
 )
+MAX_MANIFEST_SCAN_WORKERS = 6
+MIN_PARALLEL_MANIFEST_SCAN_TASKS = 4
 
 
 class HistoricalS5CacheError(ValueError):
@@ -172,7 +181,12 @@ class _Candidate:
     def duration_seconds(self) -> float:
         return (self.declared_to_utc - self.declared_from_utc).total_seconds()
 
-    def manifest_row(self, *, candidate_count_for_pair: int) -> dict[str, Any]:
+    def manifest_row(
+        self,
+        *,
+        candidate_count_for_pair: int,
+        selection_policy: str = SELECTION_POLICY,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "pair": self.pair,
             "relative_path": self.relative_path,
@@ -190,7 +204,7 @@ class _Candidate:
             "acquisition_receipt_sha256": self.acquisition_receipt_sha256,
             "acquisition_receipt_proved": self.acquisition_receipt_sha256 is not None,
             "candidate_count_for_pair": candidate_count_for_pair,
-            "selection_policy": SELECTION_POLICY,
+            "selection_policy": selection_policy,
             "coverage_policy": COVERAGE_POLICY,
             "historical_only": True,
             "diagnostic_only": True,
@@ -199,10 +213,149 @@ class _Candidate:
         return {**body, "source_sha256": _canonical_sha(body)}
 
 
+@dataclass(frozen=True, slots=True)
+class _CandidateScanJob:
+    """One immutable, process-safe strict candidate scan request."""
+
+    source_root: Path
+    summary_path: Path
+    summary_sha256: str
+    task: dict[str, Any]
+    receipt_by_path: dict[str, Mapping[str, Any]]
+
+
+def _validate_allowed_run_ids(
+    value: Sequence[str] | None,
+) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise HistoricalS5CacheError(
+            "allowed historical run ids must be a sequence or None"
+        )
+    run_ids = tuple(value)
+    if not run_ids:
+        raise HistoricalS5CacheError(
+            "allowed historical run ids must be non-empty when specified"
+        )
+    if any(not isinstance(run_id, str) for run_id in run_ids):
+        raise HistoricalS5CacheError("allowed historical run id type is invalid")
+    if len(run_ids) != len(set(run_ids)):
+        raise HistoricalS5CacheError("allowed historical run ids must be unique")
+    for run_id in run_ids:
+        if _RUN_ID_RE.fullmatch(run_id) is None:
+            raise HistoricalS5CacheError("allowed historical run id is unsafe")
+        try:
+            parsed = datetime.strptime(run_id, "%Y%m%dT%H%M%SZ")
+        except ValueError as exc:
+            raise HistoricalS5CacheError(
+                "allowed historical run id clock is invalid"
+            ) from exc
+        if parsed.strftime("%Y%m%dT%H%M%SZ") != run_id:
+            raise HistoricalS5CacheError("allowed historical run id is not canonical")
+    return tuple(sorted(run_ids))
+
+
+def _summary_paths_for_run_scope(
+    source_root: Path,
+    allowed_run_ids: tuple[str, ...] | None,
+) -> tuple[Path, ...]:
+    if allowed_run_ids is None:
+        return tuple(sorted(source_root.glob("*/summary.json")))
+    summary_paths: list[Path] = []
+    for run_id in allowed_run_ids:
+        run_path = source_root / run_id
+        if run_path.is_symlink() or not run_path.is_dir():
+            raise HistoricalS5CacheError(
+                f"allowed historical run does not exist as a regular directory: {run_id}"
+            )
+        try:
+            resolved_run = run_path.resolve(strict=True)
+        except OSError as exc:
+            raise HistoricalS5CacheError(
+                f"allowed historical run cannot be resolved: {run_id}"
+            ) from exc
+        if resolved_run.parent != source_root or resolved_run.name != run_id:
+            raise HistoricalS5CacheError(
+                f"allowed historical run escapes its exact root scope: {run_id}"
+            )
+        summary_path = run_path / "summary.json"
+        if summary_path.is_symlink() or not summary_path.is_file():
+            raise HistoricalS5CacheError(
+                f"allowed historical run has no regular summary: {run_id}"
+            )
+        summary_paths.append(summary_path)
+    actual_run_ids = tuple(sorted(path.parent.name for path in summary_paths))
+    if actual_run_ids != allowed_run_ids:
+        raise HistoricalS5CacheError(
+            "allowed historical run ids and summary run ids are not an exact set"
+        )
+    return tuple(sorted(summary_paths))
+
+
+def _resolved_manifest_scan_workers(
+    requested: int | None,
+    *,
+    task_count: int,
+) -> int:
+    if requested is not None and (
+        requested.__class__ is not int
+        or requested < 1
+        or requested > MAX_MANIFEST_SCAN_WORKERS
+    ):
+        raise HistoricalS5CacheError(
+            f"manifest scan workers must be an integer from 1 to {MAX_MANIFEST_SCAN_WORKERS}"
+        )
+    if task_count < MIN_PARALLEL_MANIFEST_SCAN_TASKS:
+        return 1
+    available = max(1, int(os.cpu_count() or 1))
+    # Preserve the historical serial behavior unless the caller explicitly opts
+    # into process workers. Production CLI paths pass a bounded worker count.
+    target = 1 if requested is None else requested
+    return max(1, min(target, available, task_count))
+
+
+def _scan_candidate_job(job: _CandidateScanJob) -> _Candidate:
+    return _candidate_from_task(
+        source_root=job.source_root,
+        summary_path=job.summary_path,
+        summary_sha256=job.summary_sha256,
+        task=job.task,
+        receipt_by_path=job.receipt_by_path,
+    )
+
+
+def _scan_candidate_jobs(
+    jobs: Sequence[_CandidateScanJob],
+    *,
+    scan_workers: int | None,
+) -> tuple[_Candidate, ...]:
+    worker_count = _resolved_manifest_scan_workers(
+        scan_workers,
+        task_count=len(jobs),
+    )
+    if worker_count == 1:
+        return tuple(_scan_candidate_job(job) for job in jobs)
+    try:
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=multiprocessing.get_context("spawn"),
+        ) as executor:
+            return tuple(executor.map(_scan_candidate_job, jobs, chunksize=1))
+    except HistoricalS5CacheError:
+        raise
+    except Exception as exc:
+        raise HistoricalS5CacheError(
+            "parallel historical manifest candidate scan failed closed"
+        ) from exc
+
+
 def build_historical_s5_manifest(
     root: Path,
     *,
     pairs: Sequence[str] = DEFAULT_TRADER_PAIRS,
+    allowed_run_ids: Sequence[str] | None = None,
+    scan_workers: int | None = None,
 ) -> dict[str, Any]:
     """Scan and seal one outcome-blind local source per requested pair.
 
@@ -215,11 +368,20 @@ def build_historical_s5_manifest(
     if not source_root.is_dir():
         raise HistoricalS5CacheError("historical S5 root is not a directory")
     normalized_pairs = _validate_pairs(pairs)
+    normalized_run_ids = _validate_allowed_run_ids(allowed_run_ids)
+    summary_paths = _summary_paths_for_run_scope(source_root, normalized_run_ids)
+    selection_policy = (
+        SELECTION_POLICY
+        if normalized_run_ids is None
+        else EXPLICIT_RUN_SELECTION_POLICY
+    )
     receipt_by_path = _load_truth_receipts(source_root)
     candidates: dict[str, list[_Candidate]] = {pair: [] for pair in normalized_pairs}
     admitted_paths: set[str] = set()
+    scan_jobs: list[_CandidateScanJob] = []
+    frozen_receipts = dict(receipt_by_path)
 
-    for summary_path in sorted(source_root.glob("*/summary.json")):
+    for summary_path in summary_paths:
         if summary_path.is_symlink() or not summary_path.is_file():
             raise HistoricalS5CacheError("summary path must be a regular file")
         summary_bytes = _read_stable_bytes(summary_path)
@@ -242,19 +404,22 @@ def build_historical_s5_manifest(
             pair = str(task.get("pair") or "")
             if pair not in candidates:
                 continue
-            candidate = _candidate_from_task(
-                source_root=source_root,
-                summary_path=summary_path,
-                summary_sha256=summary_sha,
-                task=task,
-                receipt_by_path=receipt_by_path,
-            )
-            if candidate.relative_path in admitted_paths:
-                raise HistoricalS5CacheError(
-                    f"cache file admitted by multiple summaries: {candidate.relative_path}"
+            scan_jobs.append(
+                _CandidateScanJob(
+                    source_root=source_root,
+                    summary_path=summary_path,
+                    summary_sha256=summary_sha,
+                    task=dict(task),
+                    receipt_by_path=frozen_receipts,
                 )
-            admitted_paths.add(candidate.relative_path)
-            candidates[pair].append(candidate)
+            )
+    for candidate in _scan_candidate_jobs(scan_jobs, scan_workers=scan_workers):
+        if candidate.relative_path in admitted_paths:
+            raise HistoricalS5CacheError(
+                f"cache file admitted by multiple summaries: {candidate.relative_path}"
+            )
+        admitted_paths.add(candidate.relative_path)
+        candidates[candidate.pair].append(candidate)
 
     selected_rows: list[dict[str, Any]] = []
     duplicate_rows: list[dict[str, Any]] = []
@@ -274,7 +439,10 @@ def build_historical_s5_manifest(
         )
         selected = ordered[0]
         selected_rows.append(
-            selected.manifest_row(candidate_count_for_pair=len(ordered))
+            selected.manifest_row(
+                candidate_count_for_pair=len(ordered),
+                selection_policy=selection_policy,
+            )
         )
         if len(ordered) > 1:
             duplicate_rows.append(
@@ -284,14 +452,23 @@ def build_historical_s5_manifest(
                     "candidate_relative_paths": [
                         item.relative_path for item in ordered
                     ],
-                    "resolution_policy": SELECTION_POLICY,
+                    "resolution_policy": selection_policy,
                     "outcome_data_used_for_selection": False,
                 }
             )
 
+    discovery_paths: Iterable[Path]
+    if normalized_run_ids is None:
+        discovery_paths = source_root.glob("*/*/*_S5_BA_*.jsonl*")
+    else:
+        discovery_paths = (
+            path
+            for run_id in normalized_run_ids
+            for path in (source_root / run_id).glob("*/*_S5_BA_*.jsonl*")
+        )
     discovered_files = {
         _relative_inside(source_root, path)
-        for path in source_root.glob("*/*/*_S5_BA_*.jsonl*")
+        for path in discovery_paths
         if path.is_file()
         and not path.name.endswith((".partial", ".tmp"))
         and _CACHE_NAME_RE.fullmatch(path.name)
@@ -314,7 +491,7 @@ def build_historical_s5_manifest(
         "contract": MANIFEST_CONTRACT,
         "schema_version": 1,
         "source_root": str(source_root),
-        "selection_policy": SELECTION_POLICY,
+        "selection_policy": selection_policy,
         "selection_is_outcome_blind": True,
         "coverage_policy": COVERAGE_POLICY,
         "expected_pairs": list(normalized_pairs),
@@ -343,6 +520,16 @@ def build_historical_s5_manifest(
         "live_permission": False,
         "broker_mutation_allowed": False,
     }
+    if normalized_run_ids is not None:
+        body.update(
+            {
+                "run_scope_policy": EXPLICIT_RUN_SCOPE_POLICY,
+                "allowed_run_ids": list(normalized_run_ids),
+                "summary_run_ids": [path.parent.name for path in summary_paths],
+                "summary_run_ids_exact_set_proved": True,
+                "run_scope_is_outcome_blind": True,
+            }
+        )
     manifest = {**body, "manifest_sha256": _canonical_sha(body)}
     _validate_manifest(manifest)
     return manifest
@@ -895,7 +1082,40 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
     body = {key: item for key, item in value.items() if key != "manifest_sha256"}
     if value.get("manifest_sha256") != _canonical_sha(body):
         raise HistoricalS5CacheError("historical S5 manifest digest mismatch")
-    if value.get("selection_policy") != SELECTION_POLICY:
+    selection_policy = value.get("selection_policy")
+    run_scope_fields = (
+        "run_scope_policy",
+        "allowed_run_ids",
+        "summary_run_ids",
+        "summary_run_ids_exact_set_proved",
+        "run_scope_is_outcome_blind",
+    )
+    explicit_run_ids: tuple[str, ...] | None = None
+    if selection_policy == SELECTION_POLICY:
+        if any(field in value for field in run_scope_fields):
+            raise HistoricalS5CacheError(
+                "legacy historical selection cannot claim an explicit run scope"
+            )
+    elif selection_policy == EXPLICIT_RUN_SELECTION_POLICY:
+        allowed = value.get("allowed_run_ids")
+        summaries = value.get("summary_run_ids")
+        if not isinstance(allowed, list) or not isinstance(summaries, list):
+            raise HistoricalS5CacheError(
+                "explicit historical run scope lists are invalid"
+            )
+        explicit_run_ids = _validate_allowed_run_ids(allowed)
+        if (
+            explicit_run_ids is None
+            or tuple(allowed) != explicit_run_ids
+            or tuple(summaries) != explicit_run_ids
+            or value.get("run_scope_policy") != EXPLICIT_RUN_SCOPE_POLICY
+            or value.get("summary_run_ids_exact_set_proved") is not True
+            or value.get("run_scope_is_outcome_blind") is not True
+        ):
+            raise HistoricalS5CacheError(
+                "explicit historical run scope binding is invalid"
+            )
+    else:
         raise HistoricalS5CacheError("historical S5 selection policy mismatch")
     if value.get("selection_is_outcome_blind") is not True:
         raise HistoricalS5CacheError("historical S5 selection is not outcome blind")
@@ -937,6 +1157,65 @@ def _validate_manifest(value: Mapping[str, Any]) -> None:
             or row.get("forward_proof_eligible") is not False
         ):
             raise HistoricalS5CacheError("historical S5 source proof flags invalid")
+        if row.get("selection_policy") != selection_policy:
+            raise HistoricalS5CacheError(
+                "historical S5 source selection policy mismatch"
+            )
+        if explicit_run_ids is not None:
+            relative = Path(str(row.get("relative_path") or ""))
+            summary_relative = Path(str(row.get("summary_relative_path") or ""))
+            if (
+                relative.is_absolute()
+                or summary_relative.is_absolute()
+                or ".." in relative.parts
+                or ".." in summary_relative.parts
+                or len(relative.parts) < 3
+                or len(summary_relative.parts) != 2
+                or relative.parts[0] not in explicit_run_ids
+                or summary_relative.parts[0] not in explicit_run_ids
+                or summary_relative.parts[1] != "summary.json"
+            ):
+                raise HistoricalS5CacheError(
+                    "historical S5 source escapes explicit run scope"
+                )
+    duplicates = value.get("duplicate_candidates")
+    if not isinstance(duplicates, list):
+        raise HistoricalS5CacheError("historical duplicate candidates are invalid")
+    for duplicate in duplicates:
+        if not isinstance(duplicate, Mapping):
+            raise HistoricalS5CacheError(
+                "historical duplicate candidate row is invalid"
+            )
+        if duplicate.get("resolution_policy") != selection_policy:
+            raise HistoricalS5CacheError(
+                "historical duplicate resolution policy mismatch"
+            )
+        if explicit_run_ids is not None:
+            paths = duplicate.get("candidate_relative_paths")
+            selected = str(duplicate.get("selected_relative_path") or "")
+            if not isinstance(paths, list) or any(
+                Path(str(path)).is_absolute()
+                or ".." in Path(str(path)).parts
+                or not Path(str(path)).parts
+                or Path(str(path)).parts[0] not in explicit_run_ids
+                for path in [selected, *paths]
+            ):
+                raise HistoricalS5CacheError(
+                    "historical duplicate candidate escapes explicit run scope"
+                )
+    unadmitted = value.get("unadmitted_files")
+    if not isinstance(unadmitted, list):
+        raise HistoricalS5CacheError("historical unadmitted source list is invalid")
+    if explicit_run_ids is not None and any(
+        Path(str(path)).is_absolute()
+        or ".." in Path(str(path)).parts
+        or not Path(str(path)).parts
+        or Path(str(path)).parts[0] not in explicit_run_ids
+        for path in unadmitted
+    ):
+        raise HistoricalS5CacheError(
+            "historical unadmitted source escapes explicit run scope"
+        )
 
 
 def _validate_pairs(value: Sequence[str]) -> tuple[str, ...]:

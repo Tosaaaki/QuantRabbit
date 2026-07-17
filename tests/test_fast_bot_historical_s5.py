@@ -95,6 +95,275 @@ def _write_run(
 
 
 class HistoricalS5ManifestTest(unittest.TestCase):
+    def test_explicit_run_scope_is_canonical_and_excludes_other_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2026, 5, 1, tzinfo=UTC)
+            allowed_run = "20260501T010000Z"
+            excluded_run = "20260502T010000Z"
+            selected = _write_run(
+                root,
+                run_id=allowed_run,
+                pair="EUR_USD",
+                declared_from=start,
+                declared_to=start + timedelta(hours=1),
+                rows=[_row("EUR_USD", start)],
+            )
+            orphan_dir = root / allowed_run / "GBP_USD"
+            orphan_dir.mkdir()
+            orphan = (
+                orphan_dir / "GBP_USD_S5_BA_20260501T000000Z_20260501T010000Z.jsonl.gz"
+            )
+            with gzip.open(orphan, "wt", encoding="utf-8") as handle:
+                handle.write(json.dumps(_row("GBP_USD", start), sort_keys=True) + "\n")
+            _write_run(
+                root,
+                run_id=excluded_run,
+                pair="EUR_USD",
+                declared_from=start,
+                declared_to=start + timedelta(hours=2),
+                rows=[_row("EUR_USD", start, bid=9.0)],
+                declared_rows=2,
+            )
+
+            manifest = build_historical_s5_manifest(
+                root,
+                pairs=("EUR_USD",),
+                allowed_run_ids=(allowed_run,),
+            )
+
+            self.assertEqual(
+                manifest["selection_policy"],
+                historical_s5.EXPLICIT_RUN_SELECTION_POLICY,
+            )
+            self.assertEqual(
+                manifest["run_scope_policy"],
+                historical_s5.EXPLICIT_RUN_SCOPE_POLICY,
+            )
+            self.assertEqual(manifest["allowed_run_ids"], [allowed_run])
+            self.assertEqual(manifest["summary_run_ids"], [allowed_run])
+            self.assertTrue(manifest["summary_run_ids_exact_set_proved"])
+            self.assertTrue(manifest["run_scope_is_outcome_blind"])
+            self.assertEqual(
+                manifest["selected_sources"][0]["relative_path"],
+                selected.relative_to(root).as_posix(),
+            )
+            self.assertEqual(
+                manifest["unadmitted_files"], [orphan.relative_to(root).as_posix()]
+            )
+            self.assertNotIn(excluded_run, json.dumps(manifest, sort_keys=True))
+            with self.assertRaisesRegex(HistoricalS5CacheError, "row count"):
+                build_historical_s5_manifest(root, pairs=("EUR_USD",))
+
+    def test_explicit_run_scope_order_canonicalizes_to_the_same_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2026, 5, 1, tzinfo=UTC)
+            run_ids = ("20260501T010000Z", "20260502T010000Z")
+            _write_run(
+                root,
+                run_id=run_ids[0],
+                pair="EUR_USD",
+                declared_from=start,
+                declared_to=start + timedelta(hours=2),
+                rows=[_row("EUR_USD", start)],
+            )
+            _write_run(
+                root,
+                run_id=run_ids[1],
+                pair="EUR_USD",
+                declared_from=start + timedelta(hours=1),
+                declared_to=start + timedelta(hours=2),
+                rows=[_row("EUR_USD", start + timedelta(hours=1))],
+            )
+
+            forward = build_historical_s5_manifest(
+                root,
+                pairs=("EUR_USD",),
+                allowed_run_ids=run_ids,
+            )
+            reverse = build_historical_s5_manifest(
+                root,
+                pairs=("EUR_USD",),
+                allowed_run_ids=tuple(reversed(run_ids)),
+            )
+
+            self.assertEqual(forward, reverse)
+            self.assertEqual(forward["allowed_run_ids"], list(run_ids))
+            self.assertEqual(forward["manifest_sha256"], reverse["manifest_sha256"])
+
+    def test_explicit_run_scope_rejects_unsafe_missing_and_duplicate_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            no_summary = root / "20260501T010000Z"
+            no_summary.mkdir()
+            cases = (
+                ((), "non-empty"),
+                (("20260501T010000Z", "20260501T010000Z"), "unique"),
+                (("../20260501T010000Z",), "unsafe"),
+                (("20261301T010000Z",), "clock is invalid"),
+                (("20260502T010000Z",), "does not exist"),
+                (("20260501T010000Z",), "no regular summary"),
+            )
+            for run_ids, message in cases:
+                with (
+                    self.subTest(run_ids=run_ids),
+                    self.assertRaisesRegex(HistoricalS5CacheError, message),
+                ):
+                    build_historical_s5_manifest(
+                        root,
+                        pairs=("EUR_USD",),
+                        allowed_run_ids=run_ids,
+                    )
+
+    def test_explicit_run_scope_semantic_tamper_fails_even_when_resealed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2026, 5, 1, tzinfo=UTC)
+            run_id = "20260501T010000Z"
+            _write_run(
+                root,
+                run_id=run_id,
+                pair="EUR_USD",
+                declared_from=start,
+                declared_to=start + timedelta(hours=1),
+                rows=[_row("EUR_USD", start)],
+            )
+            manifest = build_historical_s5_manifest(
+                root,
+                pairs=("EUR_USD",),
+                allowed_run_ids=(run_id,),
+            )
+            manifest["summary_run_ids"] = ["20260502T010000Z"]
+            body = {
+                key: value
+                for key, value in manifest.items()
+                if key != "manifest_sha256"
+            }
+            manifest["manifest_sha256"] = historical_s5._canonical_sha(body)
+
+            with self.assertRaisesRegex(HistoricalS5CacheError, "run scope binding"):
+                historical_s5._validate_manifest(manifest)
+
+    def test_parallel_and_serial_manifest_scans_are_byte_identical(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2026, 5, 1, tzinfo=UTC)
+            pairs = (
+                "EUR_USD",
+                "GBP_USD",
+                "AUD_USD",
+                "NZD_USD",
+                "USD_JPY",
+                "USD_CAD",
+            )
+            run_ids: list[str] = []
+            for index, pair in enumerate(pairs):
+                run_id = f"20260501T{index + 1:02d}0000Z"
+                run_ids.append(run_id)
+                row_count = 2_000 if index == 0 else 1
+                rows = [
+                    _row(pair, start + timedelta(seconds=offset * 5))
+                    for offset in range(row_count)
+                ]
+                _write_run(
+                    root,
+                    run_id=run_id,
+                    pair=pair,
+                    declared_from=start,
+                    declared_to=start + timedelta(hours=4),
+                    rows=rows,
+                )
+
+            serial = build_historical_s5_manifest(
+                root,
+                pairs=pairs,
+                allowed_run_ids=tuple(reversed(run_ids)),
+                scan_workers=1,
+            )
+            with mock.patch.object(historical_s5.os, "cpu_count", return_value=8):
+                parallel = build_historical_s5_manifest(
+                    root,
+                    pairs=pairs,
+                    allowed_run_ids=tuple(run_ids),
+                    scan_workers=6,
+                )
+
+            self.assertEqual(serial, parallel)
+            self.assertEqual(serial["manifest_sha256"], parallel["manifest_sha256"])
+            self.assertEqual(
+                json.dumps(serial, sort_keys=True, separators=(",", ":")),
+                json.dumps(parallel, sort_keys=True, separators=(",", ":")),
+            )
+            serial_path = root / "serial-manifest.json"
+            parallel_path = root / "parallel-manifest.json"
+            write_historical_s5_manifest(serial_path, serial)
+            write_historical_s5_manifest(parallel_path, parallel)
+            self.assertEqual(serial_path.read_bytes(), parallel_path.read_bytes())
+
+    def test_parallel_scan_reports_the_same_first_input_order_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2026, 5, 1, tzinfo=UTC)
+            pairs = (
+                "EUR_USD",
+                "GBP_USD",
+                "AUD_USD",
+                "NZD_USD",
+                "USD_JPY",
+                "USD_CAD",
+            )
+            run_ids: list[str] = []
+            for index, pair in enumerate(pairs):
+                run_id = f"20260501T{index + 1:02d}0000Z"
+                run_ids.append(run_id)
+                rows = [_row(pair, start)]
+                declared_rows = 2 if index == 1 else None
+                if index == 2:
+                    rows.append(_row(pair, start))
+                _write_run(
+                    root,
+                    run_id=run_id,
+                    pair=pair,
+                    declared_from=start,
+                    declared_to=start + timedelta(hours=1),
+                    rows=rows,
+                    declared_rows=declared_rows,
+                )
+
+            errors: list[str] = []
+            with mock.patch.object(historical_s5.os, "cpu_count", return_value=8):
+                for workers in (1, 6):
+                    with self.assertRaises(HistoricalS5CacheError) as raised:
+                        build_historical_s5_manifest(
+                            root,
+                            pairs=pairs,
+                            allowed_run_ids=tuple(run_ids),
+                            scan_workers=workers,
+                        )
+                    errors.append(str(raised.exception))
+
+            self.assertEqual(errors[0], errors[1])
+            self.assertIn("row count", errors[0])
+
+    def test_manifest_scan_worker_count_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(
+                historical_s5._resolved_manifest_scan_workers(None, task_count=99),
+                1,
+            )
+            for workers in (True, 0, 7):
+                with (
+                    self.subTest(workers=workers),
+                    self.assertRaisesRegex(HistoricalS5CacheError, "from 1 to 6"),
+                ):
+                    build_historical_s5_manifest(
+                        root,
+                        pairs=("EUR_USD",),
+                        scan_workers=workers,
+                    )
+
     def test_outcome_blind_duplicate_selection_and_missing_pair_are_explicit(
         self,
     ) -> None:
