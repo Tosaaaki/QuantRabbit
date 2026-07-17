@@ -231,6 +231,37 @@ family粒度GO/CAUTIONで切り替える。
 今夜の層4部品がその暴走防止。勘は「学習された読み」なので、層2は必ず層3の採点と対で運転する
 (採点なしの勘はギャンブル)。層1の広角化 (W23) と層3の regime別採点が Codex 実装対象。
 
+### 実装済み: 合成脳サイクル (`shadow_trading_brain.py`)
+
+16のシャドウ部品を1本の fail-closed サイクルに合成した。層構造をコードで表現:
+- 層1 知覚: evidence packet + 独自指標の sha 束縛
+- 層2 読み: **`CODEX_AI_TRADER` 専用の read handoff 契約**。脳は読みを検証・消費するが著述しない。
+  `SHADOW_PLACEHOLDER` のみ自己生成可で、その旨をフラグ化。オペレーター指示「直感はCodex AIトレーダー」を型で強制。
+- 層3 メタ認知: 監督採点で不信頼familyを自動CAUTION降格
+- 層4 規律: 通貨エクスポージャ上限 + conviction ladder サイジング
+- seal: throughput SLO ファネル、GO risk 0、order_intents 空、authority NONE 不変
+棚卸し UNRECONCILED は全候補を fail-closed。**live 発注は依然オペレーター承認 + Codex AI トレーダーの領分**。
+
+## W26 全天候スパイン + 脳の完成度ロードマップ (2026-07-18, 独立監査で確定)
+
+合成脳を独立監査 (4レンズ×敵対検証+完成度批評, 11 agents) にかけ、2件の fail-open を修理:
+- 候補の `nav_exposure_fraction` 欠落/0 が通貨capを素通り → 正の値必須で fail-closed 化。
+- 候補の `family_id` 欠落で監督 auto-CAUTION を回避 → family_id 必須 (`UNKNOWN_FAMILY`)。
+
+**全天候スパインを配線** (measured>declared):
+- `regime_classifier_shadow.py`: closed candle のみから ADX的効率比/BB幅/実現vol百分位で
+  {TREND/RANGE/SQUEEZE/EVENT × LOW/HIGH} を**測定**。「時計でなく状態を測る」の実装。
+- `regime_family_router.py`: regime×vol の8セルにfamilyを割当。未カバーセルを `UNCOVERED_CELL` と
+  正直に露出 (現状8セル中5セル未カバー、range×highを含む)。
+- 脳は measured cell に eligible な family のみ入場許可。read の declared regime が測定と矛盾したら flag。
+
+**完成度批評が指摘した残り高レバレッジ4件** (全てshadow実装可、Codex/次サイクル):
+1. ~~regime分類器~~ **実装済み (今回)**。
+2. ポートフォリオ共分散リスクモデル: 名目netでなく相関行列→分散目標。high-volセルで現ガードが最も盲目。
+3. 合成脳のwalk-forwardシミュレータ: 全サイクルを歴史に流し regime cell別P&L帰属。all-weatherの実スコアカード。
+4. conviction接地+較正層: declared_condition を evidence packet から独立再計算し連続0-1確信度乗数へ。W25核心。
+5. レンジ/平均回帰 shadow family (レーンF): 空セルの本体。
+
 ## 実行順 (Codex)
 
 P0: W16 (T1契約モジュール=Claude実装済みを検収) → W8+W2 (regime×order-type整合) → W4 (event gate) → W12 (通貨エクスポージャ制約)
