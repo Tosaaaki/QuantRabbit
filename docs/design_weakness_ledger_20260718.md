@@ -87,10 +87,17 @@ live昇格はオペレーター明示承認) は全修理に適用。
 | S2/欠陥2 | `gate_throughput_slo.py` | 実装済み (ファネル封印、floor割れでkiller gate命名+P0フラグ) |
 | W14/S4 | `conviction_ladder.py` | 実装済み (0.25%基底、条件数で2x/4x、連敗半減、日次-3%停止) |
 | W20 | `prospective_registry.py` | 実装済み (hash鎖・事前登録・family分母・成熟前評価拒否) |
+| W17 | `supervision_outcome_scorer.py` | 実装済み (GO/CAUTION/STOP採点、精度floor割れfamilyの自動CAUTION指名) |
+| W18 | `rejection_taxonomy.py` | 実装済み (固定死因コード必須化+family別集計) |
+| W1/W9 | `asymmetric_exit_shadow.py` | 実装済み (TP無しstructure-break exitの独立shadow評価器。封印カタログ非接触のpaired再採点) |
+| W13 | `nav_normalization.py` | 実装済み (pips→NAV%変換、明示レート必須) |
+| W10 | `cost_window_mask.py` | 実装済み (事前宣言UTC高コスト窓マスク、デフォルトrollover 21-22) |
 
-残り: **runtime配線** (上記モジュールをfast bot admission / trader cycleへ接続 = Codex担当)、
-**データ待ち** (レーンA未来テスト8/3以降、レーンB/E/FはM5取得後)、
-**封印identity手術** (W1/W9のV3出口family、W13のNAV%化 = 新audit loopつきで実施)。
+残り (コードとして今ここでは完成させられないもの):
+- **runtime配線**: 上記12モジュールをfast bot admission / trader cycle / scorecard生成へ接続 (= Codex、実行順は下表)
+- **データ待ち**: レーンA未来テスト (8/3以降に取得→評価)、レーンB/E/F研究 (M5取得後)、W17/W18の実データ運転
+- **W1/W9のカタログ本体統合**: shadow評価器でのpaired証拠が正になった場合のみ、V3 familyとして
+  identity繰り上げ+独立audit付きで昇格 (証拠より先にカタログへ入れない)
 
 ## 実行順 (Codex)
 
