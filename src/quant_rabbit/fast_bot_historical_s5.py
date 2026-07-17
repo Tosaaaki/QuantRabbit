@@ -110,14 +110,6 @@ class HistoricalS5Slice:
     def receipt(self) -> dict[str, Any]:
         """Return a sealed diagnostic receipt without serializing all candles."""
 
-        path_body = [
-            {
-                "timestamp_utc": candle.timestamp_utc.isoformat(),
-                "bid": [candle.bid_o, candle.bid_h, candle.bid_l, candle.bid_c],
-                "ask": [candle.ask_o, candle.ask_h, candle.ask_l, candle.ask_c],
-            }
-            for candle in self.candles
-        ]
         body: dict[str, Any] = {
             "contract": SLICE_CONTRACT,
             "schema_version": 1,
@@ -133,7 +125,7 @@ class HistoricalS5Slice:
             "grid_slot_count": self.grid_slot_count,
             "candle_count": len(self.candles),
             "no_tick_slot_count": self.no_tick_slot_count,
-            "truth_path_sha256": _canonical_sha(path_body),
+            "truth_path_sha256": _truth_path_sha256(self.candles),
             "exact_interval_membership_proved": True,
             "acquisition_receipt_proved": self.acquisition_receipt_proved,
             "historical_only": True,
@@ -1155,6 +1147,32 @@ def _relative_inside(root: Path, path: Path) -> str:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _truth_path_sha256(candles: Sequence[S5BidAskCandle]) -> str:
+    """Hash the canonical candle path without materializing a second full copy."""
+
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, candle in enumerate(candles):
+        if index:
+            digest.update(b",")
+        row = {
+            "timestamp_utc": candle.timestamp_utc.isoformat(),
+            "bid": [candle.bid_o, candle.bid_h, candle.bid_l, candle.bid_c],
+            "ask": [candle.ask_o, candle.ask_h, candle.ask_l, candle.ask_c],
+        }
+        digest.update(
+            json.dumps(
+                row,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    digest.update(b"]")
+    return digest.hexdigest()
 
 
 def _canonical_sha(value: Any) -> str:

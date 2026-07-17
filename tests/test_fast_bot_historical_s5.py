@@ -360,6 +360,39 @@ class HistoricalS5SliceTest(unittest.TestCase):
             self.assertFalse(receipt["promotion_allowed"])
             self.assertFalse(receipt["live_permission"])
 
+    def test_streamed_truth_path_hash_matches_legacy_canonical_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, _path, start = self._fixture(Path(tmp))
+            loaded = load_historical_s5_slice(
+                manifest,
+                pair="EUR_USD",
+                time_from=start,
+                time_to=start + timedelta(seconds=20),
+            )
+            legacy_body = [
+                {
+                    "timestamp_utc": candle.timestamp_utc.isoformat(),
+                    "bid": [
+                        candle.bid_o,
+                        candle.bid_h,
+                        candle.bid_l,
+                        candle.bid_c,
+                    ],
+                    "ask": [
+                        candle.ask_o,
+                        candle.ask_h,
+                        candle.ask_l,
+                        candle.ask_c,
+                    ],
+                }
+                for candle in loaded.candles
+            ]
+
+            self.assertEqual(
+                loaded.receipt()["truth_path_sha256"],
+                historical_s5._canonical_sha(legacy_body),
+            )
+
     def test_batch_hashes_and_decompresses_once_per_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest, _path, start = self._fixture(Path(tmp))
