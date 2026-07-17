@@ -5,7 +5,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.analysis.candles import Candle
-from quant_rabbit.analysis.indicators import compute_indicators
+from quant_rabbit.analysis.indicators import (
+    compute_adx_series,
+    compute_atr_pips_series,
+    compute_ema_spread_pips_series,
+    compute_indicators,
+)
 
 
 def _make_candles(closes: list[float], pair: str = "USD_JPY") -> list[Candle]:
@@ -81,6 +86,43 @@ class IndicatorSetTest(unittest.TestCase):
         self.assertIsNotNone(result.donchian_low)
         self.assertGreaterEqual(result.donchian_high, result.donchian_low)
         self.assertGreaterEqual(result.swing_high, result.swing_low)
+
+    def test_adx_series_exposes_bounded_directionless_strength_history(self) -> None:
+        prices = [156.0 + i * 0.01 + (i / 100.0) ** 2 for i in range(140)]
+        candles = _make_candles(prices)
+
+        series = compute_adx_series(
+            [candle.high for candle in candles],
+            [candle.low for candle in candles],
+            [candle.close for candle in candles],
+            count=12,
+        )
+
+        self.assertEqual(len(series), 12)
+        self.assertTrue(all(math.isfinite(value) and value >= 0.0 for value in series))
+
+    def test_volatility_and_ema_cross_histories_are_bounded_and_in_pips(self) -> None:
+        prices = [156.0 - i * 0.01 for i in range(70)] + [155.3 + i * 0.04 for i in range(70)]
+        candles = _make_candles(prices)
+
+        atr = compute_atr_pips_series(
+            [candle.high for candle in candles],
+            [candle.low for candle in candles],
+            [candle.close for candle in candles],
+            pip_size=0.01,
+            count=15,
+        )
+        ema_spread = compute_ema_spread_pips_series(
+            [candle.close for candle in candles],
+            pip_size=0.01,
+            count=30,
+        )
+
+        self.assertEqual(len(atr), 15)
+        self.assertTrue(all(value > 0.0 for value in atr))
+        self.assertEqual(len(ema_spread), 30)
+        self.assertLess(min(ema_spread), max(ema_spread))
+        self.assertGreater(ema_spread[-1], 0.0)
 
 
 if __name__ == "__main__":

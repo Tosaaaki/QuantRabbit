@@ -19,6 +19,7 @@ from quant_rabbit.fast_bot import (
     ENTRY_EXPERIMENT_CONTRACT,
     EPISODE_HANDOFF_CONTRACT,
     HORIZON_LANE,
+    LEGACY_EPISODE_HANDOFF_CONTRACT,
     REGIME_CONTRACT,
     _append_signals_once,
     _entry_experiment_arms,
@@ -36,6 +37,11 @@ NOW = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
 TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D": 1440}
 EPISODE_WORKER = Path(__file__).resolve().parents[1] / "scripts" / "launch-fast-bot-episode-worker.py"
 EPISODE_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "run-fast-bot-episode-shadow.py"
+EPISODE_OUTCOME_RESOLVER = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "resolve-fast-bot-episode-outcomes.py"
+)
 
 
 def _candles(timeframe: str, *, failed_break_short: bool = False) -> list[dict]:
@@ -187,6 +193,18 @@ def _load_episode_runner_module():
     )
     if spec is None or spec.loader is None:
         raise RuntimeError("episode runner module is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_episode_outcome_resolver_module():
+    spec = importlib.util.spec_from_file_location(
+        "quant_rabbit_episode_outcome_resolver_test",
+        EPISODE_OUTCOME_RESOLVER,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("episode outcome resolver module is unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -844,6 +862,210 @@ class FastBotTest(unittest.TestCase):
                 worker_module.MAX_WORKER_LOG_BYTES,
             )
 
+    def test_episode_launcher_runs_empty_spool_for_mature_outcome_catchup(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            log_path = root / "worker.log"
+            with (
+                patch.object(worker_module.subprocess, "Popen") as popen,
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_LIVE_ENABLED": "0",
+                        "QR_AUTOTRADE_LOCK_HELD": "0",
+                    },
+                    clear=False,
+                ),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                result = worker_module.launch_worker(
+                    spool=spool,
+                    output=root / "episode.json",
+                    ledger=root / "fast_bot_episode_ledger.jsonl",
+                    source_archive=root / "sources",
+                    log_path=log_path,
+                    outcome_enabled=True,
+                )
+
+            self.assertEqual(result, 0)
+            popen.assert_called_once()
+            command = popen.call_args.args[0]
+            self.assertIn("--worker", command)
+            self.assertIn("--outcome-enabled", command)
+            self.assertFalse(list(spool.glob("handoff-*.json")))
+
+    def test_episode_v2_waits_for_vehicle_projection_but_outcome_error_does_not_restore_it(self) -> None:
+        worker_module = _load_episode_worker_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            spool = root / "spool"
+            spool.mkdir()
+            owner_id = _ensure_test_spool_owner(root, spool)
+            handoff_path = (
+                spool
+                / f"handoff-1-{owner_id}-999999-0000000000000001.json"
+            )
+            handoff_path.write_text("{}\n")
+            sealed = {
+                "schema_version": 2,
+                "cycle_generated_at_utc": NOW.isoformat(),
+                "contract_sha256": "a" * 64,
+                "regime_contract": {},
+                "fast_pair_charts": {},
+                "slow_pair_charts": {},
+            }
+            environment = {
+                "QR_LIVE_ENABLED": "0",
+                "QR_AUTOTRADE_LOCK_HELD": "0",
+            }
+            with (
+                patch.object(
+                    worker_module,
+                    "load_fast_bot_episode_handoff",
+                    return_value=sealed,
+                ),
+                patch.object(
+                    worker_module,
+                    "run_fast_bot_episode_shadow",
+                    return_value={"status": "UPDATED"},
+                ),
+                patch.object(
+                    worker_module,
+                    "_run_episode_truth_cycle",
+                    return_value={
+                        "status": "LOCK_BUSY",
+                        "vehicle_projection_status": "FAILED",
+                    },
+                ),
+                patch.dict(os.environ, environment, clear=False),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                busy = worker_module.run_worker(
+                    spool=spool,
+                    output=root / "episode.json",
+                    ledger=root / "episode.jsonl",
+                    source_archive=root / "sources",
+                )
+
+            self.assertEqual(busy, 75)
+            self.assertTrue(handoff_path.exists())
+
+            with (
+                patch.object(
+                    worker_module,
+                    "load_fast_bot_episode_handoff",
+                    return_value=sealed,
+                ),
+                patch.object(
+                    worker_module,
+                    "run_fast_bot_episode_shadow",
+                    return_value={"status": "NO_NEW_EVENT"},
+                ),
+                patch.object(
+                    worker_module,
+                    "_run_episode_truth_cycle",
+                    return_value={
+                        "status": "OUTCOME_IDENTITY_CONFLICT",
+                        "vehicle_projection_status": "VERIFIED",
+                    },
+                ),
+                patch.dict(os.environ, environment, clear=False),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                conflicted = worker_module.run_worker(
+                    spool=spool,
+                    output=root / "episode.json",
+                    ledger=root / "episode.jsonl",
+                    source_archive=root / "sources",
+                )
+
+            self.assertEqual(conflicted, 1)
+            self.assertFalse(handoff_path.exists())
+
+    def test_episode_outcome_resolver_derives_siblings_and_rejects_live_before_import(self) -> None:
+        resolver = _load_episode_outcome_resolver_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ledger = root / "fast_bot_episode_ledger.jsonl"
+            paths = resolver.derive_episode_truth_paths(ledger)
+            resolved_root = ledger.resolve().parent
+            self.assertEqual(
+                paths,
+                {
+                    "vehicle_ledger_path": resolved_root / "fast_bot_episode_vehicle_ledger.jsonl",
+                    "outcome_ledger_path": resolved_root / "fast_bot_episode_outcome_ledger.jsonl",
+                    "scorecard_path": resolved_root / "fast_bot_episode_scorecard.json",
+                    "lock_path": resolved_root / "fast_bot_episode_truth.lock",
+                },
+            )
+            with (
+                patch.object(
+                    resolver,
+                    "_load_truth_dependencies",
+                    side_effect=AssertionError("unsafe runtime imported truth core"),
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_AUTOTRADE_LOCK_HELD": "0",
+                    },
+                    clear=False,
+                ),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                rejected = resolver.run_episode_outcome_resolution(
+                    episode_ledger_path=ledger,
+                    source_archive_dir=root / "sources",
+                )
+            self.assertEqual(rejected["status"], "RUNTIME_SAFETY_REJECTED")
+            self.assertFalse(rejected["broker_read"])
+            self.assertFalse(ledger.exists())
+
+            captured: dict = {}
+
+            class ReadOnlyClient:
+                def get_json(self, path: str, query: dict | None = None) -> dict:
+                    return {}
+
+            def truth_cycle(**kwargs):
+                captured.update(kwargs)
+                return {
+                    "status": "NO_DUE_VEHICLES",
+                    "vehicle_projection_status": "VERIFIED",
+                }
+
+            with (
+                patch.object(
+                    resolver,
+                    "_load_truth_dependencies",
+                    return_value=(truth_cycle, ReadOnlyClient),
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "QR_LIVE_ENABLED": "0",
+                        "QR_AUTOTRADE_LOCK_HELD": "0",
+                    },
+                    clear=False,
+                ),
+            ):
+                os.environ.pop("QR_AUTOTRADE_LOCK_OWNER_TOKEN", None)
+                resolved = resolver.run_episode_outcome_resolution(
+                    handoffs=({"schema_version": 2},),
+                    episode_ledger_path=ledger,
+                    source_archive_dir=root / "sources",
+                )
+            self.assertEqual(resolved["status"], "NO_DUE_VEHICLES")
+            self.assertEqual(captured["handoffs"], ({"schema_version": 2},))
+            self.assertIs(captured["client_factory"], ReadOnlyClient)
+            self.assertEqual(captured["vehicle_ledger_path"], paths["vehicle_ledger_path"])
+            self.assertEqual(captured["outcome_ledger_path"], paths["outcome_ledger_path"])
+            self.assertEqual(captured["scorecard_path"], paths["scorecard_path"])
+            self.assertEqual(captured["lock_path"], paths["lock_path"])
+
     def test_recovered_pending_batch_replays_same_handoff_before_delete(self) -> None:
         worker_module = _load_episode_worker_module()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -877,6 +1099,7 @@ class FastBotTest(unittest.TestCase):
                         {"status": "NO_NEW_EVENT"},
                     ],
                 ) as run_episode,
+                patch.object(worker_module, "_run_episode_truth_cycle") as run_truth,
                 patch.dict(
                     os.environ,
                     {
@@ -896,6 +1119,7 @@ class FastBotTest(unittest.TestCase):
 
             self.assertEqual(result, 0)
             self.assertEqual(run_episode.call_count, 2)
+            run_truth.assert_not_called()
             self.assertFalse(handoff_path.exists())
 
     def test_episode_worker_consumes_sealed_handoffs_in_cycle_order(self) -> None:
@@ -954,6 +1178,15 @@ class FastBotTest(unittest.TestCase):
                 datetime.fromisoformat(state["generated_at_utc"]),
                 NOW + timedelta(seconds=30),
             )
+            scorecard = json.loads(
+                (root / "episode_scorecard.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                scorecard["contract"],
+                "QR_FAST_BOT_EPISODE_CLUSTER_SCORECARD_V1",
+            )
+            self.assertFalse(scorecard["live_permission"])
+            self.assertEqual(scorecard["order_authority"], "NONE")
             self.assertIn("spool_delay_seconds=", worker.stderr)
 
     def test_primary_seals_same_validated_packets_for_post_lock_episode(self) -> None:
@@ -1001,6 +1234,16 @@ class FastBotTest(unittest.TestCase):
             self.assertEqual(handoff["cycle_generated_at_utc"], NOW.isoformat())
             self.assertEqual(handoff["regime_contract"], regime)
             self.assertEqual(handoff["regime_contract_sha256"], regime["contract_sha256"])
+            self.assertEqual(handoff["schema_version"], 2)
+            self.assertEqual(handoff["broker_snapshot"], snapshot)
+            self.assertEqual(
+                handoff["prospective_vehicle_shadow_sha256"],
+                handoff["prospective_vehicle_shadow"]["contract_sha256"],
+            )
+            self.assertEqual(
+                handoff["broker_snapshot_sha256"],
+                regime["sources"]["broker_snapshot_sha256"],
+            )
             self.assertEqual(result["episode_handoff_sha256"], handoff["contract_sha256"])
             self.assertEqual(len(episode_fast["charts"]), 28)
             self.assertTrue(all(not chart["views"] for chart in episode_fast["charts"]))
@@ -1044,6 +1287,40 @@ class FastBotTest(unittest.TestCase):
             shadow = json.loads((root / "shadow.json").read_text())
             self.assertTrue(shadow["shadow_only"])
             self.assertFalse(shadow["live_permission"])
+
+    def test_primary_never_publishes_an_unreadable_over_cap_handoff(self) -> None:
+        fast, slow, snapshot = _inputs()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for name, payload in (
+                ("fast", fast),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(
+                    json.dumps(payload),
+                    encoding="utf-8",
+                )
+            handoff_path = root / "episode-handoff.json"
+            with (
+                patch("quant_rabbit.fast_bot.MAX_EPISODE_HANDOFF_BYTES", 1024),
+                self.assertRaisesRegex(ValueError, "byte cap"),
+            ):
+                run_fast_bot_shadow(
+                    fast_pair_charts_path=root / "fast.json",
+                    slow_pair_charts_path=root / "slow.json",
+                    broker_snapshot_path=root / "snapshot.json",
+                    guardian_events_path=root / "events.json",
+                    ai_supervision_path=None,
+                    regime_output_path=root / "regime.json",
+                    shadow_output_path=root / "shadow.json",
+                    shadow_ledger_path=root / "shadow.jsonl",
+                    report_path=root / "report.md",
+                    now_utc=NOW,
+                    episode_handoff_path=handoff_path,
+                )
+            self.assertFalse(handoff_path.exists())
 
     def test_dedicated_episode_runner_uses_sealed_cycle_after_sources_change(self) -> None:
         fast, slow, snapshot = _inputs()
@@ -1286,6 +1563,50 @@ class FastBotTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "seal|binding"):
                 load_fast_bot_episode_handoff(handoff_path)
+
+    def test_episode_handoff_v2_freezes_snapshot_and_still_drains_legacy_v1(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            handoff_path = _write_episode_handoff(
+                root,
+                root / "spool",
+                now=NOW,
+                suffix="feedfacefeedface",
+            )
+            current = json.loads(handoff_path.read_text())
+            self.assertEqual(current["schema_version"], 2)
+            self.assertIn("broker_snapshot", current)
+
+            tampered = json.loads(json.dumps(current))
+            tampered["broker_snapshot"]["quotes"]["EUR_USD"]["bid"] = 1.0
+            tampered = _seal_contract(
+                {key: value for key, value in tampered.items() if key != "contract_sha256"}
+            )
+            handoff_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "binding"):
+                load_fast_bot_episode_handoff(handoff_path)
+
+            legacy_body = {
+                key: value
+                for key, value in current.items()
+                if key
+                not in {
+                    "contract_sha256",
+                    "broker_snapshot",
+                    "broker_snapshot_sha256",
+                    "prospective_vehicle_shadow",
+                    "prospective_vehicle_shadow_sha256",
+                }
+            }
+            legacy_body["contract"] = LEGACY_EPISODE_HANDOFF_CONTRACT
+            legacy_body["schema_version"] = 1
+            handoff_path.write_text(
+                json.dumps(_seal_contract(legacy_body)),
+                encoding="utf-8",
+            )
+            loaded = load_fast_bot_episode_handoff(handoff_path)
+            self.assertEqual(loaded["schema_version"], 1)
+            self.assertNotIn("broker_snapshot", loaded)
 
     def test_passive_entry_arms_never_round_onto_opposite_quote(self) -> None:
         long_arms = _entry_experiment_arms(

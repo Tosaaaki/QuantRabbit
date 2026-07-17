@@ -451,7 +451,7 @@ class FastBotLearningTest(unittest.TestCase):
             )
         )
 
-    def test_eight_arms_are_one_factor_at_a_time_and_strictly_passive(self) -> None:
+    def test_versioned_arms_are_one_factor_at_a_time_and_strictly_passive(self) -> None:
         expected_ids = [spec[0] for spec in LEARNING_ARM_SPECS]
         for side in SIDES:
             with self.subTest(side=side):
@@ -465,10 +465,16 @@ class FastBotLearningTest(unittest.TestCase):
                     m5_atr_pips=5.0,
                 )
                 self.assertEqual([arm["arm_id"] for arm in arms], expected_ids)
-                self.assertEqual(len(arms), 8)
+                self.assertEqual(len(arms), len(LEARNING_ARM_SPECS))
                 self.assertEqual(
                     {arm["horizon_lane"] for arm in arms},
-                    {"M1_EXECUTION_HOLD_900S", "M1_EXECUTION_HOLD_1800S"},
+                    {
+                        "M1_EXECUTION_HOLD_180S",
+                        "M1_EXECUTION_HOLD_300S",
+                        "M1_EXECUTION_HOLD_600S",
+                        "M1_EXECUTION_HOLD_900S",
+                        "M1_EXECUTION_HOLD_1800S",
+                    },
                 )
                 base = arms[0]
                 if side == "LONG":

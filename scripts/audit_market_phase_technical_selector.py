@@ -3,9 +3,10 @@
 
 All features are computed from complete M5 candles available at forecast time.
 Rolling phase boundaries use only earlier rows. A chronological validation block
-locks one rule/orientation/strength threshold per phase; the final holdout is
-untouched until that choice is fixed. Exact entry-relative BID/ASK opens include
-the paid spread.
+locks one rule/orientation/strength threshold per phase only after a within-cell
+Bonferroni gate; the final holdout is untouched until that choice is fixed and
+can only evaluate, never create, remove, or adopt, the selector. Exact
+entry-relative BID/ASK opens include the paid spread.
 
 This is direction evidence only. A surviving phase/rule still needs an exact S5
 TP/SL replay and the ordinary verifier/risk/gateway chain before live use.
@@ -18,6 +19,7 @@ import hashlib
 import json
 import math
 import os
+import statistics
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -61,6 +63,11 @@ RULES = (
     "mean_revert_slow",
 )
 THRESHOLD_QUANTILES = (0.50, 0.70, 0.85, 0.95)
+FAMILYWISE_ALPHA = 0.05
+PLANNED_HYPOTHESES_PER_CELL = (
+    len(RULES) * 2 * len(THRESHOLD_QUANTILES)
+)
+MULTIPLE_TESTING_METHOD = "BONFERRONI_WITHIN_VALIDATION_CELL"
 
 
 def main() -> int:
@@ -114,11 +121,8 @@ def main() -> int:
     pair_holdout_selected: list[dict[str, Any]] = []
     by_pair_phase_session: dict[str, Any] = {}
     pair_phase_session_research_selector: dict[str, dict[str, Any]] = {}
-    pair_phase_session_holdout_selector: dict[str, dict[str, Any]] = {}
     session_validation_selected: list[dict[str, Any]] = []
     session_holdout_selected: list[dict[str, Any]] = []
-    strict_session_validation_selected: list[dict[str, Any]] = []
-    strict_session_holdout_selected: list[dict[str, Any]] = []
     for phase in PHASES:
         validation_phase = validation.loc[validation["market_phase"] == phase]
         holdout_phase = holdout.loc[holdout["market_phase"] == phase]
@@ -149,19 +153,16 @@ def main() -> int:
             )
         validation_metrics = directional_metrics(validation_rows)
         holdout_metrics = directional_metrics(phase_holdout_rows)
-        candidate = _phase_candidate(
+        holdout_diagnostic = _holdout_diagnostic_passed(
             validation_metrics,
             holdout_metrics,
             minimum_validation_trades=args.minimum_validation_trades,
             minimum_holdout_trades=args.minimum_holdout_trades,
             minimum_days=args.minimum_holdout_days,
         )
-        if candidate and isinstance(locked, Mapping):
-            runtime_selector[phase] = {
-                "rule": locked["rule"],
-                "orientation": "DIRECT" if int(locked["orientation"]) == 1 else "INVERSE",
-                "minimum_absolute_score": locked["threshold"],
-            }
+        locked_selector = _validation_locked_selector(selection)
+        if locked_selector is not None:
+            runtime_selector[phase] = locked_selector
             validation_selected.extend(validation_rows)
             holdout_selected.extend(phase_holdout_rows)
         by_phase[phase] = {
@@ -170,14 +171,21 @@ def main() -> int:
             "locked_selection": locked,
             "validation_metrics": validation_metrics,
             "holdout_metrics": holdout_metrics,
-            "direction_candidate": candidate,
+            "holdout_diagnostic_passed": holdout_diagnostic,
+            "holdout_role": "EVALUATION_ONLY_NOT_SELECTOR_ADOPTION",
+            "selection_hypothesis_count": selection.get(
+                "hypothesis_count", {}
+            ),
+            "multiple_testing_correction": selection.get(
+                "multiple_testing_correction", {}
+            ),
             "selection_candidates": selection.get("candidates", []),
         }
 
-        pairs = sorted(
-            set(map(str, validation_phase["pair"].unique()))
-            & set(map(str, holdout_phase["pair"].unique()))
-        )
+        # The selector universe is frozen from validation alone.  Missing
+        # pair/session rows in holdout produce empty diagnostic metrics; they
+        # must never erase or create a validation-locked selector.
+        pairs = _validation_cohorts(validation_phase, column="pair")
         for pair in pairs:
             validation_pair = validation_phase.loc[validation_phase["pair"] == pair]
             holdout_pair = holdout_phase.loc[holdout_phase["pair"] == pair]
@@ -208,13 +216,14 @@ def main() -> int:
                 )
             pair_validation_metrics = directional_metrics(pair_validation_rows)
             pair_holdout_metrics = directional_metrics(pair_holdout_rows)
-            pair_candidate = _phase_candidate(
+            pair_holdout_diagnostic = _holdout_diagnostic_passed(
                 pair_validation_metrics,
                 pair_holdout_metrics,
                 minimum_validation_trades=args.minimum_pair_validation_trades,
                 minimum_holdout_trades=args.minimum_pair_holdout_trades,
                 minimum_days=args.minimum_pair_holdout_days,
             )
+            pair_locked_selector = _validation_locked_selector(pair_selection)
             key = f"{pair}:{phase}"
             by_pair_phase[key] = {
                 "pair": pair,
@@ -222,24 +231,25 @@ def main() -> int:
                 "locked_selection": pair_locked,
                 "validation_metrics": pair_validation_metrics,
                 "holdout_metrics": pair_holdout_metrics,
-                "direction_candidate": pair_candidate,
+                "holdout_diagnostic_passed": pair_holdout_diagnostic,
+                "holdout_role": "EVALUATION_ONLY_NOT_SELECTOR_ADOPTION",
+                "selection_hypothesis_count": pair_selection.get(
+                    "hypothesis_count", {}
+                ),
+                "multiple_testing_correction": pair_selection.get(
+                    "multiple_testing_correction", {}
+                ),
             }
-            if pair_candidate and isinstance(pair_locked, Mapping):
-                pair_phase_runtime_selector.setdefault(pair, {})[phase] = {
-                    "rule": pair_locked["rule"],
-                    "orientation": (
-                        "DIRECT"
-                        if int(pair_locked["orientation"]) == 1
-                        else "INVERSE"
-                    ),
-                    "minimum_absolute_score": pair_locked["threshold"],
-                }
+            if pair_locked_selector is not None:
+                pair_phase_runtime_selector.setdefault(pair, {})[
+                    phase
+                ] = pair_locked_selector
                 pair_validation_selected.extend(pair_validation_rows)
                 pair_holdout_selected.extend(pair_holdout_rows)
 
-            sessions = sorted(
-                set(map(str, validation_pair["utc_session_bucket"].unique()))
-                & set(map(str, holdout_pair["utc_session_bucket"].unique()))
+            sessions = _validation_cohorts(
+                validation_pair,
+                column="utc_session_bucket",
             )
             for session in sessions:
                 validation_cell = validation_pair.loc[
@@ -277,12 +287,9 @@ def main() -> int:
                     cell_validation_rows
                 )
                 cell_holdout_metrics = directional_metrics(cell_holdout_rows)
-                research_survivor = _validation_survivor(
-                    cell_validation_metrics,
-                    minimum_trades=args.minimum_session_validation_trades,
-                    minimum_days=args.minimum_session_validation_days,
-                )
-                cell_candidate = _phase_candidate(
+                cell_locked_selector = _validation_locked_selector(cell_selection)
+                research_survivor = cell_locked_selector is not None
+                cell_holdout_diagnostic = _holdout_diagnostic_passed(
                     cell_validation_metrics,
                     cell_holdout_metrics,
                     minimum_validation_trades=(
@@ -300,22 +307,21 @@ def main() -> int:
                     "validation_metrics": cell_validation_metrics,
                     "validation_research_survivor": research_survivor,
                     "holdout_metrics": cell_holdout_metrics,
-                    "direction_candidate": cell_candidate,
+                    "holdout_diagnostic_passed": cell_holdout_diagnostic,
+                    "holdout_role": "EVALUATION_ONLY_NOT_SELECTOR_ADOPTION",
+                    "selection_hypothesis_count": cell_selection.get(
+                        "hypothesis_count", {}
+                    ),
+                    "multiple_testing_correction": cell_selection.get(
+                        "multiple_testing_correction", {}
+                    ),
                 }
-                if research_survivor and isinstance(cell_locked, Mapping):
+                if cell_locked_selector is not None:
                     pair_phase_session_research_selector.setdefault(
                         pair, {}
-                    ).setdefault(phase, {})[session] = _selector_view(cell_locked)
+                    ).setdefault(phase, {})[session] = cell_locked_selector
                     session_validation_selected.extend(cell_validation_rows)
                     session_holdout_selected.extend(cell_holdout_rows)
-                if cell_candidate and isinstance(cell_locked, Mapping):
-                    pair_phase_session_holdout_selector.setdefault(
-                        pair, {}
-                    ).setdefault(phase, {})[session] = _selector_view(cell_locked)
-                    strict_session_validation_selected.extend(
-                        cell_validation_rows
-                    )
-                    strict_session_holdout_selected.extend(cell_holdout_rows)
 
     aggregate_validation = directional_metrics(validation_selected)
     aggregate_holdout = directional_metrics(holdout_selected)
@@ -337,22 +343,8 @@ def main() -> int:
         session_holdout_selected,
         horizon_min=args.horizon_min,
     )
-    strict_session_validation_selected = _merge_non_overlapping_rows(
-        strict_session_validation_selected,
-        horizon_min=args.horizon_min,
-    )
-    strict_session_holdout_selected = _merge_non_overlapping_rows(
-        strict_session_holdout_selected,
-        horizon_min=args.horizon_min,
-    )
     session_validation_metrics = directional_metrics(session_validation_selected)
     session_holdout_metrics = directional_metrics(session_holdout_selected)
-    strict_session_validation_metrics = directional_metrics(
-        strict_session_validation_selected
-    )
-    strict_session_holdout_metrics = directional_metrics(
-        strict_session_holdout_selected
-    )
     args.prediction_output_dir.mkdir(parents=True, exist_ok=True)
     prediction_stem = f"market_phase_session_{args.horizon_min}m"
     validation_predictions_path = (
@@ -377,20 +369,31 @@ def main() -> int:
         "phase_semantics": _phase_semantics(),
         "session_semantics": _session_semantics(),
         "rule_semantics": _rule_semantics(),
+        "selector_selection_source": (
+            "VALIDATION_ONLY_AFTER_WITHIN_CELL_BONFERRONI_GATE"
+        ),
+        "holdout_role": "EVALUATION_ONLY_NEVER_SELECTION_OR_ADOPTION",
+        "selector_adoption_uses_holdout": False,
+        "multiple_testing_policy": _multiple_testing_policy(),
         "runtime_selector": runtime_selector,
+        "runtime_selector_status": "VALIDATION_LOCKED_DIAGNOSTIC_ONLY",
         "selected_phase_count": len(runtime_selector),
         "aggregate_validation_metrics": aggregate_validation,
         "aggregate_holdout_metrics": aggregate_holdout,
-        "direction_candidate": bool(runtime_selector)
-        and _aggregate_candidate(aggregate_validation, aggregate_holdout),
+        "aggregate_holdout_diagnostic_passed": bool(runtime_selector)
+        and _aggregate_holdout_diagnostic_passed(
+            aggregate_validation, aggregate_holdout
+        ),
         "pair_phase_runtime_selector": pair_phase_runtime_selector,
         "selected_pair_phase_count": sum(
             len(phases) for phases in pair_phase_runtime_selector.values()
         ),
         "pair_phase_aggregate_validation_metrics": pair_aggregate_validation,
         "pair_phase_aggregate_holdout_metrics": pair_aggregate_holdout,
-        "pair_phase_direction_candidate": bool(pair_phase_runtime_selector)
-        and _aggregate_candidate(
+        "pair_phase_aggregate_holdout_diagnostic_passed": bool(
+            pair_phase_runtime_selector
+        )
+        and _aggregate_holdout_diagnostic_passed(
             pair_aggregate_validation,
             pair_aggregate_holdout,
         ),
@@ -402,18 +405,6 @@ def main() -> int:
         ),
         "pair_phase_session_validation_metrics": session_validation_metrics,
         "pair_phase_session_holdout_metrics": session_holdout_metrics,
-        "pair_phase_session_holdout_selector": (
-            pair_phase_session_holdout_selector
-        ),
-        "selected_pair_phase_session_holdout_count": _nested_selector_count(
-            pair_phase_session_holdout_selector
-        ),
-        "pair_phase_session_strict_validation_metrics": (
-            strict_session_validation_metrics
-        ),
-        "pair_phase_session_strict_holdout_metrics": (
-            strict_session_holdout_metrics
-        ),
         "validation_predictions_path": str(
             validation_predictions_path.resolve()
         ),
@@ -426,6 +417,8 @@ def main() -> int:
         ),
         "promotion_allowed": False,
         "promotion_blockers": [
+            "HOLDOUT_CANNOT_CREATE_OR_ADOPT_SELECTOR",
+            "WITHIN_CELL_MULTIPLE_TESTING_CORRECTION_REQUIRED",
             "DIRECTION_EDGE_REQUIRES_LOCKED_S5_TP_SL_VEHICLE",
             "FORWARD_LIVE_SHADOW_REQUIRED",
         ],
@@ -439,13 +432,17 @@ def main() -> int:
         "contract": CONTRACT,
         "source_report_sha256": _sha256(report),
         "horizon_min": args.horizon_min,
+        "selector_selection_source": (
+            "VALIDATION_ONLY_AFTER_WITHIN_CELL_BONFERRONI_GATE"
+        ),
+        "holdout_role": "EVALUATION_ONLY_NEVER_SELECTION_OR_ADOPTION",
+        "selector_adoption_uses_holdout": False,
+        "multiple_testing_policy": _multiple_testing_policy(),
         "runtime_selector": runtime_selector,
+        "runtime_selector_status": "VALIDATION_LOCKED_DIAGNOSTIC_ONLY",
         "pair_phase_runtime_selector": pair_phase_runtime_selector,
         "pair_phase_session_research_selector": (
             pair_phase_session_research_selector
-        ),
-        "pair_phase_session_holdout_selector": (
-            pair_phase_session_holdout_selector
         ),
         "validation_predictions_sha256": _file_sha256(
             validation_predictions_path
@@ -454,6 +451,7 @@ def main() -> int:
             holdout_predictions_path
         ),
         "live_permission": False,
+        "promotion_allowed": False,
         "requires_s5_vehicle_replay": True,
     })
     print(f"wrote {args.report_output}")
@@ -581,13 +579,25 @@ def _phase_and_rule_frame(frame, *, np, pd):
     return result
 
 
-def _select_on_validation(frame, *, horizon_min: int, minimum_trades: int, minimum_days: int, np):
+def _select_on_validation(
+    frame,
+    *,
+    horizon_min: int,
+    minimum_trades: int,
+    minimum_days: int,
+    np,
+):
     candidates: list[dict[str, Any]] = []
     for rule in RULES:
         absolute = frame[rule].abs().dropna().to_numpy()
         if not len(absolute):
             continue
-        thresholds = sorted({round(float(np.quantile(absolute, q)), 9) for q in THRESHOLD_QUANTILES})
+        thresholds = sorted(
+            {
+                round(float(np.quantile(absolute, q)), 9)
+                for q in THRESHOLD_QUANTILES
+            }
+        )
         for orientation in (1, -1):
             for threshold in thresholds:
                 rows = _selected_rows(
@@ -602,22 +612,51 @@ def _select_on_validation(frame, *, horizon_min: int, minimum_trades: int, minim
                     metrics["trades"] >= minimum_trades
                     and metrics["active_days"] >= minimum_days
                 )
-                candidates.append({
-                    "rule": rule,
-                    "orientation": orientation,
-                    "threshold": threshold,
-                    "minimum_evidence_met": enough,
-                    "metrics": metrics,
-                })
-    eligible = [row for row in candidates if row["minimum_evidence_met"]]
-    ranked = eligible or candidates
-    ranked.sort(key=_candidate_rank, reverse=True)
-    return {"selected": ranked[0] if ranked else None, "candidates": ranked[:12]}
+                gate = _bonferroni_validation_gate(
+                    rows,
+                    metrics=metrics,
+                    minimum_trades=minimum_trades,
+                    minimum_days=minimum_days,
+                    hypothesis_count=PLANNED_HYPOTHESES_PER_CELL,
+                )
+                candidates.append(
+                    {
+                        "rule": rule,
+                        "orientation": orientation,
+                        "threshold": threshold,
+                        "minimum_evidence_met": enough,
+                        "validation_gate": gate,
+                        "metrics": metrics,
+                    }
+                )
+    survivors = [row for row in candidates if row["validation_gate"]["passed"]]
+    survivors.sort(key=_candidate_rank, reverse=True)
+    ranked = sorted(candidates, key=_candidate_rank, reverse=True)
+    return {
+        "selected": survivors[0] if survivors else None,
+        "candidates": ranked[:12],
+        "hypothesis_count": {
+            "planned": PLANNED_HYPOTHESES_PER_CELL,
+            "evaluated": len(candidates),
+        },
+        "multiple_testing_correction": _multiple_testing_policy(),
+        "validation_survivor_count": len(survivors),
+        "selection_uses_holdout": False,
+    }
+
+
+def _validation_cohorts(frame, *, column: str) -> list[str]:
+    """Freeze pair/session cohort membership from validation data only."""
+
+    return sorted(set(map(str, frame[column].unique())))
 
 
 def _candidate_rank(row: Mapping[str, Any]):
     metrics = row.get("metrics") or {}
+    gate = row.get("validation_gate") or {}
     return (
+        _rank(gate.get("one_sided_adjusted_daily_lower_pips")),
+        _rank(gate.get("one_sided_adjusted_mean_lower_pips")),
         _rank(metrics.get("one_sided_95_daily_lower_pips")),
         _rank(metrics.get("one_sided_95_mean_lower_pips")),
         _rank(metrics.get("mean_pips")),
@@ -721,7 +760,16 @@ def _merge_non_overlapping_rows(
     return selected
 
 
-def _phase_candidate(validation, holdout, *, minimum_validation_trades: int, minimum_holdout_trades: int, minimum_days: int) -> bool:
+def _holdout_diagnostic_passed(
+    validation,
+    holdout,
+    *,
+    minimum_validation_trades: int,
+    minimum_holdout_trades: int,
+    minimum_days: int,
+) -> bool:
+    """Describe holdout performance without creating or adopting a selector."""
+
     return bool(
         validation.get("trades", 0) >= minimum_validation_trades
         and holdout.get("trades", 0) >= minimum_holdout_trades
@@ -735,25 +783,105 @@ def _phase_candidate(validation, holdout, *, minimum_validation_trades: int, min
     )
 
 
-def _validation_survivor(
-    metrics: Mapping[str, Any],
+def _bonferroni_validation_gate(
+    rows: Sequence[Mapping[str, Any]],
     *,
+    metrics: Mapping[str, Any],
     minimum_trades: int,
     minimum_days: int,
-) -> bool:
-    """Admit a validation-only cell to the locked S5 vehicle search.
+    hypothesis_count: int,
+) -> dict[str, Any]:
+    """Apply a validation-only familywise gate before selector locking."""
 
-    This is deliberately weaker than final direction acceptance: it keeps a
-    positive executable point estimate for joint TP/SL selection, while the
-    untouched holdout still has to clear the strict confidence bounds.
-    """
-
-    return bool(
+    count = int(hypothesis_count)
+    if count <= 0:
+        raise ValueError("hypothesis_count must be positive")
+    adjusted_alpha = FAMILYWISE_ALPHA / count
+    values = [
+        value
+        for row in rows
+        if (value := _finite(row.get("executed_pips"))) is not None
+    ]
+    daily_totals: dict[str, float] = {}
+    for row in rows:
+        value = _finite(row.get("executed_pips"))
+        if value is None:
+            continue
+        timestamp = datetime.fromisoformat(str(row["timestamp_utc"]))
+        day = timestamp.date().isoformat()
+        daily_totals[day] = daily_totals.get(day, 0.0) + value
+    mean_lower = _one_sided_lower_at_alpha(values, alpha=adjusted_alpha)
+    daily_lower = _one_sided_lower_at_alpha(
+        list(daily_totals.values()),
+        alpha=adjusted_alpha,
+    )
+    minimum_evidence_met = bool(
         int(metrics.get("trades") or 0) >= minimum_trades
         and int(metrics.get("active_days") or 0) >= minimum_days
-        and _positive(metrics.get("mean_pips"))
+    )
+    passed = bool(
+        minimum_evidence_met
+        and _positive(mean_lower)
+        and _positive(daily_lower)
         and float(metrics.get("profit_factor") or 0.0) > 1.0
     )
+    return {
+        "passed": passed,
+        "method": MULTIPLE_TESTING_METHOD,
+        "scope": "RULE_X_ORIENTATION_X_THRESHOLD_WITHIN_CELL",
+        "familywise_alpha": FAMILYWISE_ALPHA,
+        "hypothesis_count": count,
+        "adjusted_one_sided_alpha": round(adjusted_alpha, 12),
+        "z_critical": round(
+            statistics.NormalDist().inv_cdf(1.0 - adjusted_alpha), 6
+        ),
+        "minimum_evidence_met": minimum_evidence_met,
+        "one_sided_adjusted_mean_lower_pips": mean_lower,
+        "one_sided_adjusted_daily_lower_pips": daily_lower,
+        "holdout_used": False,
+    }
+
+
+def _one_sided_lower_at_alpha(
+    values: Sequence[float], *, alpha: float
+) -> float | None:
+    if len(values) < 2 or not 0.0 < alpha < 0.5:
+        return None
+    critical = statistics.NormalDist().inv_cdf(1.0 - alpha)
+    lower = statistics.mean(values) - (
+        critical * statistics.stdev(values) / math.sqrt(len(values))
+    )
+    return round(lower, 6)
+
+
+def _multiple_testing_policy() -> dict[str, Any]:
+    return {
+        "method": MULTIPLE_TESTING_METHOD,
+        "scope": "EACH_PHASE_PAIR_SESSION_VALIDATION_CELL",
+        "familywise_alpha": FAMILYWISE_ALPHA,
+        "planned_hypothesis_count_per_cell": PLANNED_HYPOTHESES_PER_CELL,
+        "adjusted_one_sided_alpha": round(
+            FAMILYWISE_ALPHA / PLANNED_HYPOTHESES_PER_CELL,
+            12,
+        ),
+        "correction_applied_before_selector_lock": True,
+        "holdout_excluded_from_selection": True,
+    }
+
+
+def _validation_locked_selector(
+    selection: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    locked = selection.get("selected")
+    if (
+        selection.get("selection_uses_holdout") is not False
+        or not isinstance(locked, Mapping)
+        or not isinstance(locked.get("validation_gate"), Mapping)
+        or locked["validation_gate"].get("passed") is not True
+        or locked["validation_gate"].get("holdout_used") is not False
+    ):
+        return None
+    return _selector_view(locked)
 
 
 def _selector_view(locked: Mapping[str, Any]) -> dict[str, Any]:
@@ -777,7 +905,7 @@ def _nested_selector_count(selector: Mapping[str, Any]) -> int:
     return count
 
 
-def _aggregate_candidate(validation, holdout) -> bool:
+def _aggregate_holdout_diagnostic_passed(validation, holdout) -> bool:
     return bool(
         _positive(validation.get("mean_pips"))
         and _positive(holdout.get("one_sided_95_mean_lower_pips"))

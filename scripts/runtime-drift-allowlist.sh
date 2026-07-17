@@ -91,6 +91,13 @@ data/fast_bot_shadow_ledger.jsonl|\
 data/fast_bot_episode_state.json|\
 data/fast_bot_episode_state.json.pending|\
 data/fast_bot_episode_ledger.jsonl|\
+data/fast_bot_episode_vehicle_ledger.jsonl|\
+data/fast_bot_episode_outcome_ledger.jsonl|\
+data/fast_bot_episode_scorecard.json|\
+data/fast_bot_episode_truth.lock|\
+data/.fast_bot_episode_vehicle_ledger.jsonl.*.tmp|\
+data/.fast_bot_episode_outcome_ledger.jsonl.*.tmp|\
+data/.fast_bot_episode_scorecard.json.*.tmp|\
 data/fast_bot_episode_handoffs/.owner.json|\
 data/fast_bot_episode_handoffs/.metadata.lock|\
 data/fast_bot_episode_handoffs/.worker.lock|\

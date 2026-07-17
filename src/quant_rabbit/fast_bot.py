@@ -28,6 +28,10 @@ from quant_rabbit.guardian_observation import (
     validate_current_m1_contract,
     validate_slow_retention_contract,
 )
+from quant_rabbit.fast_bot_learning import (
+    LEARNING_SHADOW_CONTRACT,
+    build_fast_bot_learning_shadow,
+)
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.strategy.failed_break_evidence import (
@@ -37,7 +41,8 @@ from quant_rabbit.strategy.failed_break_evidence import (
 
 
 REGIME_CONTRACT = "QR_HIERARCHICAL_BOT_REGIME_V1"
-EPISODE_HANDOFF_CONTRACT = "QR_FAST_BOT_EPISODE_HANDOFF_V1"
+LEGACY_EPISODE_HANDOFF_CONTRACT = "QR_FAST_BOT_EPISODE_HANDOFF_V1"
+EPISODE_HANDOFF_CONTRACT = "QR_FAST_BOT_EPISODE_HANDOFF_V2"
 MAX_EPISODE_HANDOFF_BYTES = 64 * 1024 * 1024
 SHADOW_CONTRACT = "QR_FAST_BOT_FORWARD_SHADOW_V1"
 SIGNAL_CONTRACT = "QR_FAST_BOT_SHADOW_SIGNAL_V1"
@@ -496,17 +501,32 @@ def run_fast_bot_shadow(
         # Freeze the exact validated inputs used above.  The episode process
         # runs only after the Guardian releases the shared live lock, when the
         # canonical chart paths may already belong to the next cycle.
+        prospective_vehicle_shadow = build_fast_bot_learning_shadow(
+            contract,
+            snapshot,
+            now_utc=cycle_now,
+        )
         episode_handoff = _seal(
             {
                 "contract": EPISODE_HANDOFF_CONTRACT,
-                "schema_version": 1,
+                "schema_version": 2,
                 "cycle_generated_at_utc": cycle_now.isoformat(),
                 "regime_contract_sha256": contract.get("contract_sha256"),
                 "fast_pair_charts_sha256": _canonical_sha(validated_fast),
                 "slow_pair_charts_sha256": _canonical_sha(validated_slow),
+                "broker_snapshot_sha256": _canonical_sha(snapshot),
                 "regime_contract": dict(contract),
                 "fast_pair_charts": dict(validated_fast),
                 "slow_pair_charts": dict(validated_slow),
+                # The confirmation-cycle quote and ATR geometry must be frozen
+                # before any future S5 truth is read.  Keeping the exact small
+                # broker snapshot lets the detached worker reproduce that
+                # binding instead of reconstructing an entry after the move.
+                "broker_snapshot": dict(snapshot),
+                "prospective_vehicle_shadow_sha256": (
+                    prospective_vehicle_shadow.get("contract_sha256")
+                ),
+                "prospective_vehicle_shadow": prospective_vehicle_shadow,
                 "diagnostic_only": True,
                 "shadow_only": True,
                 "order_authority": "NONE",
@@ -514,7 +534,11 @@ def run_fast_bot_shadow(
                 "broker_mutation_allowed": False,
             }
         )
-        _write_json_atomic(episode_handoff_path, episode_handoff)
+        _write_json_atomic_bounded(
+            episode_handoff_path,
+            episode_handoff,
+            max_bytes=MAX_EPISODE_HANDOFF_BYTES,
+        )
     return {
         "status": shadow.get("status"),
         "go_gate_count": sum(
@@ -603,7 +627,7 @@ def load_fast_bot_episode_handoff(path: Path) -> dict[str, Any]:
         )
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ValueError("episode handoff JSON is invalid") from error
-    if not isinstance(value, dict) or set(value) != {
+    legacy_fields = {
         "contract",
         "schema_version",
         "cycle_generated_at_utc",
@@ -619,15 +643,45 @@ def load_fast_bot_episode_handoff(path: Path) -> dict[str, Any]:
         "live_permission",
         "broker_mutation_allowed",
         "contract_sha256",
+    }
+    current_fields = {
+        *legacy_fields,
+        "broker_snapshot_sha256",
+        "broker_snapshot",
+        "prospective_vehicle_shadow_sha256",
+        "prospective_vehicle_shadow",
+    }
+    if not isinstance(value, dict) or frozenset(value) not in {
+        frozenset(legacy_fields),
+        frozenset(current_fields),
     }:
         raise ValueError("episode handoff shape is invalid")
-    if not _sealed_contract_valid(value, EPISODE_HANDOFF_CONTRACT):
+    contract_name = value.get("contract")
+    schema_version = value.get("schema_version")
+    is_legacy = (
+        contract_name == LEGACY_EPISODE_HANDOFF_CONTRACT
+        and schema_version == 1
+        and set(value) == legacy_fields
+    )
+    is_current = (
+        contract_name == EPISODE_HANDOFF_CONTRACT
+        and schema_version == 2
+        and set(value) == current_fields
+    )
+    if not (is_legacy or is_current) or not _sealed_contract_valid(
+        value,
+        str(contract_name),
+    ):
         raise ValueError("episode handoff seal is invalid")
-    if isinstance(value.get("schema_version"), bool) or value.get("schema_version") != 1:
+    if isinstance(schema_version, bool):
         raise ValueError("episode handoff schema is invalid")
     regime = value.get("regime_contract")
     fast = value.get("fast_pair_charts")
     slow = value.get("slow_pair_charts")
+    snapshot = value.get("broker_snapshot") if is_current else None
+    prospective_vehicle_shadow = (
+        value.get("prospective_vehicle_shadow") if is_current else None
+    )
     cycle = _parse_utc(value.get("cycle_generated_at_utc"))
     if (
         not isinstance(regime, Mapping)
@@ -639,6 +693,31 @@ def load_fast_bot_episode_handoff(path: Path) -> dict[str, Any]:
         or value.get("regime_contract_sha256") != regime.get("contract_sha256")
         or value.get("fast_pair_charts_sha256") != _canonical_sha(fast)
         or value.get("slow_pair_charts_sha256") != _canonical_sha(slow)
+        or (
+            is_current
+            and (
+                not isinstance(snapshot, Mapping)
+                or value.get("broker_snapshot_sha256") != _canonical_sha(snapshot)
+                or regime.get("sources", {}).get("broker_snapshot_sha256")
+                != value.get("broker_snapshot_sha256")
+                or not isinstance(prospective_vehicle_shadow, Mapping)
+                or not _sealed_contract_valid(
+                    prospective_vehicle_shadow,
+                    LEARNING_SHADOW_CONTRACT,
+                )
+                or value.get("prospective_vehicle_shadow_sha256")
+                != prospective_vehicle_shadow.get("contract_sha256")
+                or prospective_vehicle_shadow.get("generated_at_utc")
+                != value.get("cycle_generated_at_utc")
+                or prospective_vehicle_shadow.get("regime_contract_sha256")
+                != value.get("regime_contract_sha256")
+                or prospective_vehicle_shadow.get("broker_snapshot_sha256")
+                != value.get("broker_snapshot_sha256")
+                or prospective_vehicle_shadow.get("order_authority") != "NONE"
+                or prospective_vehicle_shadow.get("live_permission") is not False
+                or prospective_vehicle_shadow.get("broker_mutation_allowed") is not False
+            )
+        )
         or value.get("diagnostic_only") is not True
         or value.get("shadow_only") is not True
         or value.get("order_authority") != "NONE"
@@ -1121,6 +1200,24 @@ def _reject_json_constant(value: str) -> None:
 
 def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     _write_text_atomic(path, json.dumps(dict(value), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _write_json_atomic_bounded(
+    path: Path,
+    value: Mapping[str, Any],
+    *,
+    max_bytes: int,
+) -> None:
+    text = json.dumps(
+        dict(value),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        allow_nan=False,
+    ) + "\n"
+    if len(text.encode("utf-8")) > max_bytes:
+        raise ValueError("bounded JSON artifact exceeds byte cap")
+    _write_text_atomic(path, text)
 
 
 def _write_text_atomic(path: Path, text: str) -> None:

@@ -1295,6 +1295,14 @@ case "$QR_FAST_BOT_OUTCOME_ENABLED" in
     exit 2
     ;;
 esac
+export QR_FAST_BOT_EPISODE_OUTCOME_ENABLED="${QR_FAST_BOT_EPISODE_OUTCOME_ENABLED:-1}"
+case "$QR_FAST_BOT_EPISODE_OUTCOME_ENABLED" in
+  0|1) ;;
+  *)
+    echo "[run-position-guardian-live] invalid QR_FAST_BOT_EPISODE_OUTCOME_ENABLED=${QR_FAST_BOT_EPISODE_OUTCOME_ENABLED}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 export QR_FAST_BOT_LEARNING_ENABLED="${QR_FAST_BOT_LEARNING_ENABLED:-1}"
 case "$QR_FAST_BOT_LEARNING_ENABLED" in
   0|1) ;;
@@ -1571,6 +1579,7 @@ release_guardian_lock_before_episode() {
 
 launch_fast_bot_episode_worker_after_lock() {
   local launcher launch_status
+  local -a launch_args
   launcher="${ROOT_DIR}/scripts/launch-fast-bot-episode-worker.py"
   if [[ ! -f "$launcher" ]]; then
     echo "[run-position-guardian-live] fast bot episode launcher is missing; persistent handoffs remain queued." >&2
@@ -1580,18 +1589,24 @@ launch_fast_bot_episode_worker_after_lock() {
     echo "[run-position-guardian-live] shared live lock is still marked held; persistent episode handoffs remain queued fail-closed." >&2
     return 0
   fi
+  launch_args=(
+    --launch
+    --spool "$fast_bot_episode_handoff_spool"
+    --output "$fast_bot_episode_output"
+    --ledger "$fast_bot_episode_ledger"
+    --source-archive "$fast_bot_episode_source_archive"
+    --log "${QR_FAST_BOT_EPISODE_WORKER_LOG:-logs/fast_bot_episode_worker.log}"
+  )
+  if [[ "$QR_FAST_BOT_EPISODE_OUTCOME_ENABLED" == "1" ]]; then
+    launch_args+=(--outcome-enabled)
+  fi
   set +e
   (
     export QR_LIVE_ENABLED=0
     export QR_AUTOTRADE_LOCK_HELD=0
     unset QR_AUTOTRADE_LOCK_OWNER_TOKEN
     "$QR_PYTHON" "$launcher" \
-      --launch \
-      --spool "$fast_bot_episode_handoff_spool" \
-      --output "$fast_bot_episode_output" \
-      --ledger "$fast_bot_episode_ledger" \
-      --source-archive "$fast_bot_episode_source_archive" \
-      --log "${QR_FAST_BOT_EPISODE_WORKER_LOG:-logs/fast_bot_episode_worker.log}" >&2
+      "${launch_args[@]}" >&2
   )
   launch_status="$?"
   set -e
@@ -1765,7 +1780,7 @@ if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
     set +e
     "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
       --pairs "$guardian_all_pairs" \
-      --timeframes M1 \
+      --timeframes M1,M5 \
       --count "$guardian_count" \
       --output "$guardian_all_pair_raw" \
       --report "$guardian_all_pair_m1_report" \
@@ -1806,9 +1821,9 @@ if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
         --all-pair-m1-wall-seconds "$guardian_all_pair_wall_seconds" \
         --post-chart-snapshot-wall-seconds "$guardian_post_snapshot_wall_seconds" \
         --candle-close-grace-seconds "$guardian_candle_close_grace_seconds" >&2
-      echo "[run-position-guardian-live] exact-28 current-M1 observation blocked; slow retention was not erased." >&2
+      echo "[run-position-guardian-live] exact-28 current-M1/M5 observation blocked; slow retention was not erased." >&2
     else
-      echo "[run-position-guardian-live] sealed exact-28 current-M1 observation with post-chart quotes." >&2
+      echo "[run-position-guardian-live] sealed exact-28 current-M1/M5 observation with post-chart quotes." >&2
     fi
     rm -f "$guardian_all_pair_raw"
   fi

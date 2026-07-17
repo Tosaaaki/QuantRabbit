@@ -1,8 +1,8 @@
 """Sealed all-pair observation surfaces for the deterministic fast bot.
 
 The position guardian keeps its bounded active packet for position management.
-This module publishes a separate exact-28 current-M1 packet and incrementally
-retains the last structurally valid slow views seen by the existing rotation.
+This module publishes a separate exact-28 current M1/M5 packet and incrementally
+retains the last structurally valid slower views seen by the existing rotation.
 Neither artifact grants order authority.
 """
 
@@ -23,9 +23,9 @@ from quant_rabbit.strategy.directional_forecaster import (
 )
 
 
-CURRENT_M1_CONTRACT = "QR_GUARDIAN_ALL_PAIR_M1_V1"
+CURRENT_M1_CONTRACT = "QR_GUARDIAN_ALL_PAIR_FAST_V2"
 SLOW_RETENTION_CONTRACT = "QR_GUARDIAN_SLOW_CHART_RETENTION_V1"
-CURRENT_TIMEFRAMES = ("M1",)
+CURRENT_TIMEFRAMES = ("M1", "M5")
 SLOW_TIMEFRAMES = ("M5", "M15", "M30", "H1", "H4", "D")
 CURRENT_PACKET_MAX_AGE_SECONDS = 180
 QUOTE_MAX_AGE_SECONDS = 45
@@ -80,7 +80,7 @@ def publish_current_m1(
     candle_close_grace_seconds: int = 5,
     now_utc: datetime | None = None,
 ) -> dict[str, Any]:
-    """Validate and atomically publish an exact-28 current-M1 packet."""
+    """Validate and atomically publish an exact-28 current M1/M5 packet."""
 
     now = _aware_utc(now_utc or datetime.now(timezone.utc))
     source = _read_required_object(source_path, label="all-pair M1 source")
@@ -91,7 +91,7 @@ def publish_current_m1(
         generated,
         max_age_seconds=CURRENT_PACKET_MAX_AGE_SECONDS,
     ):
-        raise ObservationContractError("all-pair M1 source generated_at_utc is stale, future, or invalid")
+        raise ObservationContractError("all-pair M1/M5 source generated_at_utc is stale, future, or invalid")
     charts = _validated_source_charts(
         source,
         expected_pairs=DEFAULT_TRADER_PAIRS,
@@ -578,14 +578,21 @@ def _request_metrics(
             raise ObservationContractError(f"{name} must be finite and non-negative")
     active_requests = int(active_pair_count) * 7
     metrics: dict[str, Any] = {
-        "request_plan": "BOUNDED_70_CANDLE_REQUEST_FALLBACK",
+        "request_plan": "EXACT_28_M1_M5_PLUS_BOUNDED_ACTIVE_ROTATION",
         "active_rotation_pairs": int(active_pair_count),
         "active_rotation_timeframes": 7,
         "active_rotation_candle_requests": active_requests,
         "all_pair_m1_pairs": len(DEFAULT_TRADER_PAIRS),
         "all_pair_m1_timeframes": 1,
         "all_pair_m1_candle_requests": len(DEFAULT_TRADER_PAIRS),
-        "total_candle_requests": active_requests + len(DEFAULT_TRADER_PAIRS),
+        "all_pair_fast_pairs": len(DEFAULT_TRADER_PAIRS),
+        "all_pair_fast_timeframes": len(CURRENT_TIMEFRAMES),
+        "all_pair_fast_candle_requests": (
+            len(DEFAULT_TRADER_PAIRS) * len(CURRENT_TIMEFRAMES)
+        ),
+        "total_candle_requests": (
+            active_requests + len(DEFAULT_TRADER_PAIRS) * len(CURRENT_TIMEFRAMES)
+        ),
         **{name: round(float(value), 6) for name, value in timings.items()},
     }
     if quote_metrics:

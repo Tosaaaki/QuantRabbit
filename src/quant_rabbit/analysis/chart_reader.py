@@ -32,9 +32,12 @@ from quant_rabbit.analysis.candles import (
 )
 from quant_rabbit.analysis.indicators import (
     IndicatorSet,
+    compute_adx_series,
+    compute_atr_pips_series,
+    compute_ema_spread_pips_series,
     compute_indicators,
-    compute_rsi_series,
     compute_macd_hist_series,
+    compute_rsi_series,
 )
 from quant_rabbit.analysis.structure import StructureReading, analyze_structure
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
@@ -312,9 +315,33 @@ def build_pair_chart(
         # Indicator series for divergence detection. Empty when there
         # aren't enough bars to seed the indicator.
         closes_for_series = tuple(c.close for c in candles)
+        highs_for_series = tuple(c.high for c in candles)
+        lows_for_series = tuple(c.low for c in candles)
         series_map = {
             "rsi_14": compute_rsi_series(closes_for_series, period=14, count=RECENT_CANDLES_PUBLISH),
             "macd_hist": compute_macd_hist_series(closes_for_series, count=RECENT_CANDLES_PUBLISH),
+            "adx_14": compute_adx_series(
+                highs_for_series,
+                lows_for_series,
+                closes_for_series,
+                period=14,
+                count=RECENT_CANDLES_PUBLISH,
+            ),
+            "atr_pips": compute_atr_pips_series(
+                highs_for_series,
+                lows_for_series,
+                closes_for_series,
+                pip_size=indicators.pip_size,
+                period=14,
+                count=RECENT_CANDLES_PUBLISH,
+            ),
+            "ema_12_minus_50_pips": compute_ema_spread_pips_series(
+                closes_for_series,
+                pip_size=indicators.pip_size,
+                fast=12,
+                slow=50,
+                count=RECENT_CANDLES_PUBLISH,
+            ),
         }
         views.append(
             ChartView(

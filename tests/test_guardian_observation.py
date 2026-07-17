@@ -152,7 +152,7 @@ def _snapshot() -> dict:
 class GuardianObservationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.all_pair_m1_source = _source(DEFAULT_TRADER_PAIRS, ("M1",))
+        cls.all_pair_m1_source = _source(DEFAULT_TRADER_PAIRS, ("M1", "M5"))
 
     def test_publish_current_m1_is_exact_28_sealed_and_metrics_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -176,10 +176,17 @@ class GuardianObservationTest(unittest.TestCase):
 
             self.assertTrue(validate_current_m1_contract(value, now_utc=NOW))
             self.assertEqual([row["pair"] for row in value["charts"]], list(DEFAULT_TRADER_PAIRS))
-            self.assertTrue(all([view["granularity"] for view in row["views"]] == ["M1"] for row in value["charts"]))
+            self.assertTrue(
+                all(
+                    [view["granularity"] for view in row["views"]]
+                    == ["M1", "M5"]
+                    for row in value["charts"]
+                )
+            )
             self.assertEqual(value["request_metrics"]["active_rotation_candle_requests"], 42)
             self.assertEqual(value["request_metrics"]["all_pair_m1_candle_requests"], 28)
-            self.assertEqual(value["request_metrics"]["total_candle_requests"], 70)
+            self.assertEqual(value["request_metrics"]["all_pair_fast_candle_requests"], 56)
+            self.assertEqual(value["request_metrics"]["total_candle_requests"], 98)
             self.assertEqual(value["request_metrics"]["quote_pairs_succeeded"], 28)
             self.assertFalse(value["live_permission"])
             self.assertFalse(value["broker_mutation_allowed"])

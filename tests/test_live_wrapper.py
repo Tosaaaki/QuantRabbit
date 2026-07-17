@@ -2680,7 +2680,7 @@ class LiveWrapperTest(unittest.TestCase):
             all_pair = next(
                 call
                 for call in pair_calls
-                if call[call.index("--timeframes") + 1] == "M1"
+                if call[call.index("--timeframes") + 1] == "M1,M5"
             )
             self.assertEqual(len(active[active.index("--pairs") + 1].split(",")), 2)
             self.assertEqual(
@@ -2697,12 +2697,12 @@ class LiveWrapperTest(unittest.TestCase):
             )
             self.assertEqual(current["status"], "CURRENT")
             self.assertEqual([row["pair"] for row in current["charts"]], list(DEFAULT_TRADER_PAIRS))
-            self.assertEqual(current["request_metrics"]["total_candle_requests"], 42)
+            self.assertEqual(current["request_metrics"]["total_candle_requests"], 70)
             self.assertEqual(len(retained["charts"]), 28)
             self.assertEqual(retained["pairs_complete"], 2)
             self.assertFalse(current["live_permission"])
             self.assertFalse(retained["live_permission"])
-            self.assertIn("sealed exact-28 current-M1 observation", result.stderr)
+            self.assertIn("sealed exact-28 current-M1/M5 observation", result.stderr)
 
     def test_position_guardian_runs_permanent_counterfactual_learning_without_send(self) -> None:
         wrapper = GUARDIAN_WRAPPER.read_text(encoding="utf-8")
@@ -2734,6 +2734,12 @@ class LiveWrapperTest(unittest.TestCase):
         self.assertIn('data/fast_bot_episode_ledger.jsonl', wrapper)
         self.assertIn('data/fast_bot_episode_sources', wrapper)
         self.assertIn('data/fast_bot_episode_handoffs', wrapper)
+        self.assertIn(
+            'export QR_FAST_BOT_EPISODE_OUTCOME_ENABLED="${QR_FAST_BOT_EPISODE_OUTCOME_ENABLED:-1}"',
+            wrapper,
+        )
+        self.assertIn('invalid QR_FAST_BOT_EPISODE_OUTCOME_ENABLED=', wrapper)
+        self.assertIn('resolve-fast-bot-episode-outcomes.py', launcher)
         fast_bot_block = wrapper[
             wrapper.index("run_fast_bot_shadow()") :
             wrapper.index("resolve_fast_bot_shadow_outcomes()")
@@ -2756,6 +2762,7 @@ class LiveWrapperTest(unittest.TestCase):
         self.assertIn("--ledger", launch_block)
         self.assertIn("--source-archive", launch_block)
         self.assertIn("--log", launch_block)
+        self.assertIn("--outcome-enabled", launch_block)
         self.assertIn("export QR_LIVE_ENABLED=0", launch_block)
         self.assertIn("export QR_AUTOTRADE_LOCK_HELD=0", launch_block)
         self.assertIn("unset QR_AUTOTRADE_LOCK_OWNER_TOKEN", launch_block)
@@ -2775,6 +2782,38 @@ class LiveWrapperTest(unittest.TestCase):
             finish_block.index("launch_fast_bot_episode_worker_after_lock"),
         )
         self.assertEqual(wrapper.count("finish_guardian_cycle_with_episode"), 3)
+
+    def test_position_guardian_rejects_invalid_episode_outcome_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, capture = _guardian_wrapper_env(
+                root,
+                snapshot={
+                    "fetched_at_utc": "2026-07-16T00:00:00+00:00",
+                    "positions": [],
+                    "orders": [],
+                    "quotes": {},
+                },
+                trigger_contract={"entries": []},
+                candidate_limit=0,
+            )
+            env["QR_FAST_BOT_EPISODE_OUTCOME_ENABLED"] = "yes"
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(
+                "invalid QR_FAST_BOT_EPISODE_OUTCOME_ENABLED=yes; expected 0 or 1",
+                result.stderr,
+            )
+            self.assertFalse(capture.exists())
 
     def test_position_guardian_runs_episode_after_lock_release_on_both_success_paths(self) -> None:
         for trader_owned, episode_exit in ((False, 0), (True, 7)):
@@ -2847,6 +2886,7 @@ class LiveWrapperTest(unittest.TestCase):
                     launch_call = next(
                         call for call in episode_calls if "--launch" in call
                     )
+                    self.assertIn("--outcome-enabled", launch_call)
                     for option in (
                         "--spool",
                         "--output",

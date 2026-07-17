@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quant_rabbit.fast_bot_learning import (
+    LEARNING_ARM_SPECS,
     LEARNING_SELECTION_POLICY_V2,
     _learning_seat_valid,
     build_fast_bot_learning_shadow,
@@ -290,7 +291,7 @@ class FastBotLearningTruthTest(unittest.TestCase):
             },
         )
 
-    def test_one_frozen_fetch_scores_six_candidates_and_all_eight_arms(self) -> None:
+    def test_one_frozen_fetch_scores_six_candidates_and_all_versioned_arms(self) -> None:
         seat = _six_candidate_seat()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -319,7 +320,12 @@ class FastBotLearningTruthTest(unittest.TestCase):
             self.assertEqual(cursor["order_authority"], "NONE")
             row = json.loads(outcome.read_text(encoding="utf-8"))
             self.assertEqual(len(row["candidates"]), 6)
-            self.assertTrue(all(len(item["arms"]) == 8 for item in row["candidates"]))
+            self.assertTrue(
+                all(
+                    len(item["arms"]) == len(LEARNING_ARM_SPECS)
+                    for item in row["candidates"]
+                )
+            )
             paths = {
                 arm["truth_path_sha256"]
                 for item in row["candidates"]

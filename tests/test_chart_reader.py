@@ -130,6 +130,17 @@ class ChartReaderTest(unittest.TestCase):
         )
 
         self.assertEqual(tuple(view.granularity for view in chart.views), DEFAULT_TIMEFRAMES)
+        self.assertTrue(all(view.indicator_series["adx_14"] for view in chart.views))
+        self.assertTrue(all(view.indicator_series["atr_pips"] for view in chart.views))
+        self.assertTrue(
+            all(view.indicator_series["ema_12_minus_50_pips"] for view in chart.views)
+        )
+        self.assertTrue(
+            all(
+                len(view.indicator_series["adx_14"]) <= 30
+                for view in chart.views
+            )
+        )
         self.assertEqual(chart.technical_candle_integrity["evaluation_status"], "NOT_EVALUATED")
         self.assertEqual(chart.technical_candle_integrity["source"], "INJECTED")
         self.assertFalse(chart.technical_candle_integrity["forecast_blocking"])

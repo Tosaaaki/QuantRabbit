@@ -18,9 +18,9 @@ data they return `None`/`0.0` with a `valid=False` marker rather than raising.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import isfinite, log, sqrt
-from statistics import mean, stdev
+from statistics import stdev
 from typing import Sequence
 
 from quant_rabbit.analysis.candles import Candle, closes, highs, lows
@@ -245,7 +245,6 @@ def compute_indicators(
     sma_20 = _sma(cs, 20)
     ema_12 = _ema(cs, 12)
     ema_20 = _ema(cs, 20)
-    ema_26 = _ema(cs, 26)
     ema_50 = _ema(cs, 50)
     ema_slope_5 = _ema_slope(cs, span=12, lookback=5, pip=pip)
     ema_slope_20 = _ema_slope(cs, span=24, lookback=20, pip=pip)
@@ -509,6 +508,87 @@ def compute_macd_hist_series(values: Sequence[float], *, fast: int = 12, slow: i
             continue
         hist.append(m - sv)
     return tuple(hist[-count:])
+
+
+def compute_adx_series(
+    highs_: Sequence[float],
+    lows_: Sequence[float],
+    closes_: Sequence[float],
+    *,
+    period: int = 14,
+    count: int = 30,
+) -> tuple[float, ...]:
+    """Return the last ``count`` Wilder ADX values.
+
+    ADX is directionless, so a single high reading cannot distinguish a
+    strengthening trend from an exhausted one.  Publishing a bounded series
+    lets causal shadow policies measure its slope while ``plus_di_14`` and
+    ``minus_di_14`` continue to supply direction.
+    """
+
+    if count <= 0:
+        return tuple()
+    series = _adx_series(highs_, lows_, closes_, period)
+    if not series:
+        return tuple()
+    finite = [float(value) for value in series if value is not None and isfinite(value)]
+    return tuple(finite[-count:])
+
+
+def compute_atr_pips_series(
+    highs_: Sequence[float],
+    lows_: Sequence[float],
+    closes_: Sequence[float],
+    *,
+    pip_size: float,
+    period: int = 14,
+    count: int = 30,
+) -> tuple[float, ...]:
+    """Return the bounded ATR history in executable pip units."""
+
+    if count <= 0 or not isfinite(pip_size) or pip_size <= 0.0:
+        return tuple()
+    series = _atr_series(highs_, lows_, closes_, period)
+    if not series:
+        return tuple()
+    finite = [
+        float(value) / pip_size
+        for value in series
+        if value is not None and isfinite(value)
+    ]
+    return tuple(finite[-count:])
+
+
+def compute_ema_spread_pips_series(
+    values: Sequence[float],
+    *,
+    pip_size: float,
+    fast: int = 12,
+    slow: int = 50,
+    count: int = 30,
+) -> tuple[float, ...]:
+    """Return fast-minus-slow EMA history in pips.
+
+    A zero crossing records when a golden/death cross actually occurred;
+    the current EMA ordering alone cannot distinguish a fresh cross from a
+    stale, already extended trend.
+    """
+
+    if count <= 0 or not isfinite(pip_size) or pip_size <= 0.0 or fast >= slow:
+        return tuple()
+    fast_series = _ema_series(values, fast)
+    slow_series = _ema_series(values, slow)
+    if fast_series is None or slow_series is None:
+        return tuple()
+    spread = [
+        (float(fast_value) - float(slow_value)) / pip_size
+        for fast_value, slow_value in zip(fast_series, slow_series)
+        if fast_value is not None
+        and slow_value is not None
+        and isfinite(fast_value)
+        and isfinite(slow_value)
+    ]
+    return tuple(spread[-count:])
 
 
 def _rsi(values: Sequence[float], period: int = 14) -> float | None:
@@ -843,7 +923,6 @@ def _parabolic_sar(highs_: Sequence[float], lows_: Sequence[float], *, af_step: 
     af = af_step
     direction = 1  # +1 long, -1 short
     for i in range(1, n):
-        prev_sar = sar
         sar = sar + af * (ep - sar)
         if direction == 1:
             sar = min(sar, lows_[i - 1], lows_[i - 2] if i >= 2 else lows_[i - 1])

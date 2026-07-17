@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -776,12 +777,40 @@ def _ordered_handoffs(
     return ordered
 
 
+def _run_episode_truth_cycle(
+    *,
+    handoffs: list[Mapping[str, Any]],
+    episode_ledger_path: Path,
+    source_archive_dir: Path,
+) -> dict[str, Any]:
+    """Load the truth adapter lazily after the detached-worker checks."""
+
+    resolver_path = ROOT / "scripts" / "resolve-fast-bot-episode-outcomes.py"
+    spec = importlib.util.spec_from_file_location(
+        "quant_rabbit_fast_bot_episode_outcome_resolver",
+        resolver_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("fast-bot episode outcome resolver is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.run_episode_outcome_resolution(
+        handoffs=tuple(handoffs),
+        episode_ledger_path=episode_ledger_path,
+        source_archive_dir=source_archive_dir,
+    )
+    if not isinstance(result, Mapping):
+        raise ValueError("episode truth cycle returned an invalid result")
+    return dict(result)
+
+
 def run_worker(
     *,
     spool: Path,
     output: Path,
     ledger: Path,
     source_archive: Path,
+    outcome_enabled: bool = False,
 ) -> int:
     if os.environ.get("QR_LIVE_ENABLED", "0") != "0":
         print("fast-bot episode spool worker requires QR_LIVE_ENABLED=0", file=sys.stderr)
@@ -829,6 +858,8 @@ def run_worker(
                 file=sys.stderr,
             )
             return 1
+        pending_v2: list[tuple[Path, str, str]] = []
+        pending_v2_handoffs: list[Mapping[str, Any]] = []
         for cycle, ordered_seal, path in ordered:
             try:
                 handoff = load_fast_bot_episode_handoff(path)
@@ -895,12 +926,89 @@ def run_worker(
                     file=sys.stderr,
                 )
                 return 75 if status == "LOCK_BUSY" else 1
-            with _metadata_lock(spool):
-                _durable_unlink(path, spool=spool)
-            print(
-                f"fast-bot episode spool consumed {path.name}: status={status}",
-                file=sys.stderr,
+            if handoff.get("schema_version") == 2:
+                # V2 contains the same-cycle quote/geometry shadow.  Keep its
+                # durable spool bytes until the truth cycle confirms that all
+                # matching CONFIRMED episodes were projected idempotently into
+                # the vehicle ledger.
+                pending_v2.append((path, ordered_seal, status))
+                pending_v2_handoffs.append(handoff)
+            else:
+                # V1 has no causal quote binding and remains drain-only.  It is
+                # never backfilled from a later market snapshot.
+                with _metadata_lock(spool):
+                    _durable_unlink(path, spool=spool)
+                print(
+                    f"fast-bot episode spool consumed {path.name}: status={status}",
+                    file=sys.stderr,
+                )
+
+        if pending_v2_handoffs or outcome_enabled:
+            try:
+                truth_result = _run_episode_truth_cycle(
+                    handoffs=pending_v2_handoffs,
+                    episode_ledger_path=ledger,
+                    source_archive_dir=source_archive,
+                )
+            except Exception as error:
+                print(
+                    "fast-bot episode truth cycle retained V2 handoffs: "
+                    f"{type(error).__name__}",
+                    file=sys.stderr,
+                )
+                return 1
+            truth_status = str(truth_result.get("status") or "INVALID")
+            projection_verified = (
+                truth_result.get("vehicle_projection_status") == "VERIFIED"
             )
+            if pending_v2 and projection_verified:
+                # Vehicle durability is independent of later outcome fetches.
+                # Once verified, an outcome-side conflict must not resurrect
+                # or replay the same handoff on the next Guardian cycle.
+                for path, expected_seal, episode_status in pending_v2:
+                    try:
+                        current = load_fast_bot_episode_handoff(path)
+                    except (OSError, TypeError, ValueError) as error:
+                        print(
+                            f"fast-bot episode spool retained {path.name} after "
+                            f"vehicle projection: {type(error).__name__}",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    if str(current.get("contract_sha256") or "") != expected_seal:
+                        print(
+                            f"fast-bot episode spool retained {path.name}: "
+                            "handoff changed after vehicle projection",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    with _metadata_lock(spool):
+                        _durable_unlink(path, spool=spool)
+                    print(
+                        "fast-bot episode spool consumed "
+                        f"{path.name}: status={episode_status} "
+                        f"vehicle_projection_status=VERIFIED",
+                        file=sys.stderr,
+                    )
+                pending_v2.clear()
+            if pending_v2:
+                print(
+                    "fast-bot episode truth cycle retained V2 handoffs: "
+                    f"status={truth_status} vehicle_projection_status="
+                    f"{truth_result.get('vehicle_projection_status') or 'INVALID'}",
+                    file=sys.stderr,
+                )
+            if truth_status == "LOCK_BUSY":
+                return 75
+            if truth_status not in {
+                "PROJECTED_NO_DUE",
+                "NO_DUE_VEHICLES",
+                "RESOLVED",
+                "RESOLVED_WITH_ERRORS",
+            }:
+                return 1
+            if pending_v2:
+                return 1
         return 0
     finally:
         os.close(descriptor)
@@ -913,6 +1021,7 @@ def launch_worker(
     ledger: Path,
     source_archive: Path,
     log_path: Path,
+    outcome_enabled: bool = False,
 ) -> int:
     if os.environ.get("QR_LIVE_ENABLED", "0") != "0":
         print("fast-bot episode launcher requires QR_LIVE_ENABLED=0", file=sys.stderr)
@@ -941,7 +1050,7 @@ def launch_worker(
                 owner_id=owner_id,
             )
         )
-        if not has_final and not has_stale_outer:
+        if not has_final and not has_stale_outer and not outcome_enabled:
             return 0
     environment = os.environ.copy()
     environment["QR_LIVE_ENABLED"] = "0"
@@ -962,6 +1071,8 @@ def launch_worker(
         "--log",
         str(log_path),
     ]
+    if outcome_enabled:
+        command.append("--outcome-enabled")
     with _metadata_lock(spool):
         log_descriptor = _open_bounded_worker_log(log_path)
     with os.fdopen(log_descriptor, "ab", buffering=0) as log_handle:
@@ -986,6 +1097,11 @@ def main() -> int:
     action.add_argument("--publish", type=Path)
     action.add_argument("--launch", action="store_true")
     action.add_argument("--worker", action="store_true")
+    parser.add_argument(
+        "--outcome-enabled",
+        action="store_true",
+        help="resolve mature episode vehicles even when the handoff spool is empty",
+    )
     parser.add_argument("--spool", type=Path, default=ROOT / "data" / "fast_bot_episode_handoffs")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "fast_bot_episode_state.json")
     parser.add_argument("--ledger", type=Path, default=ROOT / "data" / "fast_bot_episode_ledger.jsonl")
@@ -1043,12 +1159,14 @@ def main() -> int:
                 ledger=args.ledger,
                 source_archive=args.source_archive,
                 log_path=args.log,
+                outcome_enabled=args.outcome_enabled,
             )
         return run_worker(
             spool=args.spool,
             output=args.output,
             ledger=args.ledger,
             source_archive=args.source_archive,
+            outcome_enabled=args.outcome_enabled,
         )
     except (SpoolFullError, MetadataLockBusyError) as error:
         print(str(error), file=sys.stderr)
