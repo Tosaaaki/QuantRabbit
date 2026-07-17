@@ -254,6 +254,91 @@ class Exact28M5HistoryManifestTest(unittest.TestCase):
                     period_to_utc=time_to,
                 )
 
+    def test_rejects_duplicate_timestamp_even_when_summary_and_receipt_match(
+        self,
+    ) -> None:
+        def mutate(pair: str, rows: list[dict]) -> None:
+            if pair == DEFAULT_TRADER_PAIRS[0]:
+                rows[1]["time"] = rows[0]["time"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "history"
+            root.mkdir()
+            time_from, time_to, _summary = _make_exact28_root(root, row_mutator=mutate)
+
+            with self.assertRaisesRegex(
+                HistoricalM5ManifestError, "strictly increasing and unique"
+            ):
+                build_exact28_m5_history_manifest(
+                    root,
+                    period_from_utc=time_from,
+                    period_to_utc=time_to,
+                )
+
+    def test_rejects_row_landing_exactly_on_the_exclusive_shard_end(self) -> None:
+        # OANDA may return a candle opening exactly at the request `to`;
+        # the half-open shard contract must refuse it instead of admitting
+        # a row that also belongs to the next shard.
+        def mutate(pair: str, rows: list[dict]) -> None:
+            if pair == DEFAULT_TRADER_PAIRS[0]:
+                boundary = datetime(2020, 1, 1, 0, 15, tzinfo=UTC)
+                rows[2]["time"] = boundary.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "history"
+            root.mkdir()
+            time_from, time_to, _summary = _make_exact28_root(root, row_mutator=mutate)
+
+            with self.assertRaisesRegex(
+                HistoricalM5ManifestError, "outside its exact half-open shard"
+            ):
+                build_exact28_m5_history_manifest(
+                    root,
+                    period_from_utc=time_from,
+                    period_to_utc=time_to,
+                )
+
+    def test_rejects_implausibly_low_internal_slot_coverage(self) -> None:
+        def mutate(pair: str, rows: list[dict]) -> None:
+            if pair == DEFAULT_TRADER_PAIRS[0]:
+                del rows[1:]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "history"
+            root.mkdir()
+            time_from, time_to, _summary = _make_exact28_root(root, row_mutator=mutate)
+
+            with self.assertRaisesRegex(
+                HistoricalM5ManifestError, "coverage is implausibly low"
+            ):
+                build_exact28_m5_history_manifest(
+                    root,
+                    period_from_utc=time_from,
+                    period_to_utc=time_to,
+                )
+
+    def test_rejects_truncated_gzip_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "history"
+            root.mkdir()
+            time_from, time_to, _summary = _make_exact28_root(root)
+            victim = next(
+                (root / "20260717T010000Z" / DEFAULT_TRADER_PAIRS[0]).glob(
+                    "*.jsonl.gz"
+                )
+            )
+            payload = victim.read_bytes()
+            victim.write_bytes(payload[: len(payload) // 2])
+
+            with self.assertRaisesRegex(
+                HistoricalM5ManifestError, "gzip stream is invalid"
+            ):
+                build_exact28_m5_history_manifest(
+                    root,
+                    period_from_utc=time_from,
+                    period_to_utc=time_to,
+                )
+
     def test_rejects_crossed_high_low_even_when_open_close_are_passive(self) -> None:
         def mutate(pair: str, rows: list[dict]) -> None:
             if pair == DEFAULT_TRADER_PAIRS[0]:
