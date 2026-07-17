@@ -35,6 +35,7 @@ from quant_rabbit.fast_bot_technical_hypotheses import (
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 
+SHADOW_ADMISSION_BINDING_CONTRACT_V1 = "QR_FAST_BOT_SHADOW_ADMISSION_BINDING_V1"
 SHADOW_RISK_SIZING_CONTRACT_V1 = "QR_FAST_BOT_SHADOW_RISK_SIZING_IDENTITY_V1"
 SHADOW_ORCHESTRATION_CONTRACT_V1 = "QR_FAST_BOT_SHADOW_ORCHESTRATION_V1"
 SHADOW_MATRIX_ENCODING_V1 = "CARTESIAN_PRODUCT_SINGLE_STATE_RLE_V1"
@@ -179,6 +180,80 @@ class PairCausalShadowInput:
     spread_pips: float
     m5_atr_pips: float
     spread_to_m5_atr: float
+
+
+def build_fast_bot_shadow_admission_binding_v1(
+    *,
+    cycle_id: str,
+    decision_utc: datetime,
+    hold_minutes: int,
+    open_positions: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, Any]],
+    currency_cap_fraction: float = 0.5,
+) -> dict[str, Any]:
+    """Bind the pre-entry admission gates into the future GO contract shape.
+
+    Seals, per cycle, the causal close-distance gate, the pre-declared
+    high-cost window mask, and per-candidate currency-exposure verdicts so
+    a future GO route must present this artifact.  It admits or refuses
+    hypothetical candidates only; GO stays 0 and order intents stay empty.
+    """
+
+    from quant_rabbit.close_distance_gate import evaluate_close_distance_gate
+    from quant_rabbit.cost_window_mask import evaluate_cost_window
+    from quant_rabbit.currency_exposure_guard import evaluate_currency_exposure
+
+    cycle = _validated_cycle_id(cycle_id)
+    decision = _aware_utc(decision_utc, "decision_utc")
+    close_decision = evaluate_close_distance_gate(
+        decision, hold_minutes=hold_minutes
+    )
+    cost_decision = evaluate_cost_window(decision)
+    candidate_rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        exposure = evaluate_currency_exposure(
+            open_positions,
+            candidate,
+            currency_cap_fraction=currency_cap_fraction,
+        )
+        admitted = bool(
+            close_decision.admitted and cost_decision.admitted and exposure.admitted
+        )
+        candidate_rows.append(
+            {
+                "pair": str(candidate.get("pair")),
+                "side": str(candidate.get("side")),
+                "admitted": admitted,
+                "refusal_reasons": [
+                    reason
+                    for reason, ok in (
+                        (close_decision.reason, close_decision.admitted),
+                        (cost_decision.reason, cost_decision.admitted),
+                        (exposure.reason, exposure.admitted),
+                    )
+                    if not ok
+                ],
+                "exposure": exposure.payload(),
+            }
+        )
+    body = {
+        "contract": SHADOW_ADMISSION_BINDING_CONTRACT_V1,
+        "schema_version": 1,
+        "cycle_id": cycle,
+        "decision_utc": decision.isoformat(),
+        "close_distance_gate": close_decision.payload(),
+        "cost_window_mask": cost_decision.payload(),
+        "currency_cap_fraction": float(currency_cap_fraction),
+        "candidate_rows": candidate_rows,
+        "admitted_candidate_count": sum(
+            row["admitted"] for row in candidate_rows
+        ),
+        "future_go_contract_must_bind_this_artifact": True,
+        "go_risk_jpy": 0.0,
+        **_zero_authority(),
+        "order_intents": [],
+    }
+    return _seal(body)
 
 
 def build_fast_bot_shadow_risk_sizing_identity_v1(
