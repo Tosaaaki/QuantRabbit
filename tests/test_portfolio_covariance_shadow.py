@@ -62,6 +62,30 @@ def test_covariance_guard_catches_correlated_stack_notional_misses() -> None:
     assert correlated["candidate_marginal_vol"] > 0.0
 
 
+def test_eigensolver_and_enb_hold_on_multi_asset_edge_cases() -> None:
+    from quant_rabbit.portfolio_covariance_shadow import _jacobi_eigen, risk_decomposition
+
+    # Known spectra and structural invariants.
+    ev, _ = _jacobi_eigen([[2.0, 1.0], [1.0, 2.0]])
+    assert sorted(round(x, 9) for x in ev) == [1.0, 3.0]
+    A = [[4.0, 1.0, 0.5], [1.0, 3.0, 0.2], [0.5, 0.2, 2.0]]
+    ev, vecs = _jacobi_eigen(A)
+    assert round(sum(ev), 9) == round(4.0 + 3.0 + 2.0, 9)  # trace preserved
+    n = 3
+    assert all(
+        abs(sum(vecs[k][i] * vecs[k][j] for k in range(n)) - (1.0 if i == j else 0.0)) < 1e-9
+        for i in range(n)
+        for j in range(n)
+    )
+
+    # ENB bounds: identity => N bets; rank-1 (all perfectly correlated) => 1.
+    w = {f"P{i}_USD": 0.33 for i in range(3)}
+    identity = {f"P{i}_USD": {f"P{j}_USD": (0.0004 if i == j else 0.0) for j in range(3)} for i in range(3)}
+    rank1 = {f"P{i}_USD": {f"P{j}_USD": 0.0004 for j in range(3)} for i in range(3)}
+    assert risk_decomposition(w, identity)["effective_number_of_bets"] == pytest.approx(3.0, abs=1e-6)
+    assert risk_decomposition(w, rank1)["effective_number_of_bets"] == pytest.approx(1.0, abs=1e-6)
+
+
 def test_malformed_covariance_fails_closed() -> None:
     weights = {"AUD_USD": 0.5, "NZD_USD": 0.5}
     asymmetric = {

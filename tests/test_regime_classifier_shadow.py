@@ -32,21 +32,28 @@ def test_trending_series_classifies_trend() -> None:
     assert result["classification_sha256"] == _canonical_sha(body)
 
 
-def test_choppy_series_classifies_range() -> None:
-    # Oscillation with wide-enough bands but low efficiency -> RANGE.
-    closes = [1.1000 + (0.0030 if i % 2 else -0.0030) for i in range(140)]
-    result = classify_regime(_candles(closes), as_of_utc=AS_OF)
+def test_choppy_wide_series_classifies_range() -> None:
+    # Tight history then a WIDE choppy recent window: non-trending and
+    # non-compressed (high BB-width percentile) -> RANGE.
+    tight = [1.1000 + (0.0004 if i % 2 else -0.0004) for i in range(120)]
+    wide = [1.1000 + (0.0030 if i % 2 else -0.0030) for i in range(20)]
+    result = classify_regime(_candles(tight + wide), as_of_utc=AS_OF)
 
     assert result["regime"] == "RANGE"
     assert result["components"]["efficiency_ratio"] < 0.35
+    assert result["components"]["bb_width_percentile"] >= 0.20
 
 
-def test_very_narrow_band_classifies_squeeze() -> None:
-    closes = [1.1000 + (0.00002 if i % 2 else -0.00002) for i in range(140)]
-    result = classify_regime(_candles(closes), as_of_utc=AS_OF)
+def test_recent_compression_relative_to_history_classifies_squeeze() -> None:
+    # Wide choppy history, then a compressed (low BB-width percentile),
+    # non-trending recent window -> SQUEEZE by relative compression.
+    wide = [1.1000 + (0.0030 if i % 2 else -0.0030) for i in range(120)]
+    tight = [1.1000 + (0.00005 if i % 2 else -0.00005) for i in range(20)]
+    result = classify_regime(_candles(wide + tight), as_of_utc=AS_OF)
 
     assert result["regime"] == "SQUEEZE"
-    assert result["components"]["bb_width_fraction"] < 0.0025
+    assert result["components"]["bb_width_percentile"] < 0.20
+    assert result["components"]["efficiency_ratio"] < 0.35
 
 
 def test_event_flag_overrides_price_classification() -> None:

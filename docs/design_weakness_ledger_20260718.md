@@ -262,6 +262,30 @@ family粒度GO/CAUTIONで切り替える。
 4. conviction接地+較正層: declared_condition を evidence packet から独立再計算し連続0-1確信度乗数へ。W25核心。
 5. レンジ/平均回帰 shadow family (レーンF): 空セルの本体。
 
+## W27 全天候アトリビューション (2026-07-18, 実測)
+
+合成脳のwalk-forwardアトリビューション (完成度#3) を survivor で実行し、各取引の regime×vol を
+決定時点で測定 (closed candle のみ) して P&L を帰属。**重要な副産物**: アトリビューションが
+分類器の較正バグ (絶対BB幅閾値0.0025が全窓をSQUEEZE判定) を実データで検出 → 全境界を
+scale-free (効率比0-1) / 相対 (自己履歴の百分位) に修正。時刻ヒューリスティック禁止と同じ教訓。
+
+較正後の実測セル別損益 (TRAIN+VAL 656取引、合計 ~2059p と一致):
+
+| cell | trades | net pips | mean |
+|---|---|---|---|
+| SQUEEZE_LOW | 132 | **+1410.2** | +10.68 |
+| TREND_HIGH | 52 | **+572.3** | +11.01 |
+| SQUEEZE_HIGH | 16 | +210.0 | +13.13 |
+| RANGE_LOW | 183 | +96.7 | +0.53 |
+| RANGE_HIGH | 167 | −5.8 | −0.03 |
+| TREND_LOW | 106 | **−224.7** | −2.12 |
+
+読み: エッジは**スクイーズ・ブレイクアウト + 強トレンド高vol**に集中。**弱トレンド低vol (騙し) と
+荒れたレンジ高vol で出血** = 負の日の主因。=> survivor は {SQUEEZE_*, TREND_HIGH, RANGE_LOW} 専任、
+{TREND_LOW, RANGE_HIGH} は router で CAUTION、後者はレーンF (レンジ) が埋めるべき空セル。
+**注意**: セル判定はTRAIN+VAL in-sample。cell-gate採用には TRAIN選抜/VAL複製/未来窓の規律必須
+(時刻R1と同じ overfitting 罠を避ける)。
+
 ## 実行順 (Codex)
 
 P0: W16 (T1契約モジュール=Claude実装済みを検収) → W8+W2 (regime×order-type整合) → W4 (event gate) → W12 (通貨エクスポージャ制約)

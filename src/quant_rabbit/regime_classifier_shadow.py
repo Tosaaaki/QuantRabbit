@@ -22,12 +22,15 @@ from statistics import fmean, pstdev
 from typing import Any, Mapping, Sequence
 
 CONTRACT = "QR_REGIME_VOL_CLASSIFIER_V1"
-# Pre-declared thresholds (not fit to any window's outcome).
+# Pre-declared thresholds.  All boundaries are scale-free (the 0..1 Kaufman
+# efficiency ratio) or RELATIVE (percentile of the instrument's own recent
+# distribution) — never an absolute pip magic number, which is the same
+# non-generalizing mistake as a time-of-day rule.
 SHORT_WINDOW = 20
 VOL_HISTORY_WINDOW = 120
 BB_K = 2.0
-SQUEEZE_BB_WIDTH_FLOOR = 0.0025  # band width as a fraction of price
-TREND_EFFICIENCY_FLOOR = 0.35  # Kaufman efficiency ratio
+TREND_EFFICIENCY_FLOOR = 0.35  # Kaufman efficiency ratio (scale-free)
+SQUEEZE_BB_WIDTH_PERCENTILE = 0.20  # compressed relative to own history
 HIGH_VOL_PERCENTILE = 0.60
 REGIMES = ("TREND", "RANGE", "SQUEEZE", "EVENT")
 VOL_STATES = ("LOW", "HIGH")
@@ -89,6 +92,13 @@ def _realized_vol(closes: Sequence[float]) -> float:
     return pstdev(returns) if len(returns) >= 2 else 0.0
 
 
+def _percentile_rank(samples: Sequence[float], current: float) -> float:
+    if not samples:
+        return 0.0
+    below = sum(1 for value in samples if value < current)
+    return below / len(samples)
+
+
 def classify_regime(
     candles: Sequence[Mapping[str, Any]],
     *,
@@ -111,28 +121,34 @@ def classify_regime(
     bb_width = _bb_width(window)
     current_vol = _realized_vol(window)
 
-    # Volatility percentile: rank the current short-window vol against the
-    # rolling distribution of the same measure across recent history.
+    # Both percentiles rank the current short-window measure against the
+    # rolling distribution of the SAME measure over recent history — relative,
+    # so the boundaries generalize across instruments and timeframes.
     vol_samples: list[float] = []
+    bb_samples: list[float] = []
     for end in range(SHORT_WINDOW, len(closes) + 1):
-        vol_samples.append(_realized_vol(closes[end - SHORT_WINDOW:end]))
-    ranked = sorted(vol_samples)
-    below = sum(1 for value in ranked if value < current_vol)
-    percentile = below / len(ranked) if ranked else 0.0
-    vol_state = "HIGH" if percentile >= HIGH_VOL_PERCENTILE else "LOW"
+        segment = closes[end - SHORT_WINDOW:end]
+        vol_samples.append(_realized_vol(segment))
+        bb_samples.append(_bb_width(segment))
+    vol_percentile = _percentile_rank(vol_samples, current_vol)
+    bb_percentile = _percentile_rank(bb_samples, bb_width)
+    vol_state = "HIGH" if vol_percentile >= HIGH_VOL_PERCENTILE else "LOW"
 
+    # Directional strength (scale-free) decides trend first; among non-trending
+    # states, band compression relative to own history splits squeeze vs range.
     if high_impact_event_active:
         regime = "EVENT"
         confidence = 1.0
-    elif bb_width < SQUEEZE_BB_WIDTH_FLOOR:
-        regime = "SQUEEZE"
-        confidence = round(
-            min(1.0, (SQUEEZE_BB_WIDTH_FLOOR - bb_width) / SQUEEZE_BB_WIDTH_FLOOR), 9
-        )
     elif efficiency >= TREND_EFFICIENCY_FLOOR:
         regime = "TREND"
         confidence = round(
             min(1.0, (efficiency - TREND_EFFICIENCY_FLOOR) / (1.0 - TREND_EFFICIENCY_FLOOR)),
+            9,
+        )
+    elif bb_percentile < SQUEEZE_BB_WIDTH_PERCENTILE:
+        regime = "SQUEEZE"
+        confidence = round(
+            min(1.0, (SQUEEZE_BB_WIDTH_PERCENTILE - bb_percentile) / SQUEEZE_BB_WIDTH_PERCENTILE),
             9,
         )
     else:
@@ -151,12 +167,13 @@ def classify_regime(
         "components": {
             "efficiency_ratio": round(efficiency, 9),
             "bb_width_fraction": round(bb_width, 12),
+            "bb_width_percentile": round(bb_percentile, 9),
             "short_window_realized_vol": round(current_vol, 12),
-            "vol_percentile": round(percentile, 9),
+            "vol_percentile": round(vol_percentile, 9),
         },
         "thresholds": {
             "trend_efficiency_floor": TREND_EFFICIENCY_FLOOR,
-            "squeeze_bb_width_floor": SQUEEZE_BB_WIDTH_FLOOR,
+            "squeeze_bb_width_percentile": SQUEEZE_BB_WIDTH_PERCENTILE,
             "high_vol_percentile": HIGH_VOL_PERCENTILE,
             "short_window": SHORT_WINDOW,
             "vol_history_window": VOL_HISTORY_WINDOW,
