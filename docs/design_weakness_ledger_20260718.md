@@ -106,6 +106,25 @@ live昇格はオペレーター明示承認) は全修理に適用。
 - live trader runtime (本体repo・ルーチン所有) への同ゲート接続 = Codex S1-S6
 - W1/W9のカタログ昇格 = shadow paired証拠が正になった時のみ (証拠先行の禁止は不変条件)
 
+## W21 全天候要件 (2026-07-18 オペレーター指示で追加)
+
+「レンジでもトレンドでも高低ボラ両方でとってこれないといけない」= regime×vol の 2×2 全セルに
+検収済みfamilyを持つこと。実測の現在地:
+
+| セル | 担当family | 状態 |
+|---|---|---|
+| トレンド×高vol | S5 survivor (RETURN_PIPS DIRECT 8h/12h) | VALIDATION複製済み・未証明 (8/3判定) |
+| トレンド×低vol | 同上でカバー可能か要day分解 | 未測定 (day-regime分解が次の実験) |
+| レンジ×(高/低)vol | **既存192では構造的に不可能**: INVERSE 96本全て TRAIN負 (最良-891.5p)。
+  4-24h軸の向き反転はレンジ捕捉にならない | レーンF (短周期レール回転・受動LIMIT両側・
+  range_rail_geometry_repair流用) を新規設計。M5取得後にTRAIN/VAL/WRC |
+| イベント×高vol | W2のEVENT regime + W4 event gate (回避が先、捕捉はその後) | ゲート実装済み・捕捉family未設計 |
+
+規律: セルごとに独立family・独立検収。1つのfamilyで全セルを取ろうとしない
+(それが「何をやっても利益が出ない」単一エンジン設計の再演)。regime判定は
+`regime_supervision_v2` の宣言regime + 因果的day分解で行い、セル間の資本配分は
+family粒度GO/CAUTIONで切り替える。
+
 ## 実行順 (Codex)
 
 P0: W16 (T1契約モジュール=Claude実装済みを検収) → W8+W2 (regime×order-type整合) → W4 (event gate) → W12 (通貨エクスポージャ制約)
