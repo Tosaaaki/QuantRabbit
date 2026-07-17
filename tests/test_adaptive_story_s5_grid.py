@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -10,7 +10,9 @@ import pytest
 import quant_rabbit.adaptive_story_s5_grid as grid
 from quant_rabbit.adaptive_story_s5_grid import (
     UtcSplit,
+    build_story_templates_v4,
     build_story_templates_v2,
+    build_story_vehicle_catalog_v4,
     build_story_vehicle_catalog_v2,
     combine_adaptive_story_s5_grid_runs,
     run_adaptive_story_s5_grid,
@@ -273,27 +275,181 @@ def _synthetic_factor_run(
     return run
 
 
-def test_catalog_has_ten_stories_five_contextual_exits_and_control() -> None:
-    templates = build_story_templates_v2()
-    vehicles = build_story_vehicle_catalog_v2()
+def test_v4_catalog_has_twelve_stories_five_contextual_exits_and_control() -> None:
+    templates = build_story_templates_v4()
+    vehicles = build_story_vehicle_catalog_v4()
 
     assert [row.hypothesis_id for row in templates] == [
         *(f"H{number}" for number in range(21, 31)),
+        "H32",
+        "H33",
         "H31",
     ]
-    assert len(vehicles) == 51
-    assert sum(not row.no_trade_control for row in vehicles) == 50
+    assert len(vehicles) == 61
+    assert sum(not row.no_trade_control for row in vehicles) == 60
     assert sum(row.no_trade_control for row in vehicles) == 1
     for template in templates[:-1]:
         rows = [row for row in vehicles if row.hypothesis_id == template.hypothesis_id]
         assert len(rows) == 5
         assert {row.exit_policy_id for row in rows} == set(grid.EXIT_POLICY_IDS)
         assert all(
-            row.allowed_order_modes == template.allowed_order_modes for row in rows
+            row.allowed_order_modes == template.emitted_order_modes for row in rows
         )
         assert all(":MARKET:" not in row.candidate_id for row in rows)
         assert all(":STOP:" not in row.candidate_id for row in rows)
         assert all(":LIMIT:" not in row.candidate_id for row in rows)
+
+    shared_family = grid.OPENING_BREAK_SELECTION_FAMILY_ID
+    assert {
+        row.selection_family_id
+        for row in vehicles
+        if row.hypothesis_id in {"H29", "H32", "H33"}
+    } == {shared_family}
+    assert all(
+        row.selection_family_id == row.hypothesis_id
+        for row in vehicles
+        if row.hypothesis_id not in {"H29", "H32", "H33"}
+    )
+    catalog_receipt = grid._story_catalog_receipt_v4()
+    assert catalog_receipt["selection_family_policy"] == (
+        grid.SELECTION_FAMILY_POLICY_V4
+    )
+    assert catalog_receipt["shared_selection_families"] == {
+        shared_family: ["H29", "H32", "H33"]
+    }
+    assert all("selection_family_id" in row for row in catalog_receipt["templates"])
+    assert all("selection_family_id" in row for row in catalog_receipt["vehicles"])
+    assert catalog_receipt["current_cohort_selection_ineligible_hypothesis_ids"] == [
+        "H32",
+        "H33",
+    ]
+    assert all(
+        row["current_cohort_selection_eligible"] is False
+        and row["current_cohort_selection_ineligibility_reason"]
+        == grid.VALIDATION_INFORMED_SHADOW_REASON_V4
+        for row in catalog_receipt["vehicles"]
+        if row["hypothesis_id"] in {"H32", "H33"}
+    )
+    assert all(
+        row["current_cohort_selection_eligible"] is True
+        for row in catalog_receipt["vehicles"]
+        if row["hypothesis_id"] == "H29"
+    )
+
+
+def test_v2_api_receipts_and_positional_prefix_remain_frozen() -> None:
+    assert grid.STORY_GRID_CONTRACT_V2 == "QR_ADAPTIVE_STORY_S5_GRID_V2"
+    assert grid.STORY_GRID_COMBINED_CONTRACT_V2 == (
+        "QR_ADAPTIVE_STORY_S5_GRID_COMBINED_V2"
+    )
+    assert grid.STORY_CATALOG_POLICY_V2 == (
+        "PREDECLARED_CAUSAL_STORY_CONTEXTUAL_ORDER_V2"
+    )
+    assert grid.STORY_TRUTH_POLICY_V2 == "EXACT_S5_BID_ASK_EQUAL_INITIAL_R_V2"
+    assert grid.StoryTemplateV4 is not grid.StoryTemplateV2
+    assert grid.StoryExitV4 is not grid.StoryExitV2
+    assert grid.StoryVehicleV4 is not grid.StoryVehicleV2
+
+    positional_control = grid.StoryTemplateV2(
+        "H31",
+        "NO_TRADE_CONTROL",
+        "CONTROL",
+        "NONE",
+        (),
+        "NONE",
+        False,
+        True,
+    )
+    assert positional_control.no_trade_control is True
+    assert not hasattr(positional_control, "emission_order_modes")
+    assert [field.name for field in fields(grid.StoryTemplateV2)] == [
+        "hypothesis_id",
+        "story_name",
+        "setup_role",
+        "trigger_role",
+        "allowed_order_modes",
+        "ordinary_order_mode",
+        "market_on_high_impulse",
+        "no_trade_control",
+    ]
+    assert grid.StoryTemplateV2.__match_args__ == (
+        "hypothesis_id",
+        "story_name",
+        "setup_role",
+        "trigger_role",
+        "allowed_order_modes",
+        "ordinary_order_mode",
+        "market_on_high_impulse",
+        "no_trade_control",
+    )
+    with pytest.raises(TypeError):
+        grid.StoryTemplateV2(
+            "H31",
+            "NO_TRADE_CONTROL",
+            "CONTROL",
+            "NONE",
+            (),
+            "NONE",
+            False,
+            True,
+            None,
+        )
+    assert [field.name for field in fields(grid.StoryTemplateV4)][-2:] == [
+        "no_trade_control",
+        "emission_order_modes",
+    ]
+    assert [field.name for field in fields(grid.StoryVehicleV2)] == [
+        "candidate_id",
+        "hypothesis_id",
+        "story_name",
+        "exit_policy_id",
+        "contextual_order_policy",
+        "allowed_order_modes",
+        "max_hold_seconds",
+        "profit_target_r",
+        "trailing_structural",
+        "complexity",
+        "no_trade_control",
+    ]
+    assert grid.StoryVehicleV2.__match_args__ == (
+        "candidate_id",
+        "hypothesis_id",
+        "story_name",
+        "exit_policy_id",
+        "contextual_order_policy",
+        "allowed_order_modes",
+        "max_hold_seconds",
+        "profit_target_r",
+        "trailing_structural",
+        "complexity",
+        "no_trade_control",
+    )
+
+    v2_templates = build_story_templates_v2()
+    v2_vehicles = build_story_vehicle_catalog_v2()
+    assert [row.hypothesis_id for row in v2_templates] == [
+        *(f"H{number}" for number in range(21, 32)),
+    ]
+    assert len(v2_vehicles) == 51
+    assert sum(not row.no_trade_control for row in v2_vehicles) == 50
+    assert not any(row.hypothesis_id in {"H32", "H33"} for row in v2_vehicles)
+    v2_catalog = grid._story_catalog_receipt_v2()
+    v2_truth = grid._truth_evaluator_receipt_v2()
+    assert set(v2_catalog) == {"story_catalog_policy", "templates", "vehicles"}
+    assert "selection_family_policy" not in v2_catalog
+    assert "h32_open_window_end_clock_policy" not in v2_truth
+    assert grid._canonical_sha(v2_catalog) == (
+        "9d19eb5d86cecd5db304a0ea0bdeeab3715d6ba51e534714bad7973b039c908b"
+    )
+    assert grid._canonical_sha(v2_truth) == (
+        "b624ff1a360a1c4610a2858c923afa69da9358e3e298c8b1f034e7eb531a6c30"
+    )
+    assert grid._canonical_sha(v2_catalog) != grid._canonical_sha(
+        grid._story_catalog_receipt_v4()
+    )
+    assert grid._canonical_sha(v2_truth) != grid._canonical_sha(
+        grid._truth_evaluator_receipt_v4()
+    )
 
 
 def test_unavailable_pair_is_explicit_and_has_no_authority() -> None:
@@ -302,7 +458,7 @@ def test_unavailable_pair_is_explicit_and_has_no_authority() -> None:
     )
 
     assert result["status"] == "UNAVAILABLE"
-    assert result["candidate_count"] == 51
+    assert result["candidate_count"] == 61
     assert result["live_permission"] is False
     assert result["broker_mutation_allowed"] is False
     assert result["order_authority"] == "NONE"
@@ -879,11 +1035,18 @@ def test_compression_story_excludes_the_setup_m15_from_prior_distribution(
     )
 
 
-@pytest.mark.parametrize("hypothesis_id", ["H24", "H29", "H30"])
+@pytest.mark.parametrize("hypothesis_id", ["H24", "H29", "H30", "H32", "H33"])
 def test_declared_range_stories_require_prior_m15_adx_below_boundary(
     hypothesis_id: str,
 ) -> None:
-    trigger_at = datetime(2026, 1, 5, 8, 5, tzinfo=UTC)
+    trigger_at = datetime(
+        2026,
+        1,
+        5,
+        8,
+        6 if hypothesis_id == "H32" else 5,
+        tzinfo=UTC,
+    )
     prior_m1 = replace(
         _feature(completed_at=trigger_at - timedelta(minutes=1)),
         close=1.1060 if hypothesis_id == "H24" else 1.1000,
@@ -893,7 +1056,7 @@ def test_declared_range_stories_require_prior_m15_adx_below_boundary(
     )
     current_m1 = replace(
         _feature(completed_at=trigger_at),
-        close=1.1060 if hypothesis_id in {"H24", "H29"} else 1.1040,
+        close=(1.1060 if hypothesis_id in {"H24", "H29", "H32", "H33"} else 1.1040),
         current_open=1.1050,
         current_low=1.1040,
         current_high=1.1060,
@@ -926,7 +1089,7 @@ def test_declared_range_stories_require_prior_m15_adx_below_boundary(
         "M5": replace(prior["M5"], completed_at=trigger_at),
     }
     template = next(
-        row for row in build_story_templates_v2() if row.hypothesis_id == hypothesis_id
+        row for row in build_story_templates_v4() if row.hypothesis_id == hypothesis_id
     )
 
     assert (
@@ -1194,6 +1357,172 @@ def test_dst_opening_window_tracks_london_summer_and_winter() -> None:
         grid._is_dst_aware_local_open(datetime(2026, 7, 6, 8, 20, tzinfo=UTC))[0]
         is False
     )
+
+
+def _opening_break_decision(
+    hypothesis_id: str,
+    trigger_at: datetime,
+) -> grid._StoryDecision | None:
+    prior_m1 = replace(
+        _feature(completed_at=trigger_at - timedelta(minutes=1)),
+        close=1.1000,
+        current_open=1.1000,
+        current_low=1.0990,
+        current_high=1.1010,
+    )
+    prior_m5 = replace(
+        _feature(
+            timeframe="M5",
+            completed_at=trigger_at - timedelta(minutes=5),
+        ),
+        atr=0.0010,
+    )
+    prior = {
+        "M1": prior_m1,
+        "M5": prior_m5,
+        "M15": replace(
+            _feature(
+                timeframe="M15",
+                completed_at=trigger_at - timedelta(minutes=15),
+                prior_low=1.0950,
+                prior_high=1.1050,
+            ),
+            adx=grid.RANGE_ADX_MAX - 0.01,
+        ),
+        "H1": _feature(
+            timeframe="H1",
+            completed_at=trigger_at - timedelta(hours=1),
+            prior_low=1.0900,
+            prior_high=1.1200,
+        ),
+    }
+    current = {
+        **prior,
+        "M1": replace(
+            _feature(completed_at=trigger_at),
+            close=1.1060,
+            current_open=1.1040,
+            current_low=1.1030,
+            current_high=1.1065,
+        ),
+        "M5": replace(prior_m5, completed_at=trigger_at),
+    }
+    template = next(
+        row for row in build_story_templates_v4() if row.hypothesis_id == hypothesis_id
+    )
+    return grid._story_decision(
+        template,
+        current,
+        prior,
+        {},
+        trigger_at=trigger_at,
+    )
+
+
+@pytest.mark.parametrize(
+    ("minute", "expected"),
+    [(5, False), (6, True), (15, True), (16, False)],
+)
+def test_h32_completed_opening_minute_06_15_boundaries(
+    minute: int,
+    expected: bool,
+) -> None:
+    trigger_at = datetime(2026, 1, 5, 8, minute, tzinfo=UTC)
+
+    decision = _opening_break_decision("H32", trigger_at)
+
+    assert (decision is not None) is expected
+    if decision is not None:
+        assert decision.setup_evidence["completed_open_minute_window"] == (
+            "06_15_INCLUSIVE"
+        )
+
+
+def test_h33_emits_only_existing_classifier_market_outcomes() -> None:
+    template = next(
+        row for row in build_story_templates_v4() if row.hypothesis_id == "H33"
+    )
+    resting_mode, _ = grid._choose_order_mode(template, impulse_ratio=0.99)
+    market_mode, _ = grid._choose_order_mode(template, impulse_ratio=1.0)
+
+    assert resting_mode == "STOP"
+    assert grid._emission_allows_order_mode(template, resting_mode) is False
+    assert market_mode == "MARKET"
+    assert grid._emission_allows_order_mode(template, market_mode) is True
+    assert template.emitted_order_modes == ("MARKET",)
+    assert all(
+        row.allowed_order_modes == ("MARKET",)
+        for row in build_story_vehicle_catalog_v4()
+        if row.hypothesis_id == "H33"
+    )
+
+
+@pytest.mark.parametrize(
+    "candidate_id",
+    ["H32:TIME_1H", "H33:TIME_1H"],
+)
+def test_v4_opening_profile_signal_ignores_observation_and_future_s5_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_id: str,
+) -> None:
+    def fake_feature(
+        bars: tuple[grid._Bar, ...], prior: grid._Feature | None
+    ) -> grid._Feature:
+        del prior
+        bar = bars[-1]
+        return _feature(
+            timeframe=bar.timeframe,
+            completed_at=bar.end,
+            close=bar.close + 0.0020,
+            current_open=bar.open,
+        )
+
+    def forced_opening_decision(
+        template: grid.StoryTemplateV2,
+        features: dict[str, grid._Feature],
+        prior_features: dict[str, grid._Feature],
+        feature_history: dict[str, tuple[grid._Feature, ...]],
+        *,
+        trigger_at: datetime,
+    ) -> grid._StoryDecision:
+        del feature_history
+        return grid._StoryDecision(
+            hypothesis_id=template.hypothesis_id,
+            side="LONG",
+            setup_at=prior_features["M1"].completed_at,
+            trigger_at=trigger_at,
+            structural_target=1.2000,
+            structural_stop_anchor=1.0950,
+            setup_evidence={"test_setup": True},
+            trigger_evidence={
+                "trigger_close": features["M1"].close,
+                "test_trigger": True,
+            },
+        )
+
+    monkeypatch.setattr(grid, "_feature", fake_feature)
+    monkeypatch.setattr(grid, "_story_decision", forced_opening_decision)
+    prefix = (_candle(0), _candle(60), _candle(120), _candle(180), _candle(240))
+    base = run_adaptive_story_s5_grid(
+        "EUR_USD",
+        (*prefix, _candle(300), _candle(305), _candle(310)),
+        _split(),
+        candidate_ids=(candidate_id,),
+    )
+    mutated = run_adaptive_story_s5_grid(
+        "EUR_USD",
+        (
+            *prefix,
+            _candle(300, bid=1.1500, ask=1.1502),
+            _candle(305, bid=1.1600, ask=1.1602),
+            _candle(310, bid=1.1700, ask=1.1702),
+        ),
+        _split(),
+        candidate_ids=(candidate_id,),
+    )
+
+    assert base["signal_audit_rows"] == mutated["signal_audit_rows"]
+    assert base["signal_audit_rows"][0]["chosen_order_mode"] == "MARKET"
 
 
 def test_cost_gate_uses_frozen_structure_target_without_one_r_fallback() -> None:
@@ -2117,10 +2446,14 @@ def test_combiner_rejects_resealed_unresolved_filled_ownership_contradiction() -
     [
         "status",
         "story_policy",
+        "selection_family_policy",
+        "current_cohort_policy",
         "truth_policy",
         "catalog_digest",
         "evaluator_digest",
         "trial_metadata",
+        "trial_selection_family",
+        "trial_current_cohort_eligibility",
         "daily_summary",
         "candidate_scope",
     ],
@@ -2138,6 +2471,10 @@ def test_combiner_rejects_resealed_policy_trial_and_daily_tampering(
         tampered["status"] = "FAILED_PARTIAL"
     elif tamper == "story_policy":
         tampered["story_catalog_policy"] = "INCOMPATIBLE_POLICY"
+    elif tamper == "selection_family_policy":
+        tampered["selection_family_policy"] = "INCOMPATIBLE_FAMILY_POLICY"
+    elif tamper == "current_cohort_policy":
+        tampered["current_cohort_selection_ineligible_hypothesis_ids"] = []
     elif tamper == "truth_policy":
         tampered["truth_policy"] = "INCOMPATIBLE_TRUTH"
     elif tamper == "catalog_digest":
@@ -2146,6 +2483,10 @@ def test_combiner_rejects_resealed_policy_trial_and_daily_tampering(
         tampered["truth_evaluator_sha256"] = "0" * 64
     elif tamper == "trial_metadata":
         tampered["all_trials"][0]["hypothesis_id"] = "H99"
+    elif tamper == "trial_selection_family":
+        tampered["all_trials"][0]["selection_family_id"] = "H99"
+    elif tamper == "trial_current_cohort_eligibility":
+        tampered["all_trials"][0]["current_cohort_selection_eligible"] = False
     elif tamper == "daily_summary":
         tampered["all_trials"][0]["daily_aggregates_by_split"]["TRAIN"][0][
             "exact_net_r"

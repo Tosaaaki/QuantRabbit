@@ -1,11 +1,14 @@
 """Finite causal story/vehicle diagnostics on exact S5 bid/ask truth.
 
 The story names make multi-timeframe context auditable; they do not give an
-LLM, a narrative string, or this historical evaluator order authority.  V2 is
-append-only and predeclares ten story policies, one contextual order policy
-per story, and five exit policies.  Every decision uses completed UTC buckets
-only, observes the first real S5 quote after the trigger, and can fill no
-earlier than the following real S5 candle.
+LLM, a narrative string, or this historical evaluator order authority.  V4
+contains twelve story policies, one contextual order policy per story, and
+five exit policies.  H32/H33 were designed after viewing VALIDATION and are
+therefore immutable diagnostic shadows for the current cohort; only a future
+catalog version evaluated on a new independent period may make them eligible.
+Every decision uses completed UTC buckets only, observes the first real S5
+quote after the trigger, and can fill no earlier than the following real S5
+candle.
 """
 
 from __future__ import annotations
@@ -36,17 +39,38 @@ from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 
 
-STORY_GRID_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_V2"
-STORY_GRID_COMBINED_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_COMBINED_V2"
+STORY_GRID_CONTRACT_V4 = "QR_ADAPTIVE_STORY_S5_GRID_V4"
+STORY_GRID_COMBINED_CONTRACT_V4 = "QR_ADAPTIVE_STORY_S5_GRID_COMBINED_V4"
 CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1 = (
     "QR_ADAPTIVE_STORY_CURRENCY_TRIGGER_M1_FACTOR_CLUSTERS_V1"
 )
+STORY_CATALOG_POLICY_V4 = (
+    "CAUSAL_STORY_CONTEXTUAL_ORDER_WITH_VALIDATION_INFORMED_SHADOWS_V4"
+)
+STORY_TRUTH_POLICY_V4 = "EXACT_S5_BID_ASK_EQUAL_INITIAL_R_V4"
+# V2 is a frozen public research API.  V4 is append-only beside it and must not
+# change V2 constants, catalog membership, positional constructors, or hashes.
+STORY_GRID_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_V2"
+STORY_GRID_COMBINED_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_COMBINED_V2"
 STORY_CATALOG_POLICY_V2 = "PREDECLARED_CAUSAL_STORY_CONTEXTUAL_ORDER_V2"
 STORY_TRUTH_POLICY_V2 = "EXACT_S5_BID_ASK_EQUAL_INITIAL_R_V2"
 CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1 = (
     "SPLIT_CANDIDATE_EXACT_TRIGGER_M1_UTC_CURRENCY_SIGN_V1"
 )
 CURRENCY_FACTOR_VIEW_POLICY_V1 = "LONG_BASE_PLUS_QUOTE_MINUS_SHORT_INVERSE_V1"
+OPENING_BREAK_SELECTION_FAMILY_ID = "H29_H32_H33_DST_OPENING_BREAK"
+SELECTION_FAMILY_POLICY_V4 = (
+    "H29_H32_H33_SHARED_OVERLAPPING_EVENT_FAMILY_OTHERS_BY_HYPOTHESIS_V4"
+)
+CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4 = (
+    "H32_H33_VALIDATION_INFORMED_IMMUTABLE_SHADOW_ONLY_UNTIL_"
+    "NEW_INDEPENDENT_PERIOD_FUTURE_CATALOG_VERSION_V4"
+)
+VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4 = ("H32", "H33")
+VALIDATION_INFORMED_SHADOW_REASON_V4 = (
+    "VALIDATION_INFORMED_PROFILE_REQUIRES_NEW_INDEPENDENT_PERIOD_"
+    "AND_FUTURE_CATALOG_VERSION"
+)
 EXIT_POLICY_IDS = (
     "PROFIT_FIRST_24H",
     "TIME_1H",
@@ -107,6 +131,11 @@ RANGE_ADX_MAX = 25.0
 SESSION_LOCAL_OPEN_HOUR = 8
 SESSION_OPEN_WINDOW_MINUTES = 15
 SESSION_TIMEZONES = (ZoneInfo("Europe/London"), ZoneInfo("America/New_York"))
+# H32 starts with the sixth completed local opening minute.  The profile was
+# designed from already-viewed VALIDATION diagnostics, so the boundary is
+# frozen for shadow measurement only and cannot enter the current cohort.
+# Eligibility requires a future catalog version and a new independent period.
+H32_OPEN_COMPLETED_MINUTE_START = 6
 # These validation-screen floors are frozen economic consistency checks, not
 # statistical proof or live promotion. They require 30 resolved trades, eight
 # active UTC days, and four contributing pairs before a pooled story can be
@@ -204,8 +233,286 @@ class StoryVehicleV2:
     no_trade_control: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class StoryTemplateV4(StoryTemplateV2):
+    """Distinct V4 API type preserving the compatible V2 positional prefix."""
+
+    emission_order_modes: tuple[str, ...] | None = None
+
+    @property
+    def emitted_order_modes(self) -> tuple[str, ...]:
+        """Modes this profile may actually emit after contextual classification."""
+
+        return (
+            self.allowed_order_modes
+            if self.emission_order_modes is None
+            else self.emission_order_modes
+        )
+
+    @property
+    def selection_family_id(self) -> str:
+        """Family whose overlapping candidates may supply at most one primary."""
+
+        return _selection_family_id(self.hypothesis_id)
+
+    @property
+    def current_cohort_selection_eligible(self) -> bool:
+        """Whether this profile was declared before the current validation."""
+
+        return (
+            not self.no_trade_control
+            and self.hypothesis_id not in VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4
+        )
+
+    @property
+    def current_cohort_selection_ineligibility_reason(self) -> str | None:
+        if self.hypothesis_id in VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4:
+            return VALIDATION_INFORMED_SHADOW_REASON_V4
+        if self.no_trade_control:
+            return "NO_TRADE_CONTROL"
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class StoryExitV4(StoryExitV2):
+    """Distinct V4 exit API type."""
+
+
+@dataclass(frozen=True, slots=True)
+class StoryVehicleV4(StoryVehicleV2):
+    """Distinct V4 vehicle API type with computed selection metadata."""
+
+    @property
+    def selection_family_id(self) -> str:
+        return _selection_family_id(self.hypothesis_id)
+
+    @property
+    def current_cohort_selection_eligible(self) -> bool:
+        return (
+            not self.no_trade_control
+            and self.hypothesis_id not in VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4
+        )
+
+    @property
+    def current_cohort_selection_ineligibility_reason(self) -> str | None:
+        if self.hypothesis_id in VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4:
+            return VALIDATION_INFORMED_SHADOW_REASON_V4
+        if self.no_trade_control:
+            return "NO_TRADE_CONTROL"
+        return None
+
+
+def _selection_family_id(hypothesis_id: str) -> str:
+    if hypothesis_id in {"H29", "H32", "H33"}:
+        return OPENING_BREAK_SELECTION_FAMILY_ID
+    return hypothesis_id
+
+
+def _shared_selection_families_receipt_v4() -> dict[str, list[str]]:
+    """Return a fresh canonical map so callers cannot mutate the policy seal."""
+
+    return {OPENING_BREAK_SELECTION_FAMILY_ID: ["H29", "H32", "H33"]}
+
+
+def _current_cohort_selection_receipt_v4() -> dict[str, Any]:
+    """Seal why validation-informed profiles cannot enter this cohort."""
+
+    return {
+        "current_cohort_selection_eligibility_policy": (
+            CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+        ),
+        "current_cohort_selection_ineligible_hypothesis_ids": list(
+            VALIDATION_INFORMED_SHADOW_HYPOTHESIS_IDS_V4
+        ),
+        "current_cohort_selection_ineligibility_reason": (
+            VALIDATION_INFORMED_SHADOW_REASON_V4
+        ),
+        "eligibility_unlock_policy": (
+            "NEW_INDEPENDENT_PERIOD_AND_FUTURE_CATALOG_VERSION_ONLY"
+        ),
+    }
+
+
+def build_story_templates_v4() -> tuple[StoryTemplateV4, ...]:
+    """Return the immutable H21-H33 causal story catalog plus H31 control."""
+
+    return (
+        StoryTemplateV4(
+            "H21",
+            "PULLBACK_CONTINUATION",
+            "PRIOR_M1_PULLBACK_INSIDE_M15_H1_TREND",
+            "M1_RECLAIM_OF_PRIOR_PULLBACK_EXTREME",
+            ("LIMIT",),
+            "LIMIT",
+            False,
+        ),
+        StoryTemplateV4(
+            "H22",
+            "CHOCH_REVERSAL",
+            "PRIOR_M15_TREND_AND_M1_EXHAUSTION",
+            "M1_BREAK_OF_PRIOR_COUNTER_SWING",
+            ("STOP",),
+            "STOP",
+            False,
+        ),
+        StoryTemplateV4(
+            "H23",
+            "RANGE_SWEEP_REVERSION",
+            "PRIOR_M15_LOW_ADX_WITH_FROZEN_M15_RAILS",
+            "M1_SWEEP_AND_REACCEPTANCE",
+            ("LIMIT",),
+            "LIMIT",
+            False,
+        ),
+        StoryTemplateV4(
+            "H24",
+            "RANGE_BREAK_RETEST",
+            "PRIOR_M15_RANGE_AND_COMPLETED_BREAK",
+            "M1_RETEST_HOLDS_FROZEN_M15_RAIL",
+            ("LIMIT",),
+            "LIMIT",
+            False,
+        ),
+        StoryTemplateV4(
+            "H25",
+            "COMPRESSION_RELEASE",
+            "PRIOR_M15_ATR_IN_LOWER_PRIOR_ONLY_QUANTILE",
+            "M1_BREAK_WITH_M5_ATR_EXPANSION",
+            ("STOP", "MARKET"),
+            "STOP",
+            True,
+        ),
+        StoryTemplateV4(
+            "H26",
+            "FALSE_COMPRESSION_RELEASE",
+            "PRIOR_M15_COMPRESSION_AND_BREAK_ATTEMPT",
+            "M1_FALSE_BREAK_REACCEPTANCE",
+            ("STOP",),
+            "STOP",
+            False,
+        ),
+        StoryTemplateV4(
+            "H27",
+            "IMPULSE_PAUSE_CONTINUATION",
+            "PRIOR_M1_IMPULSE_WITH_M5_DIRECTION",
+            "M1_SHALLOW_PAUSE_HOLDS_HALF_IMPULSE",
+            ("LIMIT",),
+            "LIMIT",
+            False,
+        ),
+        StoryTemplateV4(
+            "H28",
+            "CLIMAX_FADE",
+            "PRIOR_M1_CLIMAX_BODY_AND_M15_DECELERATION",
+            "M1_COUNTER_BREAK",
+            ("STOP",),
+            "STOP",
+            False,
+        ),
+        StoryTemplateV4(
+            "H29",
+            "DST_OPENING_BREAK",
+            "LOCAL_DST_AWARE_OPEN_AND_PRIOR_M15_RANGE",
+            "M1_OPENING_RANGE_BREAK",
+            ("STOP", "MARKET"),
+            "STOP",
+            True,
+        ),
+        StoryTemplateV4(
+            "H30",
+            "DST_OPENING_FAILED_BREAK",
+            "LOCAL_DST_AWARE_OPEN_AND_PRIOR_M15_RANGE",
+            "M1_OPENING_FALSE_BREAK_REACCEPTANCE",
+            ("STOP",),
+            "STOP",
+            False,
+        ),
+        StoryTemplateV4(
+            "H32",
+            "OPEN_MINUTE_06_15",
+            "LOCAL_DST_AWARE_OPEN_MINUTE_06_15_AND_PRIOR_M15_RANGE",
+            "M1_OPENING_RANGE_BREAK",
+            ("STOP", "MARKET"),
+            "STOP",
+            True,
+        ),
+        StoryTemplateV4(
+            "H33",
+            "MARKET_IMPULSE",
+            "LOCAL_DST_AWARE_OPEN_AND_PRIOR_M15_RANGE",
+            "M1_OPENING_RANGE_BREAK_CLASSIFIED_AS_MARKET",
+            ("STOP", "MARKET"),
+            "STOP",
+            True,
+            emission_order_modes=("MARKET",),
+        ),
+        StoryTemplateV4(
+            "H31",
+            "NO_TRADE_CONTROL",
+            "CONTROL",
+            "NONE",
+            (),
+            "NONE",
+            False,
+            no_trade_control=True,
+        ),
+    )
+
+
+def _exit_catalog_v4() -> tuple[StoryExitV4, ...]:
+    return (
+        StoryExitV4("PROFIT_FIRST_24H", MAX_HOLD_SECONDS, None, False, 1),
+        StoryExitV4("TIME_1H", 60 * 60, None, False, 0),
+        StoryExitV4("TIME_4H", 4 * 60 * 60, None, False, 1),
+        StoryExitV4("TIME_24H", MAX_HOLD_SECONDS, None, False, 2),
+        StoryExitV4("TRAILING_STRUCTURAL_24H", MAX_HOLD_SECONDS, None, True, 3),
+    )
+
+
+def build_story_vehicle_catalog_v4() -> tuple[StoryVehicleV4, ...]:
+    """Return exactly 60 contextual-order candidates plus H31 control."""
+
+    rows: list[StoryVehicleV4] = []
+    for template in build_story_templates_v4():
+        if template.no_trade_control:
+            rows.append(
+                StoryVehicleV4(
+                    candidate_id="H31:NO_TRADE_CONTROL",
+                    hypothesis_id="H31",
+                    story_name=template.story_name,
+                    exit_policy_id="NO_TRADE_CONTROL",
+                    contextual_order_policy="NO_ORDER",
+                    allowed_order_modes=(),
+                    max_hold_seconds=0,
+                    profit_target_r=None,
+                    trailing_structural=False,
+                    complexity=0,
+                    no_trade_control=True,
+                )
+            )
+            continue
+        for exit_policy in _exit_catalog_v4():
+            rows.append(
+                StoryVehicleV4(
+                    candidate_id=(
+                        f"{template.hypothesis_id}:{exit_policy.exit_policy_id}"
+                    ),
+                    hypothesis_id=template.hypothesis_id,
+                    story_name=template.story_name,
+                    exit_policy_id=exit_policy.exit_policy_id,
+                    contextual_order_policy="STORY_CONTEXT_SELECTS_ONE_ORDER_MODE_V4",
+                    allowed_order_modes=template.emitted_order_modes,
+                    max_hold_seconds=exit_policy.max_hold_seconds,
+                    profit_target_r=exit_policy.profit_target_r,
+                    trailing_structural=exit_policy.trailing_structural,
+                    complexity=exit_policy.complexity,
+                )
+            )
+    return tuple(rows)
+
+
 def build_story_templates_v2() -> tuple[StoryTemplateV2, ...]:
-    """Return the immutable H21-H31 causal story catalog."""
+    """Return the frozen H21-H31 V2 causal story catalog."""
 
     return (
         StoryTemplateV2(
@@ -298,6 +605,7 @@ def build_story_templates_v2() -> tuple[StoryTemplateV2, ...]:
             "STOP",
             False,
         ),
+        # Keep the eighth positional argument frozen as no_trade_control.
         StoryTemplateV2(
             "H31",
             "NO_TRADE_CONTROL",
@@ -312,6 +620,8 @@ def build_story_templates_v2() -> tuple[StoryTemplateV2, ...]:
 
 
 def _exit_catalog_v2() -> tuple[StoryExitV2, ...]:
+    """Return the frozen V2 exit catalog."""
+
     return (
         StoryExitV2("PROFIT_FIRST_24H", MAX_HOLD_SECONDS, None, False, 1),
         StoryExitV2("TIME_1H", 60 * 60, None, False, 0),
@@ -322,7 +632,7 @@ def _exit_catalog_v2() -> tuple[StoryExitV2, ...]:
 
 
 def build_story_vehicle_catalog_v2() -> tuple[StoryVehicleV2, ...]:
-    """Return exactly 50 contextual-order candidates plus H31 control."""
+    """Return exactly 50 frozen V2 candidates plus H31 control."""
 
     rows: list[StoryVehicleV2] = []
     for template in build_story_templates_v2():
@@ -352,7 +662,7 @@ def build_story_vehicle_catalog_v2() -> tuple[StoryVehicleV2, ...]:
                     hypothesis_id=template.hypothesis_id,
                     story_name=template.story_name,
                     exit_policy_id=exit_policy.exit_policy_id,
-                    contextual_order_policy="STORY_CONTEXT_SELECTS_ONE_ORDER_MODE_V2",
+                    contextual_order_policy=("STORY_CONTEXT_SELECTS_ONE_ORDER_MODE_V2"),
                     allowed_order_modes=template.allowed_order_modes,
                     max_hold_seconds=exit_policy.max_hold_seconds,
                     profit_target_r=exit_policy.profit_target_r,
@@ -761,7 +1071,186 @@ def _build_currency_trigger_cluster_payload(
     return payload, metric_fields
 
 
+def _story_catalog_receipt_v4() -> dict[str, Any]:
+    return {
+        "story_catalog_policy": STORY_CATALOG_POLICY_V4,
+        "selection_family_policy": SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": _shared_selection_families_receipt_v4(),
+        **_current_cohort_selection_receipt_v4(),
+        "templates": [
+            {
+                "hypothesis_id": row.hypothesis_id,
+                "selection_family_id": row.selection_family_id,
+                "story_name": row.story_name,
+                "setup_role": row.setup_role,
+                "trigger_role": row.trigger_role,
+                "allowed_order_modes": list(row.allowed_order_modes),
+                "emitted_order_modes": list(row.emitted_order_modes),
+                "ordinary_order_mode": row.ordinary_order_mode,
+                "market_on_high_impulse": row.market_on_high_impulse,
+                "no_trade_control": row.no_trade_control,
+                "current_cohort_selection_eligible": (
+                    row.current_cohort_selection_eligible
+                ),
+                "current_cohort_selection_ineligibility_reason": (
+                    row.current_cohort_selection_ineligibility_reason
+                ),
+            }
+            for row in build_story_templates_v4()
+        ],
+        "vehicles": [
+            {
+                "candidate_id": row.candidate_id,
+                "hypothesis_id": row.hypothesis_id,
+                "selection_family_id": row.selection_family_id,
+                "story_name": row.story_name,
+                "exit_policy_id": row.exit_policy_id,
+                "contextual_order_policy": row.contextual_order_policy,
+                "allowed_order_modes": list(row.allowed_order_modes),
+                "max_hold_seconds": row.max_hold_seconds,
+                "profit_target_r": row.profit_target_r,
+                "trailing_structural": row.trailing_structural,
+                "complexity": row.complexity,
+                "no_trade_control": row.no_trade_control,
+                "current_cohort_selection_eligible": (
+                    row.current_cohort_selection_eligible
+                ),
+                "current_cohort_selection_ineligibility_reason": (
+                    row.current_cohort_selection_ineligibility_reason
+                ),
+            }
+            for row in build_story_vehicle_catalog_v4()
+        ],
+    }
+
+
+def _truth_evaluator_receipt_v4() -> dict[str, Any]:
+    return {
+        "truth_policy": STORY_TRUTH_POLICY_V4,
+        "entry_ttl_seconds_exclusive": ENTRY_TTL_SECONDS,
+        "maximum_hold_seconds": MAX_HOLD_SECONDS,
+        "spread_stress_round_trips": SPREAD_STRESS_ROUND_TRIPS,
+        "stop_offset_atr": STOP_OFFSET_ATR,
+        "limit_offset_atr": LIMIT_OFFSET_ATR,
+        "market_impulse_min_atr": MARKET_IMPULSE_MIN_ATR,
+        "story_impulse_min_atr": STORY_IMPULSE_MIN_ATR,
+        "h22_reversal_impulse_min_atr": STORY_IMPULSE_MIN_ATR,
+        "frozen_threshold_float_boundary_abs_tolerance": FLOAT_BOUNDARY_ABS_TOL,
+        "climax_impulse_min_atr": CLIMAX_IMPULSE_MIN_ATR,
+        "structural_stop_atr_floor": STRUCTURAL_STOP_ATR_FLOOR,
+        "compression_min_prior_atr_observations": (
+            COMPRESSION_MIN_PRIOR_ATR_OBSERVATIONS
+        ),
+        "compression_atr_quantile": COMPRESSION_ATR_QUANTILE,
+        "range_adx_max_exclusive": RANGE_ADX_MAX,
+        "session_local_open_hour": SESSION_LOCAL_OPEN_HOUR,
+        "session_open_window_minutes": SESSION_OPEN_WINDOW_MINUTES,
+        "session_timezones": [str(zone) for zone in SESSION_TIMEZONES],
+        "session_open_window_end_clock_policy": "LOCAL_(08:00,08:15]",
+        "h32_open_window_end_clock_policy": "LOCAL_[08:06,08:15]",
+        "h33_emission_order_policy": (
+            "EXISTING_CONTEXTUAL_CLASSIFIER_MARKET_ONLY_NO_COST_THRESHOLD"
+        ),
+        "quote_observation_policy": (
+            "FIRST_REAL_S5_AFTER_TRIGGER_OBSERVES_ONLY;"
+            "FOLLOWING_REAL_S5_IS_EARLIEST_FILL"
+        ),
+        "entry_execution_side": {"LONG": "ASK", "SHORT": "BID"},
+        "exit_execution_side": {"LONG": "BID", "SHORT": "ASK"},
+        "same_s5_barrier_policy": "STRUCTURAL_STOP_FIRST",
+        "barrier_open_gap_policy": (
+            "STOP_GAP_FIRST;THEN_TARGET_GAP_AT_EXECUTABLE_OPEN;"
+            "THEN_INTRABAR_STOP_FIRST"
+        ),
+        "mandatory_time_close_policy": "FIRST_REAL_S5_OPEN_AT_OR_AFTER_DUE",
+        "trailing_input_policy": "COMPLETED_M1_AFTER_FILL_ONLY",
+        "split_embargo_seconds": ENTRY_TTL_SECONDS + MAX_HOLD_SECONDS,
+        "gross_mid_decomposition_policy": (
+            "ONLY_WHEN_ENTRY_AND_EXIT_HAVE_SYNCHRONIZED_EXECUTABLE_OPENS"
+        ),
+        "resting_fill_s5_policy": (
+            "NO_TARGET;STOP_RANGE_CHARGED_CONSERVATIVELY;NO_PREFILL_OPEN_GAP"
+        ),
+        "entry_gap_invalid_geometry_policy": (
+            "BROKER_ON_FILL_DEPENDENT_ORDER_LOSS_CANCEL_NO_FILL"
+        ),
+        "price_precision_policy": PRICE_PRECISION_POLICY_V2,
+        "broker_ticks_per_pip": BROKER_TICKS_PER_PIP,
+        "resting_entry_tick_rounding": {
+            "LONG_LIMIT": "FLOOR",
+            "SHORT_LIMIT": "CEILING",
+            "LONG_STOP": "CEILING",
+            "SHORT_STOP": "FLOOR",
+        },
+        "structural_barrier_tick_rounding": {
+            "LONG_STOP": "FLOOR",
+            "LONG_TARGET": "CEILING",
+            "SHORT_STOP": "CEILING",
+            "SHORT_TARGET": "FLOOR",
+        },
+        "trailing_candidate_tick_rounding": {
+            "LONG": "FLOOR_THEN_MAX",
+            "SHORT": "CEILING_THEN_MIN",
+        },
+        "price_cost_scope": dict(PRICE_COST_SCOPE_V2),
+        "currency_trigger_factor_clusters": {
+            "contract": CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1,
+            "cluster_key_policy": CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1,
+            "cluster_key_fields": [
+                "split",
+                "candidate_id",
+                "trigger_at_utc",
+                "currency",
+                "sign",
+            ],
+            "factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+            "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+            "trade_identity_fields": [
+                "candidate_id",
+                "pair",
+                "side",
+                "setup_at_utc",
+                "trigger_at_utc",
+                "quote_observed_at_utc",
+                "entry_at_utc",
+                "entry_exec",
+                "exit_policy_id",
+            ],
+            "trigger_clock_policy": "CANONICAL_EXACT_UTC_MINUTE",
+            "trade_identity_policy": "UNIQUE_SHA256_CANONICAL_BODY",
+            "accumulation_policy": "BEFORE_BOUNDED_AUDIT_ROW_CAP",
+            "cluster_rows_untruncated": True,
+            "factor_clusters_are_not_candidate_summed": True,
+            "factor_membership_total_policy": (
+                "VERIFY_ONLY_EQUALS_TWO_TIMES_CANDIDATE_TOTAL_R"
+            ),
+            "leave_one_cluster_out_policy": (
+                "CANDIDATE_TOTAL_R_MINUS_FACTOR_CLUSTER_R"
+            ),
+            "top_cluster_policy": ("MAX_EXACT_NET_R_THEN_CANONICAL_CLUSTER_KEY"),
+            "global_merge_policy": (
+                "MERGE_EQUAL_CLUSTER_KEYS_ACROSS_PAIRS;"
+                "REJECT_CROSS_PAIR_DUPLICATE_TRADE_IDENTITIES"
+            ),
+            "economic_gate": (
+                "leave_one_currency_trigger_cluster_min_total_r_positive"
+            ),
+            "economic_gate_boundary": "STRICTLY_GREATER_THAN_ZERO",
+        },
+        "economic_screen": {
+            "minimum_resolved_trades": SCREEN_MIN_RESOLVED_TRADES,
+            "minimum_active_days": SCREEN_MIN_ACTIVE_DAYS,
+            "minimum_contributing_pairs": SCREEN_MIN_CONTRIBUTING_PAIRS,
+            "minimum_profit_factor_r_exclusive": SCREEN_MIN_PROFIT_FACTOR_R,
+            "unresolved_filled_count_required": 0,
+            "leave_one_currency_trigger_cluster_min_total_r_required_positive": (True),
+        },
+    }
+
+
 def _story_catalog_receipt_v2() -> dict[str, Any]:
+    """Return the frozen pre-V4 catalog receipt without V4 metadata leakage."""
+
     return {
         "story_catalog_policy": STORY_CATALOG_POLICY_V2,
         "templates": [
@@ -797,6 +1286,8 @@ def _story_catalog_receipt_v2() -> dict[str, Any]:
 
 
 def _truth_evaluator_receipt_v2() -> dict[str, Any]:
+    """Return the frozen V2 evaluator semantics independently of V4."""
+
     return {
         "truth_policy": STORY_TRUTH_POLICY_V2,
         "entry_ttl_seconds_exclusive": ENTRY_TTL_SECONDS,
@@ -895,7 +1386,7 @@ def _truth_evaluator_receipt_v2() -> dict[str, Any]:
             "leave_one_cluster_out_policy": (
                 "CANDIDATE_TOTAL_R_MINUS_FACTOR_CLUSTER_R"
             ),
-            "top_cluster_policy": ("MAX_EXACT_NET_R_THEN_CANONICAL_CLUSTER_KEY"),
+            "top_cluster_policy": "MAX_EXACT_NET_R_THEN_CANONICAL_CLUSTER_KEY",
             "global_merge_policy": (
                 "MERGE_EQUAL_CLUSTER_KEYS_ACROSS_PAIRS;"
                 "REJECT_CROSS_PAIR_DUPLICATE_TRADE_IDENTITIES"
@@ -974,14 +1465,32 @@ def _prior_atr_quantile(
 
 
 def _is_dst_aware_local_open(trigger_at: datetime) -> tuple[bool, str | None]:
+    return _is_dst_aware_local_open_window(
+        trigger_at,
+        first_completed_minute=1,
+        last_completed_minute=SESSION_OPEN_WINDOW_MINUTES,
+    )
+
+
+def _is_dst_aware_local_open_window(
+    trigger_at: datetime,
+    *,
+    first_completed_minute: int,
+    last_completed_minute: int,
+) -> tuple[bool, str | None]:
+    """Match a fixed completed-M1 offset inside either DST-aware local open."""
+
+    if not 1 <= first_completed_minute <= last_completed_minute <= 59:
+        raise ValueError("completed local-open minute bounds are invalid")
     for zone in SESSION_TIMEZONES:
         local = trigger_at.astimezone(zone)
         # ``trigger_at`` is the completed M1 end clock.  Therefore the local
         # 08:00-08:15 opening bars end in the half-open-to-closed interval
         # (08:00, 08:15], not [08:00, 08:15).
-        completed_minute = local.hour * 60 + local.minute
-        open_minute = SESSION_LOCAL_OPEN_HOUR * 60
-        if open_minute < completed_minute <= open_minute + SESSION_OPEN_WINDOW_MINUTES:
+        if (
+            local.hour == SESSION_LOCAL_OPEN_HOUR
+            and first_completed_minute <= local.minute <= last_completed_minute
+        ):
             return True, str(zone)
     return False, None
 
@@ -1303,8 +1812,15 @@ def _story_decision(
                     {"counter_break_above": midpoint},
                 )
         return None
-    if template.hypothesis_id == "H29":
-        at_open, session_zone = _is_dst_aware_local_open(trigger_at)
+    if template.hypothesis_id in {"H29", "H32", "H33"}:
+        if template.hypothesis_id == "H32":
+            at_open, session_zone = _is_dst_aware_local_open_window(
+                trigger_at,
+                first_completed_minute=H32_OPEN_COMPLETED_MINUTE_START,
+                last_completed_minute=SESSION_OPEN_WINDOW_MINUTES,
+            )
+        else:
+            at_open, session_zone = _is_dst_aware_local_open(trigger_at)
         if (
             not at_open
             or prior_m15 is None
@@ -1316,27 +1832,37 @@ def _story_decision(
         ):
             return None
         if m1.close > upper:
+            setup_evidence = {
+                "session_zone": session_zone,
+                "frozen_m15_upper": upper,
+                "m15_adx": prior_m15.adx,
+            }
+            if template.hypothesis_id == "H32":
+                setup_evidence["completed_open_minute_window"] = "06_15_INCLUSIVE"
+            elif template.hypothesis_id == "H33":
+                setup_evidence["emission_order_filter"] = "MARKET_ONLY"
             return emit(
                 "LONG",
                 h1_upper,
                 lower,
-                {
-                    "session_zone": session_zone,
-                    "frozen_m15_upper": upper,
-                    "m15_adx": prior_m15.adx,
-                },
+                setup_evidence,
                 {"opening_break_above": upper},
             )
         if m1.close < lower:
+            setup_evidence = {
+                "session_zone": session_zone,
+                "frozen_m15_lower": lower,
+                "m15_adx": prior_m15.adx,
+            }
+            if template.hypothesis_id == "H32":
+                setup_evidence["completed_open_minute_window"] = "06_15_INCLUSIVE"
+            elif template.hypothesis_id == "H33":
+                setup_evidence["emission_order_filter"] = "MARKET_ONLY"
             return emit(
                 "SHORT",
                 h1_lower,
                 upper,
-                {
-                    "session_zone": session_zone,
-                    "frozen_m15_lower": lower,
-                    "m15_adx": prior_m15.adx,
-                },
+                setup_evidence,
                 {"opening_break_below": lower},
             )
         return None
@@ -1393,6 +1919,15 @@ def _choose_order_mode(
     if template.ordinary_order_mode not in template.allowed_order_modes:
         raise AssertionError("story ordinary order is outside its allowed modes")
     return template.ordinary_order_mode, "STORY_NATIVE_RESTING_ORDER"
+
+
+def _emission_allows_order_mode(
+    template: StoryTemplateV2,
+    order_mode: str,
+) -> bool:
+    """Apply a profile's preregistered post-classifier emission filter."""
+
+    return order_mode in template.emitted_order_modes
 
 
 def _mid_open(candle: S5BidAskCandle) -> float:
@@ -1950,7 +2485,7 @@ def _metric(stat: Mapping[str, Any]) -> dict[str, Any]:
 def _requested_vehicles(
     candidate_ids: Sequence[str] | None,
 ) -> tuple[StoryVehicleV2, ...]:
-    catalog = build_story_vehicle_catalog_v2()
+    catalog = build_story_vehicle_catalog_v4()
     if candidate_ids is None:
         return catalog
     if isinstance(candidate_ids, (str, bytes)) or not isinstance(
@@ -1978,7 +2513,12 @@ def run_adaptive_story_s5_grid(
     unavailable_pairs: Sequence[str] = (),
     candidate_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Run one pair once through the finite causal story/vehicle grid."""
+    """Run the V4 finite grid via the historical unversioned entry point.
+
+    V2 named constants, dataclasses, builders, and receipt helpers remain
+    frozen.  New callers should use :func:`run_adaptive_story_s5_grid_v4` so a
+    future catalog cannot silently change their requested runtime version.
+    """
 
     pair_name = str(pair).strip().upper()
     if not pair_name:
@@ -2027,7 +2567,7 @@ def run_adaptive_story_s5_grid(
     requested_hypotheses = {row.hypothesis_id for row in executable}
     templates = tuple(
         row
-        for row in build_story_templates_v2()
+        for row in build_story_templates_v4()
         if not row.no_trade_control and row.hypothesis_id in requested_hypotheses
     )
     vehicles_by_story = {
@@ -2177,10 +2717,19 @@ def run_adaptive_story_s5_grid(
                 order_mode, order_reason = _choose_order_mode(
                     template, impulse_ratio=impulse
                 )
+                if not _emission_allows_order_mode(template, order_mode):
+                    continue
                 if len(signal_rows) < MAX_AUDIT_ROWS:
                     signal_rows.append(
                         {
                             "hypothesis_id": template.hypothesis_id,
+                            "selection_family_id": template.selection_family_id,
+                            "current_cohort_selection_eligible": (
+                                template.current_cohort_selection_eligible
+                            ),
+                            "current_cohort_selection_ineligibility_reason": (
+                                template.current_cohort_selection_ineligibility_reason
+                            ),
                             "story_name": template.story_name,
                             "setup_at_utc": setup_at.isoformat(),
                             "trigger_at_utc": trigger_at.isoformat(),
@@ -2193,7 +2742,7 @@ def run_adaptive_story_s5_grid(
                             ),
                             "structural_target_scorable": decision.scorable,
                             "chosen_order_mode": order_mode,
-                            "allowed_order_modes": list(template.allowed_order_modes),
+                            "allowed_order_modes": list(template.emitted_order_modes),
                             "order_selection_reason": order_reason,
                             "completed_feature_clocks": {
                                 key: value.completed_at.isoformat()
@@ -2543,6 +3092,13 @@ def _build_result(
             {
                 "candidate_id": vehicle.candidate_id,
                 "hypothesis_id": vehicle.hypothesis_id,
+                "selection_family_id": vehicle.selection_family_id,
+                "current_cohort_selection_eligible": (
+                    vehicle.current_cohort_selection_eligible
+                ),
+                "current_cohort_selection_ineligibility_reason": (
+                    vehicle.current_cohort_selection_ineligibility_reason
+                ),
                 "story_name": vehicle.story_name,
                 "exit_policy_id": vehicle.exit_policy_id,
                 "contextual_order_policy": vehicle.contextual_order_policy,
@@ -2561,14 +3117,17 @@ def _build_result(
             }
         )
     body: dict[str, Any] = {
-        "contract": STORY_GRID_CONTRACT_V2,
-        "schema_version": 2,
+        "contract": STORY_GRID_CONTRACT_V4,
+        "schema_version": 4,
         "status": status,
         "pair": pair,
-        "story_catalog_policy": STORY_CATALOG_POLICY_V2,
-        "truth_policy": STORY_TRUTH_POLICY_V2,
-        "story_catalog_sha256": _canonical_sha(_story_catalog_receipt_v2()),
-        "truth_evaluator_sha256": _canonical_sha(_truth_evaluator_receipt_v2()),
+        "story_catalog_policy": STORY_CATALOG_POLICY_V4,
+        "selection_family_policy": SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": _shared_selection_families_receipt_v4(),
+        **_current_cohort_selection_receipt_v4(),
+        "truth_policy": STORY_TRUTH_POLICY_V4,
+        "story_catalog_sha256": _canonical_sha(_story_catalog_receipt_v4()),
+        "truth_evaluator_sha256": _canonical_sha(_truth_evaluator_receipt_v4()),
         "price_precision_policy": PRICE_PRECISION_POLICY_V2,
         "price_cost_scope": dict(PRICE_COST_SCOPE_V2),
         "currency_trigger_cluster_contract": (CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1),
@@ -2584,9 +3143,11 @@ def _build_result(
         "entry_gap_invalid_geometry_policy": (
             "BROKER_ON_FILL_DEPENDENT_ORDER_LOSS_CANCEL_NO_FILL"
         ),
-        "story_template_count": len(build_story_templates_v2()),
-        "predeclared_selectable_candidate_count": 50,
-        "predeclared_control_candidate_count": 1,
+        "story_template_count": len(build_story_templates_v4()),
+        "validation_diagnostic_candidate_count": 60,
+        "current_cohort_selection_eligible_candidate_count": 50,
+        "validation_informed_shadow_candidate_count": 10,
+        "control_candidate_count": 1,
         "requested_candidate_ids": [row.candidate_id for row in vehicles],
         "evaluated_candidate_ids": [
             row.candidate_id for row in vehicles if not row.no_trade_control
@@ -3036,6 +3597,13 @@ def _validated_trials_for_run(
         expected_metadata = {
             "candidate_id": vehicle.candidate_id,
             "hypothesis_id": vehicle.hypothesis_id,
+            "selection_family_id": vehicle.selection_family_id,
+            "current_cohort_selection_eligible": (
+                vehicle.current_cohort_selection_eligible
+            ),
+            "current_cohort_selection_ineligibility_reason": (
+                vehicle.current_cohort_selection_ineligibility_reason
+            ),
             "story_name": vehicle.story_name,
             "exit_policy_id": vehicle.exit_policy_id,
             "contextual_order_policy": vehicle.contextual_order_policy,
@@ -3121,11 +3689,12 @@ def combine_adaptive_story_s5_grid_runs(
     *,
     candidate_ids: Sequence[str],
 ) -> dict[str, Any]:
-    """Pool sealed pair runs on complete entry-UTC-day clusters.
+    """Pool sealed V4 pair runs on complete entry-UTC-day clusters.
 
     The combiner never reads capped trade audit rows.  It accepts only pair
     runs created with the exact same split and candidate whitelist receipts,
     then pools their complete per-entry-day aggregates, including zero days.
+    New callers should use :func:`combine_adaptive_story_s5_grid_runs_v4`.
     """
 
     normalized_splits = _normalise_splits(splits)
@@ -3135,8 +3704,8 @@ def combine_adaptive_story_s5_grid_runs(
     expected_split_rows = _split_receipt_rows(normalized_splits)
     expected_split_digest = _canonical_sha(expected_split_rows)
     expected_candidate_digest = _canonical_sha(requested_ids)
-    expected_catalog_digest = _canonical_sha(_story_catalog_receipt_v2())
-    expected_evaluator_digest = _canonical_sha(_truth_evaluator_receipt_v2())
+    expected_catalog_digest = _canonical_sha(_story_catalog_receipt_v4())
+    expected_evaluator_digest = _canonical_sha(_truth_evaluator_receipt_v4())
     split_dates = {split.name: _split_utc_dates(split) for split in normalized_splits}
     if isinstance(pair_runs, (str, bytes)) or not isinstance(pair_runs, Sequence):
         raise ValueError("pair_runs must be a sequence")
@@ -3149,8 +3718,8 @@ def combine_adaptive_story_s5_grid_runs(
         if not isinstance(run, Mapping):
             raise ValueError("pair run must be an object")
         if (
-            run.get("contract") != STORY_GRID_CONTRACT_V2
-            or run.get("schema_version") != 2
+            run.get("contract") != STORY_GRID_CONTRACT_V4
+            or run.get("schema_version") != 4
         ):
             raise ValueError("pair run contract mismatch")
         if run.get("status") not in PAIR_RUN_ALLOWED_STATUSES:
@@ -3179,18 +3748,31 @@ def combine_adaptive_story_s5_grid_runs(
         if run.get("split_digest") != expected_split_digest:
             raise ValueError("pair run split digest mismatch")
         if (
-            run.get("story_catalog_policy") != STORY_CATALOG_POLICY_V2
-            or run.get("truth_policy") != STORY_TRUTH_POLICY_V2
+            run.get("story_catalog_policy") != STORY_CATALOG_POLICY_V4
+            or run.get("truth_policy") != STORY_TRUTH_POLICY_V4
         ):
             raise ValueError("pair run story/truth policy mismatch")
+        if (
+            run.get("selection_family_policy") != SELECTION_FAMILY_POLICY_V4
+            or run.get("shared_selection_families")
+            != _shared_selection_families_receipt_v4()
+        ):
+            raise ValueError("pair run selection-family policy mismatch")
+        if any(
+            run.get(key) != value
+            for key, value in _current_cohort_selection_receipt_v4().items()
+        ):
+            raise ValueError("pair run current-cohort eligibility policy mismatch")
         if run.get("story_catalog_sha256") != expected_catalog_digest:
             raise ValueError("pair run story catalog digest mismatch")
         if run.get("truth_evaluator_sha256") != expected_evaluator_digest:
             raise ValueError("pair run truth evaluator digest mismatch")
         expected_run_policy_fields = {
-            "story_template_count": len(build_story_templates_v2()),
-            "predeclared_selectable_candidate_count": 50,
-            "predeclared_control_candidate_count": 1,
+            "story_template_count": len(build_story_templates_v4()),
+            "validation_diagnostic_candidate_count": 60,
+            "current_cohort_selection_eligible_candidate_count": 50,
+            "validation_informed_shadow_candidate_count": 10,
+            "control_candidate_count": 1,
             "contextual_order_cross_product_forbidden": True,
             "setup_trigger_entry_policy": "T_SETUP_LT_T_TRIGGER_LT_T_ENTRY",
             "entry_ttl_boundary": "EXCLUSIVE",
@@ -3271,6 +3853,13 @@ def combine_adaptive_story_s5_grid_runs(
                 {
                     "candidate_id": vehicle.candidate_id,
                     "hypothesis_id": vehicle.hypothesis_id,
+                    "selection_family_id": vehicle.selection_family_id,
+                    "current_cohort_selection_eligible": (
+                        vehicle.current_cohort_selection_eligible
+                    ),
+                    "current_cohort_selection_ineligibility_reason": (
+                        vehicle.current_cohort_selection_ineligibility_reason
+                    ),
                     "no_trade_control": True,
                     "by_split": {},
                     "economic_screen_by_split": {},
@@ -3506,6 +4095,13 @@ def combine_adaptive_story_s5_grid_runs(
             {
                 "candidate_id": vehicle.candidate_id,
                 "hypothesis_id": vehicle.hypothesis_id,
+                "selection_family_id": vehicle.selection_family_id,
+                "current_cohort_selection_eligible": (
+                    vehicle.current_cohort_selection_eligible
+                ),
+                "current_cohort_selection_ineligibility_reason": (
+                    vehicle.current_cohort_selection_ineligibility_reason
+                ),
                 "story_name": vehicle.story_name,
                 "exit_policy_id": vehicle.exit_policy_id,
                 "no_trade_control": False,
@@ -3528,8 +4124,8 @@ def combine_adaptive_story_s5_grid_runs(
         and row["economic_screen_by_split"][validation_names[0]]["eligible"]
     ]
     body: dict[str, Any] = {
-        "contract": STORY_GRID_COMBINED_CONTRACT_V2,
-        "schema_version": 2,
+        "contract": STORY_GRID_COMBINED_CONTRACT_V4,
+        "schema_version": 4,
         "status": "COMPLETE",
         "pair_count": len(run_by_pair),
         "pairs": sorted(run_by_pair),
@@ -3537,8 +4133,11 @@ def combine_adaptive_story_s5_grid_runs(
         "requested_candidate_ids": requested_ids,
         "evaluated_candidate_ids": [row.candidate_id for row in evaluated],
         "candidate_whitelist_sha256": expected_candidate_digest,
-        "story_catalog_policy": STORY_CATALOG_POLICY_V2,
-        "truth_policy": STORY_TRUTH_POLICY_V2,
+        "story_catalog_policy": STORY_CATALOG_POLICY_V4,
+        "selection_family_policy": SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": _shared_selection_families_receipt_v4(),
+        **_current_cohort_selection_receipt_v4(),
+        "truth_policy": STORY_TRUTH_POLICY_V4,
         "story_catalog_sha256": expected_catalog_digest,
         "truth_evaluator_sha256": expected_evaluator_digest,
         "accepted_pair_run_statuses": list(PAIR_RUN_ALLOWED_STATUSES),
@@ -3567,13 +4166,54 @@ def combine_adaptive_story_s5_grid_runs(
     return {**body, "result_sha256": _canonical_sha(body)}
 
 
+def run_adaptive_story_s5_grid_v4(
+    pair: str,
+    candles: Iterable[S5BidAskCandle],
+    splits: Sequence[UtcSplit],
+    *,
+    unavailable_pairs: Sequence[str] = (),
+    candidate_ids: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Explicit V4 runtime API; the unversioned function is its legacy alias."""
+
+    return run_adaptive_story_s5_grid(
+        pair,
+        candles,
+        splits,
+        unavailable_pairs=unavailable_pairs,
+        candidate_ids=candidate_ids,
+    )
+
+
+def combine_adaptive_story_s5_grid_runs_v4(
+    pair_runs: Sequence[Mapping[str, Any]],
+    splits: Sequence[UtcSplit],
+    *,
+    candidate_ids: Sequence[str],
+) -> dict[str, Any]:
+    """Explicit V4 combiner API; validates only sealed V4 pair receipts."""
+
+    return combine_adaptive_story_s5_grid_runs(
+        pair_runs,
+        splits,
+        candidate_ids=candidate_ids,
+    )
+
+
 __all__ = [
     "StoryExitV2",
+    "StoryExitV4",
     "StoryTemplateV2",
+    "StoryTemplateV4",
     "StoryVehicleV2",
+    "StoryVehicleV4",
     "UtcSplit",
+    "build_story_templates_v4",
+    "build_story_vehicle_catalog_v4",
     "build_story_templates_v2",
     "build_story_vehicle_catalog_v2",
     "combine_adaptive_story_s5_grid_runs",
+    "combine_adaptive_story_s5_grid_runs_v4",
     "run_adaptive_story_s5_grid",
+    "run_adaptive_story_s5_grid_v4",
 ]

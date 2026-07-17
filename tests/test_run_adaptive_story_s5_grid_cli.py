@@ -239,7 +239,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         phase = splits[0].name
         split = splits[0]
         requested = kwargs.get("candidate_ids")
-        vehicles = self.cli.story_core.build_story_vehicle_catalog_v2()
+        vehicles = self.cli.story_core.build_story_vehicle_catalog_v4()
         if requested is None:
             selected = [item for item in vehicles if not item.no_trade_control]
         else:
@@ -262,6 +262,13 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 {
                     "candidate_id": vehicle.candidate_id,
                     "hypothesis_id": vehicle.hypothesis_id,
+                    "selection_family_id": vehicle.selection_family_id,
+                    "current_cohort_selection_eligible": (
+                        vehicle.current_cohort_selection_eligible
+                    ),
+                    "current_cohort_selection_ineligibility_reason": (
+                        vehicle.current_cohort_selection_ineligibility_reason
+                    ),
                     "story_name": vehicle.story_name,
                     "exit_policy_id": vehicle.exit_policy_id,
                     "contextual_order_policy": vehicle.contextual_order_policy,
@@ -296,17 +303,22 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         candidate_ids = [vehicle.candidate_id for vehicle in selected]
         split_rows = self.cli._expected_split_rows(split)
         body = {
-            "contract": self.cli.story_core.STORY_GRID_CONTRACT_V2,
-            "schema_version": 2,
+            "contract": self.cli.story_core.STORY_GRID_CONTRACT_V4,
+            "schema_version": 4,
             "status": "COMPLETE",
             "pair": pair,
-            "story_catalog_policy": self.cli.story_core.STORY_CATALOG_POLICY_V2,
-            "truth_policy": self.cli.story_core.STORY_TRUTH_POLICY_V2,
+            "story_catalog_policy": self.cli.story_core.STORY_CATALOG_POLICY_V4,
+            "selection_family_policy": (self.cli.story_core.SELECTION_FAMILY_POLICY_V4),
+            "shared_selection_families": (
+                self.cli.story_core._shared_selection_families_receipt_v4()
+            ),
+            **self.cli.story_core._current_cohort_selection_receipt_v4(),
+            "truth_policy": self.cli.story_core.STORY_TRUTH_POLICY_V4,
             "story_catalog_sha256": self.cli._canonical_sha(
-                self.cli.story_core._story_catalog_receipt_v2()
+                self.cli.story_core._story_catalog_receipt_v4()
             ),
             "truth_evaluator_sha256": self.cli._canonical_sha(
-                self.cli.story_core._truth_evaluator_receipt_v2()
+                self.cli.story_core._truth_evaluator_receipt_v4()
             ),
             "price_precision_policy": (self.cli.story_core.PRICE_PRECISION_POLICY_V2),
             "price_cost_scope": dict(self.cli.story_core.PRICE_COST_SCOPE_V2),
@@ -387,13 +399,20 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             profit_factor = gross_profit / gross_loss if gross_loss > 0.0 else None
             vehicle = next(
                 item
-                for item in self.cli.story_core.build_story_vehicle_catalog_v2()
+                for item in self.cli.story_core.build_story_vehicle_catalog_v4()
                 if item.candidate_id == candidate_id
             )
             rows.append(
                 {
                     "candidate_id": candidate_id,
                     "hypothesis_id": vehicle.hypothesis_id,
+                    "selection_family_id": vehicle.selection_family_id,
+                    "current_cohort_selection_eligible": (
+                        vehicle.current_cohort_selection_eligible
+                    ),
+                    "current_cohort_selection_ineligibility_reason": (
+                        vehicle.current_cohort_selection_ineligibility_reason
+                    ),
                     "story_name": vehicle.story_name,
                     "exit_policy_id": vehicle.exit_policy_id,
                     "no_trade_control": False,
@@ -431,21 +450,26 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         split_rows = self.cli._expected_split_rows(split)
         pairs = sorted(str(row.get("pair") or "") for row in pair_runs)
         body = {
-            "contract": self.cli.story_core.STORY_GRID_COMBINED_CONTRACT_V2,
-            "schema_version": 2,
+            "contract": self.cli.story_core.STORY_GRID_COMBINED_CONTRACT_V4,
+            "schema_version": 4,
             "status": "COMPLETE",
             "pair_count": len(pairs),
             "pairs": pairs,
             "requested_candidate_ids": list(candidate_ids),
             "evaluated_candidate_ids": list(candidate_ids),
             "candidate_whitelist_sha256": self.cli._canonical_sha(list(candidate_ids)),
-            "story_catalog_policy": self.cli.story_core.STORY_CATALOG_POLICY_V2,
-            "truth_policy": self.cli.story_core.STORY_TRUTH_POLICY_V2,
+            "story_catalog_policy": self.cli.story_core.STORY_CATALOG_POLICY_V4,
+            "selection_family_policy": (self.cli.story_core.SELECTION_FAMILY_POLICY_V4),
+            "shared_selection_families": (
+                self.cli.story_core._shared_selection_families_receipt_v4()
+            ),
+            **self.cli.story_core._current_cohort_selection_receipt_v4(),
+            "truth_policy": self.cli.story_core.STORY_TRUTH_POLICY_V4,
             "story_catalog_sha256": self.cli._canonical_sha(
-                self.cli.story_core._story_catalog_receipt_v2()
+                self.cli.story_core._story_catalog_receipt_v4()
             ),
             "truth_evaluator_sha256": self.cli._canonical_sha(
-                self.cli.story_core._truth_evaluator_receipt_v2()
+                self.cli.story_core._truth_evaluator_receipt_v4()
             ),
             "accepted_pair_run_statuses": list(
                 self.cli.story_core.PAIR_RUN_ALLOWED_STATUSES
@@ -535,7 +559,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(runner.call_count, 2)
             expected_ids = tuple(
                 item.candidate_id
-                for item in self.cli.story_core.build_story_vehicle_catalog_v2()
+                for item in self.cli.story_core.build_story_vehicle_catalog_v4()
                 if not item.no_trade_control
             )
             self.assertEqual(
@@ -545,9 +569,9 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(loader.call_count, 2)
             self.assertEqual(combiner.call_count, 1)
             receipt = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(len(receipt["executed_candidate_ids"]), 50)
+            self.assertEqual(len(receipt["executed_candidate_ids"]), 60)
             self.assertEqual(receipt["train_primary_candidate_ids"], [])
-            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 50)
+            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 60)
             self.assertEqual(
                 receipt["validation_execution_candidate_ids"],
                 receipt["executed_candidate_ids"],
@@ -569,7 +593,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             )
             self.assertEqual(
                 receipt["selection"]["story_selections"][0]["selection_basis"],
-                "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT",
+                "NO_TRAIN_PRIMARY_ELIGIBLE_FAMILY_CANDIDATE",
             )
             self.assertEqual(
                 self.cli._validate_candidate_roles(receipt["candidate_roles"]),
@@ -577,9 +601,9 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             )
             summary = json.loads(summary_stdout.getvalue())
             self.assertNotIn("next_phase_candidate_count", summary)
-            self.assertEqual(summary["validation_execution_candidate_count"], 50)
+            self.assertEqual(summary["validation_execution_candidate_count"], 60)
             self.assertEqual(summary["train_primary_candidate_count"], 0)
-            self.assertEqual(summary["train_shadow_candidate_count"], 50)
+            self.assertEqual(summary["train_shadow_candidate_count"], 60)
             body = dict(receipt)
             digest = body.pop("receipt_sha256")
             self.assertEqual(digest, self.cli._canonical_sha(body))
@@ -603,8 +627,24 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 50,
             )
             self.assertEqual(
+                dependency["selection_semantics"][
+                    "validation_diagnostic_candidate_count"
+                ],
+                60,
+            )
+            self.assertEqual(
+                dependency["selection_semantics"][
+                    "validation_informed_shadow_candidate_count"
+                ],
+                10,
+            )
+            self.assertEqual(
                 dependency["dst_schedule"]["timezone_order"],
                 ["Europe/London", "America/New_York"],
+            )
+            self.assertEqual(
+                dependency["dst_schedule"]["h32_completed_m1_end_clock_window"],
+                "LOCAL_[08:06,08:15]",
             )
             self.assertEqual(receipt["frozen_manifest"]["missing_pairs"], [])
             self.assertTrue(
@@ -622,7 +662,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(status, 0)
             receipt = json.loads(output.read_text(encoding="utf-8"))
             expected_ids = receipt["executed_candidate_ids"]
-            self.assertEqual(len(expected_ids), 50)
+            self.assertEqual(len(expected_ids), 60)
             self.assertNotIn("H31:NO_TRADE_CONTROL", expected_ids)
             self.assertEqual(
                 receipt["global_result"]["requested_candidate_ids"],
@@ -635,12 +675,13 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 )
             self.assertTrue(
                 all(
-                    row["selection_basis"] == "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
+                    row["selection_basis"]
+                    == "NO_TRAIN_PRIMARY_ELIGIBLE_FAMILY_CANDIDATE"
                     for row in receipt["selection"]["story_selections"]
                 )
             )
             self.assertEqual(receipt["train_primary_candidate_ids"], [])
-            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 50)
+            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 60)
             validation_output = parent / "real-validation.json"
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(
@@ -660,7 +701,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                     0,
                 )
             validation = json.loads(validation_output.read_text(encoding="utf-8"))
-            self.assertEqual(len(validation["executed_candidate_ids"]), 50)
+            self.assertEqual(len(validation["executed_candidate_ids"]), 60)
             self.assertEqual(validation["holdout_candidate_ids"], [])
             self.assertEqual(
                 validation["fixed_portfolio"]["portfolio_spec"]["candidate_ids"],
@@ -703,7 +744,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         )
         candidate_ids = tuple(
             item.candidate_id
-            for item in self.cli.story_core.build_story_vehicle_catalog_v2()
+            for item in self.cli.story_core.build_story_vehicle_catalog_v4()
             if not item.no_trade_control
         )
         global_result = self._fake_combine((), (split,), candidate_ids=candidate_ids)
@@ -722,7 +763,10 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             first["selected_train_primary_candidate_id"],
             "H21:TIME_1H",
         )
-        self.assertEqual(first["selection_basis"], "TRAIN_PRIMARY_ELIGIBLE_ONE_SE")
+        self.assertEqual(
+            first["selection_basis"],
+            "TRAIN_PRIMARY_FAMILY_ELIGIBLE_ONE_SE",
+        )
         metric = selection["candidate_metrics"][0]
         self.assertEqual(metric["utc_calendar_day_count"], 8)
         self.assertEqual(
@@ -745,6 +789,95 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             "H22:TIME_1H",
         )
 
+    def test_opening_profiles_share_one_family_level_one_se_selection(self) -> None:
+        split = self.cli.story_core.UtcSplit(
+            name="TRAIN",
+            from_utc=datetime(2026, 5, 1, tzinfo=UTC),
+            to_utc=datetime(2026, 5, 9, tzinfo=UTC),
+        )
+        candidate_ids = tuple(row.candidate_id for row in self.cli._catalog_rows())
+        global_result = self._fake_combine((), (split,), candidate_ids=candidate_ids)
+        for candidate_id in candidate_ids:
+            if candidate_id.split(":", 1)[0] in {"H29", "H32", "H33"}:
+                self._set_candidate_daily_values(
+                    global_result,
+                    candidate_id,
+                    [-0.2] * 8,
+                )
+        self._set_candidate_daily_values(
+            global_result,
+            "H29:TIME_1H",
+            [0.49] * 8,
+        )
+        self._set_candidate_daily_values(
+            global_result,
+            "H32:TIME_4H",
+            [0.8, 0.6, 0.4, 0.4, 0.4, 0.4, 0.4, 0.6],
+        )
+        self._set_candidate_daily_values(
+            global_result,
+            "H33:TIME_1H",
+            [0.7] * 8,
+        )
+        pair_results = [
+            self._fake_run("EUR_USD", (), (split,)),
+            self._fake_run("GBP_JPY", (), (split,)),
+        ]
+
+        selection = self.cli._train_selection(global_result, pair_results, split)
+        family = next(
+            row
+            for row in selection["story_selections"]
+            if row["selection_family_id"]
+            == self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID
+        )
+
+        self.assertEqual(family["family_hypothesis_ids"], ["H29", "H32", "H33"])
+        self.assertEqual(len(family["family_candidate_ids"]), 15)
+        self.assertEqual(family["best_candidate_id"], "H29:TIME_1H")
+        self.assertEqual(
+            family["observed_mean_leader_candidate_id"],
+            "H33:TIME_1H",
+        )
+        self.assertEqual(
+            family["selected_train_primary_candidate_id"],
+            "H29:TIME_1H",
+        )
+        self.assertEqual(
+            family["selection_basis"],
+            "TRAIN_PRIMARY_FAMILY_ELIGIBLE_ONE_SE",
+        )
+        selected_opening_profiles = [
+            candidate_id
+            for candidate_id in selection["train_primary_candidate_ids"]
+            if candidate_id.split(":", 1)[0] in {"H29", "H32", "H33"}
+        ]
+        self.assertEqual(selected_opening_profiles, ["H29:TIME_1H"])
+        self.assertEqual(
+            family["train_economic_eligible_candidate_ids"],
+            ["H29:TIME_1H", "H32:TIME_4H", "H33:TIME_1H"],
+        )
+        self.assertEqual(
+            family["train_primary_eligible_candidate_ids"],
+            ["H29:TIME_1H"],
+        )
+        h32_metric = next(
+            row
+            for row in selection["candidate_metrics"]
+            if row["candidate_id"] == "H32:TIME_4H"
+        )
+        self.assertTrue(h32_metric["train_primary_economic_eligible"])
+        self.assertFalse(h32_metric["current_cohort_selection_eligible"])
+        self.assertFalse(h32_metric["train_primary_eligible"])
+        self.assertEqual(
+            h32_metric["train_primary_exclusion_reason"],
+            self.cli.story_core.VALIDATION_INFORMED_SHADOW_REASON_V4,
+        )
+        self.assertEqual(
+            len(selection["train_primary_selection_family_ids"]),
+            len(set(selection["train_primary_selection_family_ids"])),
+        )
+
     def test_train_daily_vector_integrity_fails_closed(self) -> None:
         split = self.cli.story_core.UtcSplit(
             name="TRAIN",
@@ -753,7 +886,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         )
         candidate_ids = tuple(
             item.candidate_id
-            for item in self.cli.story_core.build_story_vehicle_catalog_v2()
+            for item in self.cli.story_core.build_story_vehicle_catalog_v4()
             if not item.no_trade_control
         )
         original = self._fake_combine((), (split,), candidate_ids=candidate_ids)
@@ -876,7 +1009,8 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         self.assertTrue(
             all(
                 row["selected_train_primary_candidate_id"] is None
-                and row["selection_basis"] == "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
+                and row["selection_basis"]
+                == "NO_TRAIN_PRIMARY_ELIGIBLE_FAMILY_CANDIDATE"
                 for row in selection["story_selections"]
             )
         )
@@ -906,7 +1040,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     len(roles["train_shadow_candidate_ids"]),
-                    50 - len(primary),
+                    60 - len(primary),
                 )
 
         digest_tamper = copy.deepcopy(self.cli._new_candidate_roles(variable_primary))
@@ -923,7 +1057,181 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         with self.assertRaises(self.cli.AdaptiveStoryCliError):
             self.cli._validate_candidate_roles(semantic_tamper)
 
-    def test_validation_runs_all_50_but_holdout_uses_primary_survivors_only(
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._new_candidate_roles(["H29:TIME_1H", "H32:TIME_1H"])
+
+        family_tamper = copy.deepcopy(
+            self.cli._new_candidate_roles(["H29:TIME_1H", "H30:TIME_1H"])
+        )
+        family_tamper["train_primary_candidate_ids"] = [
+            "H29:TIME_1H",
+            "H32:TIME_1H",
+        ]
+        family_tamper["train_primary_hypothesis_ids"] = ["H29", "H32"]
+        family_tamper["train_primary_selection_family_ids"] = [
+            self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID,
+            self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID,
+        ]
+        primary_set = set(family_tamper["train_primary_candidate_ids"])
+        family_tamper["train_shadow_candidate_ids"] = [
+            row.candidate_id
+            for row in self.cli._catalog_rows()
+            if row.candidate_id not in primary_set
+        ]
+        family_body = dict(family_tamper)
+        family_body.pop("candidate_roles_sha256")
+        family_tamper["candidate_roles_sha256"] = self.cli._canonical_sha(family_body)
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_candidate_roles(family_tamper)
+
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._new_candidate_roles(["H32:TIME_1H"])
+
+        shadow_promotion_tamper = copy.deepcopy(
+            self.cli._new_candidate_roles(["H30:TIME_1H"])
+        )
+        shadow_promotion_tamper["train_primary_candidate_ids"] = ["H32:TIME_1H"]
+        shadow_promotion_tamper["train_primary_hypothesis_ids"] = ["H32"]
+        shadow_promotion_tamper["train_primary_selection_family_ids"] = [
+            self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID
+        ]
+        shadow_primary = set(shadow_promotion_tamper["train_primary_candidate_ids"])
+        shadow_promotion_tamper["train_shadow_candidate_ids"] = [
+            row.candidate_id
+            for row in self.cli._catalog_rows()
+            if row.candidate_id not in shadow_primary
+        ]
+        shadow_body = dict(shadow_promotion_tamper)
+        shadow_body.pop("candidate_roles_sha256")
+        shadow_promotion_tamper["candidate_roles_sha256"] = self.cli._canonical_sha(
+            shadow_body
+        )
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_candidate_roles(shadow_promotion_tamper)
+
+    def test_fixed_portfolio_rejects_duplicate_selection_family_even_resealed(
+        self,
+    ) -> None:
+        duplicate_ids = ["H29:TIME_1H", "H32:TIME_1H"]
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._new_portfolio_spec(duplicate_ids)
+
+        tampered = copy.deepcopy(
+            self.cli._new_portfolio_spec(["H29:TIME_1H", "H30:TIME_1H"])
+        )
+        shared = self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID
+        tampered["candidate_ids"] = duplicate_ids
+        tampered["candidate_ids_sha256"] = self.cli._canonical_sha(duplicate_ids)
+        tampered["selection_family_ids"] = [shared, shared]
+        tampered["selection_family_ids_sha256"] = self.cli._canonical_sha(
+            [shared, shared]
+        )
+        tampered_body = dict(tampered)
+        tampered_body.pop("portfolio_spec_sha256")
+        tampered["portfolio_spec_sha256"] = self.cli._canonical_sha(tampered_body)
+
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_portfolio_spec(tampered, duplicate_ids)
+
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._new_portfolio_spec(["H33:TIME_1H"])
+
+        shadow_tamper = copy.deepcopy(self.cli._new_portfolio_spec(["H30:TIME_1H"]))
+        shadow_ids = ["H33:TIME_1H"]
+        shadow_tamper["candidate_ids"] = shadow_ids
+        shadow_tamper["candidate_ids_sha256"] = self.cli._canonical_sha(shadow_ids)
+        shadow_tamper["selection_family_ids"] = [shared]
+        shadow_tamper["selection_family_ids_sha256"] = self.cli._canonical_sha([shared])
+        shadow_body = dict(shadow_tamper)
+        shadow_body.pop("portfolio_spec_sha256")
+        shadow_tamper["portfolio_spec_sha256"] = self.cli._canonical_sha(shadow_body)
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_portfolio_spec(shadow_tamper, shadow_ids)
+
+    def test_v4_catalog_selection_receipt_and_shadow_partition_share_exact_order(
+        self,
+    ) -> None:
+        catalog = list(self.cli._catalog_rows())
+        catalog_ids = [row.candidate_id for row in catalog]
+        expected_ids = [
+            f"{hypothesis_id}:{exit_policy_id}"
+            for hypothesis_id in (
+                *(f"H{number}" for number in range(21, 31)),
+                "H32",
+                "H33",
+            )
+            for exit_policy_id in self.cli.story_core.EXIT_POLICY_IDS
+        ]
+
+        self.assertEqual(len(catalog_ids), 60)
+        self.assertEqual(catalog_ids, expected_ids)
+        selection = self.cli._selection_semantic_receipt()
+        self.assertEqual(
+            selection["contract"],
+            "QR_ADAPTIVE_STORY_60_CANDIDATE_SELECTION_SEMANTICS_V4",
+        )
+        self.assertEqual(
+            [row["candidate_id"] for row in selection["candidate_rows"]],
+            catalog_ids,
+        )
+        self.assertEqual(
+            selection["core_story_catalog_sha256"],
+            self.cli._canonical_sha(self.cli.story_core._story_catalog_receipt_v4()),
+        )
+        self.assertEqual(
+            selection["core_selection_family_policy"],
+            self.cli.story_core.SELECTION_FAMILY_POLICY_V4,
+        )
+        self.assertEqual(
+            selection["shared_selection_families"],
+            {
+                self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID: [
+                    "H29",
+                    "H32",
+                    "H33",
+                ]
+            },
+        )
+        self.assertEqual(
+            {
+                row["selection_family_id"]
+                for row in selection["candidate_rows"]
+                if row["hypothesis_id"] in {"H29", "H32", "H33"}
+            },
+            {self.cli.story_core.OPENING_BREAK_SELECTION_FAMILY_ID},
+        )
+        self.assertEqual(
+            selection["current_cohort_selection_ineligible_hypothesis_ids"],
+            ["H32", "H33"],
+        )
+        self.assertTrue(
+            all(
+                row["current_cohort_selection_eligible"] is False
+                and row["current_cohort_selection_ineligibility_reason"]
+                == self.cli.story_core.VALIDATION_INFORMED_SHADOW_REASON_V4
+                for row in selection["candidate_rows"]
+                if row["hypothesis_id"] in {"H32", "H33"}
+            )
+        )
+        roles = self.cli._new_candidate_roles([])
+        self.assertEqual(roles["validation_execution_candidate_ids"], catalog_ids)
+        self.assertEqual(roles["train_primary_candidate_ids"], [])
+        self.assertEqual(roles["train_shadow_candidate_ids"], catalog_ids)
+        self.assertEqual(
+            roles["validation_informed_shadow_candidate_ids"],
+            [
+                candidate_id
+                for candidate_id in catalog_ids
+                if candidate_id.startswith(("H32:", "H33:"))
+            ],
+        )
+        self.assertFalse(roles["validation_informed_shadow_primary_eligible"])
+        self.assertFalse(roles["validation_informed_shadow_holdout_eligible"])
+        self.assertFalse(roles["shadow_current_cohort_promotion_allowed"])
+        self.assertFalse(roles["shadow_holdout_eligible"])
+        self.assertEqual(self.cli._validate_candidate_roles(roles), roles)
+
+    def test_validation_runs_all_60_but_holdout_uses_primary_survivors_only(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -994,7 +1302,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 [tuple(train["validation_execution_candidate_ids"])] * 2,
             )
             validation = json.loads(validation_path.read_text(encoding="utf-8"))
-            self.assertEqual(len(validation["executed_candidate_ids"]), 50)
+            self.assertEqual(len(validation["executed_candidate_ids"]), 60)
             self.assertEqual(
                 validation["executed_candidate_ids"],
                 train["validation_execution_candidate_ids"],
@@ -1367,6 +1675,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 if row["validation_diagnostic_passed"]
             ]
             validation["selection"]["current_cohort_selected_candidate_ids"] = []
+            validation["selection"]["current_cohort_selection_family_ids"] = []
             validation["selection"]["holdout_candidate_ids"] = []
             validation["selection"]["fixed_portfolio_candidate_ids"] = []
             validation["selection"]["fixed_portfolio_spec_sha256"] = empty_spec[

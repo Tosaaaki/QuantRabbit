@@ -36,25 +36,29 @@ from quant_rabbit.fast_bot_historical_s5 import (  # noqa: E402
 )
 
 
-TRAIN_CONTRACT = "QR_ADAPTIVE_STORY_S5_TRAIN_RECEIPT_V2"
-VALIDATION_CONTRACT = "QR_ADAPTIVE_STORY_S5_VALIDATION_RECEIPT_V2"
-HOLDOUT_CONTRACT = "QR_ADAPTIVE_STORY_S5_HOLDOUT_RECEIPT_V2"
+TRAIN_CONTRACT = "QR_ADAPTIVE_STORY_S5_TRAIN_RECEIPT_V4"
+VALIDATION_CONTRACT = "QR_ADAPTIVE_STORY_S5_VALIDATION_RECEIPT_V4"
+HOLDOUT_CONTRACT = "QR_ADAPTIVE_STORY_S5_HOLDOUT_RECEIPT_V4"
 TRAIN_SELECTION_POLICY = (
     "TRAIN_PRIMARY_POSITIVE_ECONOMIC_ELIGIBILITY_THEN_"
-    "MAX_ONE_EXIT_PER_STORY_ONE_SE_COMPLETE_UTC_DAILY_NET_R_"
+    "CURRENT_COHORT_ELIGIBLE_ONLY_H32_H33_VALIDATION_INFORMED_SHADOW_EXCLUDED_"
+    "MAX_ONE_CANDIDATE_PER_SELECTION_FAMILY_ONE_SE_COMPLETE_UTC_DAILY_NET_R_"
     "WEIGHTED_TWO_DAY_CLUSTER_ROBUST_SE_ANCHORED_AT_SPLIT_START_"
-    "NO_FORCED_DEFAULT_IF_NO_ELIGIBLE_EXIT_V3"
+    "H29_H32_H33_SHARED_FAMILY_NO_FORCED_DEFAULT_IF_NO_ELIGIBLE_EXIT_V4"
 )
 VALIDATION_SCREEN_POLICY = (
-    "ALL_50_FIXED_CANDIDATES_GLOBAL_ECONOMIC_SCREEN_"
+    "ALL_60_FIXED_CANDIDATES_GLOBAL_ECONOMIC_SCREEN_"
     "MIN30_RESOLVED_MIN8_DAYS_MIN4_CONTRIBUTING_PAIRS_"
     "POSITIVE_R_PF_ABOVE_ONE_LOOCV_POSITIVE_NO_UNRESOLVED_"
     "LEAVE_ONE_CURRENCY_TRIGGER_CLUSTER_POSITIVE_"
-    "TRAIN_PRIMARY_CURRENT_COHORT_SHADOW_DIAGNOSTIC_ONLY_V3"
+    "TRAIN_PRIMARY_CURRENT_COHORT_SHADOW_DIAGNOSTIC_ONLY_"
+    "H32_H33_VALIDATION_INFORMED_HOLDOUT_INELIGIBLE_V4"
 )
 CANDIDATE_ROLE_POLICY = (
-    "TRAIN_PRIMARY_HOLDOUT_ELIGIBLE_VALIDATION_ALL_50_"
-    "TRAIN_SHADOW_DIAGNOSTIC_NEVER_REPLACES_PRIMARY_V3"
+    "TRAIN_PRIMARY_HOLDOUT_ELIGIBLE_VALIDATION_ALL_60_"
+    "MAX_ONE_PRIMARY_PER_SELECTION_FAMILY_"
+    "H32_H33_VALIDATION_INFORMED_IMMUTABLE_SHADOW_ONLY_"
+    "TRAIN_SHADOW_DIAGNOSTIC_NEVER_REPLACES_PRIMARY_V4"
 )
 PORTFOLIO_ALLOCATION = "EQUAL_INITIAL_R_PER_FILLED_TRADE_UNBOUNDED_GROSS_DIAGNOSTIC_V2"
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
@@ -202,7 +206,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     validation = phases.add_parser(
         "validation",
-        help="run all 50 candidates; promote only the sealed TRAIN-primary cohort",
+        help="run all 60 candidates; promote only the sealed TRAIN-primary cohort",
     )
     validation.add_argument("--history-root", type=Path, required=True)
     validation.add_argument("--train-receipt", type=Path, required=True)
@@ -448,12 +452,14 @@ def _dst_schedule_receipt() -> dict[str, Any]:
             }
         )
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_DST_SCHEDULE_SEAL_V1",
+        "contract": "QR_ADAPTIVE_STORY_DST_SCHEDULE_SEAL_V4",
         "timezone_order": list(zone_keys),
         "zoneinfo_files": zone_rows,
         "local_open_hour": story_core.SESSION_LOCAL_OPEN_HOUR,
         "local_open_window_minutes": story_core.SESSION_OPEN_WINDOW_MINUTES,
         "completed_m1_end_clock_window": "LOCAL_(08:00,08:15]",
+        "h32_completed_m1_end_clock_window": "LOCAL_[08:06,08:15]",
+        "h33_completed_m1_end_clock_window": "LOCAL_(08:00,08:15]",
     }
     return {**body, "dst_schedule_sha256": _canonical_sha(body)}
 
@@ -463,6 +469,13 @@ def _selection_semantic_receipt() -> dict[str, Any]:
         {
             "candidate_id": row.candidate_id,
             "hypothesis_id": row.hypothesis_id,
+            "selection_family_id": row.selection_family_id,
+            "current_cohort_selection_eligible": (
+                row.current_cohort_selection_eligible
+            ),
+            "current_cohort_selection_ineligibility_reason": (
+                row.current_cohort_selection_ineligibility_reason
+            ),
             "story_name": row.story_name,
             "exit_policy_id": row.exit_policy_id,
             "contextual_order_policy": row.contextual_order_policy,
@@ -475,18 +488,26 @@ def _selection_semantic_receipt() -> dict[str, Any]:
         for row in _catalog_rows()
     ]
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_50_CANDIDATE_SELECTION_SEMANTICS_V2",
+        "contract": "QR_ADAPTIVE_STORY_60_CANDIDATE_SELECTION_SEMANTICS_V4",
+        "validation_diagnostic_candidate_count": 60,
         "selectable_candidate_count": 50,
+        "validation_informed_shadow_candidate_count": 10,
         "candidate_rows": candidates,
-        "core_story_catalog_policy": story_core.STORY_CATALOG_POLICY_V2,
-        "core_truth_policy": story_core.STORY_TRUTH_POLICY_V2,
+        "core_story_catalog_policy": story_core.STORY_CATALOG_POLICY_V4,
+        "core_truth_policy": story_core.STORY_TRUTH_POLICY_V4,
         "core_story_catalog_sha256": _canonical_sha(
-            story_core._story_catalog_receipt_v2()
+            story_core._story_catalog_receipt_v4()
         ),
         "core_truth_evaluator_sha256": _canonical_sha(
-            story_core._truth_evaluator_receipt_v2()
+            story_core._truth_evaluator_receipt_v4()
         ),
+        "core_selection_family_policy": story_core.SELECTION_FAMILY_POLICY_V4,
         "train_selection_policy": TRAIN_SELECTION_POLICY,
+        "selection_unit": "SELECTION_FAMILY_ID",
+        "shared_selection_families": (
+            story_core._shared_selection_families_receipt_v4()
+        ),
+        **story_core._current_cohort_selection_receipt_v4(),
         "train_estimator": "COMPLETE_UTC_DAILY_NET_R_ZERO_DAYS_INCLUDED",
         "train_cluster_formula": ("SQRT(B/(B-1)*SUM((S_C-N_C*MEAN_DAILY_R)^2)/N^2)"),
         "train_cluster_unit": "NON_OVERLAPPING_TWO_UTC_CALENDAR_DAY_BLOCK",
@@ -501,6 +522,10 @@ def _selection_semantic_receipt() -> dict[str, Any]:
             "minimum_non_overlapping_clusters": 2,
             "cluster_standard_error_required": True,
             "forced_default_when_none_eligible": False,
+            "maximum_candidates_per_selection_family": 1,
+            "current_cohort_selection_eligible_required": True,
+            "validation_informed_shadow_profiles_economically_measured": True,
+            "validation_informed_shadow_profiles_primary_eligible": False,
         },
         "validation_screen_policy": VALIDATION_SCREEN_POLICY,
         "validation_currency_trigger_cluster_gate": (
@@ -508,7 +533,7 @@ def _selection_semantic_receipt() -> dict[str, Any]:
             "MIN_TOTAL_R_STRICTLY_POSITIVE"
         ),
         "candidate_role_policy": CANDIDATE_ROLE_POLICY,
-        "validation_executes_all_50": True,
+        "validation_executes_all_60": True,
         "shadow_can_replace_current_cohort": False,
         "shadow_holdout_eligible": False,
         "portfolio_allocation": PORTFOLIO_ALLOCATION,
@@ -588,6 +613,13 @@ def _validate_evaluator_dependency_seal(value: object) -> dict[str, Any]:
         or seal.get("dst_schedule_sha256") != dst_claimed
     ):
         raise AdaptiveStoryCliError("evaluator DST schedule digest mismatch")
+    if (
+        dst.get("contract") != "QR_ADAPTIVE_STORY_DST_SCHEDULE_SEAL_V4"
+        or dst.get("completed_m1_end_clock_window") != "LOCAL_(08:00,08:15]"
+        or dst.get("h32_completed_m1_end_clock_window") != "LOCAL_[08:06,08:15]"
+        or dst.get("h33_completed_m1_end_clock_window") != "LOCAL_(08:00,08:15]"
+    ):
+        raise AdaptiveStoryCliError("evaluator DST schedule policy mismatch")
     selection = seal.get("selection_semantics")
     if not isinstance(selection, Mapping):
         raise AdaptiveStoryCliError("evaluator selection semantics seal is missing")
@@ -596,7 +628,9 @@ def _validate_evaluator_dependency_seal(value: object) -> dict[str, Any]:
     if (
         _canonical_sha(selection_body) != selection_claimed
         or seal.get("selection_semantics_sha256") != selection_claimed
+        or selection.get("validation_diagnostic_candidate_count") != 60
         or selection.get("selectable_candidate_count") != 50
+        or selection.get("validation_informed_shadow_candidate_count") != 10
     ):
         raise AdaptiveStoryCliError("evaluator selection semantics digest mismatch")
     return {**seal, "evaluator_dependency_sha256": claimed}
@@ -658,7 +692,7 @@ def _load_receipt(path: Path, *, expected_contract: str) -> dict[str, Any]:
         VALIDATION_CONTRACT: "VALIDATION",
         HOLDOUT_CONTRACT: "HOLDOUT",
     }.get(expected_contract)
-    if value.get("schema_version") != 2 or value.get("phase") != expected_phase:
+    if value.get("schema_version") != 4 or value.get("phase") != expected_phase:
         raise AdaptiveStoryCliError("phase receipt schema/phase is invalid")
     claimed = value.get("receipt_sha256")
     if not isinstance(claimed, str) or _SHA_RE.fullmatch(claimed) is None:
@@ -976,11 +1010,11 @@ def _validate_manifest_coverage(
 def _catalog_rows() -> tuple[Any, ...]:
     rows = tuple(
         item
-        for item in story_core.build_story_vehicle_catalog_v2()
+        for item in story_core.build_story_vehicle_catalog_v4()
         if not item.no_trade_control
     )
-    if len(rows) != 50 or len({item.candidate_id for item in rows}) != 50:
-        raise AdaptiveStoryCliError("V2 story catalog is not the fixed 50 candidates")
+    if len(rows) != 60 or len({item.candidate_id for item in rows}) != 60:
+        raise AdaptiveStoryCliError("V4 story catalog is not the fixed 60 candidates")
     return rows
 
 
@@ -996,15 +1030,34 @@ def _new_candidate_roles(primary_candidate_ids: Sequence[str]) -> dict[str, Any]
     ):
         raise AdaptiveStoryCliError("TRAIN-primary candidate order/scope is invalid")
     by_id = {row.candidate_id: row for row in catalog}
+    ineligible_catalog_ids = [
+        row.candidate_id for row in catalog if not row.current_cohort_selection_eligible
+    ]
+    ineligible_primary = [
+        candidate_id
+        for candidate_id in primary
+        if not by_id[candidate_id].current_cohort_selection_eligible
+    ]
+    if ineligible_primary:
+        raise AdaptiveStoryCliError(
+            "TRAIN-primary contains validation-informed shadow-only candidates"
+        )
     hypotheses = [by_id[candidate_id].hypothesis_id for candidate_id in primary]
     if len(hypotheses) != len(set(hypotheses)):
         raise AdaptiveStoryCliError("TRAIN-primary contains multiple exits per story")
+    selection_families = [
+        by_id[candidate_id].selection_family_id for candidate_id in primary
+    ]
+    if len(selection_families) != len(set(selection_families)):
+        raise AdaptiveStoryCliError(
+            "TRAIN-primary contains multiple candidates per selection family"
+        )
     shadow = [
         candidate_id for candidate_id in catalog_ids if candidate_id not in primary_set
     ]
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V3",
-        "schema_version": 3,
+        "contract": "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V4",
+        "schema_version": 4,
         "policy": CANDIDATE_ROLE_POLICY,
         "catalog_candidate_ids": catalog_ids,
         "catalog_candidate_ids_sha256": _canonical_sha(catalog_ids),
@@ -1012,7 +1065,22 @@ def _new_candidate_roles(primary_candidate_ids: Sequence[str]) -> dict[str, Any]
         "train_primary_candidate_ids": primary,
         "train_shadow_candidate_ids": shadow,
         "train_primary_hypothesis_ids": hypotheses,
+        "train_primary_selection_family_ids": selection_families,
         "train_primary_max_one_exit_per_story": True,
+        "train_primary_max_one_candidate_per_selection_family": True,
+        "current_cohort_selection_eligibility_policy": (
+            story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+        ),
+        "current_cohort_selection_ineligible_candidate_ids": (ineligible_catalog_ids),
+        "current_cohort_selection_ineligibility_reason": (
+            story_core.VALIDATION_INFORMED_SHADOW_REASON_V4
+        ),
+        "validation_informed_shadow_candidate_ids": ineligible_catalog_ids,
+        "validation_informed_shadow_primary_eligible": False,
+        "validation_informed_shadow_holdout_eligible": False,
+        "eligibility_unlock_policy": (
+            "NEW_INDEPENDENT_PERIOD_AND_FUTURE_CATALOG_VERSION_ONLY"
+        ),
         "roles_are_catalog_ordered": True,
         "roles_form_exact_catalog_partition": True,
         "validation_executes_shadow": True,
@@ -1035,8 +1103,8 @@ def _validate_candidate_roles(value: object) -> dict[str, Any]:
     ):
         raise AdaptiveStoryCliError("candidate role digest mismatch")
     if (
-        roles.get("contract") != "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V3"
-        or roles.get("schema_version") != 3
+        roles.get("contract") != "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V4"
+        or roles.get("schema_version") != 4
         or roles.get("policy") != CANDIDATE_ROLE_POLICY
     ):
         raise AdaptiveStoryCliError("candidate role policy mismatch")
@@ -1097,12 +1165,12 @@ def _expected_split_rows(split: Any) -> list[dict[str, str]]:
 def _vehicles_for_candidate_ids(candidate_ids: Sequence[str]) -> tuple[Any, ...]:
     by_id = {
         row.candidate_id: row
-        for row in story_core.build_story_vehicle_catalog_v2()
+        for row in story_core.build_story_vehicle_catalog_v4()
         if not row.no_trade_control
     }
     requested = tuple(candidate_ids)
     if any(candidate_id not in by_id for candidate_id in requested):
-        raise AdaptiveStoryCliError("phase candidate whitelist is not in V2 catalog")
+        raise AdaptiveStoryCliError("phase candidate whitelist is not in V4 catalog")
     catalog_order = tuple(
         row for row in _catalog_rows() if row.candidate_id in requested
     )
@@ -1124,14 +1192,19 @@ def _validate_pair_result_contract(
     requested = [row.candidate_id for row in vehicles]
     split_rows = _expected_split_rows(split)
     expected_exact: dict[str, Any] = {
-        "contract": story_core.STORY_GRID_CONTRACT_V2,
-        "schema_version": 2,
+        "contract": story_core.STORY_GRID_CONTRACT_V4,
+        "schema_version": 4,
         "pair": pair,
-        "story_catalog_policy": story_core.STORY_CATALOG_POLICY_V2,
-        "truth_policy": story_core.STORY_TRUTH_POLICY_V2,
-        "story_catalog_sha256": _canonical_sha(story_core._story_catalog_receipt_v2()),
+        "story_catalog_policy": story_core.STORY_CATALOG_POLICY_V4,
+        "selection_family_policy": story_core.SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": (
+            story_core._shared_selection_families_receipt_v4()
+        ),
+        **story_core._current_cohort_selection_receipt_v4(),
+        "truth_policy": story_core.STORY_TRUTH_POLICY_V4,
+        "story_catalog_sha256": _canonical_sha(story_core._story_catalog_receipt_v4()),
         "truth_evaluator_sha256": _canonical_sha(
-            story_core._truth_evaluator_receipt_v2()
+            story_core._truth_evaluator_receipt_v4()
         ),
         "price_precision_policy": story_core.PRICE_PRECISION_POLICY_V2,
         "price_cost_scope": dict(story_core.PRICE_COST_SCOPE_V2),
@@ -1175,6 +1248,13 @@ def _validate_pair_result_contract(
         trial_exact = {
             "candidate_id": vehicle.candidate_id,
             "hypothesis_id": vehicle.hypothesis_id,
+            "selection_family_id": vehicle.selection_family_id,
+            "current_cohort_selection_eligible": (
+                vehicle.current_cohort_selection_eligible
+            ),
+            "current_cohort_selection_ineligibility_reason": (
+                vehicle.current_cohort_selection_ineligibility_reason
+            ),
             "story_name": vehicle.story_name,
             "exit_policy_id": vehicle.exit_policy_id,
             "contextual_order_policy": vehicle.contextual_order_policy,
@@ -1220,7 +1300,7 @@ def _run_core(
     if candidate_ids is not None:
         kwargs["candidate_ids"] = tuple(candidate_ids)
     try:
-        result = story_core.run_adaptive_story_s5_grid(
+        result = story_core.run_adaptive_story_s5_grid_v4(
             pair,
             candles,
             (split,),
@@ -1677,13 +1757,32 @@ def _train_selection(
     metrics: list[dict[str, Any]] = []
     for vehicle in catalog:
         daily = daily_by_id[vehicle.candidate_id]
+        economic_eligible = daily["train_primary_eligible"] is True
+        current_cohort_eligible = vehicle.current_cohort_selection_eligible
         metrics.append(
             {
                 "candidate_id": vehicle.candidate_id,
                 "hypothesis_id": vehicle.hypothesis_id,
+                "selection_family_id": vehicle.selection_family_id,
                 "exit_policy_id": vehicle.exit_policy_id,
                 "complexity": int(vehicle.complexity),
                 **daily,
+                "train_primary_economic_eligibility_gates": dict(
+                    daily["train_primary_eligibility_gates"]
+                ),
+                "train_primary_economic_eligible": economic_eligible,
+                "current_cohort_selection_eligible": current_cohort_eligible,
+                "current_cohort_selection_ineligibility_reason": (
+                    vehicle.current_cohort_selection_ineligibility_reason
+                ),
+                "train_primary_eligible": (
+                    economic_eligible and current_cohort_eligible
+                ),
+                "train_primary_exclusion_reason": (
+                    vehicle.current_cohort_selection_ineligibility_reason
+                    if not current_cohort_eligible
+                    else None
+                ),
                 "pair_cluster_diagnostic": _pair_cluster_diagnostic(
                     pair_results,
                     vehicle.candidate_id,
@@ -1693,15 +1792,29 @@ def _train_selection(
 
     selected: list[str] = []
     story_receipts: list[dict[str, Any]] = []
-    for hypothesis_id in (f"H{number}" for number in range(21, 31)):
-        rows = [row for row in metrics if row["hypothesis_id"] == hypothesis_id]
-        defaults = [row for row in rows if row["exit_policy_id"] == "TIME_1H"]
-        if len(defaults) != 1 or int(defaults[0]["complexity"]) != min(
-            int(row["complexity"]) for row in rows
-        ):
-            raise AdaptiveStoryCliError(
-                "TIME_1H is not the unique preregistered simplest exit"
-            )
+    selection_family_ids = tuple(
+        dict.fromkeys(row.selection_family_id for row in catalog)
+    )
+    for selection_family_id in selection_family_ids:
+        rows = [
+            row for row in metrics if row["selection_family_id"] == selection_family_id
+        ]
+        family_hypothesis_ids = list(
+            dict.fromkeys(str(row["hypothesis_id"]) for row in rows)
+        )
+        for hypothesis_id in family_hypothesis_ids:
+            hypothesis_rows = [
+                row for row in rows if row["hypothesis_id"] == hypothesis_id
+            ]
+            defaults = [
+                row for row in hypothesis_rows if row["exit_policy_id"] == "TIME_1H"
+            ]
+            if len(defaults) != 1 or int(defaults[0]["complexity"]) != min(
+                int(row["complexity"]) for row in hypothesis_rows
+            ):
+                raise AdaptiveStoryCliError(
+                    "TIME_1H is not the unique preregistered simplest exit"
+                )
         eligible = [row for row in rows if row["train_primary_eligible"] is True]
         observed_leader = min(
             rows,
@@ -1739,18 +1852,35 @@ def _train_selection(
                     str(row["candidate_id"]),
                 ),
             )
-            basis = "TRAIN_PRIMARY_ELIGIBLE_ONE_SE"
+            basis = "TRAIN_PRIMARY_FAMILY_ELIGIBLE_ONE_SE"
             selected.append(str(chosen["candidate_id"]))
         else:
             best = None
             chosen = None
             threshold = None
-            basis = "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
+            basis = "NO_TRAIN_PRIMARY_ELIGIBLE_FAMILY_CANDIDATE"
         story_receipts.append(
             {
-                "hypothesis_id": hypothesis_id,
+                "selection_family_id": selection_family_id,
+                "family_hypothesis_ids": family_hypothesis_ids,
+                "hypothesis_id": (
+                    family_hypothesis_ids[0]
+                    if len(family_hypothesis_ids) == 1
+                    else None
+                ),
+                "family_candidate_ids": [row["candidate_id"] for row in rows],
+                "train_economic_eligible_candidate_ids": [
+                    row["candidate_id"]
+                    for row in rows
+                    if row["train_primary_economic_eligible"] is True
+                ],
                 "train_primary_eligible_candidate_ids": [
                     row["candidate_id"] for row in eligible
+                ],
+                "current_cohort_shadow_only_candidate_ids": [
+                    row["candidate_id"]
+                    for row in rows
+                    if row["current_cohort_selection_eligible"] is False
                 ],
                 "best_candidate_id": best["candidate_id"] if best else None,
                 "observed_mean_leader_candidate_id": observed_leader["candidate_id"],
@@ -1761,11 +1891,23 @@ def _train_selection(
                 "selection_basis": basis,
             }
         )
-    if len(selected) > 10 or len(set(selected)) != len(selected):
+    if len(selected) > len(selection_family_ids) or len(set(selected)) != len(selected):
         raise AdaptiveStoryCliError("TRAIN-primary candidate scope is invalid")
-    selected_hypotheses = [candidate_id.split(":", 1)[0] for candidate_id in selected]
-    if len(selected_hypotheses) != len(set(selected_hypotheses)):
-        raise AdaptiveStoryCliError("TRAIN-primary contains duplicate story exits")
+    selected_by_id = {row.candidate_id: row for row in catalog}
+    if any(
+        not selected_by_id[candidate_id].current_cohort_selection_eligible
+        for candidate_id in selected
+    ):
+        raise AdaptiveStoryCliError(
+            "TRAIN-primary selected a validation-informed shadow-only candidate"
+        )
+    selected_families = [
+        selected_by_id[candidate_id].selection_family_id for candidate_id in selected
+    ]
+    if len(selected_families) != len(set(selected_families)):
+        raise AdaptiveStoryCliError(
+            "TRAIN-primary contains duplicate selection-family candidates"
+        )
     return {
         "policy": TRAIN_SELECTION_POLICY,
         "estimator": "COMPLETE_UTC_DAILY_NET_R_ZERO_DAYS_INCLUDED",
@@ -1781,7 +1923,8 @@ def _train_selection(
         "insufficient_cluster_policy": (
             "LESS_THAN_2_OR_UNDEFINED_SE_IS_NOT_TRAIN_PRIMARY_ELIGIBLE"
         ),
-        "no_eligible_exit_policy": "NO_PRIMARY_FOR_STORY_NO_FORCED_TIME_1H",
+        "selection_unit": "SELECTION_FAMILY_ID",
+        "no_eligible_exit_policy": "NO_PRIMARY_FOR_FAMILY_NO_FORCED_TIME_1H",
         "best_tie_rule": "MEAN_DAILY_R_DESC_SE_ASC_COMPLEXITY_ASC_ID_ASC",
         "within_one_se_tie_rule": ("COMPLEXITY_ASC_MEAN_DAILY_R_DESC_SE_ASC_ID_ASC"),
         "pair_cluster_diagnostic_selection_eligible": False,
@@ -1790,6 +1933,17 @@ def _train_selection(
         "train_primary_candidate_ids": selected,
         "train_primary_candidate_count": len(selected),
         "train_primary_max_one_exit_per_story": True,
+        "train_primary_selection_family_ids": selected_families,
+        "train_primary_max_one_candidate_per_selection_family": True,
+        **story_core._current_cohort_selection_receipt_v4(),
+        "validation_informed_shadow_candidate_ids": [
+            row.candidate_id
+            for row in catalog
+            if not row.current_cohort_selection_eligible
+        ],
+        "validation_informed_shadow_metrics_calculated": True,
+        "validation_informed_shadow_primary_eligible": False,
+        "validation_informed_shadow_holdout_eligible": False,
         "selection_uses_validation": False,
         "selection_uses_holdout": False,
     }
@@ -1800,7 +1954,7 @@ def _combine_phase(
     split: Any,
     candidate_ids: Sequence[str],
 ) -> dict[str, Any]:
-    combine = getattr(story_core, "combine_adaptive_story_s5_grid_runs", None)
+    combine = getattr(story_core, "combine_adaptive_story_s5_grid_runs_v4", None)
     if not callable(combine):
         raise AdaptiveStoryCoreCapabilityError(
             "core global combine API is required before train/validation/holdout"
@@ -1845,19 +1999,24 @@ def _validate_global_result_contract(
     split_rows = _expected_split_rows(split)
     expected_pairs = sorted(str(row.get("pair") or "") for row in pair_results)
     expected_exact: dict[str, Any] = {
-        "contract": story_core.STORY_GRID_COMBINED_CONTRACT_V2,
-        "schema_version": 2,
+        "contract": story_core.STORY_GRID_COMBINED_CONTRACT_V4,
+        "schema_version": 4,
         "status": "COMPLETE",
         "pair_count": len(expected_pairs),
         "pairs": expected_pairs,
         "requested_candidate_ids": requested,
         "evaluated_candidate_ids": requested,
         "candidate_whitelist_sha256": _canonical_sha(requested),
-        "story_catalog_policy": story_core.STORY_CATALOG_POLICY_V2,
-        "truth_policy": story_core.STORY_TRUTH_POLICY_V2,
-        "story_catalog_sha256": _canonical_sha(story_core._story_catalog_receipt_v2()),
+        "story_catalog_policy": story_core.STORY_CATALOG_POLICY_V4,
+        "selection_family_policy": story_core.SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": (
+            story_core._shared_selection_families_receipt_v4()
+        ),
+        **story_core._current_cohort_selection_receipt_v4(),
+        "truth_policy": story_core.STORY_TRUTH_POLICY_V4,
+        "story_catalog_sha256": _canonical_sha(story_core._story_catalog_receipt_v4()),
         "truth_evaluator_sha256": _canonical_sha(
-            story_core._truth_evaluator_receipt_v2()
+            story_core._truth_evaluator_receipt_v4()
         ),
         "accepted_pair_run_statuses": list(story_core.PAIR_RUN_ALLOWED_STATUSES),
         "price_precision_policy": story_core.PRICE_PRECISION_POLICY_V2,
@@ -1882,6 +2041,13 @@ def _validate_global_result_contract(
         row_exact = {
             "candidate_id": vehicle.candidate_id,
             "hypothesis_id": vehicle.hypothesis_id,
+            "selection_family_id": vehicle.selection_family_id,
+            "current_cohort_selection_eligible": (
+                vehicle.current_cohort_selection_eligible
+            ),
+            "current_cohort_selection_ineligibility_reason": (
+                vehicle.current_cohort_selection_ineligibility_reason
+            ),
             "story_name": vehicle.story_name,
             "exit_policy_id": vehicle.exit_policy_id,
             "no_trade_control": False,
@@ -2028,6 +2194,16 @@ def _apply_train_validation_same_sign_gate(
         candidate_id for candidate_id in candidate_ids if candidate_id in primary_set
     ] != list(primary):
         raise AdaptiveStoryCliError("validation TRAIN-primary order/scope is invalid")
+    primary_vehicles = _vehicles_for_candidate_ids(primary)
+    if any(not row.current_cohort_selection_eligible for row in primary_vehicles):
+        raise AdaptiveStoryCliError(
+            "validation TRAIN-primary contains validation-informed shadow-only candidates"
+        )
+    primary_families = [row.selection_family_id for row in primary_vehicles]
+    if len(primary_families) != len(set(primary_families)):
+        raise AdaptiveStoryCliError(
+            "validation TRAIN-primary contains duplicate selection families"
+        )
     final: list[str] = []
     gates: list[dict[str, Any]] = []
     for candidate_id in candidate_ids:
@@ -2069,6 +2245,13 @@ def _apply_train_validation_same_sign_gate(
         gates.append(
             {
                 "candidate_id": candidate_id,
+                "selection_family_id": str(row["selection_family_id"]),
+                "current_cohort_selection_eligible": bool(
+                    row["current_cohort_selection_eligible"]
+                ),
+                "current_cohort_selection_ineligibility_reason": row[
+                    "current_cohort_selection_ineligibility_reason"
+                ],
                 "train_mean_daily_net_r": train_mean,
                 "validation_mean_daily_net_r": validation_mean,
                 "core_validation_economic_screen_eligible": core_eligible,
@@ -2082,19 +2265,61 @@ def _apply_train_validation_same_sign_gate(
                 "rejection_reason": rejection_reason,
             }
         )
+    final_vehicles = _vehicles_for_candidate_ids(final)
+    if any(not row.current_cohort_selection_eligible for row in final_vehicles):
+        raise AdaptiveStoryCliError(
+            "validation survivors contain validation-informed shadow-only candidates"
+        )
+    final_families = [row.selection_family_id for row in final_vehicles]
+    if len(final_families) != len(set(final_families)):
+        raise AdaptiveStoryCliError(
+            "validation survivors contain duplicate selection families"
+        )
     return final, gates
+
+
+def _selection_families_for_candidate_ids(
+    candidate_ids: Sequence[str],
+) -> list[str]:
+    vehicles = _vehicles_for_candidate_ids(candidate_ids)
+    if any(not row.current_cohort_selection_eligible for row in vehicles):
+        raise AdaptiveStoryCliError(
+            "fixed portfolio contains validation-informed shadow-only candidates"
+        )
+    families = [row.selection_family_id for row in vehicles]
+    if len(families) != len(set(families)):
+        raise AdaptiveStoryCliError(
+            "fixed portfolio contains multiple candidates per selection family"
+        )
+    return families
 
 
 def _new_portfolio_spec(candidate_ids: Sequence[str]) -> dict[str, Any]:
     ids = list(candidate_ids)
     if any(not item for item in ids) or len(ids) != len(set(ids)):
         raise AdaptiveStoryCliError("fixed portfolio candidate scope is invalid")
+    selection_family_ids = _selection_families_for_candidate_ids(ids)
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_SPEC_V2",
-        "schema_version": 2,
+        "contract": "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_SPEC_V4",
+        "schema_version": 4,
         "allocation_label": PORTFOLIO_ALLOCATION,
         "candidate_ids": ids,
         "candidate_ids_sha256": _canonical_sha(ids),
+        "selection_family_ids": selection_family_ids,
+        "selection_family_ids_sha256": _canonical_sha(selection_family_ids),
+        "selection_family_policy": story_core.SELECTION_FAMILY_POLICY_V4,
+        "shared_selection_families": (
+            story_core._shared_selection_families_receipt_v4()
+        ),
+        "max_one_candidate_per_selection_family": True,
+        "all_candidates_current_cohort_selection_eligible": True,
+        "validation_informed_shadow_candidate_allowed": False,
+        "current_cohort_selection_eligibility_policy": (
+            story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+        ),
+        "eligibility_unlock_policy": (
+            "NEW_INDEPENDENT_PERIOD_AND_FUTURE_CATALOG_VERSION_ONLY"
+        ),
         "candidate_order_policy": ("SEALED_TRAIN_PRIMARY_VALIDATION_SURVIVOR_ORDER"),
         "all_train_primary_validation_survivors_included": True,
         "subset_search_allowed": False,
@@ -2118,7 +2343,10 @@ def _validate_portfolio_spec(
     claimed = spec.pop("portfolio_spec_sha256", None)
     if not isinstance(claimed, str) or _canonical_sha(spec) != claimed:
         raise AdaptiveStoryCliError("fixed portfolio spec digest mismatch")
-    if spec.get("contract") != "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_SPEC_V2":
+    if (
+        spec.get("contract") != "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_SPEC_V4"
+        or spec.get("schema_version") != 4
+    ):
         raise AdaptiveStoryCliError("fixed portfolio spec contract is invalid")
     if spec.get("allocation_label") != PORTFOLIO_ALLOCATION:
         raise AdaptiveStoryCliError("fixed portfolio allocation changed")
@@ -2126,6 +2354,23 @@ def _validate_portfolio_spec(
         raise AdaptiveStoryCliError("fixed portfolio candidate order changed")
     if spec.get("candidate_ids_sha256") != _canonical_sha(list(candidate_ids)):
         raise AdaptiveStoryCliError("fixed portfolio candidate digest mismatch")
+    selection_family_ids = _selection_families_for_candidate_ids(candidate_ids)
+    if (
+        spec.get("selection_family_ids") != selection_family_ids
+        or spec.get("selection_family_ids_sha256")
+        != _canonical_sha(selection_family_ids)
+        or spec.get("selection_family_policy") != story_core.SELECTION_FAMILY_POLICY_V4
+        or spec.get("shared_selection_families")
+        != story_core._shared_selection_families_receipt_v4()
+        or spec.get("max_one_candidate_per_selection_family") is not True
+        or spec.get("all_candidates_current_cohort_selection_eligible") is not True
+        or spec.get("validation_informed_shadow_candidate_allowed") is not False
+        or spec.get("current_cohort_selection_eligibility_policy")
+        != story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+        or spec.get("eligibility_unlock_policy")
+        != "NEW_INDEPENDENT_PERIOD_AND_FUTURE_CATALOG_VERSION_ONLY"
+    ):
+        raise AdaptiveStoryCliError("fixed portfolio selection-family seal changed")
     if any(
         spec.get(name) is not False
         for name in (
@@ -2154,6 +2399,8 @@ def _validate_portfolio_spec(
         complete.get(field) == expected for field, expected in _AUTHORITY.items()
     ):
         raise AdaptiveStoryCliError("fixed portfolio authority contract mismatch")
+    if complete != _new_portfolio_spec(candidate_ids):
+        raise AdaptiveStoryCliError("fixed portfolio semantic receipt mismatch")
     return complete
 
 
@@ -2172,8 +2419,8 @@ def _validate_fixed_portfolio_result(
         label="fixed portfolio result",
     )
     if (
-        result.get("contract") != "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_RESULT_V2"
-        or result.get("schema_version") != 2
+        result.get("contract") != "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_RESULT_V4"
+        or result.get("schema_version") != 4
         or result.get("phase") != expected_phase
     ):
         raise AdaptiveStoryCliError("fixed portfolio result contract mismatch")
@@ -2289,6 +2536,7 @@ def _aggregate_fixed_portfolio(
     candidate_ids = spec.get("candidate_ids")
     if not isinstance(candidate_ids, list):
         raise AdaptiveStoryCliError("fixed portfolio spec has no candidate list")
+    spec = _validate_portfolio_spec(spec, candidate_ids)
     expected_dates = _expected_utc_day_labels(split)
     rows = global_result.get("candidate_metrics")
     if not isinstance(rows, list):
@@ -2337,8 +2585,8 @@ def _aggregate_fixed_portfolio(
     daily_profit_r = sum(max(value, 0.0) for value in portfolio_daily)
     daily_loss_r = sum(max(-value, 0.0) for value in portfolio_daily)
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_RESULT_V2",
-        "schema_version": 2,
+        "contract": "QR_ADAPTIVE_STORY_FIXED_PORTFOLIO_RESULT_V4",
+        "schema_version": 4,
         "phase": split.name,
         "portfolio_spec": dict(spec),
         "portfolio_spec_sha256": spec["portfolio_spec_sha256"],
@@ -2557,6 +2805,8 @@ def _validate_train_receipt_for_downstream(
         "validation_execution_candidate_ids",
         "train_primary_candidate_ids",
         "train_shadow_candidate_ids",
+        "train_primary_selection_family_ids",
+        "current_cohort_selection_ineligible_candidate_ids",
     ):
         if train.get(field) != roles[field]:
             raise AdaptiveStoryCliError(f"train top-level {field} binding is invalid")
@@ -2667,6 +2917,17 @@ def _validate_validation_receipt_for_holdout(
         "policy": VALIDATION_SCREEN_POLICY,
         "validation_execution_candidate_ids": list(input_candidate_ids),
         "train_primary_candidate_ids": list(train_primary_candidate_ids),
+        "train_primary_selection_family_ids": list(
+            roles["train_primary_selection_family_ids"]
+        ),
+        "current_cohort_selection_ineligible_candidate_ids": list(
+            roles["current_cohort_selection_ineligible_candidate_ids"]
+        ),
+        "current_cohort_selection_eligibility_policy": (
+            story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+        ),
+        "validation_informed_shadow_primary_eligible": False,
+        "validation_informed_shadow_holdout_eligible": False,
         "train_shadow_candidate_ids": list(roles["train_shadow_candidate_ids"]),
         "core_validation_economic_survivor_ids": core_survivors,
         "same_sign_policy": (
@@ -2685,10 +2946,13 @@ def _validate_validation_receipt_for_holdout(
             and row["validation_diagnostic_passed"] is True
         ],
         "current_cohort_selected_candidate_ids": survivors,
+        "current_cohort_selection_family_ids": portfolio_spec["selection_family_ids"],
         "holdout_candidate_ids": survivors,
         "fixed_portfolio_candidate_ids": survivors,
         "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
         "all_train_primary_final_same_sign_survivors_included": True,
+        "current_cohort_max_one_candidate_per_selection_family": True,
+        "current_cohort_all_selected_candidates_selection_eligible": True,
         "current_cohort_promotion_allowed_for_train_primary_only": True,
         "shadow_current_cohort_promotion_allowed": False,
         "shadow_holdout_eligible": False,
@@ -2708,6 +2972,8 @@ def _validate_validation_receipt_for_holdout(
         "validation_execution_candidate_ids",
         "train_primary_candidate_ids",
         "train_shadow_candidate_ids",
+        "train_primary_selection_family_ids",
+        "current_cohort_selection_ineligible_candidate_ids",
     ):
         if validation.get(field) != roles[field]:
             raise AdaptiveStoryCliError(
@@ -2719,7 +2985,7 @@ def _validate_validation_receipt_for_holdout(
 def _new_receipt(contract: str, body: Mapping[str, Any]) -> dict[str, Any]:
     complete = {
         "contract": contract,
-        "schema_version": 2,
+        "schema_version": 4,
         **dict(body),
         "price_only_cost_scope": dict(PRICE_ONLY_COST_SCOPE),
         "fully_loaded_net_economics": False,
@@ -2835,6 +3101,12 @@ def _run_train(
             "train_primary_candidate_ids": candidate_roles[
                 "train_primary_candidate_ids"
             ],
+            "train_primary_selection_family_ids": candidate_roles[
+                "train_primary_selection_family_ids"
+            ],
+            "current_cohort_selection_ineligible_candidate_ids": candidate_roles[
+                "current_cohort_selection_ineligible_candidate_ids"
+            ],
             "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
         },
     )
@@ -2916,11 +3188,28 @@ def _run_validation(
             "train_primary_candidate_ids": candidate_roles[
                 "train_primary_candidate_ids"
             ],
+            "train_primary_selection_family_ids": candidate_roles[
+                "train_primary_selection_family_ids"
+            ],
+            "current_cohort_selection_ineligible_candidate_ids": candidate_roles[
+                "current_cohort_selection_ineligible_candidate_ids"
+            ],
             "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
             "selection": {
                 "policy": VALIDATION_SCREEN_POLICY,
                 "validation_execution_candidate_ids": list(candidate_ids),
                 "train_primary_candidate_ids": list(train_primary_candidate_ids),
+                "train_primary_selection_family_ids": list(
+                    candidate_roles["train_primary_selection_family_ids"]
+                ),
+                "current_cohort_selection_ineligible_candidate_ids": list(
+                    candidate_roles["current_cohort_selection_ineligible_candidate_ids"]
+                ),
+                "current_cohort_selection_eligibility_policy": (
+                    story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+                ),
+                "validation_informed_shadow_primary_eligible": False,
+                "validation_informed_shadow_holdout_eligible": False,
                 "train_shadow_candidate_ids": list(
                     candidate_roles["train_shadow_candidate_ids"]
                 ),
@@ -2941,10 +3230,15 @@ def _run_validation(
                     and row["validation_diagnostic_passed"] is True
                 ],
                 "current_cohort_selected_candidate_ids": survivors,
+                "current_cohort_selection_family_ids": portfolio_spec[
+                    "selection_family_ids"
+                ],
                 "holdout_candidate_ids": survivors,
                 "fixed_portfolio_candidate_ids": survivors,
                 "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
                 "all_train_primary_final_same_sign_survivors_included": True,
+                "current_cohort_max_one_candidate_per_selection_family": True,
+                "current_cohort_all_selected_candidates_selection_eligible": True,
                 "current_cohort_promotion_allowed_for_train_primary_only": True,
                 "shadow_current_cohort_promotion_allowed": False,
                 "shadow_holdout_eligible": False,
@@ -3058,11 +3352,25 @@ def _run_holdout(
             "train_primary_candidate_ids": candidate_roles[
                 "train_primary_candidate_ids"
             ],
+            "train_primary_selection_family_ids": candidate_roles[
+                "train_primary_selection_family_ids"
+            ],
+            "current_cohort_selection_ineligible_candidate_ids": candidate_roles[
+                "current_cohort_selection_ineligible_candidate_ids"
+            ],
             "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
             "holdout_candidate_ids": list(candidate_ids),
+            "holdout_selection_family_ids": portfolio_spec["selection_family_ids"],
             "selection": {
                 "source": "SEALED_TRAIN_PRIMARY_VALIDATION_SURVIVORS_ONLY",
                 "holdout_candidate_ids": list(candidate_ids),
+                "holdout_selection_family_ids": portfolio_spec["selection_family_ids"],
+                "holdout_max_one_candidate_per_selection_family": True,
+                "all_holdout_candidates_current_cohort_selection_eligible": True,
+                "validation_informed_shadow_holdout_eligible": False,
+                "current_cohort_selection_eligibility_policy": (
+                    story_core.CURRENT_COHORT_SELECTION_ELIGIBILITY_POLICY_V4
+                ),
                 "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
                 "fixed_portfolio_is_primary_result": True,
                 "train_shadow_evaluated_in_holdout": False,
