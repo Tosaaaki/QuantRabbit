@@ -566,6 +566,7 @@ def _project_handoffs(
     matched_count = 0
     idempotent_count = 0
     unscored_no_frozen_seat_count = 0
+    unscored_no_confirmation_candle_seat_count = 0
     unscored_examples: list[dict[str, str]] = []
     for handoff in handoffs:
         _validate_v2_handoff(handoff)
@@ -616,6 +617,41 @@ def _project_handoffs(
                         }
                     )
                 continue
+            if _late_confirmation_has_no_same_candle_seat(
+                event=event,
+                handoff=handoff,
+                seat=seat,
+            ):
+                # A delayed detector can legitimately confirm the oldest
+                # unseen M1 candle while the same-cycle learning shadow has
+                # already frozen a newer M1 seat.  That newer seat is not the
+                # vehicle that existed at confirmation time.  Retain the
+                # episode as explicit unscored evidence; never backfill or
+                # relabel the newer seat as the older confirmation candle.
+                unscored_no_confirmation_candle_seat_count += 1
+                if len(unscored_examples) < MAX_UNSCORED_EXAMPLES:
+                    unscored_examples.append(
+                        {
+                            "pair": pair,
+                            "confirmed_event_sha256": str(
+                                event["event_sha256"]
+                            ),
+                            "handoff_contract_sha256": str(
+                                handoff["contract_sha256"]
+                            ),
+                            "confirmation_candle_close_utc": str(
+                                event["observation"]["candle_close_utc"]
+                            ),
+                            "frozen_seat_m1_closed_candle_utc": str(
+                                seat["m1_closed_candle_utc"]
+                            ),
+                            "reason": (
+                                "CONFIRMED_EVENT_NO_FROZEN_SEAT_AT_"
+                                "CONFIRMATION_CANDLE"
+                            ),
+                        }
+                    )
+                continue
             matched_count += 1
             vehicle = _build_vehicle(event=event, handoff=handoff, seat=seat)
             vehicle_id = str(vehicle["vehicle_id"])
@@ -641,28 +677,77 @@ def _project_handoffs(
         "matched_count": matched_count,
         "idempotent_count": idempotent_count,
         "unscored_no_frozen_seat_count": unscored_no_frozen_seat_count,
+        "unscored_no_confirmation_candle_seat_count": (
+            unscored_no_confirmation_candle_seat_count
+        ),
         "unscored_examples": unscored_examples,
     }
 
 
 def _projection_summary(projected: Mapping[str, Any]) -> dict[str, Any]:
-    unscored = int(projected["unscored_no_frozen_seat_count"])
+    no_frozen_seat = int(projected["unscored_no_frozen_seat_count"])
+    no_confirmation_candle_seat = int(
+        projected["unscored_no_confirmation_candle_seat_count"]
+    )
+    unscored = no_frozen_seat + no_confirmation_candle_seat
+    reason_counts = {}
+    if no_frozen_seat:
+        reason_counts["CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"] = (
+            no_frozen_seat
+        )
+    if no_confirmation_candle_seat:
+        reason_counts[
+            "CONFIRMED_EVENT_NO_FROZEN_SEAT_AT_CONFIRMATION_CANDLE"
+        ] = no_confirmation_candle_seat
     return {
         "handoff_confirmed_event_count": int(
             projected["confirmed_event_count"]
         ),
         "handoff_confirmed_vehicle_count": int(projected["matched_count"]),
         "handoff_confirmed_unscored_count": unscored,
-        "handoff_confirmed_unscored_reason_counts": (
-            {"CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT": unscored}
-            if unscored
-            else {}
-        ),
+        "handoff_confirmed_unscored_reason_counts": reason_counts,
         "handoff_confirmed_unscored_examples": list(
             projected["unscored_examples"]
         ),
         "vehicle_ledger_idempotent": int(projected["idempotent_count"]),
     }
+
+
+def _late_confirmation_has_no_same_candle_seat(
+    *,
+    event: Mapping[str, Any],
+    handoff: Mapping[str, Any],
+    seat: Mapping[str, Any],
+) -> bool:
+    """Recognize only the valid delayed-confirmation clock gap.
+
+    Every non-clock source binding is checked here.  A broker, regime, pair,
+    generation, or event-source mismatch therefore still reaches
+    ``_build_vehicle`` and fails closed instead of being mislabeled unscored.
+    """
+
+    observation = event.get("observation")
+    if not isinstance(observation, Mapping):
+        return False
+    try:
+        confirmation_close = _parse_utc(observation["candle_close_utc"])
+        seat_m1_close = _parse_utc(seat["m1_closed_candle_utc"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return bool(
+        event.get("state") == "CONFIRMED"
+        and event.get("late_detected") is True
+        and seat.get("pair") == event.get("pair")
+        and seat.get("generated_at_utc")
+        == handoff.get("cycle_generated_at_utc")
+        and seat.get("regime_contract_sha256")
+        == handoff.get("regime_contract_sha256")
+        and seat.get("broker_snapshot_sha256")
+        == handoff.get("broker_snapshot_sha256")
+        and observation.get("regime_contract_sha256")
+        == handoff.get("regime_contract_sha256")
+        and seat_m1_close > confirmation_close
+    )
 
 
 def _build_vehicle(

@@ -318,6 +318,158 @@ def _build_fixture(root: Path, *, late_confirmation: bool = False) -> dict:
     }
 
 
+def _build_mixed_confirmation_fixture(root: Path) -> dict:
+    """Freeze one current seat and one delayed confirmation in one batch."""
+
+    fast, slow, snapshot = _inputs()
+    for packet in (fast, slow):
+        second_chart = copy.deepcopy(packet["charts"][0])
+        second_chart["pair"] = "GBP_USD"
+        packet["charts"].append(second_chart)
+    snapshot["quotes"]["GBP_USD"] = copy.deepcopy(
+        snapshot["quotes"]["EUR_USD"]
+    )
+    ledger = root / "episode_ledger.jsonl"
+    sources = root / "episode_sources"
+    state = root / "episode_state.json"
+
+    def build_regime(cycle: datetime) -> dict:
+        return build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            now_utc=cycle,
+        )
+
+    regime = build_regime(NOW)
+    first = run_fast_bot_episode_shadow(
+        regime_contract=regime,
+        fast_pair_charts=fast,
+        slow_pair_charts=slow,
+        output_path=state,
+        ledger_path=ledger,
+        source_archive_dir=sources,
+        now_utc=NOW,
+    )
+    if {row["state"] for row in first["latest_episodes"]} != {"REJECTED"}:
+        raise AssertionError("mixed fixture must start with rejected episodes")
+
+    eur_m1 = fast["charts"][0]["views"][0]
+    eur_m1["recent_candles"] = [
+        *eur_m1["recent_candles"],
+        {
+            "t": NOW.isoformat(),
+            "o": 1.105,
+            "h": 1.106,
+            "l": 1.103,
+            "c": 1.104,
+            "complete": True,
+        },
+    ][-21:]
+    current_cycle = NOW + timedelta(minutes=1)
+    for packet in (fast, slow):
+        packet["generated_at_utc"] = current_cycle.isoformat()
+    snapshot["fetched_at_utc"] = current_cycle.isoformat()
+    for quote in snapshot["quotes"].values():
+        quote["timestamp_utc"] = current_cycle.isoformat()
+    current_regime = build_regime(current_cycle)
+    current = run_fast_bot_episode_shadow(
+        regime_contract=current_regime,
+        fast_pair_charts=fast,
+        slow_pair_charts=slow,
+        output_path=state,
+        ledger_path=ledger,
+        source_archive_dir=sources,
+        now_utc=current_cycle,
+    )
+    if not any(
+        row["pair"] == "EUR_USD" and row["state"] == "CONFIRMED"
+        for row in current["latest_episodes"]
+    ):
+        raise AssertionError("mixed fixture current episode must confirm")
+    current_shadow = build_fast_bot_learning_shadow(
+        current_regime,
+        snapshot,
+        now_utc=current_cycle,
+    )
+    current_handoff = _handoff(
+        regime=current_regime,
+        fast=fast,
+        slow=slow,
+        snapshot=snapshot,
+        shadow=current_shadow,
+        cycle=current_cycle,
+    )
+
+    gbp_m1 = fast["charts"][1]["views"][0]
+    for offset in range(5):
+        gbp_m1["recent_candles"].append(
+            {
+                "t": (NOW + timedelta(minutes=offset)).isoformat(),
+                "o": 1.105,
+                "h": 1.106,
+                "l": 1.103,
+                "c": 1.104 - offset * 0.0001,
+                "complete": True,
+            }
+        )
+    gbp_m1["recent_candles"] = gbp_m1["recent_candles"][-21:]
+    delayed_cycle = NOW + timedelta(minutes=5)
+    for packet in (fast, slow):
+        packet["generated_at_utc"] = delayed_cycle.isoformat()
+    snapshot["fetched_at_utc"] = delayed_cycle.isoformat()
+    for quote in snapshot["quotes"].values():
+        quote["timestamp_utc"] = delayed_cycle.isoformat()
+    delayed_regime = build_regime(delayed_cycle)
+    delayed = run_fast_bot_episode_shadow(
+        regime_contract=delayed_regime,
+        fast_pair_charts=fast,
+        slow_pair_charts=slow,
+        output_path=state,
+        ledger_path=ledger,
+        source_archive_dir=sources,
+        now_utc=delayed_cycle,
+    )
+    delayed_event = next(
+        row
+        for row in delayed["latest_episodes"]
+        if row["pair"] == "GBP_USD"
+    )
+    if delayed_event["state"] != "CONFIRMED" or not delayed_event["late_detected"]:
+        raise AssertionError("mixed fixture delayed episode must confirm late")
+    delayed_shadow = build_fast_bot_learning_shadow(
+        delayed_regime,
+        snapshot,
+        now_utc=delayed_cycle,
+    )
+    delayed_handoff = _handoff(
+        regime=delayed_regime,
+        fast=fast,
+        slow=slow,
+        snapshot=snapshot,
+        shadow=delayed_shadow,
+        cycle=delayed_cycle,
+    )
+    events = [json.loads(line) for line in ledger.read_text().splitlines()]
+    if verify_episode_ledger(
+        events,
+        as_of_utc=delayed_cycle,
+        source_archive_dir=sources,
+    ) != (True, None):
+        raise AssertionError("mixed fixture episode ledger must verify")
+    return {
+        "ledger": ledger,
+        "sources": sources,
+        "handoffs": [current_handoff, delayed_handoff],
+        "delayed_handoff": delayed_handoff,
+        "vehicle_ledger": root / "vehicle_ledger.jsonl",
+        "outcome_ledger": root / "outcome_ledger.jsonl",
+        "scorecard": root / "scorecard.json",
+        "lock": root / "truth.lock",
+        "now": delayed_cycle,
+    }
+
+
 def _run(paths: dict, *, handoffs: list[dict], now: datetime, client_factory) -> dict:
     return run_fast_bot_episode_truth_cycle(
         handoffs=handoffs,
@@ -565,6 +717,100 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 "NO_ELIGIBLE_LEARNING_SEAT",
             )
             self.assertEqual(result["vehicle_ledger_appended"], 0)
+            self.assertFalse(paths["vehicle_ledger"].exists())
+
+    def test_delayed_confirmation_without_same_candle_seat_is_unscored_and_mixed_batch_continues(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = _build_mixed_confirmation_fixture(Path(temp_dir))
+            result = _run(
+                paths,
+                handoffs=paths["handoffs"],
+                now=paths["now"],
+                client_factory=lambda: (_ for _ in ()).throw(
+                    AssertionError("mixed immature batch must not fetch truth")
+                ),
+            )
+
+            self.assertEqual(result["status"], "PROJECTED_NO_DUE")
+            self.assertEqual(result["vehicle_projection_status"], "VERIFIED")
+            self.assertEqual(result["handoff_confirmed_event_count"], 2)
+            self.assertEqual(result["handoff_confirmed_vehicle_count"], 1)
+            self.assertEqual(result["handoff_confirmed_unscored_count"], 1)
+            self.assertEqual(
+                result["handoff_confirmed_unscored_reason_counts"],
+                {
+                    "CONFIRMED_EVENT_NO_FROZEN_SEAT_AT_CONFIRMATION_CANDLE": 1,
+                },
+            )
+            example = result["handoff_confirmed_unscored_examples"][0]
+            self.assertEqual(example["pair"], "GBP_USD")
+            self.assertEqual(
+                example["confirmation_candle_close_utc"],
+                CONFIRMED_AT.isoformat(),
+            )
+            self.assertEqual(
+                example["frozen_seat_m1_closed_candle_utc"],
+                paths["now"].isoformat(),
+            )
+            vehicle = _load_one(paths["vehicle_ledger"])
+            self.assertEqual(vehicle["pair"], "EUR_USD")
+            self.assertEqual(
+                vehicle["confirmed_at_utc"],
+                vehicle["learning_seat"]["m1_closed_candle_utc"],
+            )
+
+    def test_delayed_clock_exception_does_not_hide_broker_source_mismatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = _build_mixed_confirmation_fixture(Path(temp_dir))
+            corrupt = copy.deepcopy(paths["delayed_handoff"])
+            shadow_body = {
+                key: value
+                for key, value in corrupt["prospective_vehicle_shadow"].items()
+                if key != "contract_sha256"
+            }
+            seats = copy.deepcopy(shadow_body["seats"])
+            index = next(
+                position
+                for position, seat in enumerate(seats)
+                if seat["pair"] == "GBP_USD"
+            )
+            seat_body = {
+                key: value
+                for key, value in seats[index].items()
+                if key != "contract_sha256"
+            }
+            seat_body["broker_snapshot_sha256"] = "b" * 64
+            seats[index] = _seal(seat_body)
+            shadow_body["seats"] = seats
+            corrupt_shadow = _seal(shadow_body)
+            handoff_body = {
+                key: value
+                for key, value in corrupt.items()
+                if key != "contract_sha256"
+            }
+            handoff_body["prospective_vehicle_shadow"] = corrupt_shadow
+            handoff_body["prospective_vehicle_shadow_sha256"] = corrupt_shadow[
+                "contract_sha256"
+            ]
+            corrupt = _seal(handoff_body)
+
+            result = _run(
+                paths,
+                handoffs=[paths["handoffs"][0], corrupt],
+                now=paths["now"],
+                client_factory=lambda: None,
+            )
+
+            self.assertEqual(
+                result["status"],
+                "PRECHECK_OR_PERSISTENCE_FAILED_CLOSED",
+            )
+            self.assertEqual(result["vehicle_projection_status"], "FAILED")
+            self.assertIn("source binding is invalid", result["error"])
             self.assertFalse(paths["vehicle_ledger"].exists())
 
     def test_mature_cycle_uses_one_path_and_separates_proof_from_bid_ask_mark(self) -> None:
