@@ -2744,6 +2744,8 @@ class LiveWrapperTest(unittest.TestCase):
             wrapper.index("run_fast_bot_shadow()") :
             wrapper.index("resolve_fast_bot_shadow_outcomes()")
         ]
+        self.assertIn("--fast-pair-charts-fallback", fast_bot_block)
+        self.assertIn("--fast-pair-charts-freshness", fast_bot_block)
         self.assertIn("--episode-handoff", fast_bot_block)
         self.assertIn("--reserve", fast_bot_block)
         self.assertNotIn("--episode-output", fast_bot_block)

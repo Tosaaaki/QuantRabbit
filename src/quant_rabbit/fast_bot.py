@@ -38,6 +38,9 @@ from quant_rabbit.strategy.failed_break_evidence import (
     build_m5_failed_break_evidence,
     failed_break_direction,
 )
+from quant_rabbit.strategy.directional_forecaster import (
+    validate_mba_integrity_receipt,
+)
 
 
 REGIME_CONTRACT = "QR_HIERARCHICAL_BOT_REGIME_V1"
@@ -469,16 +472,32 @@ def run_fast_bot_shadow(
     report_path: Path,
     now_utc: datetime | None = None,
     episode_handoff_path: Path | None = None,
+    fast_pair_charts_fallback_path: Path | None = None,
+    fast_pair_charts_freshness_path: Path | None = None,
 ) -> dict[str, Any]:
     """Read current artifacts and atomically persist the bot shadow cycle."""
 
     cycle_now = _aware_utc(now_utc or datetime.now(timezone.utc))
     fast = _read_object(fast_pair_charts_path)
+    fallback_fast, fallback_source_sha256 = _read_object_with_sha(
+        fast_pair_charts_fallback_path
+    )
+    fallback_freshness = _read_object(fast_pair_charts_freshness_path)
     slow = _read_object(slow_pair_charts_path)
     snapshot = _read_object(broker_snapshot_path)
     events = _read_object(guardian_events_path)
     supervision = _read_object(ai_supervision_path) if ai_supervision_path else {}
-    validated_fast = _validated_fast_pair_charts(fast, now_utc=cycle_now)
+    validated_fast, fast_source = _select_validated_fast_pair_charts(
+        fast,
+        fallback=fallback_fast,
+        fallback_freshness=fallback_freshness,
+        fallback_source_sha256=fallback_source_sha256,
+        all_pair_fallback_mode=bool(
+            fast_pair_charts_fallback_path is not None
+            or fast_pair_charts_freshness_path is not None
+        ),
+        now_utc=cycle_now,
+    )
     validated_slow = _validated_slow_pair_charts(slow)
     contract = build_hierarchical_regime_contract(
         fast_pair_charts=validated_fast,
@@ -548,6 +567,7 @@ def run_fast_bot_shadow(
         "ledger_appended": appended,
         "ai_wake_required": contract.get("ai_wake_required"),
         "ai_wake_reasons": contract.get("ai_wake_reasons"),
+        "fast_pair_charts_source": fast_source,
         "episode_handoff": str(episode_handoff_path) if episode_handoff is not None else None,
         "episode_handoff_sha256": (
             episode_handoff.get("contract_sha256") if episode_handoff is not None else None
@@ -972,6 +992,193 @@ def _charts_by_pair(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     }
 
 
+def _select_validated_fast_pair_charts(
+    primary: Mapping[str, Any],
+    *,
+    fallback: Mapping[str, Any],
+    fallback_freshness: Mapping[str, Any],
+    fallback_source_sha256: str,
+    now_utc: datetime,
+    all_pair_fallback_mode: bool = False,
+) -> tuple[Mapping[str, Any], str]:
+    """Prefer exact-28 truth, else use only an independently fresh active packet."""
+
+    primary_is_all_pair = primary.get("contract") == CURRENT_M1_CONTRACT
+    if not primary_is_all_pair and not all_pair_fallback_mode:
+        return primary, "DIRECT_ACTIVE_PACKET"
+    if primary_is_all_pair and validate_current_m1_contract(
+        primary,
+        now_utc=now_utc,
+    ):
+        return primary, "CURRENT_ALL_PAIR"
+    validated_fallback = _validated_active_fast_fallback(
+        fallback,
+        freshness=fallback_freshness,
+        source_sha256=fallback_source_sha256,
+        now_utc=now_utc,
+    )
+    if validated_fallback is not None:
+        return validated_fallback, "FRESH_ACTIVE_ROTATION_FALLBACK"
+    return {
+        "generated_at_utc": None,
+        "charts": [{"pair": pair, "views": []} for pair in DEFAULT_TRADER_PAIRS],
+    }, "BLOCKED_ALL_PAIR_NO_VALID_FALLBACK"
+
+
+def _validated_active_fast_fallback(
+    value: Mapping[str, Any],
+    *,
+    freshness: Mapping[str, Any],
+    source_sha256: str,
+    now_utc: datetime,
+) -> Mapping[str, Any] | None:
+    generated = _parse_utc(value.get("generated_at_utc"))
+    checked = _parse_utc(freshness.get("checked_at_utc"))
+    charts = value.get("charts")
+    monitor_pairs = value.get("guardian_monitor_pairs")
+    freshness_pairs = freshness.get("monitor_pairs")
+    if not bool(
+        value.get("contract") != CURRENT_M1_CONTRACT
+        and _sha256_text(source_sha256)
+        and freshness.get("source_pair_charts_sha256") == source_sha256
+        and freshness.get("status") == "FRESH"
+        and generated is not None
+        and checked is not None
+        and _timestamp_current(
+            now_utc,
+            generated,
+            max_age_seconds=FAST_CHART_MAX_AGE_SECONDS,
+        )
+        and _timestamp_current(
+            now_utc,
+            checked,
+            max_age_seconds=FAST_CHART_MAX_AGE_SECONDS,
+        )
+        and freshness.get("source_generated_at_utc") == generated.isoformat()
+        and isinstance(charts, list)
+        and isinstance(monitor_pairs, list)
+        and monitor_pairs
+        and freshness_pairs == monitor_pairs
+        and value.get("pairs_requested") == len(monitor_pairs)
+        and value.get("pairs_succeeded") == len(monitor_pairs)
+        and value.get("pairs_failed") == 0
+        and value.get("partial") is False
+        and value.get("failures") == []
+        and isinstance(value.get("timeframes"), list)
+        and all(isinstance(item, str) for item in value["timeframes"])
+        and {"M1", "M5"}.issubset(value["timeframes"])
+    ):
+        return None
+    normalized_pairs = [_pair(item) for item in monitor_pairs]
+    if (
+        any(not pair for pair in normalized_pairs)
+        or len(set(normalized_pairs)) != len(normalized_pairs)
+        or not set(normalized_pairs).issubset(DEFAULT_TRADER_PAIRS)
+    ):
+        return None
+    by_pair = _charts_by_pair(value)
+    if set(by_pair) != set(normalized_pairs) or len(by_pair) != len(normalized_pairs):
+        return None
+    rows = freshness.get("rows")
+    if not isinstance(rows, list):
+        return None
+    required_timeframes = ("M1", "M5")
+    freshness_rows: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        timeframe = str(row.get("timeframe") or "").upper()
+        if timeframe not in required_timeframes:
+            continue
+        pair = _pair(row.get("pair"))
+        key = (pair, timeframe)
+        if not pair or key in freshness_rows:
+            return None
+        freshness_rows[key] = row
+    expected_rows = {
+        (pair, timeframe)
+        for pair in normalized_pairs
+        for timeframe in required_timeframes
+    }
+    if set(freshness_rows) != expected_rows:
+        return None
+    selected_charts: list[dict[str, Any]] = []
+    for pair in normalized_pairs:
+        chart = by_pair[pair]
+        by_timeframe: dict[str, Mapping[str, Any]] = {}
+        for view in chart.get("views", []) or []:
+            if not isinstance(view, Mapping):
+                return None
+            timeframe = str(view.get("granularity") or "").upper()
+            if timeframe in by_timeframe:
+                return None
+            by_timeframe[timeframe] = view
+        if any(timeframe not in by_timeframe for timeframe in required_timeframes):
+            return None
+        selected_views: list[dict[str, Any]] = []
+        for timeframe in required_timeframes:
+            view = by_timeframe[timeframe]
+            integrity = view.get("candle_integrity")
+            row = freshness_rows[(pair, timeframe)]
+            closed_at = _latest_complete_candle_close_time(
+                view,
+                timeframe=timeframe,
+            )
+            market = view.get("market_state")
+            candles = view.get("recent_candles")
+            structural_view = bool(
+                isinstance(market, Mapping)
+                and isinstance(candles, list)
+                and any(
+                    isinstance(candle, Mapping) and candle.get("complete") is True
+                    for candle in candles
+                )
+                and _view_atr_pips(view) is not None
+            )
+            if not bool(
+                isinstance(integrity, Mapping)
+                and validate_mba_integrity_receipt(
+                    integrity,
+                    chart_generated_at=generated,
+                    view=dict(view),
+                    now_utc=now_utc,
+                )
+                and structural_view
+                and (_usable_view(view) if timeframe == "M1" else True)
+                and not _view_integrity_blocked(view)
+                and _view_candle_fresh(
+                    view,
+                    timeframe=timeframe,
+                    now=now_utc,
+                )
+                and row.get("status") == "FRESH"
+                and row.get("blocking_codes") == []
+                and row.get("latest_complete_candle_closed_at_utc") == closed_at
+            ):
+                return None
+            selected_views.append(dict(view))
+        selected_charts.append({"pair": pair, "views": selected_views})
+    return {
+        "generated_at_utc": generated.isoformat(),
+        "timeframes": list(required_timeframes),
+        "pairs_requested": len(normalized_pairs),
+        "pairs_succeeded": len(normalized_pairs),
+        "pairs_failed": 0,
+        "partial": False,
+        "failures": [],
+        "guardian_monitor_pairs": normalized_pairs,
+        "active_fallback_source_sha256": source_sha256,
+        "active_fallback_freshness_sha256": _canonical_sha(freshness),
+        # M1 must carry complete directional evidence. M5 is deliberately a
+        # causal structural/volatility context for diagnostic INPUT_BLOCKED
+        # seats, so its evidence_complete flag is never promoted to proof.
+        "active_fallback_policy": (
+            "EXACT_CAUSAL_M1_PLUS_STRUCTURAL_M5_DIAGNOSTIC_ONLY_V1"
+        ),
+        "charts": selected_charts,
+    }
+
+
 def _validated_fast_pair_charts(
     payload: Mapping[str, Any],
     *,
@@ -1183,6 +1390,27 @@ def _read_object(path: Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _read_object_with_sha(path: Path | None) -> tuple[dict[str, Any], str]:
+    """Strictly parse and hash the exact same fallback-file byte snapshot."""
+
+    if path is None:
+        return {}, ""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return {}, ""
+    source_sha256 = hashlib.sha256(raw).hexdigest()
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {}, source_sha256
+    return (value if isinstance(value, dict) else {}), source_sha256
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

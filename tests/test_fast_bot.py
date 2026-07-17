@@ -23,6 +23,8 @@ from quant_rabbit.fast_bot import (
     REGIME_CONTRACT,
     _append_signals_once,
     _entry_experiment_arms,
+    _read_object_with_sha,
+    _select_validated_fast_pair_charts,
     _write_text_atomic,
     build_fast_bot_shadow,
     build_hierarchical_regime_contract,
@@ -155,6 +157,48 @@ def _seal_contract(body: dict) -> dict:
     return {**body, "contract_sha256": hashlib.sha256(raw).hexdigest()}
 
 
+def _active_fast_fallback_fixture() -> tuple[dict, dict, str]:
+    fast, _, _ = _inputs()
+    fast.update(
+        {
+            "guardian_monitor_pairs": ["EUR_USD"],
+            "timeframes": list(TF_MINUTES),
+            "pairs_requested": 1,
+            "pairs_succeeded": 1,
+            "pairs_failed": 0,
+            "partial": False,
+            "failures": [],
+        }
+    )
+    source_sha = hashlib.sha256(
+        json.dumps(fast, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    freshness = {
+        "status": "FRESH",
+        "checked_at_utc": NOW.isoformat(),
+        "source_generated_at_utc": fast["generated_at_utc"],
+        "source_pair_charts_sha256": source_sha,
+        "monitor_pairs": ["EUR_USD"],
+        "rows": [
+            {
+                "pair": "EUR_USD",
+                "timeframe": "M1",
+                "status": "FRESH",
+                "blocking_codes": [],
+                "latest_complete_candle_closed_at_utc": NOW.isoformat(),
+            },
+            {
+                "pair": "EUR_USD",
+                "timeframe": "M5",
+                "status": "FRESH",
+                "blocking_codes": [],
+                "latest_complete_candle_closed_at_utc": NOW.isoformat(),
+            },
+        ],
+    }
+    return fast, freshness, source_sha
+
+
 def _episode_worker_env(**overrides: str) -> dict[str, str]:
     env = os.environ.copy()
     env["QR_LIVE_ENABLED"] = "0"
@@ -282,6 +326,294 @@ def _write_episode_handoff(
 
 
 class FastBotTest(unittest.TestCase):
+    def test_fallback_object_and_sha_use_one_strict_byte_snapshot(self) -> None:
+        path = Path("fallback.json")
+        cases = (
+            (b'{"packet":{"status":"fresh"}}', {"packet": {"status": "fresh"}}),
+            (b'{"packet":1,"packet":2}', {}),
+            (b'{"packet":NaN}', {}),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                with patch(
+                    "quant_rabbit.fast_bot.Path.read_bytes",
+                    autospec=True,
+                    return_value=raw,
+                ) as read_bytes:
+                    value, source_sha = _read_object_with_sha(path)
+
+                read_bytes.assert_called_once_with(path)
+                self.assertEqual(value, expected)
+                self.assertEqual(source_sha, hashlib.sha256(raw).hexdigest())
+
+    def test_valid_exact_28_fast_packet_keeps_priority_over_active_fallback(
+        self,
+    ) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+        current = {"contract": CURRENT_M1_CONTRACT, "charts": [{"pair": "PRIMARY"}]}
+        freshness["status"] = "STALE"
+
+        with patch(
+            "quant_rabbit.fast_bot.validate_current_m1_contract",
+            return_value=True,
+        ):
+            selected, source = _select_validated_fast_pair_charts(
+                current,
+                fallback=active,
+                fallback_freshness=freshness,
+                fallback_source_sha256=source_sha,
+                now_utc=NOW,
+            )
+
+        self.assertIs(selected, current)
+        self.assertEqual(source, "CURRENT_ALL_PAIR")
+
+    def test_blocked_all_pair_uses_only_exact_fresh_active_m1_fallback(self) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+        blocked = {"contract": CURRENT_M1_CONTRACT, "charts": []}
+
+        with (
+            patch(
+                "quant_rabbit.fast_bot.validate_current_m1_contract",
+                return_value=False,
+            ),
+            patch(
+                "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+                return_value=True,
+            ),
+        ):
+            selected, source = _select_validated_fast_pair_charts(
+                blocked,
+                fallback=active,
+                fallback_freshness=freshness,
+                fallback_source_sha256=source_sha,
+                now_utc=NOW,
+            )
+
+        self.assertEqual(source, "FRESH_ACTIVE_ROTATION_FALLBACK")
+        self.assertIsNot(selected, active)
+        self.assertEqual(selected["timeframes"], ["M1", "M5"])
+        self.assertEqual(selected["active_fallback_source_sha256"], source_sha)
+        self.assertEqual(
+            [view["granularity"] for view in selected["charts"][0]["views"]],
+            ["M1", "M5"],
+        )
+        self.assertEqual(
+            selected["charts"][0]["views"][0]["recent_candles"][-1]["t"],
+            (NOW - timedelta(minutes=1)).isoformat(),
+        )
+        self.assertEqual(
+            selected["active_fallback_policy"],
+            "EXACT_CAUSAL_M1_PLUS_STRUCTURAL_M5_DIAGNOSTIC_ONLY_V1",
+        )
+
+    def test_explicit_all_pair_mode_uses_fallback_when_primary_is_bad(self) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+
+        with patch(
+            "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+            return_value=True,
+        ):
+            selected, source = _select_validated_fast_pair_charts(
+                {},
+                fallback=active,
+                fallback_freshness=freshness,
+                fallback_source_sha256=source_sha,
+                now_utc=NOW,
+                all_pair_fallback_mode=True,
+            )
+
+        self.assertEqual(source, "FRESH_ACTIVE_ROTATION_FALLBACK")
+        self.assertEqual(selected["guardian_monitor_pairs"], ["EUR_USD"])
+
+    def test_run_uses_fallback_paths_when_primary_json_is_corrupt(self) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+        _, slow, snapshot = _inputs()
+        raw_fallback = json.dumps(active, sort_keys=True).encode("utf-8")
+        self.assertEqual(hashlib.sha256(raw_fallback).hexdigest(), source_sha)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "fast.json").write_text("{corrupt", encoding="utf-8")
+            (root / "fallback.json").write_bytes(raw_fallback)
+            for name, payload in (
+                ("freshness", freshness),
+                ("slow", slow),
+                ("snapshot", snapshot),
+                ("events", {"events": []}),
+            ):
+                (root / f"{name}.json").write_text(
+                    json.dumps(payload),
+                    encoding="utf-8",
+                )
+
+            with patch(
+                "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+                return_value=True,
+            ):
+                result = run_fast_bot_shadow(
+                    fast_pair_charts_path=root / "fast.json",
+                    fast_pair_charts_fallback_path=root / "fallback.json",
+                    fast_pair_charts_freshness_path=root / "freshness.json",
+                    slow_pair_charts_path=root / "slow.json",
+                    broker_snapshot_path=root / "snapshot.json",
+                    guardian_events_path=root / "events.json",
+                    ai_supervision_path=None,
+                    regime_output_path=root / "regime.json",
+                    shadow_output_path=root / "shadow.json",
+                    shadow_ledger_path=root / "shadow.jsonl",
+                    report_path=root / "report.md",
+                    now_utc=NOW,
+                )
+
+        self.assertEqual(
+            result["fast_pair_charts_source"],
+            "FRESH_ACTIVE_ROTATION_FALLBACK",
+        )
+
+    def test_explicit_all_pair_mode_fails_closed_when_both_packets_are_bad(
+        self,
+    ) -> None:
+        selected, source = _select_validated_fast_pair_charts(
+            {"corrupt_primary": True},
+            fallback={},
+            fallback_freshness={},
+            fallback_source_sha256="",
+            now_utc=NOW,
+            all_pair_fallback_mode=True,
+        )
+
+        self.assertEqual(source, "BLOCKED_ALL_PAIR_NO_VALID_FALLBACK")
+        self.assertEqual(len(selected["charts"]), len(DEFAULT_TRADER_PAIRS))
+        self.assertTrue(all(not row["views"] for row in selected["charts"]))
+
+    def test_standalone_non_all_pair_packet_remains_direct_without_fallback_mode(
+        self,
+    ) -> None:
+        direct = {"generated_at_utc": NOW.isoformat(), "charts": []}
+
+        selected, source = _select_validated_fast_pair_charts(
+            direct,
+            fallback={},
+            fallback_freshness={},
+            fallback_source_sha256="",
+            now_utc=NOW,
+        )
+
+        self.assertIs(selected, direct)
+        self.assertEqual(source, "DIRECT_ACTIVE_PACKET")
+
+    def test_stale_or_hash_mismatched_active_fallback_is_never_used(self) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+        blocked = {"contract": CURRENT_M1_CONTRACT, "charts": []}
+        cases = (
+            (
+                {
+                    **freshness,
+                    "checked_at_utc": (NOW - timedelta(minutes=10)).isoformat(),
+                },
+                source_sha,
+            ),
+            (freshness, "0" * 64),
+        )
+        for candidate_freshness, candidate_sha in cases:
+            with self.subTest(candidate_sha=candidate_sha):
+                with (
+                    patch(
+                        "quant_rabbit.fast_bot.validate_current_m1_contract",
+                        return_value=False,
+                    ),
+                    patch(
+                        "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+                        return_value=True,
+                    ),
+                ):
+                    selected, source = _select_validated_fast_pair_charts(
+                        blocked,
+                        fallback=active,
+                        fallback_freshness=candidate_freshness,
+                        fallback_source_sha256=candidate_sha,
+                        now_utc=NOW,
+                    )
+
+                self.assertEqual(source, "BLOCKED_ALL_PAIR_NO_VALID_FALLBACK")
+                self.assertEqual(len(selected["charts"]), 28)
+                self.assertTrue(all(not row["views"] for row in selected["charts"]))
+
+    def test_active_fallback_rejects_stale_or_unbound_m5(self) -> None:
+        active, freshness, source_sha = _active_fast_fallback_fixture()
+        blocked = {"contract": CURRENT_M1_CONTRACT, "charts": []}
+        missing_m5 = {
+            **freshness,
+            "rows": [row for row in freshness["rows"] if row["timeframe"] != "M5"],
+        }
+        stale_m5 = json.loads(json.dumps(active))
+        for candle in stale_m5["charts"][0]["views"][1]["recent_candles"]:
+            candle["t"] = (
+                datetime.fromisoformat(candle["t"]) - timedelta(minutes=30)
+            ).isoformat()
+        stale_sha = hashlib.sha256(
+            json.dumps(stale_m5, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        stale_freshness = {
+            **freshness,
+            "source_pair_charts_sha256": stale_sha,
+        }
+        cases = (
+            (active, missing_m5, source_sha),
+            (stale_m5, stale_freshness, stale_sha),
+        )
+        for candidate, candidate_freshness, candidate_sha in cases:
+            with self.subTest(candidate_sha=candidate_sha):
+                with (
+                    patch(
+                        "quant_rabbit.fast_bot.validate_current_m1_contract",
+                        return_value=False,
+                    ),
+                    patch(
+                        "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+                        return_value=True,
+                    ),
+                ):
+                    selected, source = _select_validated_fast_pair_charts(
+                        blocked,
+                        fallback=candidate,
+                        fallback_freshness=candidate_freshness,
+                        fallback_source_sha256=candidate_sha,
+                        now_utc=NOW,
+                    )
+
+                self.assertEqual(source, "BLOCKED_ALL_PAIR_NO_VALID_FALLBACK")
+                self.assertTrue(all(not row["views"] for row in selected["charts"]))
+
+    def test_active_fallback_source_must_declare_m1_and_m5(self) -> None:
+        active, freshness, _ = _active_fast_fallback_fixture()
+        active["timeframes"] = ["M1"]
+        source_sha = hashlib.sha256(
+            json.dumps(active, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        freshness["source_pair_charts_sha256"] = source_sha
+
+        with (
+            patch(
+                "quant_rabbit.fast_bot.validate_current_m1_contract",
+                return_value=False,
+            ),
+            patch(
+                "quant_rabbit.fast_bot.validate_mba_integrity_receipt",
+                return_value=True,
+            ),
+        ):
+            selected, source = _select_validated_fast_pair_charts(
+                {"contract": CURRENT_M1_CONTRACT, "charts": []},
+                fallback=active,
+                fallback_freshness=freshness,
+                fallback_source_sha256=source_sha,
+                now_utc=NOW,
+            )
+
+        self.assertEqual(source, "BLOCKED_ALL_PAIR_NO_VALID_FALLBACK")
+        self.assertTrue(all(not row["views"] for row in selected["charts"]))
+
     def test_atomic_text_failure_removes_private_temp(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

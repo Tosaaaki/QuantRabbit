@@ -19,6 +19,8 @@ from quant_rabbit.fast_bot import run_fast_bot_shadow  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fast-pair-charts", type=Path, default=ROOT / "data" / "position_guardian_pair_charts.json")
+    parser.add_argument("--fast-pair-charts-fallback", type=Path)
+    parser.add_argument("--fast-pair-charts-freshness", type=Path)
     parser.add_argument("--slow-pair-charts", type=Path, default=ROOT / "data" / "pair_charts.json")
     parser.add_argument("--broker-snapshot", type=Path, default=ROOT / "data" / "position_guardian_broker_snapshot.json")
     parser.add_argument("--guardian-events", type=Path, default=ROOT / "data" / "guardian_events.json")
@@ -31,6 +33,8 @@ def main() -> int:
     args = parser.parse_args()
     result = run_fast_bot_shadow(
         fast_pair_charts_path=args.fast_pair_charts,
+        fast_pair_charts_fallback_path=args.fast_pair_charts_fallback,
+        fast_pair_charts_freshness_path=args.fast_pair_charts_freshness,
         slow_pair_charts_path=args.slow_pair_charts,
         broker_snapshot_path=args.broker_snapshot,
         guardian_events_path=args.guardian_events,

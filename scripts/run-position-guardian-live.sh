@@ -1508,6 +1508,12 @@ run_fast_bot_shadow() {
     --ledger "${QR_FAST_BOT_SHADOW_LEDGER:-data/fast_bot_shadow_ledger.jsonl}"
     --report "${QR_FAST_BOT_SHADOW_REPORT:-docs/fast_bot_shadow_report.md}"
   )
+  if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
+    bot_args+=(
+      --fast-pair-charts-fallback "$guardian_charts"
+      --fast-pair-charts-freshness "$guardian_chart_freshness"
+    )
+  fi
   if [[ -n "$handoff_path" ]]; then
     bot_args+=(--episode-handoff "$handoff_path")
   fi
