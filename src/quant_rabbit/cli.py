@@ -10,7 +10,7 @@ import sys
 import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -1848,6 +1848,18 @@ DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 180.0
 # the OANDA HTTP timeout, while staying far below one thread per candle request.
 # This is infrastructure wall-clock control, not market/risk tuning.
 DEFAULT_PAIR_CHART_WORKERS = 14
+# A complete intent-boundary packet gets one initial fetch plus two bounded
+# retries.  This is transport-recovery policy, not a market threshold: after
+# three attempts the caller fails closed and keeps the prior complete packet.
+_REQUIRE_COMPLETE_PAIR_CHART_MAX_ATTEMPTS = 3
+# M1 and M5 are the execution-timeframe provenance contract.  A returned
+# PairChart object without either view is incomplete even when slower views
+# were built successfully.
+_REQUIRE_COMPLETE_PAIR_CHART_FAST_TIMEFRAMES = frozenset({"M1", "M5"})
+# OANDA candle timestamps identify bucket opens.  Freeze the last bucket that
+# was already complete when acquisition began so a retry crossing a wall-clock
+# minute cannot splice a newer M1/M5 row into the first attempt's packet.
+_PAIR_CHART_ACQUISITION_CADENCE_SECONDS = {"M1": 60, "M5": 5 * 60}
 
 
 class _CycleStepTimeout(BaseException):
@@ -2084,6 +2096,325 @@ def _build_pair_charts_concurrently(
     return charts, failures
 
 
+def _pair_chart_acquisition_now_utc() -> datetime:
+    """Return the one wall-clock instant that bounds a complete acquisition."""
+
+    return datetime.now(timezone.utc)
+
+
+def _pair_chart_acquisition_ceilings(
+    acquisition_started_at_utc: datetime,
+) -> dict[str, datetime]:
+    """Freeze the latest already-complete M1/M5 bucket opens.
+
+    OANDA labels a candle with its opening instant.  Subtracting one complete
+    cadence from the bucket containing acquisition start prevents a retry from
+    crossing into a newly completed candle while still allowing one pair's
+    latest real quote to be older because that pair had a genuine no-tick gap.
+    """
+
+    started = acquisition_started_at_utc.astimezone(timezone.utc)
+    ceilings: dict[str, datetime] = {}
+    for timeframe, cadence_seconds in _PAIR_CHART_ACQUISITION_CADENCE_SECONDS.items():
+        current_bucket_epoch = (
+            int(started.timestamp()) // cadence_seconds
+        ) * cadence_seconds
+        ceilings[timeframe] = datetime.fromtimestamp(
+            current_bucket_epoch,
+            tz=timezone.utc,
+        ) - timedelta(seconds=cadence_seconds)
+    return ceilings
+
+
+def _freeze_pair_chart_payload(chart: Any) -> dict[str, Any]:
+    """Materialize one JSON-safe chart body exactly once before validation."""
+
+    raw = chart.to_dict()
+    encoded = json.dumps(
+        raw,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    frozen = json.loads(encoded)
+    if not isinstance(frozen, dict):
+        raise ValueError("PAIR_CHART_PAYLOAD_NOT_OBJECT")
+    return frozen
+
+
+def _pair_chart_coverage_error(
+    payload: dict[str, Any],
+    *,
+    expected_pair: str,
+    timeframes: tuple[str, ...],
+    count: int,
+    acquisition_started_at_utc: datetime,
+    acquisition_ceilings_utc: Mapping[str, datetime],
+) -> str | None:
+    """Return a fail-closed reason when a chart is not exact MBA evidence."""
+
+    if not payload:
+        return "PAIR_CHART_PAYLOAD_EMPTY"
+    if payload.get("pair") != expected_pair:
+        return "PAIR_CHART_PAIR_MISMATCH"
+    if not _REQUIRE_COMPLETE_PAIR_CHART_FAST_TIMEFRAMES.issubset(set(timeframes)):
+        return "PAIR_CHART_REQUIRED_M1_M5_NOT_REQUESTED"
+
+    integrity = payload.get("technical_candle_integrity")
+    if not isinstance(integrity, dict) or not integrity:
+        return "PAIR_CHART_INTEGRITY_MISSING_OR_EMPTY"
+    if integrity.get("evaluation_status") == "NOT_EVALUATED":
+        return "PAIR_CHART_INTEGRITY_NOT_EVALUATED"
+    if (
+        integrity.get("evaluation_status") not in {"PASS", "DEGRADED"}
+        or integrity.get("source") != "OANDA_MBA"
+        or integrity.get("forecast_blocking") is not False
+        or integrity.get("requested_timeframes") != list(timeframes)
+        or integrity.get("evaluated_timeframe_count") != len(timeframes)
+    ):
+        return "PAIR_CHART_INTEGRITY_STATUS_OR_SCOPE_INVALID"
+
+    timeframe_receipts = integrity.get("timeframes")
+    if not isinstance(timeframe_receipts, dict) or set(timeframe_receipts) != set(
+        timeframes
+    ):
+        return "PAIR_CHART_TIMEFRAME_RECEIPTS_MISSING_OR_UNEXPECTED"
+    for timeframe in timeframes:
+        receipt = timeframe_receipts.get(timeframe)
+        if not isinstance(receipt, dict) or not receipt:
+            return f"PAIR_CHART_TIMEFRAME_INTEGRITY_EMPTY:{timeframe}"
+        if receipt.get("evaluation_status") == "NOT_EVALUATED":
+            return f"PAIR_CHART_TIMEFRAME_NOT_EVALUATED:{timeframe}"
+        if (
+            receipt.get("evaluation_status") not in {"PASS", "DEGRADED"}
+            or receipt.get("source") != "OANDA_MBA"
+            or receipt.get("requested_price") != "MBA"
+            or receipt.get("forecast_blocking") is not False
+            or receipt.get("coverage_complete") is not True
+            or receipt.get("provenance_complete") is not True
+            or receipt.get("requested_count") != count
+            or receipt.get("raw_entry_count") != count
+        ):
+            return f"PAIR_CHART_TIMEFRAME_STATUS_OR_PROVENANCE_INVALID:{timeframe}"
+
+    # Reuse the forecaster's complete schema/count/calibration/cadence
+    # verifier.  A local partial facsimile here would create two definitions of
+    # valid OANDA MBA evidence and eventually reopen the same acquisition bug.
+    from quant_rabbit.strategy.directional_forecaster import (
+        _technical_candle_integrity_forecast_blockers,
+    )
+
+    validation_payload = dict(payload)
+    validation_payload["generated_at_utc"] = acquisition_started_at_utc.isoformat()
+    validated_evidence: dict[str, Any] = {}
+    blockers = _technical_candle_integrity_forecast_blockers(
+        validation_payload,
+        expected_pair=expected_pair,
+        require_technical_candle_integrity=True,
+        now_utc=acquisition_started_at_utc,
+        _validated_evidence_out=validated_evidence,
+    )
+    if blockers or not validated_evidence:
+        return "PAIR_CHART_INTEGRITY_SCHEMA_OR_MBA_PROVENANCE_INVALID"
+
+    verified_timeframes = validated_evidence.get("timeframes")
+    if not isinstance(verified_timeframes, dict):
+        return "PAIR_CHART_VALIDATED_TIMEFRAMES_MISSING"
+    for timeframe in sorted(_REQUIRE_COMPLETE_PAIR_CHART_FAST_TIMEFRAMES):
+        receipt = verified_timeframes.get(timeframe)
+        ceiling = acquisition_ceilings_utc.get(timeframe)
+        if not isinstance(receipt, dict) or not isinstance(ceiling, datetime):
+            return f"PAIR_CHART_FAST_TIMEFRAME_VALIDATION_MISSING:{timeframe}"
+        for clock_field in (
+            "latest_complete_timestamp_utc",
+            "latest_clean_timestamp_utc",
+        ):
+            value = receipt.get(clock_field)
+            clock = _parse_utc_timestamp(value)
+            if not isinstance(value, str) or clock is None:
+                return f"PAIR_CHART_FAST_CLOCK_INVALID:{timeframe}:{clock_field}"
+            if clock > ceiling:
+                return (
+                    "PAIR_CHART_ACQUISITION_CEILING_EXCEEDED:"
+                    f"{timeframe}:{clock_field}"
+                )
+    return None
+
+
+def _build_complete_pair_charts_with_retries(
+    pairs: list[str] | tuple[str, ...],
+    *,
+    client: OandaReadOnlyClient,
+    timeframes: tuple[str, ...],
+    count: int,
+    workers: int,
+    builder: Callable[..., Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Acquire one exact complete packet, retrying only unresolved pairs."""
+
+    requested_pairs = tuple(pairs)
+    acquisition_started_at = _pair_chart_acquisition_now_utc().astimezone(
+        timezone.utc
+    )
+    ceilings = _pair_chart_acquisition_ceilings(acquisition_started_at)
+    metadata: dict[str, Any] = {
+        "acquisition_started_at_utc": acquisition_started_at.isoformat(),
+        "acquisition_timeframe_ceilings_utc": {
+            timeframe: ceiling.isoformat()
+            for timeframe, ceiling in sorted(ceilings.items())
+        },
+        "acquisition_attempts": 0,
+        "acquisition_max_attempts": _REQUIRE_COMPLETE_PAIR_CHART_MAX_ATTEMPTS,
+        "acquisition_retried_pairs": [],
+        "acquisition_retry_diagnostics": [],
+    }
+    if not requested_pairs:
+        return [], [{"pair": "UNKNOWN", "error": "PAIR_CHART_PAIRS_EMPTY"}], metadata
+    duplicate_requests = sorted(
+        pair for pair in set(requested_pairs) if requested_pairs.count(pair) > 1
+    )
+    if duplicate_requests:
+        return (
+            [],
+            [
+                {
+                    "pair": pair,
+                    "error": "PAIR_CHART_REQUEST_PAIR_DUPLICATED",
+                }
+                for pair in duplicate_requests
+            ],
+            metadata,
+        )
+    missing_fast = sorted(
+        _REQUIRE_COMPLETE_PAIR_CHART_FAST_TIMEFRAMES - set(timeframes)
+    )
+    if missing_fast:
+        return (
+            [],
+            [
+                {
+                    "pair": pair,
+                    "error": (
+                        "PAIR_CHART_REQUIRED_FAST_TIMEFRAMES_MISSING:"
+                        + ",".join(missing_fast)
+                    ),
+                }
+                for pair in requested_pairs
+            ],
+            metadata,
+        )
+
+    accepted: dict[str, dict[str, Any]] = {}
+    last_errors: dict[str, str] = {}
+    attempts_by_pair = dict.fromkeys(requested_pairs, 0)
+    diagnostics: list[dict[str, Any]] = []
+    for attempt in range(1, _REQUIRE_COMPLETE_PAIR_CHART_MAX_ATTEMPTS + 1):
+        pending = [pair for pair in requested_pairs if pair not in accepted]
+        if not pending:
+            break
+        metadata["acquisition_attempts"] = attempt
+        for pair in pending:
+            attempts_by_pair[pair] += 1
+
+        chart_results, transport_failures = _build_pair_charts_concurrently(
+            pending,
+            client=client,
+            timeframes=timeframes,
+            count=count,
+            workers=min(max(1, workers), len(pending)),
+            builder=builder,
+        )
+        touched_pairs: set[str] = set()
+        for failure in transport_failures:
+            pair = str(failure.get("pair") or "UNKNOWN").strip().upper()
+            error = str(failure.get("error") or "PAIR_CHART_FETCH_FAILED").strip()
+            bounded_error = error[:512] or "PAIR_CHART_FETCH_FAILED"
+            diagnostics.append(
+                {"attempt": attempt, "pair": pair, "error": bounded_error}
+            )
+            if pair in pending:
+                touched_pairs.add(pair)
+                last_errors[pair] = bounded_error
+
+        frozen_results: list[dict[str, Any]] = []
+        for chart in chart_results:
+            try:
+                frozen_results.append(_freeze_pair_chart_payload(chart))
+            except Exception as exc:
+                diagnostics.append(
+                    {
+                        "attempt": attempt,
+                        "pair": "UNKNOWN",
+                        "error": f"PAIR_CHART_PAYLOAD_FREEZE_FAILED:{exc}"[:512],
+                    }
+                )
+
+        returned_pairs = [
+            str(payload.get("pair") or "").strip().upper()
+            for payload in frozen_results
+        ]
+        duplicate_returns = {
+            pair
+            for pair in returned_pairs
+            if pair and returned_pairs.count(pair) > 1
+        }
+        for payload, pair in zip(frozen_results, returned_pairs, strict=True):
+            if not pair or pair not in pending:
+                diagnostics.append(
+                    {
+                        "attempt": attempt,
+                        "pair": pair or "UNKNOWN",
+                        "error": "PAIR_CHART_RETURNED_UNEXPECTED_PAIR",
+                    }
+                )
+                continue
+            touched_pairs.add(pair)
+            if pair in duplicate_returns:
+                error = "PAIR_CHART_RETURNED_DUPLICATE_PAIR"
+            else:
+                error = _pair_chart_coverage_error(
+                    payload,
+                    expected_pair=pair,
+                    timeframes=timeframes,
+                    count=count,
+                    acquisition_started_at_utc=acquisition_started_at,
+                    acquisition_ceilings_utc=ceilings,
+                )
+            if error is None:
+                accepted[pair] = payload
+                last_errors.pop(pair, None)
+            else:
+                last_errors[pair] = error
+                diagnostics.append(
+                    {"attempt": attempt, "pair": pair, "error": error}
+                )
+
+        for pair in pending:
+            if pair in accepted or pair in touched_pairs:
+                continue
+            error = "PAIR_CHART_NO_PAYLOAD_RETURNED"
+            last_errors[pair] = error
+            diagnostics.append(
+                {"attempt": attempt, "pair": pair, "error": error}
+            )
+
+    unresolved = [pair for pair in requested_pairs if pair not in accepted]
+    failures = [
+        {
+            "pair": pair,
+            "error": last_errors.get(pair, "PAIR_CHART_COMPLETE_ACQUISITION_FAILED"),
+            "attempts": attempts_by_pair[pair],
+        }
+        for pair in unresolved
+    ]
+    metadata["acquisition_retried_pairs"] = sorted(
+        pair for pair, attempts in attempts_by_pair.items() if attempts > 1
+    )
+    metadata["acquisition_retry_diagnostics"] = diagnostics
+    return [accepted[pair] for pair in requested_pairs if pair in accepted], failures, metadata
+
+
 def _run_with_cycle_step_timeout(timeout_seconds: float | None, fn: Callable[[], Any]) -> int:
     if timeout_seconds is None:
         return int(fn() or 0)
@@ -2194,7 +2525,7 @@ def _refresh_pair_charts_and_matrix(
     from quant_rabbit.analysis.score_momentum import attach_score_momentum
 
     chart_workers = _pair_chart_worker_count(None, len(pairs))
-    chart_results, chart_failures = _build_pair_charts_concurrently(
+    charts, chart_failures, acquisition = _build_complete_pair_charts_with_retries(
         pairs,
         client=client,
         timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES,
@@ -2202,7 +2533,6 @@ def _refresh_pair_charts_and_matrix(
         workers=chart_workers,
         builder=build_pair_chart,
     )
-    charts = [chart.to_dict() for chart in chart_results]
     result_pairs = [str(chart.get("pair") or "").strip().upper() for chart in charts]
     requested_pair_set = set(pairs)
     result_pair_set = set(result_pairs)
@@ -2211,7 +2541,7 @@ def _refresh_pair_charts_and_matrix(
     duplicate_pairs = sorted({pair for pair in result_pairs if result_pairs.count(pair) > 1})
     if (
         chart_failures
-        or len(chart_results) != len(pairs)
+        or len(charts) != len(pairs)
         or len(requested_pair_set) != len(pairs)
         or missing_pairs
         or unexpected_pairs
@@ -2222,7 +2552,7 @@ def _refresh_pair_charts_and_matrix(
         )
         raise RuntimeError(
             "intent-boundary market evidence refresh requires complete pair-chart coverage; "
-            f"received={len(chart_results)}/{len(pairs)} failed={failed_pairs or 'NONE'} "
+            f"received={len(charts)}/{len(pairs)} failed={failed_pairs or 'NONE'} "
             f"missing={','.join(missing_pairs) or 'NONE'} "
             f"unexpected={','.join(unexpected_pairs) or 'NONE'} "
             f"duplicates={','.join(duplicate_pairs) or 'NONE'}"
@@ -2260,6 +2590,7 @@ def _refresh_pair_charts_and_matrix(
         "partial": False,
         "failures": [],
         "charts": charts,
+        **acquisition,
     }
     if cycle_id:
         pair_payload["cycle_id"] = cycle_id
@@ -7088,15 +7419,29 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         workers = _pair_chart_worker_count(args.workers, len(pairs))
-        charts, failures = _build_pair_charts_concurrently(
-            pairs,
-            client=client,
-            timeframes=timeframes,
-            count=args.count,
-            workers=workers,
-            builder=build_pair_chart,
-        )
-        if not charts:
+        acquisition: dict[str, Any] = {}
+        if args.require_complete:
+            chart_payloads, failures, acquisition = (
+                _build_complete_pair_charts_with_retries(
+                    pairs,
+                    client=client,
+                    timeframes=timeframes,
+                    count=args.count,
+                    workers=workers,
+                    builder=build_pair_chart,
+                )
+            )
+        else:
+            charts, failures = _build_pair_charts_concurrently(
+                pairs,
+                client=client,
+                timeframes=timeframes,
+                count=args.count,
+                workers=workers,
+                builder=build_pair_chart,
+            )
+            chart_payloads = [chart.to_dict() for chart in charts]
+        if not args.require_complete and not chart_payloads:
             print(
                 json.dumps(
                     {
@@ -7112,7 +7457,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        chart_payloads = [chart.to_dict() for chart in charts]
         returned_pairs = [str(chart.get("pair") or "").strip().upper() for chart in chart_payloads]
         requested_pair_set = set(pairs)
         returned_pair_set = set(returned_pairs)
@@ -7140,6 +7484,7 @@ def main(argv: list[str] | None = None) -> int:
                         "duplicate_pairs": duplicate_pairs,
                         "workers": workers,
                         "failures": failures,
+                        **acquisition,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -7178,6 +7523,7 @@ def main(argv: list[str] | None = None) -> int:
             "partial": bool(failures),
             "failures": failures,
             "charts": chart_payloads,
+            **acquisition,
         }
         if cycle_id:
             output_payload["cycle_id"] = cycle_id
@@ -7197,6 +7543,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"- Candles per timeframe: `{args.count}`",
                 f"- Pairs requested/succeeded/failed: `{len(pairs)}/{len(chart_payloads)}/{len(failures)}`",
                 f"- Workers: `{workers}`",
+                *(
+                    [
+                        "- Complete-acquisition attempts: "
+                        f"`{acquisition.get('acquisition_attempts')}`",
+                        "- Retried pairs: "
+                        f"`{','.join(acquisition.get('acquisition_retried_pairs') or []) or 'NONE'}`",
+                    ]
+                    if acquisition
+                    else []
+                ),
                 "",
                 "## Pair Score Table",
                 "",
@@ -7245,12 +7601,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "output_path": str(args.output) if args.output else None,
             "report_path": str(args.report) if args.report else None,
-            "pairs": len(charts),
+            "pairs": len(chart_payloads),
             "pairs_requested": len(pairs),
             "pairs_failed": len(failures),
             "workers": workers,
             "partial": bool(failures),
             "failures": failures[:8],
+            "acquisition_attempts": acquisition.get("acquisition_attempts"),
+            "acquisition_retried_pairs": acquisition.get(
+                "acquisition_retried_pairs"
+            ),
             "top": [
                 {"pair": c["pair"], "side": "LONG" if c["long_score"] >= c["short_score"] else "SHORT",
                  "long": round(c["long_score"], 3), "short": round(c["short_score"], 3), "regime": c["dominant_regime"],

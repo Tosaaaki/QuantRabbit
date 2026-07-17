@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,8 +12,11 @@ from quant_rabbit.fast_bot_technical_grid_backtest import (
     PLANNED_CANDIDATE_COUNT,
     CausalTimeframeFeature,
     assign_fixed_split_roles_v1,
+    build_fast_bot_technical_grid_historical_policy_v1,
+    build_verified_fast_bot_technical_grid_metrics_v1,
     build_causal_technical_feature_snapshot_v1,
     build_fast_bot_technical_grid_catalog_v1,
+    compile_fast_bot_technical_grid_base_vehicle_v1,
     deoverlap_same_pair_signal_specs_v1,
     freeze_fast_bot_technical_grid_signal_v1,
     resolve_executable_bidask_time_close_v1,
@@ -121,7 +125,7 @@ def _metric(
     return {
         "candidate_id": candidate_id,
         "data_role": role,
-        "cluster_count": 10,
+        "cluster_count": 30,
         "mean_daily_post_cost_pips": daily,
         "standard_error_daily_post_cost_pips": standard_error,
         "mean_post_cost_pips": daily / 10.0,
@@ -300,6 +304,144 @@ def test_intrabar_fill_candle_never_uses_prefill_open_as_profit_or_stop_gap() ->
     assert outcome["ambiguous_same_s5"] is True
     assert outcome["stop_gap_worse"] is False
     assert outcome["post_cost_realized_pips"] < 0.0
+
+
+@pytest.mark.parametrize(
+    ("side", "entry", "target", "stop", "candle"),
+    [
+        (
+            "LONG",
+            1.1002,
+            1.1005,
+            1.0990,
+            _candle(
+                0,
+                bid_o=1.1000,
+                bid_h=1.1006,
+                bid_l=1.0999,
+                bid_c=1.1004,
+            ),
+        ),
+        (
+            "SHORT",
+            1.1000,
+            1.0995,
+            1.1010,
+            _candle(
+                0,
+                bid_o=1.1002,
+                bid_h=1.1003,
+                bid_l=1.0993,
+                bid_c=1.0996,
+            ),
+        ),
+    ],
+)
+def test_intrabar_stop_entry_target_only_is_causally_take_profit(
+    side: str,
+    entry: float,
+    target: float,
+    stop: float,
+    candle: S5BidAskCandle,
+) -> None:
+    signal = _signal(
+        source_side=side,
+        side=side,
+        order_type="STOP",
+        entry=entry,
+        target=target,
+        stop=stop,
+    )
+
+    outcome = resolve_executable_bidask_time_close_v1(
+        signal, [candle], truth_source_receipt_sha256=TRUTH_SHA
+    )
+
+    assert outcome["fill_kind"] == "INTRABAR_TRIGGER"
+    assert outcome["exit_reason"] == "TAKE_PROFIT_FILL_S5_AFTER_STOP_ENTRY"
+    assert outcome["post_cost_realized_pips"] > 0.0
+    assert outcome["ambiguous_same_s5"] is False
+
+
+@pytest.mark.parametrize(
+    ("side", "entry", "target", "stop", "candle"),
+    [
+        (
+            "LONG",
+            1.1002,
+            1.1005,
+            1.0990,
+            _candle(
+                0,
+                bid_o=1.1004,
+                bid_h=1.1006,
+                bid_l=1.1000,
+                bid_c=1.1003,
+            ),
+        ),
+        (
+            "SHORT",
+            1.1000,
+            1.0995,
+            1.1010,
+            _candle(
+                0,
+                bid_o=1.0998,
+                bid_h=1.1002,
+                bid_l=1.0993,
+                bid_c=1.0997,
+            ),
+        ),
+    ],
+)
+def test_intrabar_limit_entry_target_only_is_charged_the_full_stop_loss(
+    side: str,
+    entry: float,
+    target: float,
+    stop: float,
+    candle: S5BidAskCandle,
+) -> None:
+    signal = _signal(
+        source_side=side,
+        side=side,
+        order_type="LIMIT",
+        entry=entry,
+        target=target,
+        stop=stop,
+    )
+
+    outcome = resolve_executable_bidask_time_close_v1(
+        signal, [candle], truth_source_receipt_sha256=TRUTH_SHA
+    )
+
+    # The favorable extreme may precede the intrabar LIMIT fill, but the
+    # contract charges every ambiguous fill-candle exit the full SL rather
+    # than deleting the filled trade from the cohort as unresolvable.
+    assert outcome["fill_kind"] == "INTRABAR_TRIGGER"
+    assert outcome["status"] == "MATURE_FILLED_STOP_LOSS"
+    assert outcome["exit_reason"] == "STOP_LOSS_AMBIGUOUS_FILL_S5"
+    assert outcome["scorecard_result_available"] is True
+    assert outcome["post_cost_realized_pips"] < 0.0
+    assert outcome["ambiguous_same_s5"] is True
+
+
+def test_open_fill_target_only_is_take_profit_not_stop() -> None:
+    signal = _signal(entry=1.1002, target=1.1005, stop=1.0990)
+    candle = _candle(
+        0,
+        bid_o=1.1003,
+        bid_h=1.1006,
+        bid_l=1.1002,
+        bid_c=1.1005,
+    )
+
+    outcome = resolve_executable_bidask_time_close_v1(
+        signal, [candle], truth_source_receipt_sha256=TRUTH_SHA
+    )
+
+    assert outcome["fill_kind"] == "OPEN_TRIGGER"
+    assert outcome["exit_reason"] == "TAKE_PROFIT_FILL_S5_AFTER_OPEN_FILL"
+    assert outcome["post_cost_realized_pips"] > 0.0
 
 
 def test_later_same_s5_target_and_stop_is_stop_first() -> None:
@@ -585,6 +727,32 @@ def test_split_purges_cross_boundary_maturity_and_never_opens_holdout() -> None:
     assert receipt["selection_allowed_roles"] == ["TRAIN", "VALIDATION"]
 
 
+def test_split_purges_maturity_exactly_on_exclusive_truth_boundary() -> None:
+    train_end = datetime(2026, 1, 2, tzinfo=UTC)
+    validation_end = datetime(2026, 1, 3, tzinfo=UTC)
+    holdout_end = datetime(2026, 1, 4, tzinfo=UTC)
+    train_equal = _signal(
+        activation=train_end - timedelta(seconds=270),
+        source_sha="7" * 64,
+    )
+    validation_equal = _signal(
+        activation=validation_end - timedelta(seconds=270),
+        source_sha="8" * 64,
+    )
+
+    receipt = assign_fixed_split_roles_v1(
+        [train_equal, validation_equal],
+        train_end_utc=train_end,
+        validation_end_utc=validation_end,
+        holdout_end_utc=holdout_end,
+    )
+
+    assert [row["role"] for row in receipt["assignments"]] == [
+        "PURGED_TRAIN_VALIDATION",
+        "PURGED_VALIDATION_HOLDOUT",
+    ]
+
+
 def test_selection_keeps_182_denominator_and_chooses_simplest_within_one_se() -> None:
     metrics = [
         _metric("H01:DIRECT:BASE", "TRAIN", daily=1.0),
@@ -603,9 +771,11 @@ def test_selection_keeps_182_denominator_and_chooses_simplest_within_one_se() ->
             "hypothesis_id": "H01",
             "candidate_id": "H01:DIRECT:BASE",
             "best_candidate_id": "H01:DIRECT:TP050",
-            "best_mean_daily_post_cost_pips": 1.1,
+            "selection_data_role": "TRAIN",
+            "validation_role": "UNCHANGED_CONFIRMATION_GATE_ONLY",
+            "best_mean_daily_post_cost_pips": 1.2,
             "best_standard_error_daily_post_cost_pips": 0.2,
-            "one_se_floor": 0.9,
+            "one_se_floor": 1.0,
             "selected_by_simplicity_within_one_se": True,
         }
     ]
@@ -655,3 +825,464 @@ def test_selection_does_not_round_holm_value_into_false_alpha_pass() -> None:
     assert candidate["holm_adjusted_p_value"] > 0.05
     assert candidate["validation_gate_passed"] is False
     assert receipt["selected_family_count"] == 0
+
+
+def test_selection_alpha_is_immutable_exact_point_zero_five() -> None:
+    with pytest.raises(ValueError, match="exactly 0.05"):
+        select_validation_one_se_v1([], alpha=0.049)
+
+
+def test_validation_cannot_replace_the_candidate_frozen_on_train() -> None:
+    receipt = select_validation_one_se_v1(
+        [
+            _metric("H01:DIRECT:BASE", "TRAIN", daily=1.2),
+            _metric("H01:DIRECT:BASE", "VALIDATION", daily=1.2, p_value=1.0),
+            _metric("H01:DIRECT:TP050", "TRAIN", daily=1.0),
+            _metric("H01:DIRECT:TP050", "VALIDATION", daily=1.0),
+        ]
+    )
+
+    assert receipt["selected"] == []
+    assert receipt["provisional_validation_candidate_ids"] == []
+    passing_alternative = next(
+        row
+        for row in receipt["candidate_economics"]
+        if row["candidate_id"] == "H01:DIRECT:TP050"
+    )
+    assert passing_alternative["validation_gate_passed"] is True
+
+
+def test_self_sealed_metric_receipt_cannot_grant_economic_selection() -> None:
+    catalog = build_fast_bot_technical_grid_catalog_v1()
+    metrics = []
+    for candidate in catalog["candidates"]:
+        candidate_id = candidate["candidate_id"]
+        daily = 1.0 if candidate_id == "H01:DIRECT:BASE" else -1.0
+        metrics.extend(
+            [
+                _metric(candidate_id, "TRAIN", daily=daily),
+                _metric(candidate_id, "VALIDATION", daily=daily),
+            ]
+        )
+    forged = grid_module._seal(
+        {
+            "contract": grid_module.ECONOMIC_METRIC_RECEIPT_CONTRACT_V1,
+            "selection_metrics": metrics,
+        }
+    )
+
+    receipt = grid_module.select_verified_validation_one_se_v1(forged)
+
+    assert receipt["selection_status"] == (
+        "BLOCKED_COMPLETE_CAUSAL_SIGNAL_UNIVERSE_NOT_PROVED"
+    )
+    assert receipt["economic_conclusion_allowed"] is False
+    assert receipt["metric_provenance_binding_verified"] is False
+    assert receipt["metric_outcome_reexecution_verified"] is False
+    assert receipt["backtest_complete"] is False
+    assert receipt["cohort_evaluation_complete"] is False
+    assert receipt["selected"] == []
+    assert receipt["historical_survivor_candidate_ids"] == []
+    assert receipt["observed_cohort_pattern_candidate_ids"] == ["H01:DIRECT:BASE"]
+    assert all(row["eligible"] is False for row in receipt["candidate_economics"])
+
+
+def _fake_compiler_sources(
+    *, hypothesis_id: str = "H03"
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    pair = "EUR_USD"
+    feature_rows = [
+        {
+            "timeframe": timeframe,
+            "complete_candle_close_utc": DECISION.isoformat(),
+        }
+        for timeframe in ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+    ]
+    feature = {
+        "pair": pair,
+        "contract_sha256": "1" * 64,
+        "timeframes": feature_rows,
+    }
+    arm = {
+        "arm_id": "BASE",
+        "entry_ttl_seconds": 90,
+        "max_hold_seconds": 900,
+        "entry": 1.1000,
+        "take_profit": 1.1010,
+        "stop_loss": 1.0990,
+    }
+    candidate_body = {
+        "candidate_id": "seat-candidate",
+        "side": "LONG",
+        "method": "RANGE_ROTATION",
+        "arms": [arm],
+    }
+    candidate = {
+        **candidate_body,
+        "candidate_sha256": grid_module._canonical_sha(candidate_body),
+    }
+    seat = {
+        "pair": pair,
+        "seat_id": "seat-id",
+        "contract_sha256": "2" * 64,
+        "m1_closed_candle_utc": DECISION.isoformat(),
+        "candidates": [candidate],
+    }
+    binding = {
+        "binding_type": "EXACT_FROZEN_LEARNING_SEAT_BASE_ARM_REFERENCE",
+        "learning_seat_contract_sha256": seat["contract_sha256"],
+        "learning_seat_id": seat["seat_id"],
+        "candidate_id": candidate["candidate_id"],
+        "candidate_sha256": candidate["candidate_sha256"],
+        "side": "LONG",
+        "method": "RANGE_ROTATION",
+        "arm_id": "BASE",
+        "arm_sha256": grid_module._canonical_sha(arm),
+        "numeric_geometry_embedded": False,
+        "source_resolution_required": True,
+    }
+    vehicle = {
+        "hypothesis_id": hypothesis_id,
+        "predicted_side": "LONG",
+        "proxy_binding": binding,
+        "execution": None,
+        "scoring_vehicle_available": True,
+        "vehicle_sha256": "3" * 64,
+    }
+    vehicle_shadow = {
+        "pair": pair,
+        "activation_at_utc": DECISION.isoformat(),
+        "scorecard_eligible": True,
+        "contract_sha256": "4" * 64,
+        "vehicles": [vehicle],
+    }
+    sources = {
+        "technical_feature_snapshot": feature,
+        "technical_hypothesis_shadow": {"contract_sha256": "5" * 64},
+        "episode_anchor": {"anchor": True},
+        "episode_route": {"route": True},
+        "learning_seat": seat,
+        "confirmed_at_utc": DECISION.isoformat(),
+        "technical_vehicle_shadow_v2": vehicle_shadow,
+    }
+    return sources, vehicle_shadow
+
+
+def test_compiler_requires_canonical_proxy_and_never_economizes_inverse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, vehicle_shadow = _fake_compiler_sources()
+    monkeypatch.setattr(
+        grid_module,
+        "build_fast_bot_technical_hypothesis_vehicles_v2",
+        lambda **_kwargs: vehicle_shadow,
+    )
+    monkeypatch.setattr(
+        grid_module,
+        "technical_hypothesis_vehicle_shadow_v2_valid",
+        lambda *_args, **_kwargs: True,
+    )
+
+    direct = compile_fast_bot_technical_grid_base_vehicle_v1(
+        hypothesis_id="H03", orientation="DIRECT", **sources
+    )
+    inverse = compile_fast_bot_technical_grid_base_vehicle_v1(
+        hypothesis_id="H03", orientation="INVERSE", **sources
+    )
+
+    assert direct["economic_backtest_eligible"] is True
+    assert direct["geometry_source"] == "CANONICAL_V2_EXACT_LEARNING_SEAT_BASE_ARM"
+    assert direct["geometry"]["order_type"] == "LIMIT"
+    assert inverse["economic_backtest_eligible"] is False
+    assert inverse["geometry"] is None
+    assert (
+        "INVERSE_HAS_NO_CANONICAL_ACTUAL_SIDE_V2_GEOMETRY"
+        in inverse["economic_ineligibility_reasons"]
+    )
+
+    broken = deepcopy(vehicle_shadow)
+    broken["vehicles"][0]["proxy_binding"] = None
+    monkeypatch.setattr(
+        grid_module,
+        "build_fast_bot_technical_hypothesis_vehicles_v2",
+        lambda **_kwargs: broken,
+    )
+    with pytest.raises(ValueError, match="canonical V2 proxy"):
+        compile_fast_bot_technical_grid_base_vehicle_v1(
+            hypothesis_id="H03",
+            orientation="DIRECT",
+            **{**sources, "technical_vehicle_shadow_v2": broken},
+        )
+
+
+def test_compiler_rejects_stale_higher_timeframe_and_non_s5_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources, vehicle_shadow = _fake_compiler_sources()
+    monkeypatch.setattr(
+        grid_module,
+        "build_fast_bot_technical_hypothesis_vehicles_v2",
+        lambda **_kwargs: vehicle_shadow,
+    )
+    monkeypatch.setattr(
+        grid_module,
+        "technical_hypothesis_vehicle_shadow_v2_valid",
+        lambda *_args, **_kwargs: True,
+    )
+    stale_sources = deepcopy(sources)
+    h1_row = next(
+        row
+        for row in stale_sources["technical_feature_snapshot"]["timeframes"]
+        if row["timeframe"] == "H1"
+    )
+    h1_row["complete_candle_close_utc"] = (DECISION - timedelta(hours=3)).isoformat()
+    with pytest.raises(ValueError, match="stale or future-dated: H1"):
+        compile_fast_bot_technical_grid_base_vehicle_v1(
+            hypothesis_id="H03", orientation="DIRECT", **stale_sources
+        )
+
+    non_grid_shadow = deepcopy(vehicle_shadow)
+    non_grid_shadow["activation_at_utc"] = (DECISION + timedelta(seconds=1)).isoformat()
+    monkeypatch.setattr(
+        grid_module,
+        "build_fast_bot_technical_hypothesis_vehicles_v2",
+        lambda **_kwargs: non_grid_shadow,
+    )
+    with pytest.raises(ValueError, match="exact S5 grid"):
+        compile_fast_bot_technical_grid_base_vehicle_v1(
+            hypothesis_id="H03",
+            orientation="DIRECT",
+            **{**sources, "technical_vehicle_shadow_v2": non_grid_shadow},
+        )
+
+
+def _economic_signal_with_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    compiler = grid_module._seal(
+        {
+            "contract": grid_module.BASE_VEHICLE_COMPILER_CONTRACT_V1,
+            "pair": "EUR_USD",
+            "hypothesis_id": "H01",
+            "orientation": "DIRECT",
+            "source_predicted_side": "LONG",
+            "side": "LONG",
+            "activation_at_utc": DECISION.isoformat(),
+            "causal_source_sha256": SOURCE_SHA,
+            "geometry": {
+                "order_type": "STOP",
+                "entry_price": 1.1002,
+                "base_take_profit_price": 1.1020,
+                "base_stop_loss_price": 1.0980,
+            },
+            "economic_backtest_eligible": True,
+        }
+    )
+    monkeypatch.setattr(
+        grid_module, "_compile_from_input_bundle", lambda _value: compiler
+    )
+    diagnostic = freeze_fast_bot_technical_grid_signal_v1(
+        pair="EUR_USD",
+        hypothesis_id="H01",
+        orientation="DIRECT",
+        source_predicted_side="LONG",
+        side="LONG",
+        arm_id="HOLD180",
+        order_type="STOP",
+        activation_at_utc=DECISION,
+        entry_price=1.1002,
+        base_take_profit_price=1.1020,
+        base_stop_loss_price=1.0980,
+        causal_source_sha256=SOURCE_SHA,
+        compiler_receipt=compiler,
+    )
+    assert diagnostic["economic_backtest_eligible"] is False
+    assert diagnostic["strategy_evaluator_binding_verified"] is False
+    signal = freeze_fast_bot_technical_grid_signal_v1(
+        pair="EUR_USD",
+        hypothesis_id="H01",
+        orientation="DIRECT",
+        source_predicted_side="LONG",
+        side="LONG",
+        arm_id="HOLD180",
+        order_type="STOP",
+        activation_at_utc=DECISION,
+        entry_price=1.1002,
+        base_take_profit_price=1.1020,
+        base_stop_loss_price=1.0980,
+        causal_source_sha256=SOURCE_SHA,
+        compiler_receipt=compiler,
+        compiler_inputs={"deep": "patched"},
+    )
+    return signal, compiler
+
+
+def _resealed_signal_variant(
+    signal: dict[str, Any], mutations: dict[str, Any]
+) -> dict[str, Any]:
+    body = {
+        key: item
+        for key, item in {**signal, **mutations}.items()
+        if key not in {"signal_id", "signal_sha256"}
+    }
+    body["signal_id"] = grid_module._canonical_sha(
+        grid_module._signal_identity_payload(body)
+    )[:24]
+    return {**body, "signal_sha256": grid_module._canonical_sha(body)}
+
+
+def test_resealed_hindsight_geometry_or_pair_cannot_reuse_a_real_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signal, _compiler = _economic_signal_with_compiler(monkeypatch)
+
+    # Internally consistent hindsight geometry: every price shifts together,
+    # so clocks/geometry stay valid and only the receipt binding can refuse.
+    shift = -0.0010
+    forged_geometry = _resealed_signal_variant(
+        signal,
+        {
+            "entry_price": signal["entry_price"] + shift,
+            "base_take_profit_price": signal["base_take_profit_price"] + shift,
+            "base_stop_loss_price": signal["base_stop_loss_price"] + shift,
+            "take_profit_price": signal["take_profit_price"] + shift,
+            "stop_loss_price": signal["stop_loss_price"] + shift,
+        },
+    )
+    with pytest.raises(ValueError, match="match its compiler receipt"):
+        grid_module._validate_frozen_signal(forged_geometry)
+
+    forged_pair = _resealed_signal_variant(signal, {"pair": "GBP_USD"})
+    with pytest.raises(ValueError, match="match its compiler receipt"):
+        grid_module._validate_frozen_signal(forged_pair)
+
+
+def test_verified_metric_reexec_rejects_correctly_resealed_fake_pnl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signal, compiler = _economic_signal_with_compiler(monkeypatch)
+    slice_body = {"contract": "TEST_SLICE", "pair": "EUR_USD"}
+    slice_receipt = {
+        **slice_body,
+        "slice_sha256": grid_module._canonical_sha(slice_body),
+    }
+    slice_sha = slice_receipt["slice_sha256"]
+    candles = (
+        _candle(0, bid_o=1.1000, bid_h=1.1003, bid_l=1.0999),
+        _candle(180, bid_o=1.1004, bid_h=1.1005, bid_l=1.1003),
+    )
+    train_boundary = DECISION + timedelta(days=1)
+    outcome = resolve_executable_bidask_time_close_v1(
+        signal,
+        candles,
+        truth_source_receipt_sha256=slice_sha,
+        truth_provenance_end_utc=train_boundary,
+    )
+    manifest = {
+        "source_root": "/does/not/matter/in/patched-test",
+        "expected_pairs": list(grid_module.DEFAULT_TRADER_PAIRS),
+        "complete_pair_coverage": True,
+        "all_selected_sources_acquisition_receipted": True,
+        "manifest_sha256": "d" * 64,
+    }
+    source_slice = SimpleNamespace(
+        acquisition_receipt_proved=True,
+        requested_from_utc=DECISION,
+        requested_to_utc=DECISION + timedelta(seconds=300),
+        aligned_from_utc=DECISION,
+        aligned_to_utc=DECISION + timedelta(seconds=300),
+        pair="EUR_USD",
+        source_manifest_sha256=manifest["manifest_sha256"],
+        source_file_sha256="e" * 64,
+        candles=candles,
+        receipt=lambda: slice_receipt,
+    )
+    monkeypatch.setattr(
+        grid_module, "build_historical_s5_manifest", lambda *_args, **_kwargs: manifest
+    )
+    monkeypatch.setattr(
+        grid_module,
+        "load_historical_s5_slices",
+        lambda *_args, **_kwargs: (source_slice,),
+    )
+    monkeypatch.setattr(
+        grid_module, "_compile_from_input_bundle", lambda _value: compiler
+    )
+    observation = {
+        "signal": signal,
+        "outcome": outcome,
+        "compiler_inputs": {"deep": "patched"},
+        "data_role": "TRAIN",
+        "truth_requested_to_utc": (DECISION + timedelta(seconds=300)).isoformat(),
+    }
+    split = assign_fixed_split_roles_v1(
+        [signal],
+        train_end_utc=train_boundary,
+        validation_end_utc=DECISION + timedelta(days=2),
+        holdout_end_utc=DECISION + timedelta(days=3),
+    )
+
+    receipt = build_verified_fast_bot_technical_grid_metrics_v1(
+        observations=[observation],
+        historical_manifest=manifest,
+        split_receipt=split,
+    )
+    assert receipt["outcome_resolver_reexecution_verified"] is True
+    assert receipt["metric_row_count"] == 364
+
+    with pytest.raises(ValueError, match="fixed split"):
+        build_verified_fast_bot_technical_grid_metrics_v1(
+            observations=[{**observation, "data_role": "VALIDATION"}],
+            historical_manifest=manifest,
+            split_receipt=split,
+        )
+
+    fake = deepcopy(outcome)
+    fake["post_cost_realized_pips"] = 999.0
+    fake = grid_module._seal(
+        {key: value for key, value in fake.items() if key != "contract_sha256"}
+    )
+    with pytest.raises(ValueError, match="resolver re-execution"):
+        build_verified_fast_bot_technical_grid_metrics_v1(
+            observations=[{**observation, "outcome": fake}],
+            historical_manifest=manifest,
+            split_receipt=split,
+        )
+
+
+def test_historical_policy_keeps_every_current_pair_on_h08_no_trade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric = {"contract": "VERIFIED_METRIC", "contract_sha256": "e" * 64}
+    selection = {
+        "contract": "VERIFIED_SELECTION",
+        "observed_cohort_pattern_candidate_ids": ["H03:DIRECT:BASE"],
+        "historical_survivor_candidate_ids": [],
+        "contract_sha256": "f" * 64,
+    }
+    monkeypatch.setattr(
+        grid_module,
+        "build_verified_fast_bot_technical_grid_metrics_v1",
+        lambda **_kwargs: metric,
+    )
+    monkeypatch.setattr(
+        grid_module,
+        "select_verified_validation_one_se_v1",
+        lambda _metric: selection,
+    )
+
+    policy = build_fast_bot_technical_grid_historical_policy_v1(
+        observations=[],
+        historical_manifest={},
+        split_receipt={},
+        metric_receipt=metric,
+        selection_receipt=selection,
+    )
+
+    assert policy["current_route_count"] == 28
+    assert policy["current_go_count"] == 0
+    assert policy["all_current_routes_h08_no_trade"] is True
+    assert {row["current_hypothesis_id"] for row in policy["current_routes"]} == {"H08"}
+    assert {row["current_action"] for row in policy["current_routes"]} == {"NO_TRADE"}
+    assert policy["future_evidence_candidate_ids"] == ["H03:DIRECT:BASE"]
+    assert policy["historical_survivor_candidate_ids"] == []

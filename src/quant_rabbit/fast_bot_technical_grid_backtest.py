@@ -10,11 +10,13 @@ runtime strategy state, or grants promotion/live authority.
 The existing technical-hypothesis V1 and vehicle V2 contracts are immutable.
 The contracts here are a separate research layer; in particular, executable
 time-close is not a reinterpretation of V2's conservative full-stop-at-hold
-evidence policy.  This module is not a strategy evaluator: its source SHA and
-aggregate metric rows are caller assertions, so its receipts are structural
-dry-run evidence and cannot establish profitability until an upstream causal
-hypothesis/vehicle receipt and metric provenance contract are bound and
-validated.
+evidence policy.  The legacy caller-geometry and caller-metric entry points
+remain structural dry-run evidence.  A separate economic path is admitted only
+when the canonical V2 vehicle rebuilds from its full causal inputs, the exact
+historical manifest/summary/acquisition/file bytes revalidate, every requested
+slice covers its frozen interval, and the outcome resolver reproduces the
+sealed row byte-for-byte.  Even that path is historical diagnostic evidence,
+never forward proof or current routing authority.
 """
 
 from __future__ import annotations
@@ -23,11 +25,18 @@ import hashlib
 import json
 import math
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from quant_rabbit.fast_bot_historical_s5 import (
+    HistoricalS5SliceRequest,
+    build_historical_s5_manifest,
+    load_historical_s5_slices,
+)
 from quant_rabbit.fast_bot_technical_hypotheses import (
     ENUM_INDICATOR_FEATURES,
     FEATURE_SNAPSHOT_CONTRACT,
@@ -40,6 +49,10 @@ from quant_rabbit.fast_bot_technical_hypotheses import (
     TIMEFRAMES,
     technical_hypothesis_catalog,
 )
+from quant_rabbit.fast_bot_technical_hypothesis_vehicles import (
+    build_fast_bot_technical_hypothesis_vehicles_v2,
+    technical_hypothesis_vehicle_shadow_v2_valid,
+)
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 
@@ -50,11 +63,20 @@ GRID_SIGNAL_CONTRACT_V1 = "QR_FAST_BOT_TECHNICAL_GRID_SIGNAL_V1"
 TIME_CLOSE_OUTCOME_CONTRACT_V1 = "QR_FAST_BOT_TECHNICAL_GRID_TIME_CLOSE_OUTCOME_V1"
 SPLIT_RECEIPT_CONTRACT_V1 = "QR_FAST_BOT_TECHNICAL_GRID_SPLIT_RECEIPT_V1"
 SELECTION_RECEIPT_CONTRACT_V1 = "QR_FAST_BOT_TECHNICAL_GRID_SELECTION_RECEIPT_V1"
+BASE_VEHICLE_COMPILER_CONTRACT_V1 = (
+    "QR_FAST_BOT_TECHNICAL_GRID_BASE_VEHICLE_COMPILER_V1"
+)
+ECONOMIC_METRIC_RECEIPT_CONTRACT_V1 = (
+    "QR_FAST_BOT_TECHNICAL_GRID_ECONOMIC_METRIC_RECEIPT_V1"
+)
+HISTORICAL_POLICY_CONTRACT_V1 = "QR_FAST_BOT_TECHNICAL_GRID_HISTORICAL_POLICY_V1"
 
 GRID_POLICY_V1 = "H01_H07_DIRECT_INVERSE_13_OFAT_V1"
-TIME_CLOSE_POLICY_V1 = "EXACT_S5_BID_ASK_EXECUTABLE_TIME_CLOSE_SL_FIRST_V1"
+TIME_CLOSE_POLICY_V2 = (
+    "EXACT_S5_BID_ASK_EXECUTABLE_TIME_CLOSE_CAUSAL_TP_PROOF_ELSE_SL_FIRST_V2"
+)
 SELECTION_POLICY_V1 = (
-    "TRAIN_POSITIVE_ECONOMICS_VALIDATION_HOLM_ONE_SE_SIMPLEST_PER_FAMILY_V1"
+    "TRAIN_ONE_SE_SIMPLEST_THEN_UNCHANGED_VALIDATION_HOLM_PER_FAMILY_V1"
 )
 SPLIT_POLICY_V1 = "EMISSION_CLOCK_WITH_LATEST_MATURITY_PURGE_AND_UNOPENED_HOLDOUT_V1"
 
@@ -67,7 +89,16 @@ PLANNED_CANDIDATE_COUNT = (
     PLANNED_DIRECTIONAL_FAMILIES * len(ORIENTATIONS) * PLANNED_ARM_COUNT
 )
 SELECTION_ALPHA = 0.05
-MIN_SELECTION_CLUSTERS = 2
+MIN_SELECTION_CLUSTERS = 30
+CANONICAL_TIMEFRAME_MAX_AGE_SECONDS = {
+    "M1": 180,
+    "M5": 600,
+    "M15": 1_800,
+    "M30": 3_600,
+    "H1": 7_200,
+    "H4": 28_800,
+    "D": 172_800,
+}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
 _SIGNAL_IDENTITY_KEYS = (
@@ -98,6 +129,9 @@ _SIGNAL_IDENTITY_KEYS = (
     "hold_policy",
     "missing_s5_policy",
     "causal_source_sha256",
+    "base_vehicle_compiler_sha256",
+    "base_vehicle_compiler_deep_rebuild_verified",
+    "geometry_binding_status",
 )
 
 _ZERO_AUTHORITY_SCALARS = {
@@ -256,7 +290,7 @@ def build_fast_bot_technical_grid_catalog_v1() -> dict[str, Any]:
         "candidates": candidates,
         "h08_control": control,
         "full_stop_hold_policy_role": "PARITY_STRESS_ONLY_NOT_WINNER_SELECTION",
-        "primary_exit_policy": TIME_CLOSE_POLICY_V1,
+        "primary_exit_policy": TIME_CLOSE_POLICY_V2,
         "strategy_evaluator_included": False,
         "economic_backtest_ready": False,
         **_zero_authority(),
@@ -336,6 +370,257 @@ def build_causal_technical_feature_snapshot_v1(
     return snapshot
 
 
+def compile_fast_bot_technical_grid_base_vehicle_v1(
+    *,
+    hypothesis_id: str,
+    orientation: str,
+    technical_feature_snapshot: Mapping[str, Any],
+    technical_hypothesis_shadow: Mapping[str, Any],
+    episode_anchor: Mapping[str, Any],
+    episode_route: Mapping[str, Any],
+    learning_seat: Mapping[str, Any],
+    confirmed_at_utc: str,
+    technical_vehicle_shadow_v2: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compile one canonical V2 BASE vehicle without accepting price inputs.
+
+    A caller-authored entry/TP/SL triple is intentionally absent from this API.
+    The only economic binding is a byte-identical rebuild of the canonical V2
+    vehicle shadow and, for H03/H05, the exact learning-seat BASE arm referenced
+    by the V2 proxy.  INVERSE remains a useful diagnostic counterfactual, but it
+    has no canonical actual-side V2 geometry and is therefore never economic
+    evidence.
+    """
+
+    hypothesis = str(hypothesis_id).upper()
+    orientation_name = str(orientation).upper()
+    if hypothesis not in {f"H{index:02d}" for index in range(1, 8)}:
+        raise ValueError("base vehicle compiler requires H01..H07")
+    if orientation_name not in ORIENTATIONS:
+        raise ValueError("base vehicle compiler orientation is invalid")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (
+            technical_feature_snapshot,
+            technical_hypothesis_shadow,
+            episode_anchor,
+            episode_route,
+            learning_seat,
+        )
+    ):
+        raise ValueError("base vehicle compiler causal inputs must be mappings")
+
+    rebuilt_shadow = build_fast_bot_technical_hypothesis_vehicles_v2(
+        technical_feature_snapshot=technical_feature_snapshot,
+        technical_hypothesis_shadow=technical_hypothesis_shadow,
+        episode_anchor=episode_anchor,
+        episode_route=episode_route,
+        learning_seat=learning_seat,
+        confirmed_at_utc=confirmed_at_utc,
+    )
+    supplied_shadow = (
+        rebuilt_shadow
+        if technical_vehicle_shadow_v2 is None
+        else dict(technical_vehicle_shadow_v2)
+    )
+    if (
+        not technical_hypothesis_vehicle_shadow_v2_valid(
+            supplied_shadow,
+            technical_feature_snapshot=technical_feature_snapshot,
+            technical_hypothesis_shadow=technical_hypothesis_shadow,
+            episode_anchor=episode_anchor,
+            episode_route=episode_route,
+            learning_seat=learning_seat,
+            confirmed_at_utc=confirmed_at_utc,
+        )
+        or supplied_shadow != rebuilt_shadow
+    ):
+        raise ValueError("canonical V2 vehicle shadow does not deep-rebuild")
+
+    pair = _validated_pair(technical_feature_snapshot.get("pair"))
+    if learning_seat.get("pair") != pair or supplied_shadow.get("pair") != pair:
+        raise ValueError("canonical V2 vehicle pair binding is invalid")
+    rows = supplied_shadow.get("vehicles")
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        raise ValueError("canonical V2 vehicle rows are invalid")
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and row.get("hypothesis_id") == hypothesis
+    ]
+    if len(matches) != 1:
+        raise ValueError("canonical V2 hypothesis vehicle is not unique")
+    vehicle = matches[0]
+    source_side = str(vehicle.get("predicted_side") or "")
+    if source_side not in {"LONG", "SHORT"}:
+        raise ValueError("canonical V2 predicted side is unavailable")
+
+    raw_activation = _parse_utc(supplied_shadow.get("activation_at_utc"))
+    if raw_activation.second % S5_SECONDS or raw_activation.microsecond:
+        raise ValueError("canonical V2 activation is not an exact S5 grid slot")
+    activation = raw_activation
+    timeframe_rows = technical_feature_snapshot.get("timeframes")
+    if not isinstance(timeframe_rows, Sequence) or isinstance(
+        timeframe_rows, (str, bytes)
+    ):
+        raise ValueError("canonical feature timeframe rows are invalid")
+    timeframe_by_name = {
+        str(row.get("timeframe")): row
+        for row in timeframe_rows
+        if isinstance(row, Mapping)
+    }
+    if set(timeframe_by_name) != set(TIMEFRAMES):
+        raise ValueError("canonical feature timeframe coverage is incomplete")
+    timeframe_closes = {
+        timeframe: _parse_utc(
+            timeframe_by_name[timeframe].get("complete_candle_close_utc")
+        )
+        for timeframe in TIMEFRAMES
+    }
+    m1_close = timeframe_closes["M1"]
+    if _parse_utc(learning_seat.get("m1_closed_candle_utc")) != m1_close:
+        raise ValueError("learning-seat M1 clock does not match the feature source")
+    stale_or_future = [
+        timeframe
+        for timeframe, close in timeframe_closes.items()
+        if close > raw_activation
+        or raw_activation - close
+        > timedelta(seconds=CANONICAL_TIMEFRAME_MAX_AGE_SECONDS[timeframe])
+    ]
+    if stale_or_future:
+        raise ValueError(
+            "canonical timeframe source is stale or future-dated: "
+            + ",".join(stale_or_future)
+        )
+    if activation.second % S5_SECONDS or activation.microsecond:
+        raise AssertionError("compiled activation did not land on the S5 grid")
+
+    geometry: dict[str, Any] | None = None
+    geometry_source = "NONE"
+    if orientation_name == "DIRECT" and hypothesis in {"H03", "H05"}:
+        geometry = _canonical_proxy_base_geometry(
+            hypothesis_id=hypothesis,
+            vehicle=vehicle,
+            learning_seat=learning_seat,
+        )
+        geometry_source = "CANONICAL_V2_EXACT_LEARNING_SEAT_BASE_ARM"
+    elif orientation_name == "DIRECT":
+        execution = vehicle.get("execution")
+        if isinstance(execution, Mapping):
+            geometry = {
+                "order_type": "STOP",
+                "entry_price": _positive_finite(
+                    execution.get("entry_price"), "canonical entry_price"
+                ),
+                "base_take_profit_price": _positive_finite(
+                    execution.get("take_profit_price"),
+                    "canonical take_profit_price",
+                ),
+                "base_stop_loss_price": _positive_finite(
+                    execution.get("stop_loss_price"), "canonical stop_loss_price"
+                ),
+                "entry_ttl_seconds": execution.get("entry_ttl_seconds"),
+                "max_hold_seconds": execution.get("max_hold_seconds"),
+                "canonical_source_sha256": str(vehicle.get("vehicle_sha256") or ""),
+            }
+            geometry_source = "CANONICAL_V2_EXACT_EXECUTION"
+
+    economic_eligible = bool(
+        orientation_name == "DIRECT"
+        and geometry is not None
+        and vehicle.get("scoring_vehicle_available") is True
+        and supplied_shadow.get("scorecard_eligible") is True
+    )
+    ineligibility_reasons: list[str] = []
+    if orientation_name == "INVERSE":
+        ineligibility_reasons.append("INVERSE_HAS_NO_CANONICAL_ACTUAL_SIDE_V2_GEOMETRY")
+    if geometry is None:
+        ineligibility_reasons.append("CANONICAL_BASE_GEOMETRY_UNAVAILABLE")
+    if vehicle.get("scoring_vehicle_available") is not True:
+        ineligibility_reasons.append("CANONICAL_V2_VEHICLE_NOT_SCORECARD_ELIGIBLE")
+    if supplied_shadow.get("scorecard_eligible") is not True:
+        ineligibility_reasons.append("CANONICAL_V2_SHADOW_NOT_SCORECARD_ELIGIBLE")
+
+    if geometry is not None:
+        base_arm = _arm_by_id("BASE")
+        if (
+            geometry.get("entry_ttl_seconds") != base_arm.entry_ttl_seconds
+            or geometry.get("max_hold_seconds") != base_arm.max_hold_seconds
+        ):
+            raise ValueError("canonical V2 BASE clock policy mismatches the fixed grid")
+        entry = float(geometry["entry_price"])
+        target = float(geometry["base_take_profit_price"])
+        stop = float(geometry["base_stop_loss_price"])
+        if not _geometry_valid(source_side, entry, target, stop):
+            raise ValueError("canonical V2 BASE geometry is invalid")
+        tick = _price_tick(pair)
+        for name, value in (
+            ("entry", entry),
+            ("take profit", target),
+            ("stop loss", stop),
+        ):
+            decimal = Decimal(str(value))
+            if _nearest_tick(decimal, tick) != decimal:
+                raise ValueError(f"canonical V2 {name} is off broker precision")
+
+    source_binding = {
+        "technical_feature_snapshot_sha256": str(
+            technical_feature_snapshot.get("contract_sha256") or ""
+        ),
+        "technical_hypothesis_shadow_sha256": str(
+            technical_hypothesis_shadow.get("contract_sha256") or ""
+        ),
+        "technical_vehicle_shadow_v2_sha256": str(
+            supplied_shadow.get("contract_sha256") or ""
+        ),
+        "episode_anchor_sha256": _canonical_sha(dict(episode_anchor)),
+        "episode_route_sha256": _canonical_sha(dict(episode_route)),
+        "learning_seat_sha256": str(learning_seat.get("contract_sha256") or ""),
+        "vehicle_sha256": str(vehicle.get("vehicle_sha256") or ""),
+        "confirmed_at_utc": _parse_utc(confirmed_at_utc).isoformat(),
+        "raw_causal_activation_at_utc": raw_activation.isoformat(),
+        "complete_candle_close_utc_by_timeframe": {
+            timeframe: timeframe_closes[timeframe].isoformat()
+            for timeframe in TIMEFRAMES
+        },
+    }
+    for name, value in source_binding.items():
+        if name.endswith("sha256"):
+            _validated_sha(value, name)
+    causal_source_sha = _canonical_sha(source_binding)
+    body = {
+        "contract": BASE_VEHICLE_COMPILER_CONTRACT_V1,
+        "schema_version": 1,
+        "compiler_policy": "DEEP_REBUILT_CANONICAL_V2_BASE_ONLY_V1",
+        "catalog_contract_sha256": build_fast_bot_technical_grid_catalog_v1()[
+            "contract_sha256"
+        ],
+        "pair": pair,
+        "hypothesis_id": hypothesis,
+        "orientation": orientation_name,
+        "source_predicted_side": source_side,
+        "side": (
+            source_side if orientation_name == "DIRECT" else _opposite_side(source_side)
+        ),
+        "activation_at_utc": activation.isoformat(),
+        "activation_policy": "REQUIRE_CANONICAL_V2_CLOCK_ON_EXACT_S5_GRID_SLOT",
+        "timeframe_max_age_seconds": dict(CANONICAL_TIMEFRAME_MAX_AGE_SECONDS),
+        "geometry_source": geometry_source,
+        "geometry": geometry,
+        "source_binding": source_binding,
+        "source_binding_sha256": causal_source_sha,
+        "causal_source_sha256": causal_source_sha,
+        "canonical_v2_deep_rebuild_verified": True,
+        "canonical_h03_h05_proxy_requires_exact_learning_seat_base": True,
+        "custom_geometry_allowed": False,
+        "inverse_economic_geometry_allowed": False,
+        "economic_backtest_eligible": economic_eligible,
+        "economic_ineligibility_reasons": sorted(set(ineligibility_reasons)),
+        **_zero_authority(),
+    }
+    return _seal(body)
+
+
 def freeze_fast_bot_technical_grid_signal_v1(
     *,
     pair: str,
@@ -350,12 +635,15 @@ def freeze_fast_bot_technical_grid_signal_v1(
     base_take_profit_price: float,
     base_stop_loss_price: float,
     causal_source_sha256: str,
+    compiler_receipt: Mapping[str, Any] | None = None,
+    compiler_inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Freeze one caller-supplied actual-side primitive before later S5 prices.
+    """Freeze one grid arm before later S5 prices.
 
-    This validates the finite candidate and its execution geometry, but does
-    not rebuild H01..H07 from the source snapshot.  The source SHA is therefore
-    only a syntactic caller binding in this increment.
+    Caller geometry remains available for structural/counterfactual tests, but
+    it is always economic-ineligible.  Economic binding requires an exact
+    canonical compiler receipt and exact agreement with every supplied clock,
+    side, order type, source digest, and BASE price.
     """
 
     catalog = build_fast_bot_technical_grid_catalog_v1()
@@ -380,14 +668,76 @@ def freeze_fast_bot_technical_grid_signal_v1(
     if order not in ORDER_TYPES:
         raise ValueError("grid signal order_type must be STOP or LIMIT")
     activation = _aware_utc(activation_at_utc)
-    if activation.second != 0 or activation.microsecond != 0:
-        raise ValueError("signal activation must equal a complete-M1 close")
+    if activation.second % S5_SECONDS != 0 or activation.microsecond != 0:
+        raise ValueError("signal activation must land on an exact S5 grid slot")
     source_sha = _validated_sha(causal_source_sha256, "causal_source_sha256")
     entry = _positive_finite(entry_price, "entry_price")
     base_tp = _positive_finite(base_take_profit_price, "base_take_profit_price")
     base_sl = _positive_finite(base_stop_loss_price, "base_stop_loss_price")
     if not _geometry_valid(actual_side, entry, base_tp, base_sl):
         raise ValueError("base geometry is invalid for actual signal side")
+
+    compiled: dict[str, Any] | None = None
+    geometry_binding_status = "CALLER_ASSERTED_DIAGNOSTIC_ONLY"
+    compiler_sha: str | None = None
+    compiler_deep_rebuild_verified = False
+    economic_eligible = False
+    if compiler_receipt is not None:
+        if not isinstance(compiler_receipt, Mapping) or not _sealed_contract_valid(
+            compiler_receipt, BASE_VEHICLE_COMPILER_CONTRACT_V1
+        ):
+            raise ValueError("base vehicle compiler receipt is invalid")
+        compiled = dict(compiler_receipt)
+        compiler_sha = str(compiled["contract_sha256"])
+        compiled_geometry = compiled.get("geometry")
+        if not isinstance(compiled_geometry, Mapping):
+            raise ValueError("compiler receipt has no canonical BASE geometry")
+        expected_binding = {
+            "pair": pair_name,
+            "hypothesis_id": hypothesis,
+            "orientation": orientation_name,
+            "source_predicted_side": source_side,
+            "side": actual_side,
+            "activation_at_utc": activation.isoformat(),
+            "causal_source_sha256": source_sha,
+            "order_type": order,
+            "entry_price": entry,
+            "base_take_profit_price": base_tp,
+            "base_stop_loss_price": base_sl,
+        }
+        actual_binding = {
+            "pair": compiled.get("pair"),
+            "hypothesis_id": compiled.get("hypothesis_id"),
+            "orientation": compiled.get("orientation"),
+            "source_predicted_side": compiled.get("source_predicted_side"),
+            "side": compiled.get("side"),
+            "activation_at_utc": compiled.get("activation_at_utc"),
+            "causal_source_sha256": compiled.get("causal_source_sha256"),
+            "order_type": compiled_geometry.get("order_type"),
+            "entry_price": compiled_geometry.get("entry_price"),
+            "base_take_profit_price": compiled_geometry.get("base_take_profit_price"),
+            "base_stop_loss_price": compiled_geometry.get("base_stop_loss_price"),
+        }
+        if actual_binding != expected_binding:
+            raise ValueError("signal does not exactly match its compiler receipt")
+        if compiler_inputs is not None:
+            if not isinstance(compiler_inputs, Mapping):
+                raise ValueError("compiler inputs must be a mapping")
+            rebuilt_compiler = _compile_from_input_bundle(compiler_inputs)
+            if rebuilt_compiler != compiled:
+                raise ValueError("compiler receipt does not deep-rebuild from inputs")
+            compiler_deep_rebuild_verified = True
+        economic_eligible = bool(
+            compiler_deep_rebuild_verified
+            and compiled.get("economic_backtest_eligible") is True
+        )
+        geometry_binding_status = (
+            "CANONICAL_V2_BASE_DEEP_RECEIPT_BOUND"
+            if economic_eligible
+            else "SELF_SEALED_COMPILER_RECEIPT_DIAGNOSTIC_ONLY"
+        )
+    elif compiler_inputs is not None:
+        raise ValueError("compiler inputs require an exact compiler receipt")
 
     arm = _arm_by_id(str(arm_id).upper())
     tick = _price_tick(pair_name)
@@ -437,15 +787,28 @@ def freeze_fast_bot_technical_grid_signal_v1(
         "exit_component": "BID" if actual_side == "LONG" else "ASK",
         "entry_gap_policy": "STOP_WORSE_REAL_OPEN_LIMIT_REAL_OPEN_IMPROVEMENT",
         "same_s5_policy": (
-            "FILL_CANDLE_ANY_ATTACHED_EXIT_SL_FIRST;LATER_TP_AND_SL_SL_FIRST"
+            "FILL_CANDLE_CAUSALLY_PROVEN_POST_FILL_TP_ELSE_FULL_SL_V2;"
+            "LATER_TP_AND_SL_SL_FIRST"
         ),
         "hold_policy": "FIRST_REAL_EXECUTABLE_OPEN_AT_OR_AFTER_HOLD_BOUNDARY",
         "missing_s5_policy": "NO_SYNTHETIC_CANDLE_NEXT_REAL_OPEN_OWNS_GAP",
         "causal_source_sha256": source_sha,
         "catalog_contract_sha256": catalog["contract_sha256"],
-        "causal_strategy_evaluator_binding": "CALLER_ASSERTED_SHA_ONLY",
-        "strategy_evaluator_binding_verified": False,
-        "economic_backtest_eligible": False,
+        "base_vehicle_compiler_sha256": compiler_sha,
+        "base_vehicle_compiler_receipt": compiled,
+        "base_vehicle_compiler_deep_rebuild_verified": (compiler_deep_rebuild_verified),
+        "geometry_binding_status": geometry_binding_status,
+        "causal_strategy_evaluator_binding": (
+            "DEEP_REBUILT_CANONICAL_V2_BASE_ONLY_V1"
+            if compiler_deep_rebuild_verified
+            else (
+                "SELF_SEALED_COMPILER_RECEIPT_ONLY"
+                if compiled is not None
+                else "CALLER_ASSERTED_SHA_ONLY"
+            )
+        ),
+        "strategy_evaluator_binding_verified": compiler_deep_rebuild_verified,
+        "economic_backtest_eligible": economic_eligible,
         **_zero_authority(),
     }
     signal_id = _canonical_sha(_signal_identity_payload(execution_fields))[:24]
@@ -729,29 +1092,157 @@ def resolve_executable_bidask_time_close_v1(
             )
 
         target_hit, stop_hit = _exit_hits(side, candle, target, stop)
-        if is_fill_candle and (target_hit or stop_hit):
-            # If entry was first touched intrabar, the candle open predates the
-            # fill and may not be used as a stop gap.  This prevents a
-            # pre-entry price from becoming an executable post-entry loss.
-            gap_allowed = fill_kind == "OPEN_TRIGGER"
-            return _stop_first_outcome(
-                signal,
-                truth_path_sha=truth_path_sha,
-                truth_source_receipt_sha=receipt_sha,
-                fill_candle=fill_candle,
-                fill_price=fill_price,
-                fill_kind=fill_kind,
-                entry_gap_pips=entry_gap_pips,
-                exit_candle=candle,
-                stop=stop,
-                pip_factor=pip_factor,
-                ambiguous=True,
-                reason="STOP_LOSS_AMBIGUOUS_FILL_S5",
-                gap_allowed=gap_allowed,
-                relevant=relevant,
-                activation=activation,
-                latest_maturity=latest_maturity,
-            )
+        if is_fill_candle:
+            if target_hit and stop_hit:
+                # Both attached exits may have occurred after the fill.  With
+                # no tick order, preserve the predeclared pessimistic policy.
+                return _stop_first_outcome(
+                    signal,
+                    truth_path_sha=truth_path_sha,
+                    truth_source_receipt_sha=receipt_sha,
+                    fill_candle=fill_candle,
+                    fill_price=fill_price,
+                    fill_kind=fill_kind,
+                    entry_gap_pips=entry_gap_pips,
+                    exit_candle=candle,
+                    stop=stop,
+                    pip_factor=pip_factor,
+                    ambiguous=True,
+                    reason="STOP_LOSS_AMBIGUOUS_FILL_S5",
+                    gap_allowed=fill_kind == "OPEN_TRIGGER",
+                    relevant=relevant,
+                    activation=activation,
+                    latest_maturity=latest_maturity,
+                )
+            if fill_kind == "OPEN_TRIGGER":
+                # The open is the first price in the candle, so either sole
+                # attached-barrier touch is necessarily post-fill.
+                if stop_hit:
+                    return _stop_first_outcome(
+                        signal,
+                        truth_path_sha=truth_path_sha,
+                        truth_source_receipt_sha=receipt_sha,
+                        fill_candle=fill_candle,
+                        fill_price=fill_price,
+                        fill_kind=fill_kind,
+                        entry_gap_pips=entry_gap_pips,
+                        exit_candle=candle,
+                        stop=stop,
+                        pip_factor=pip_factor,
+                        ambiguous=False,
+                        reason="STOP_LOSS_FILL_S5",
+                        gap_allowed=True,
+                        relevant=relevant,
+                        activation=activation,
+                        latest_maturity=latest_maturity,
+                    )
+                if target_hit:
+                    return _filled_outcome(
+                        signal,
+                        truth_path_sha=truth_path_sha,
+                        truth_source_receipt_sha=receipt_sha,
+                        fill_candle=fill_candle,
+                        fill_price=fill_price,
+                        fill_kind=fill_kind,
+                        entry_gap_pips=entry_gap_pips,
+                        exit_candle=candle,
+                        exit_price=target,
+                        exit_reason="TAKE_PROFIT_FILL_S5_AFTER_OPEN_FILL",
+                        pip_factor=pip_factor,
+                        ambiguous=False,
+                        stop_gap=False,
+                        relevant=relevant,
+                        activation=activation,
+                        latest_maturity=latest_maturity,
+                    )
+            elif order_type == "STOP":
+                if target_hit:
+                    # A favorable target beyond a STOP entry cannot be reached
+                    # without first crossing and filling that entry.
+                    return _filled_outcome(
+                        signal,
+                        truth_path_sha=truth_path_sha,
+                        truth_source_receipt_sha=receipt_sha,
+                        fill_candle=fill_candle,
+                        fill_price=fill_price,
+                        fill_kind=fill_kind,
+                        entry_gap_pips=entry_gap_pips,
+                        exit_candle=candle,
+                        exit_price=target,
+                        exit_reason="TAKE_PROFIT_FILL_S5_AFTER_STOP_ENTRY",
+                        pip_factor=pip_factor,
+                        ambiguous=False,
+                        stop_gap=False,
+                        relevant=relevant,
+                        activation=activation,
+                        latest_maturity=latest_maturity,
+                    )
+                if stop_hit:
+                    # The adverse extreme may precede the intrabar STOP fill,
+                    # but the contract charges every temporally ambiguous
+                    # fill-candle exit the full SL: a filled hypothesis may
+                    # never become unresolvable and drop out of the cohort.
+                    return _stop_first_outcome(
+                        signal,
+                        truth_path_sha=truth_path_sha,
+                        truth_source_receipt_sha=receipt_sha,
+                        fill_candle=fill_candle,
+                        fill_price=fill_price,
+                        fill_kind=fill_kind,
+                        entry_gap_pips=entry_gap_pips,
+                        exit_candle=candle,
+                        stop=stop,
+                        pip_factor=pip_factor,
+                        ambiguous=True,
+                        reason="STOP_LOSS_AMBIGUOUS_FILL_S5",
+                        gap_allowed=False,
+                        relevant=relevant,
+                        activation=activation,
+                        latest_maturity=latest_maturity,
+                    )
+            elif stop_hit:
+                # A LIMIT entry is crossed before its farther adverse stop.
+                return _stop_first_outcome(
+                    signal,
+                    truth_path_sha=truth_path_sha,
+                    truth_source_receipt_sha=receipt_sha,
+                    fill_candle=fill_candle,
+                    fill_price=fill_price,
+                    fill_kind=fill_kind,
+                    entry_gap_pips=entry_gap_pips,
+                    exit_candle=candle,
+                    stop=stop,
+                    pip_factor=pip_factor,
+                    ambiguous=False,
+                    reason="STOP_LOSS_FILL_S5_AFTER_LIMIT_ENTRY",
+                    gap_allowed=False,
+                    relevant=relevant,
+                    activation=activation,
+                    latest_maturity=latest_maturity,
+                )
+            elif target_hit:
+                # The favorable extreme may precede the intrabar LIMIT fill;
+                # the contract charges this temporally ambiguous fill-candle
+                # TP the full SL instead of inventing the win or deleting
+                # the filled trade as unresolvable.
+                return _stop_first_outcome(
+                    signal,
+                    truth_path_sha=truth_path_sha,
+                    truth_source_receipt_sha=receipt_sha,
+                    fill_candle=fill_candle,
+                    fill_price=fill_price,
+                    fill_kind=fill_kind,
+                    entry_gap_pips=entry_gap_pips,
+                    exit_candle=candle,
+                    stop=stop,
+                    pip_factor=pip_factor,
+                    ambiguous=True,
+                    reason="STOP_LOSS_AMBIGUOUS_FILL_S5",
+                    gap_allowed=False,
+                    relevant=relevant,
+                    activation=activation,
+                    latest_maturity=latest_maturity,
+                )
         if not is_fill_candle and target_hit and stop_hit:
             return _stop_first_outcome(
                 signal,
@@ -919,11 +1410,11 @@ def assign_fixed_split_roles_v1(
         activation = _parse_utc(signal["activation_at_utc"])
         maturity = _parse_utc(signal["latest_maturity_at_utc"])
         if activation < train_end:
-            role = "TRAIN" if maturity <= train_end else "PURGED_TRAIN_VALIDATION"
+            role = "TRAIN" if maturity < train_end else "PURGED_TRAIN_VALIDATION"
         elif activation < validation_end:
             role = (
                 "VALIDATION"
-                if maturity <= validation_end
+                if maturity < validation_end
                 else "PURGED_VALIDATION_HOLDOUT"
             )
         elif activation < holdout_end:
@@ -961,8 +1452,8 @@ def select_validation_one_se_v1(
     candidates remain in the Holm denominator with p=1.
     """
 
-    if not 0.0 < float(alpha) < 0.5:
-        raise ValueError("selection alpha must be between zero and one-half")
+    if float(alpha) != SELECTION_ALPHA:
+        raise ValueError("selection alpha is fixed at exactly 0.05")
     catalog = build_fast_bot_technical_grid_catalog_v1()
     candidates = {str(row["candidate_id"]): row for row in catalog["candidates"]}
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1013,30 +1504,29 @@ def select_validation_one_se_v1(
 
     winners: list[dict[str, Any]] = []
     for hypothesis_id in (f"H{index:02d}" for index in range(1, 8)):
-        eligible = [
+        train_eligible = [
             candidates[candidate_id]
             for candidate_id, row in economic.items()
-            if row["eligible"] is True and row["hypothesis_id"] == hypothesis_id
+            if row["train_gate_passed"] is True
+            and row["hypothesis_id"] == hypothesis_id
         ]
-        if not eligible:
+        if not train_eligible:
             continue
         best = max(
-            eligible,
-            key=lambda row: by_key[(str(row["candidate_id"]), "VALIDATION")][
+            train_eligible,
+            key=lambda row: by_key[(str(row["candidate_id"]), "TRAIN")][
                 "mean_daily_post_cost_pips"
             ],
         )
-        best_metric = by_key[(str(best["candidate_id"]), "VALIDATION")]
+        best_metric = by_key[(str(best["candidate_id"]), "TRAIN")]
         one_se_floor = (
             best_metric["mean_daily_post_cost_pips"]
             - best_metric["standard_error_daily_post_cost_pips"]
         )
         within_one_se = [
             row
-            for row in eligible
-            if by_key[(str(row["candidate_id"]), "VALIDATION")][
-                "mean_daily_post_cost_pips"
-            ]
+            for row in train_eligible
+            if by_key[(str(row["candidate_id"]), "TRAIN")]["mean_daily_post_cost_pips"]
             >= one_se_floor
         ]
         selected = min(
@@ -1047,11 +1537,16 @@ def select_validation_one_se_v1(
                 int(row["catalog_order"]),
             ),
         )
+        selected_candidate_id = str(selected["candidate_id"])
+        if economic[selected_candidate_id]["validation_gate_passed"] is not True:
+            continue
         winners.append(
             {
                 "hypothesis_id": hypothesis_id,
-                "candidate_id": selected["candidate_id"],
+                "candidate_id": selected_candidate_id,
                 "best_candidate_id": best["candidate_id"],
+                "selection_data_role": "TRAIN",
+                "validation_role": "UNCHANGED_CONFIRMATION_GATE_ONLY",
                 "best_mean_daily_post_cost_pips": best_metric[
                     "mean_daily_post_cost_pips"
                 ],
@@ -1094,6 +1589,583 @@ def select_validation_one_se_v1(
         **_zero_authority(),
     }
     return _seal(body)
+
+
+def build_verified_fast_bot_technical_grid_metrics_v1(
+    *,
+    observations: Sequence[Mapping[str, Any]],
+    historical_manifest: Mapping[str, Any],
+    split_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Deep-rebuild historical truth and derive all 182 x two-role metrics.
+
+    The function deliberately does not trust a sealed outcome's P/L.  It
+    rescans the manifest (thereby rereading summary, acquisition chain, and
+    complete source-file hash), reloads each exact interval, deep-recompiles
+    the causal BASE vehicle, and re-executes the outcome resolver.  Any byte
+    difference, including a correctly resealed P/L edit, fails closed.
+    """
+
+    if not isinstance(historical_manifest, Mapping):
+        raise ValueError("historical manifest must be a mapping")
+    source_root = Path(str(historical_manifest.get("source_root") or ""))
+    expected_pairs = historical_manifest.get("expected_pairs")
+    if not isinstance(expected_pairs, Sequence) or isinstance(
+        expected_pairs, (str, bytes)
+    ):
+        raise ValueError("historical manifest expected-pair scope is invalid")
+    normalized_expected_pairs = tuple(_validated_pair(pair) for pair in expected_pairs)
+    if (
+        len(normalized_expected_pairs) != len(DEFAULT_TRADER_PAIRS)
+        or set(normalized_expected_pairs) != set(DEFAULT_TRADER_PAIRS)
+        or len(set(normalized_expected_pairs)) != len(normalized_expected_pairs)
+    ):
+        raise ValueError("economic evaluation requires the exact configured 28 pairs")
+    allowed_run_ids_raw = historical_manifest.get("allowed_run_ids")
+    allowed_run_ids = (
+        tuple(str(value) for value in allowed_run_ids_raw)
+        if isinstance(allowed_run_ids_raw, Sequence)
+        and not isinstance(allowed_run_ids_raw, (str, bytes))
+        else None
+    )
+    rebuilt_manifest = build_historical_s5_manifest(
+        source_root,
+        pairs=normalized_expected_pairs,
+        allowed_run_ids=allowed_run_ids,
+        scan_workers=1,
+    )
+    if dict(historical_manifest) != rebuilt_manifest:
+        raise ValueError("historical manifest does not deep-rebuild from source bytes")
+    if (
+        rebuilt_manifest.get("complete_pair_coverage") is not True
+        or rebuilt_manifest.get("all_selected_sources_acquisition_receipted")
+        is not True
+    ):
+        raise ValueError("historical manifest coverage/acquisition proof is incomplete")
+
+    if isinstance(observations, (str, bytes)) or not isinstance(observations, Sequence):
+        raise ValueError("economic observations must be a sequence")
+    frozen = tuple(observations)
+    if not _sealed_contract_valid(split_receipt, SPLIT_RECEIPT_CONTRACT_V1):
+        raise ValueError("fixed split receipt is invalid")
+    split_signals = [
+        raw.get("signal")
+        for raw in frozen
+        if isinstance(raw, Mapping) and isinstance(raw.get("signal"), Mapping)
+    ]
+    if len(split_signals) != len(frozen):
+        raise ValueError("fixed split observations contain an invalid signal")
+    rebuilt_split = assign_fixed_split_roles_v1(
+        split_signals,
+        train_end_utc=_parse_utc(split_receipt.get("train_end_utc")),
+        validation_end_utc=_parse_utc(split_receipt.get("validation_end_utc")),
+        holdout_end_utc=_parse_utc(split_receipt.get("holdout_end_utc")),
+    )
+    if dict(split_receipt) != rebuilt_split:
+        raise ValueError("fixed split receipt does not rebuild from signal clocks")
+    split_role_by_signal_id = {
+        str(row["signal_id"]): str(row["role"]) for row in rebuilt_split["assignments"]
+    }
+    requests: list[HistoricalS5SliceRequest] = []
+    normalized: list[dict[str, Any]] = []
+    seen_signal_ids: set[str] = set()
+    for raw in frozen:
+        if not isinstance(raw, Mapping):
+            raise ValueError("economic observation must be a mapping")
+        signal = raw.get("signal")
+        outcome = raw.get("outcome")
+        compiler_inputs = raw.get("compiler_inputs")
+        if not isinstance(signal, Mapping) or not isinstance(outcome, Mapping):
+            raise ValueError("economic observation signal/outcome is invalid")
+        if not isinstance(compiler_inputs, Mapping):
+            raise ValueError("economic observation compiler inputs are required")
+        _validate_frozen_signal(signal)
+        signal_id = str(signal.get("signal_id") or "")
+        if signal_id in seen_signal_ids:
+            raise ValueError("economic observations contain duplicate signal_id")
+        seen_signal_ids.add(signal_id)
+        if signal.get("economic_backtest_eligible") is not True:
+            raise ValueError("caller/custom/inverse geometry is not economic evidence")
+        rebuilt_compiler = _compile_from_input_bundle(compiler_inputs)
+        if signal.get("base_vehicle_compiler_receipt") != rebuilt_compiler:
+            raise ValueError("signal compiler receipt does not deep-rebuild")
+        role = str(raw.get("data_role") or "").upper()
+        if role not in {"TRAIN", "VALIDATION"}:
+            if "HOLDOUT" in role:
+                raise ValueError("HOLDOUT observations are forbidden")
+            raise ValueError("economic observation role must be TRAIN or VALIDATION")
+        if split_role_by_signal_id.get(signal_id) != role:
+            raise ValueError("observation role does not match the fixed split receipt")
+        role_boundary = _parse_utc(
+            split_receipt["train_end_utc" if role == "TRAIN" else "validation_end_utc"]
+        )
+        activation = _parse_utc(signal.get("activation_at_utc"))
+        maturity = _parse_utc(signal.get("latest_maturity_at_utc"))
+        requested_from = _parse_optional_utc(raw.get("truth_requested_from_utc"))
+        if requested_from is None:
+            requested_from = activation
+        requested_to = _parse_optional_utc(raw.get("truth_requested_to_utc"))
+        caller_provenance_end = _parse_optional_utc(raw.get("truth_provenance_end_utc"))
+        if caller_provenance_end is not None and caller_provenance_end != role_boundary:
+            raise ValueError(
+                "truth provenance boundary must equal the fixed split boundary"
+            )
+        provenance_end = role_boundary
+        if requested_to is None:
+            exit_at = _parse_optional_utc(outcome.get("exit_at_utc"))
+            requested_to = max(
+                maturity + timedelta(seconds=S5_SECONDS),
+                (exit_at + timedelta(seconds=S5_SECONDS))
+                if exit_at is not None
+                else maturity + timedelta(seconds=S5_SECONDS),
+            )
+        if requested_from > activation or requested_to <= maturity:
+            raise ValueError("historical slice does not cover the full signal horizon")
+        if requested_to > provenance_end:
+            requested_to = provenance_end
+        requests.append(
+            HistoricalS5SliceRequest(
+                pair=str(signal["pair"]),
+                time_from=requested_from,
+                time_to=requested_to,
+            )
+        )
+        normalized.append(
+            {
+                "signal": dict(signal),
+                "outcome": dict(outcome),
+                "data_role": role,
+                "truth_provenance_end_utc": provenance_end,
+            }
+        )
+
+    slices = load_historical_s5_slices(rebuilt_manifest, requests=requests)
+    if len(slices) != len(normalized):
+        raise ValueError("historical slice loader returned incomplete coverage")
+    verified_rows: list[dict[str, Any]] = []
+    for request, item, source_slice in zip(requests, normalized, slices):
+        signal = item["signal"]
+        supplied_outcome = item["outcome"]
+        if source_slice.acquisition_receipt_proved is not True:
+            raise ValueError("historical slice lacks acquisition proof")
+        activation = _parse_utc(signal["activation_at_utc"])
+        maturity = _parse_utc(signal["latest_maturity_at_utc"])
+        if not (
+            source_slice.aligned_from_utc <= activation
+            and source_slice.aligned_to_utc > maturity
+            and source_slice.requested_from_utc == _aware_utc(request.time_from)
+            and source_slice.requested_to_utc == _aware_utc(request.time_to)
+            and source_slice.pair == signal["pair"]
+            and source_slice.source_manifest_sha256
+            == rebuilt_manifest["manifest_sha256"]
+        ):
+            raise ValueError("historical slice complete-coverage binding failed")
+        slice_receipt = source_slice.receipt()
+        if not _historical_slice_receipt_valid(slice_receipt):
+            raise ValueError("historical slice receipt seal is invalid")
+        recomputed = resolve_executable_bidask_time_close_v1(
+            signal,
+            source_slice.candles,
+            truth_source_receipt_sha256=slice_receipt["slice_sha256"],
+            truth_provenance_end_utc=item["truth_provenance_end_utc"],
+        )
+        if recomputed != supplied_outcome:
+            raise ValueError("sealed outcome does not match resolver re-execution")
+        if (
+            recomputed.get("scorecard_result_available") is not True
+            or recomputed.get("post_cost_realized_pips") is None
+        ):
+            raise ValueError("economic observation outcome is unresolved")
+        verified_rows.append(
+            {
+                "signal_id": signal["signal_id"],
+                "signal_sha256": signal["signal_sha256"],
+                "candidate_id": signal["candidate_id"],
+                "pair": signal["pair"],
+                "data_role": item["data_role"],
+                "activation_at_utc": signal["activation_at_utc"],
+                "post_cost_realized_pips": recomputed["post_cost_realized_pips"],
+                "filled": recomputed["filled"],
+                "outcome_sha256": recomputed["contract_sha256"],
+                "slice_sha256": slice_receipt["slice_sha256"],
+                "source_file_sha256": source_slice.source_file_sha256,
+                "source_manifest_sha256": source_slice.source_manifest_sha256,
+                "compiler_sha256": signal["base_vehicle_compiler_sha256"],
+            }
+        )
+
+    post_read_manifest = build_historical_s5_manifest(
+        source_root,
+        pairs=normalized_expected_pairs,
+        allowed_run_ids=allowed_run_ids,
+        scan_workers=1,
+    )
+    if post_read_manifest != rebuilt_manifest:
+        raise ValueError("historical source changed during economic evaluation")
+
+    catalog = build_fast_bot_technical_grid_catalog_v1()
+    candidate_ids = [str(row["candidate_id"]) for row in catalog["candidates"]]
+    observed_days_by_role = {
+        role: sorted(
+            {
+                _parse_utc(row["activation_at_utc"]).date().isoformat()
+                for row in verified_rows
+                if row["data_role"] == role
+            }
+        )
+        for role in ("TRAIN", "VALIDATION")
+    }
+    selection_metrics: list[dict[str, Any]] = []
+    for candidate_id in candidate_ids:
+        for role in ("TRAIN", "VALIDATION"):
+            rows = [
+                row
+                for row in verified_rows
+                if row["candidate_id"] == candidate_id and row["data_role"] == role
+            ]
+            selection_metrics.append(
+                _selection_metric_from_verified_rows(
+                    candidate_id,
+                    role,
+                    rows,
+                    cluster_days=observed_days_by_role[role],
+                )
+            )
+    body = {
+        "contract": ECONOMIC_METRIC_RECEIPT_CONTRACT_V1,
+        "schema_version": 1,
+        "metric_policy": (
+            "DEEP_MANIFEST_AND_CANONICAL_COMPILER_RESOLVER_REEXECUTION_UTC_DAY_V1"
+        ),
+        "catalog_contract_sha256": catalog["contract_sha256"],
+        "historical_manifest": rebuilt_manifest,
+        "historical_manifest_sha256": rebuilt_manifest["manifest_sha256"],
+        "split_receipt": rebuilt_split,
+        "split_receipt_sha256": rebuilt_split["contract_sha256"],
+        "split_role_rebuild_verified": True,
+        "manifest_deep_rebuild_verified": True,
+        "post_evaluation_manifest_rebuild_verified": True,
+        "summary_acquisition_and_file_hash_reverified": True,
+        "complete_slice_coverage_verified": True,
+        "outcome_resolver_reexecution_verified": True,
+        "provided_observation_count": len(verified_rows),
+        "verified_outcomes": verified_rows,
+        "planned_candidate_count": PLANNED_CANDIDATE_COUNT,
+        "metric_row_count": len(selection_metrics),
+        "selection_metrics": selection_metrics,
+        "daily_cluster_policy": "UTC_ACTIVATION_DAY_SUM_PER_CANDIDATE_AND_ROLE",
+        "observed_cluster_days_by_role": observed_days_by_role,
+        "one_sided_p_value_policy": (
+            "EXACT_SIGN_FLIP_UP_TO_16_DAYS_THEN_NORMAL_APPROXIMATION_V1"
+        ),
+        "familywise_alpha": SELECTION_ALPHA,
+        "multiple_testing_policy": "HOLM_OVER_ALL_FIXED_182_VALIDATION_ROWS",
+        "selection_roles": ["TRAIN", "VALIDATION"],
+        "holdout_outcomes_consumed": False,
+        "verified_cohort_economic_summary_allowed": True,
+        "complete_signal_universe_proved": False,
+        "profitability_proof_allowed": False,
+        "forward_proof_eligible": False,
+        **_zero_authority(),
+    }
+    return _seal(body)
+
+
+def select_verified_validation_one_se_v1(
+    metric_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Expose cohort patterns without promoting them to economic selection.
+
+    A metric receipt proves that every *supplied* observation was re-executed
+    against immutable historical bytes.  It cannot prove that the supplied
+    observations are the complete causal emission universe.  Until the
+    deterministic emitter is replayed over the entire fixed window, even a
+    correctly sealed metric receipt is therefore only hypothesis-generating.
+    """
+
+    if not _sealed_contract_valid(metric_receipt, ECONOMIC_METRIC_RECEIPT_CONTRACT_V1):
+        raise ValueError("economic metric receipt is invalid")
+    metrics = metric_receipt.get("selection_metrics")
+    if (
+        not isinstance(metrics, Sequence)
+        or isinstance(metrics, (str, bytes))
+        or len(metrics) != PLANNED_CANDIDATE_COUNT * 2
+    ):
+        raise ValueError("verified metric receipt does not contain fixed 182 x 2 rows")
+    structural = select_validation_one_se_v1(metrics, alpha=SELECTION_ALPHA)
+    observed_patterns = list(structural["provisional_validation_candidate_ids"])
+    blocked_economics = [
+        {
+            **row,
+            "eligible": False,
+            "blocked_by": "COMPLETE_CAUSAL_SIGNAL_UNIVERSE_NOT_PROVED",
+        }
+        for row in structural["candidate_economics"]
+    ]
+    body = {
+        **{key: value for key, value in structural.items() if key != "contract_sha256"},
+        "metric_receipt_sha256": metric_receipt["contract_sha256"],
+        "metric_outcome_reexecution_verified": False,
+        "metric_provenance_binding_verified": False,
+        "selection_status": "BLOCKED_COMPLETE_CAUSAL_SIGNAL_UNIVERSE_NOT_PROVED",
+        "economic_conclusion_allowed": False,
+        "economic_conclusion_scope": "NONE",
+        "complete_signal_universe_proved": False,
+        "profitability_proof_allowed": False,
+        "backtest_complete": False,
+        "cohort_evaluation_complete": False,
+        "cohort_evaluation_deep_rebuild_required": True,
+        "eligible_candidate_count": 0,
+        "selected_family_count": 0,
+        "selected": [],
+        "locked_portfolio_candidate_ids": [],
+        "provisional_validation_candidate_ids": [],
+        "candidate_economics": blocked_economics,
+        "observed_cohort_pattern_candidate_ids": observed_patterns,
+        "historical_survivor_candidate_ids": [],
+        "future_evidence_only": True,
+        "forward_proof_eligible": False,
+    }
+    return _seal(body)
+
+
+def build_fast_bot_technical_grid_historical_policy_v1(
+    *,
+    observations: Sequence[Mapping[str, Any]],
+    historical_manifest: Mapping[str, Any],
+    split_receipt: Mapping[str, Any],
+    metric_receipt: Mapping[str, Any],
+    selection_receipt: Mapping[str, Any],
+    pairs: Sequence[str] = DEFAULT_TRADER_PAIRS,
+) -> dict[str, Any]:
+    """Seal a future-evidence-only policy; historical winners never route now."""
+
+    rebuilt_metric = build_verified_fast_bot_technical_grid_metrics_v1(
+        observations=observations,
+        historical_manifest=historical_manifest,
+        split_receipt=split_receipt,
+    )
+    if dict(metric_receipt) != rebuilt_metric:
+        raise ValueError("historical policy metric receipt does not deep-rebuild")
+    rebuilt_selection = select_verified_validation_one_se_v1(rebuilt_metric)
+    if dict(selection_receipt) != rebuilt_selection:
+        raise ValueError("historical policy selection receipt does not deep-rebuild")
+    normalized_pairs = tuple(_validated_pair(pair) for pair in pairs)
+    if (
+        len(normalized_pairs) != len(DEFAULT_TRADER_PAIRS)
+        or set(normalized_pairs) != set(DEFAULT_TRADER_PAIRS)
+        or len(set(normalized_pairs)) != len(normalized_pairs)
+    ):
+        raise ValueError("historical policy requires the exact configured 28 pairs")
+    routes = [
+        {
+            "pair": pair,
+            "current_hypothesis_id": "H08",
+            "current_action": "NO_TRADE",
+            "reason": "HISTORICAL_SELECTION_IS_FUTURE_EVIDENCE_ONLY",
+            "go_candidate_ids": [],
+        }
+        for pair in normalized_pairs
+    ]
+    observed_patterns = list(rebuilt_selection["observed_cohort_pattern_candidate_ids"])
+    body = {
+        "contract": HISTORICAL_POLICY_CONTRACT_V1,
+        "schema_version": 1,
+        "policy": "HISTORICAL_SURVIVORS_FUTURE_SHADOW_ONLY_CURRENT_H08_V1",
+        "metric_receipt": rebuilt_metric,
+        "selection_receipt": rebuilt_selection,
+        "metric_receipt_sha256": rebuilt_metric["contract_sha256"],
+        "selection_receipt_sha256": rebuilt_selection["contract_sha256"],
+        "deep_rebuild_verified": True,
+        "cohort_evaluation_deep_rebuild_verified": True,
+        "historical_survivor_candidate_ids": [],
+        "future_evidence_candidate_ids": observed_patterns,
+        "future_evidence_interpretation": (
+            "SUPPLIED_COHORT_PATTERN_FOR_FUTURE_COMPLETE_REPLAY_ONLY"
+        ),
+        "future_evidence_only": True,
+        "current_route_count": len(routes),
+        "current_routes": routes,
+        "current_go_count": 0,
+        "all_current_routes_h08_no_trade": True,
+        "historical_result_may_change_current_route": False,
+        "holdout_outcomes_consumed": False,
+        "forward_proof_eligible": False,
+        **_zero_authority(),
+    }
+    return _seal(body)
+
+
+def _canonical_proxy_base_geometry(
+    *,
+    hypothesis_id: str,
+    vehicle: Mapping[str, Any],
+    learning_seat: Mapping[str, Any],
+) -> dict[str, Any]:
+    method = "RANGE_ROTATION" if hypothesis_id == "H03" else "BREAKOUT_FAILURE"
+    binding = vehicle.get("proxy_binding")
+    if not isinstance(binding, Mapping):
+        raise ValueError("H03/H05 requires a canonical V2 proxy binding")
+    if (
+        binding.get("binding_type") != "EXACT_FROZEN_LEARNING_SEAT_BASE_ARM_REFERENCE"
+        or binding.get("learning_seat_contract_sha256")
+        != learning_seat.get("contract_sha256")
+        or binding.get("learning_seat_id") != learning_seat.get("seat_id")
+        or binding.get("method") != method
+        or binding.get("arm_id") != "BASE"
+        or binding.get("numeric_geometry_embedded") is not False
+        or binding.get("source_resolution_required") is not True
+    ):
+        raise ValueError("H03/H05 canonical proxy binding is incomplete")
+    candidates = [
+        row
+        for row in learning_seat.get("candidates", [])
+        if isinstance(row, Mapping)
+        and row.get("candidate_id") == binding.get("candidate_id")
+        and row.get("side") == binding.get("side")
+        and row.get("method") == method
+    ]
+    if len(candidates) != 1:
+        raise ValueError("H03/H05 learning-seat candidate is not unique")
+    candidate = candidates[0]
+    candidate_body = {
+        key: value for key, value in candidate.items() if key != "candidate_sha256"
+    }
+    if candidate.get("candidate_sha256") != _canonical_sha(
+        candidate_body
+    ) or candidate.get("candidate_sha256") != binding.get("candidate_sha256"):
+        raise ValueError("H03/H05 learning-seat candidate digest is invalid")
+    arms = [
+        row
+        for row in candidate.get("arms", [])
+        if isinstance(row, Mapping) and row.get("arm_id") == "BASE"
+    ]
+    if len(arms) != 1 or _canonical_sha(dict(arms[0])) != binding.get("arm_sha256"):
+        raise ValueError("H03/H05 exact learning-seat BASE arm is unavailable")
+    arm = arms[0]
+    return {
+        "order_type": "LIMIT",
+        "entry_price": _positive_finite(arm.get("entry"), "BASE entry"),
+        "base_take_profit_price": _positive_finite(
+            arm.get("take_profit"), "BASE take_profit"
+        ),
+        "base_stop_loss_price": _positive_finite(
+            arm.get("stop_loss"), "BASE stop_loss"
+        ),
+        "entry_ttl_seconds": arm.get("entry_ttl_seconds"),
+        "max_hold_seconds": arm.get("max_hold_seconds"),
+        "canonical_source_sha256": str(binding.get("arm_sha256") or ""),
+    }
+
+
+def _compile_from_input_bundle(value: Mapping[str, Any]) -> dict[str, Any]:
+    required = {
+        "hypothesis_id",
+        "orientation",
+        "technical_feature_snapshot",
+        "technical_hypothesis_shadow",
+        "episode_anchor",
+        "episode_route",
+        "learning_seat",
+        "confirmed_at_utc",
+    }
+    if not required.issubset(value):
+        raise ValueError("compiler input bundle is incomplete")
+    return compile_fast_bot_technical_grid_base_vehicle_v1(
+        hypothesis_id=str(value["hypothesis_id"]),
+        orientation=str(value["orientation"]),
+        technical_feature_snapshot=value["technical_feature_snapshot"],
+        technical_hypothesis_shadow=value["technical_hypothesis_shadow"],
+        episode_anchor=value["episode_anchor"],
+        episode_route=value["episode_route"],
+        learning_seat=value["learning_seat"],
+        confirmed_at_utc=str(value["confirmed_at_utc"]),
+        technical_vehicle_shadow_v2=value.get("technical_vehicle_shadow_v2"),
+    )
+
+
+def _selection_metric_from_verified_rows(
+    candidate_id: str,
+    role: str,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    cluster_days: Sequence[str],
+) -> dict[str, Any]:
+    values = [float(row["post_cost_realized_pips"]) for row in rows]
+    by_day: dict[str, float] = {}
+    for row, value in zip(rows, values):
+        day = _parse_utc(row["activation_at_utc"]).date().isoformat()
+        by_day[day] = by_day.get(day, 0.0) + value
+    daily = [by_day.get(day, 0.0) for day in cluster_days]
+    mean_daily = statistics.fmean(daily) if daily else 0.0
+    standard_error = (
+        statistics.stdev(daily) / math.sqrt(len(daily)) if len(daily) >= 2 else 0.0
+    )
+    profit = sum(value for value in values if value > 0.0)
+    loss = -sum(value for value in values if value < 0.0)
+    # A loss-free positive cohort has an unbounded PF mathematically.  Keep the
+    # serialized metric finite while preserving the strict >1 gate.
+    profit_factor = profit / loss if loss > 0.0 else (1.0e12 if profit > 0.0 else 0.0)
+    return {
+        "candidate_id": candidate_id,
+        "data_role": role,
+        "cluster_count": len(daily),
+        "mean_daily_post_cost_pips": _round(mean_daily),
+        "standard_error_daily_post_cost_pips": _round(standard_error),
+        "mean_post_cost_pips": _round(statistics.fmean(values) if values else 0.0),
+        "profit_factor": profit_factor,
+        "one_sided_p_value": _one_sided_sign_flip_p_value(daily),
+        "outcome_count": len(values),
+        "metric_source": "RESOLVER_REEXECUTED_EXACT_S5_BID_ASK",
+    }
+
+
+def _one_sided_sign_flip_p_value(values: Sequence[float]) -> float:
+    if len(values) < MIN_SELECTION_CLUSTERS or not values:
+        return 1.0
+    observed = statistics.fmean(values)
+    if observed <= 0.0:
+        return 1.0
+    if len(values) <= 16:
+        extreme = 0
+        total = 1 << len(values)
+        for mask in range(total):
+            mean = sum(
+                value if mask & (1 << index) else -value
+                for index, value in enumerate(values)
+            ) / len(values)
+            if mean >= observed - 1e-15:
+                extreme += 1
+        return extreme / total
+    deviation = statistics.stdev(values)
+    if deviation == 0.0:
+        return 0.5 ** len(values)
+    statistic = observed / (deviation / math.sqrt(len(values)))
+    return 0.5 * math.erfc(statistic / math.sqrt(2.0))
+
+
+def _parse_optional_utc(value: Any) -> datetime | None:
+    return None if value is None else _parse_utc(value)
+
+
+def _sealed_contract_valid(value: Mapping[str, Any], contract: str) -> bool:
+    if not isinstance(value, Mapping) or value.get("contract") != contract:
+        return False
+    body = {key: item for key, item in value.items() if key != "contract_sha256"}
+    try:
+        return value.get("contract_sha256") == _canonical_sha(body)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _historical_slice_receipt_valid(value: Mapping[str, Any]) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    body = {key: item for key, item in value.items() if key != "slice_sha256"}
+    try:
+        return value.get("slice_sha256") == _canonical_sha(body)
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def _validated_selection_metric(raw: Mapping[str, Any], *, role: str) -> dict[str, Any]:
@@ -1293,7 +2365,7 @@ def _sealed_outcome(
     body = {
         "contract": TIME_CLOSE_OUTCOME_CONTRACT_V1,
         "schema_version": 1,
-        "scoring_policy": TIME_CLOSE_POLICY_V1,
+        "scoring_policy": TIME_CLOSE_POLICY_V2,
         "signal_id": signal["signal_id"],
         "signal_sha256": signal["signal_sha256"],
         "candidate_id": signal["candidate_id"],
@@ -1436,6 +2508,29 @@ def _validate_frozen_signal(value: Mapping[str, Any]) -> None:
     orientation = str(value.get("orientation") or "")
     source_side = str(value.get("source_predicted_side") or "")
     side = str(value.get("side") or "")
+    compiler = value.get("base_vehicle_compiler_receipt")
+    compiled = isinstance(compiler, Mapping) and _sealed_contract_valid(
+        compiler, BASE_VEHICLE_COMPILER_CONTRACT_V1
+    )
+    if compiler is not None and not compiled:
+        raise ValueError("frozen signal compiler receipt is invalid")
+    compiler_deep_rebuild_verified = (
+        value.get("base_vehicle_compiler_deep_rebuild_verified") is True
+    )
+    expected_economic = bool(
+        compiled
+        and compiler_deep_rebuild_verified
+        and compiler.get("economic_backtest_eligible") is True
+    )
+    expected_binding = (
+        "CANONICAL_V2_BASE_DEEP_RECEIPT_BOUND"
+        if expected_economic
+        else (
+            "SELF_SEALED_COMPILER_RECEIPT_DIAGNOSTIC_ONLY"
+            if compiled
+            else "CALLER_ASSERTED_DIAGNOSTIC_ONLY"
+        )
+    )
     candidate_id = f"{hypothesis}:{orientation}:{arm.get('arm_id')}"
     catalog = build_fast_bot_technical_grid_catalog_v1()
     candidate = next(
@@ -1454,14 +2549,70 @@ def _validate_frozen_signal(value: Mapping[str, Any]) -> None:
         == (source_side if orientation == "DIRECT" else _opposite_side(source_side))
         and value.get("natural_entry_component") == ("ASK" if side == "LONG" else "BID")
         and value.get("exit_component") == ("BID" if side == "LONG" else "ASK")
-        and value.get("causal_strategy_evaluator_binding") == "CALLER_ASSERTED_SHA_ONLY"
-        and value.get("strategy_evaluator_binding_verified") is False
-        and value.get("economic_backtest_eligible") is False
+        and value.get("base_vehicle_compiler_sha256")
+        == (compiler.get("contract_sha256") if compiled else None)
+        and value.get("base_vehicle_compiler_deep_rebuild_verified")
+        is compiler_deep_rebuild_verified
+        and value.get("geometry_binding_status") == expected_binding
+        and value.get("causal_strategy_evaluator_binding")
+        == (
+            "DEEP_REBUILT_CANONICAL_V2_BASE_ONLY_V1"
+            if compiler_deep_rebuild_verified
+            else (
+                "SELF_SEALED_COMPILER_RECEIPT_ONLY"
+                if compiled
+                else "CALLER_ASSERTED_SHA_ONLY"
+            )
+        )
+        and value.get("strategy_evaluator_binding_verified")
+        is compiler_deep_rebuild_verified
+        and value.get("economic_backtest_eligible") is expected_economic
+        and (not expected_economic or orientation == "DIRECT")
         and all(
             value.get(key) == expected for key, expected in _zero_authority().items()
         )
     ):
         raise ValueError("frozen signal catalog identity or authority is invalid")
+
+    if compiled:
+        # Freeze-time binding must also hold at validation time: a receipt is
+        # only tamper-evidence, so a reseal with hindsight geometry, a foreign
+        # pair, or a shifted clock would otherwise pass every flag check.
+        compiled_geometry = compiler.get("geometry")
+        if not isinstance(compiled_geometry, Mapping):
+            raise ValueError("frozen signal compiler receipt has no geometry")
+        receipt_binding = {
+            "pair": compiler.get("pair"),
+            "hypothesis_id": compiler.get("hypothesis_id"),
+            "orientation": compiler.get("orientation"),
+            "source_predicted_side": compiler.get("source_predicted_side"),
+            "side": compiler.get("side"),
+            "activation_at_utc": compiler.get("activation_at_utc"),
+            "causal_source_sha256": compiler.get("causal_source_sha256"),
+            "order_type": compiled_geometry.get("order_type"),
+            "entry_price": compiled_geometry.get("entry_price"),
+            "base_take_profit_price": compiled_geometry.get(
+                "base_take_profit_price"
+            ),
+            "base_stop_loss_price": compiled_geometry.get("base_stop_loss_price"),
+        }
+        signal_binding = {
+            "pair": pair,
+            "hypothesis_id": hypothesis,
+            "orientation": orientation,
+            "source_predicted_side": source_side,
+            "side": side,
+            "activation_at_utc": value.get("activation_at_utc"),
+            "causal_source_sha256": value.get("causal_source_sha256"),
+            "order_type": value.get("order_type"),
+            "entry_price": value.get("entry_price"),
+            "base_take_profit_price": value.get("base_take_profit_price"),
+            "base_stop_loss_price": value.get("base_stop_loss_price"),
+        }
+        if receipt_binding != signal_binding:
+            raise ValueError(
+                "frozen signal does not exactly match its compiler receipt"
+            )
 
     _validated_sha(value.get("causal_source_sha256"), "causal_source_sha256")
     activation = _parse_utc(value["activation_at_utc"])
@@ -1490,7 +2641,7 @@ def _validate_frozen_signal(value: Mapping[str, Any]) -> None:
             expected_target = _nearest_tick(entry_decimal - tp_distance * arm_tp, tick)
             expected_stop = _nearest_tick(entry_decimal + sl_distance * arm_sl, tick)
         clocks_and_geometry_valid = bool(
-            activation.second == 0
+            activation.second % S5_SECONDS == 0
             and activation.microsecond == 0
             and expiry == activation + timedelta(seconds=ttl_seconds)
             and maturity == expiry + timedelta(seconds=hold_seconds)
@@ -1795,20 +2946,27 @@ def _canonical_json_bytes(value: Any) -> bytes:
 
 
 __all__ = [
+    "BASE_VEHICLE_COMPILER_CONTRACT_V1",
     "CausalTimeframeFeature",
+    "ECONOMIC_METRIC_RECEIPT_CONTRACT_V1",
     "GRID_CATALOG_CONTRACT_V1",
     "GRID_POLICY_V1",
+    "HISTORICAL_POLICY_CONTRACT_V1",
     "PLANNED_CANDIDATE_COUNT",
     "SELECTION_RECEIPT_CONTRACT_V1",
     "SPLIT_RECEIPT_CONTRACT_V1",
     "TIME_CLOSE_OUTCOME_CONTRACT_V1",
     "TechnicalGridArm",
     "assign_fixed_split_roles_v1",
+    "build_fast_bot_technical_grid_historical_policy_v1",
     "build_causal_technical_feature_snapshot_v1",
     "build_fast_bot_technical_grid_catalog_v1",
+    "build_verified_fast_bot_technical_grid_metrics_v1",
+    "compile_fast_bot_technical_grid_base_vehicle_v1",
     "deoverlap_same_pair_signal_specs_v1",
     "freeze_fast_bot_technical_grid_signal_v1",
     "resolve_executable_bidask_time_close_v1",
     "select_validation_one_se_v1",
+    "select_verified_validation_one_se_v1",
     "technical_grid_arms_v1",
 ]

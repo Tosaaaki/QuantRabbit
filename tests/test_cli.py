@@ -25,6 +25,8 @@ from quant_rabbit.cli import (
     _direct_autotrade_audit_sidecar_steps,
     _fresh_partial_close_forbidden_trade_reasons,
     _market_read_evidence_sources,
+    _pair_chart_acquisition_ceilings,
+    _pair_chart_coverage_error,
     _post_autotrade_failure_sidecar_steps,
     _partial_close_receipt_actions,
     _pre_entry_projection_verification_if_required,
@@ -6759,6 +6761,10 @@ class CliHelpTest(unittest.TestCase):
                     side_effect=payload_builder("option_skew", {"issues": []}),
                 ),
                 mock.patch("quant_rabbit.analysis.chart_reader.build_pair_chart", side_effect=build_pair_chart),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_coverage_error",
+                    return_value=None,
+                ),
                 mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
                 mock.patch(
                     "quant_rabbit.analysis.market_context_matrix.build_market_context_matrix",
@@ -6770,10 +6776,11 @@ class CliHelpTest(unittest.TestCase):
                 stack.enter_context(patcher)
             result = _auto_refresh_market_evidence_if_required(label="test")
             with mock.patch(
-                "quant_rabbit.cli._build_pair_charts_concurrently",
+                "quant_rabbit.cli._build_complete_pair_charts_with_retries",
                 return_value=(
-                    [SimpleNamespace(to_dict=lambda: {"pair": "EUR_USD"})],
+                    [{"pair": "EUR_USD"}],
                     [{"pair": "USD_CAD", "error": "timeout"}],
+                    {},
                 ),
             ):
                 with self.assertRaisesRegex(
@@ -10329,12 +10336,24 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
 
 class PairChartsCommandTest(unittest.TestCase):
     class _FakeChart:
-        def __init__(self, pair: str, long_score: float = 0.7, short_score: float = 0.3) -> None:
+        def __init__(
+            self,
+            pair: str,
+            long_score: float = 0.7,
+            short_score: float = 0.3,
+            *,
+            payload: dict[str, object] | None = None,
+        ) -> None:
             self.pair = pair
             self.long_score = long_score
             self.short_score = short_score
+            self.payload = payload
+            self.to_dict_calls = 0
 
         def to_dict(self) -> dict[str, object]:
+            self.to_dict_calls += 1
+            if self.payload is not None:
+                return json.loads(json.dumps(self.payload))
             return {
                 "pair": self.pair,
                 "long_score": self.long_score,
@@ -10346,6 +10365,109 @@ class PairChartsCommandTest(unittest.TestCase):
                 "session": None,
                 "confluence": {},
             }
+
+    @classmethod
+    def _valid_mba_chart(
+        cls,
+        pair: str,
+        *,
+        acquisition_started_at: datetime,
+        timeframes: tuple[str, ...] = ("M1", "M5"),
+        count: int = 200,
+        latest_by_timeframe: dict[str, datetime] | None = None,
+    ) -> PairChartsCommandTest._FakeChart:
+        from quant_rabbit.analysis.candles import (
+            TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT,
+            _technical_candle_integrity,
+        )
+        from quant_rabbit.analysis.chart_reader import (
+            _aggregate_technical_candle_integrity,
+        )
+        from quant_rabbit.instruments import (
+            NORMAL_SPREAD_PIPS,
+            OANDA_SPREAD_CALIBRATION_V1,
+        )
+        from quant_rabbit.risk import RiskPolicy
+
+        cadence_seconds = {"M1": 60, "M5": 5 * 60}
+        latest_overrides = latest_by_timeframe or {}
+        integrity_by_tf: dict[str, dict[str, object]] = {}
+        views: list[dict[str, object]] = []
+        for timeframe in timeframes:
+            cadence = cadence_seconds[timeframe]
+            default_latest_epoch = (
+                int(acquisition_started_at.timestamp()) // cadence
+            ) * cadence - cadence
+            latest = latest_overrides.get(
+                timeframe,
+                datetime.fromtimestamp(default_latest_epoch, tz=timezone.utc),
+            )
+            integrity = _technical_candle_integrity(
+                pair=pair,
+                granularity=timeframe,
+                payload_instrument=pair,
+                payload_granularity=timeframe,
+                requested_count=count,
+                raw_entry_count=count,
+                complete_entry_count=count,
+                clean_count=count,
+                recent_clean_tail_count=count,
+                indicator_warmup_min_clean_count=(
+                    TECHNICAL_CANDLE_INDICATOR_WARMUP_MIN_CLEAN_COUNT
+                ),
+                contaminated_count=0,
+                malformed_count=0,
+                normal_spread_pips=NORMAL_SPREAD_PIPS[pair],
+                max_spread_multiple=RiskPolicy().max_spread_multiple,
+                cap_pips=OANDA_SPREAD_CALIBRATION_V1.pairs[pair].max_pips,
+                spread_calibration_sha256=(
+                    OANDA_SPREAD_CALIBRATION_V1.calibration_sha256
+                ),
+                recent_tail_state="CLEAN",
+                latest_complete_timestamp_utc=latest,
+                latest_clean_timestamp_utc=latest,
+                quarantine_details=(),
+            )
+            integrity_by_tf[timeframe] = integrity
+            recent_count = min(count, 30)
+            views.append(
+                {
+                    "granularity": timeframe,
+                    "indicators": {"candles_count": count},
+                    "recent_candles": [
+                        {
+                            "t": (
+                                latest
+                                - timedelta(
+                                    seconds=cadence * (recent_count - 1 - index)
+                                )
+                            ).isoformat()
+                        }
+                        for index in range(recent_count)
+                    ],
+                    "candle_integrity": integrity,
+                }
+            )
+
+        payload: dict[str, object] = {
+            "generated_at_utc": acquisition_started_at.isoformat(),
+            "pair": pair,
+            "long_score": 0.7,
+            "short_score": 0.3,
+            "dominant_regime": "RANGE",
+            "chart_story": f"{pair} exact MBA chart",
+            "warnings": [],
+            "views": views,
+            "session": None,
+            "confluence": {},
+            "technical_candle_integrity": _aggregate_technical_candle_integrity(
+                pair=pair,
+                requested_timeframes=timeframes,
+                integrity_by_tf=integrity_by_tf,
+            ),
+            "market_state_summary": {},
+        }
+        return cls._FakeChart(pair, payload=payload)
 
     def test_pair_charts_writes_partial_success_instead_of_stale_whole_packet(self) -> None:
         def fake_build(pair: str, **_kwargs: object) -> PairChartsCommandTest._FakeChart:
@@ -10393,10 +10515,27 @@ class PairChartsCommandTest(unittest.TestCase):
             self.assertIn("GBP_USD", report.read_text())
 
     def test_pair_charts_require_complete_preserves_previous_packet_on_partial_fetch(self) -> None:
-        def fake_build(pair: str, **_kwargs: object) -> PairChartsCommandTest._FakeChart:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+        build_counts: dict[str, int] = {}
+
+        def fake_build(pair: str, **kwargs: object) -> PairChartsCommandTest._FakeChart:
+            build_counts[pair] = build_counts.get(pair, 0) + 1
             if pair == "GBP_USD":
                 raise RuntimeError("broker candle timeout")
-            return self._FakeChart(pair)
+            return self._valid_mba_chart(
+                pair,
+                acquisition_started_at=acquisition_started_at,
+                timeframes=tuple(kwargs["timeframes"]),
+                count=int(kwargs["count"]),
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "pair_charts.json"
@@ -10408,6 +10547,10 @@ class PairChartsCommandTest(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_acquisition_now_utc",
+                    return_value=acquisition_started_at,
+                ),
                 mock.patch("quant_rabbit.analysis.chart_reader.build_pair_chart", side_effect=fake_build),
                 mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum") as momentum,
                 redirect_stdout(stdout),
@@ -10418,7 +10561,7 @@ class PairChartsCommandTest(unittest.TestCase):
                         "--pairs",
                         "EUR_USD,GBP_USD,AUD_USD",
                         "--timeframes",
-                        "M5",
+                        "M1,M5",
                         "--workers",
                         "2",
                         "--output",
@@ -10438,6 +10581,367 @@ class PairChartsCommandTest(unittest.TestCase):
             self.assertEqual(printed["pairs_requested"], 3)
             self.assertEqual(printed["pairs_succeeded"], 2)
             self.assertEqual(printed["missing_pairs"], ["GBP_USD"])
+            self.assertEqual(printed["acquisition_attempts"], 3)
+            self.assertEqual(printed["acquisition_retried_pairs"], ["GBP_USD"])
+            self.assertEqual(printed["failures"][0]["attempts"], 3)
+            self.assertEqual(
+                build_counts,
+                {"EUR_USD": 1, "GBP_USD": 3, "AUD_USD": 1},
+            )
+
+    def test_pair_charts_require_complete_retries_only_invalid_pair_and_recovers(self) -> None:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+        build_counts: dict[str, int] = {}
+
+        def fake_build(pair: str, **kwargs: object) -> PairChartsCommandTest._FakeChart:
+            build_counts[pair] = build_counts.get(pair, 0) + 1
+            chart = self._valid_mba_chart(
+                pair,
+                acquisition_started_at=acquisition_started_at,
+                timeframes=tuple(kwargs["timeframes"]),
+                count=int(kwargs["count"]),
+            )
+            if pair != "AUD_USD" or build_counts[pair] > 1:
+                return chart
+            payload = chart.to_dict()
+            integrity = payload["technical_candle_integrity"]
+            integrity["timeframes"].pop("M1")
+            payload["views"] = [
+                view
+                for view in payload["views"]
+                if view["granularity"] != "M1"
+            ]
+            return self._FakeChart(pair, payload=payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_acquisition_now_utc",
+                    return_value=acquisition_started_at,
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.chart_reader.build_pair_chart",
+                    side_effect=fake_build,
+                ),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
+                redirect_stdout(stdout),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD,AUD_USD",
+                        "--timeframes",
+                        "M1,M5",
+                        "--workers",
+                        "2",
+                        "--output",
+                        str(output),
+                        "--require-complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["pairs_succeeded"], 2)
+            self.assertEqual(payload["acquisition_attempts"], 2)
+            self.assertEqual(payload["acquisition_retried_pairs"], ["AUD_USD"])
+            self.assertEqual(build_counts, {"EUR_USD": 1, "AUD_USD": 2})
+            printed = json.loads(stdout.getvalue())
+            self.assertEqual(printed["acquisition_attempts"], 2)
+            self.assertEqual(printed["acquisition_retried_pairs"], ["AUD_USD"])
+
+    def test_pair_chart_coverage_rejects_missing_empty_not_evaluated_and_wrong_schema_status(
+        self,
+    ) -> None:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+        ceilings = _pair_chart_acquisition_ceilings(acquisition_started_at)
+        cases = (
+            "TOP_MISSING",
+            "TOP_EMPTY",
+            "TOP_NOT_EVALUATED",
+            "TOP_WRONG_SCHEMA",
+            "TOP_WRONG_STATUS",
+            "M1_EMPTY",
+            "M1_NOT_EVALUATED",
+            "M1_WRONG_SCHEMA",
+            "M1_WRONG_STATUS",
+            "M1_WRONG_SOURCE",
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                payload = self._valid_mba_chart(
+                    "EUR_USD",
+                    acquisition_started_at=acquisition_started_at,
+                ).to_dict()
+                if case == "TOP_MISSING":
+                    payload.pop("technical_candle_integrity")
+                elif case == "TOP_EMPTY":
+                    payload["technical_candle_integrity"] = {}
+                else:
+                    integrity = payload["technical_candle_integrity"]
+                    if case == "TOP_NOT_EVALUATED":
+                        integrity["evaluation_status"] = "NOT_EVALUATED"
+                    elif case == "TOP_WRONG_SCHEMA":
+                        integrity["schema"] = "WRONG_SCHEMA"
+                    elif case == "TOP_WRONG_STATUS":
+                        integrity["evaluation_status"] = "BLOCKED"
+                    else:
+                        receipt = integrity["timeframes"]["M1"]
+                        if case == "M1_EMPTY":
+                            integrity["timeframes"]["M1"] = {}
+                        elif case == "M1_NOT_EVALUATED":
+                            receipt["evaluation_status"] = "NOT_EVALUATED"
+                        elif case == "M1_WRONG_SCHEMA":
+                            receipt["schema"] = "WRONG_SCHEMA"
+                        elif case == "M1_WRONG_STATUS":
+                            receipt["evaluation_status"] = "BLOCKED"
+                        elif case == "M1_WRONG_SOURCE":
+                            receipt["source"] = "OANDA_MID"
+
+                error = _pair_chart_coverage_error(
+                    payload,
+                    expected_pair="EUR_USD",
+                    timeframes=("M1", "M5"),
+                    count=200,
+                    acquisition_started_at_utc=acquisition_started_at,
+                    acquisition_ceilings_utc=ceilings,
+                )
+                self.assertIsNotNone(error)
+
+    def test_pair_charts_require_complete_allows_pair_local_no_tick_gap(self) -> None:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+
+        def fake_build(pair: str, **kwargs: object) -> PairChartsCommandTest._FakeChart:
+            latest = (
+                {"M1": datetime(2026, 7, 17, 12, 32, tzinfo=timezone.utc)}
+                if pair == "AUD_USD"
+                else None
+            )
+            return self._valid_mba_chart(
+                pair,
+                acquisition_started_at=acquisition_started_at,
+                timeframes=tuple(kwargs["timeframes"]),
+                count=int(kwargs["count"]),
+                latest_by_timeframe=latest,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_acquisition_now_utc",
+                    return_value=acquisition_started_at,
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.chart_reader.build_pair_chart",
+                    side_effect=fake_build,
+                ),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
+                redirect_stdout(io.StringIO()),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD,AUD_USD",
+                        "--timeframes",
+                        "M1,M5",
+                        "--workers",
+                        "2",
+                        "--output",
+                        str(output),
+                        "--require-complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            charts = {
+                chart["pair"]: chart
+                for chart in json.loads(output.read_text())["charts"]
+            }
+            eur_latest = charts["EUR_USD"]["technical_candle_integrity"][
+                "timeframes"
+            ]["M1"]["latest_clean_timestamp_utc"]
+            aud_latest = charts["AUD_USD"]["technical_candle_integrity"][
+                "timeframes"
+            ]["M1"]["latest_clean_timestamp_utc"]
+            self.assertEqual(eur_latest, "2026-07-17T12:33:00+00:00")
+            self.assertEqual(aud_latest, "2026-07-17T12:32:00+00:00")
+
+    def test_pair_charts_require_complete_rejects_newer_retry_minute(self) -> None:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+        attempts = 0
+
+        def fake_build(pair: str, **kwargs: object) -> PairChartsCommandTest._FakeChart:
+            nonlocal attempts
+            attempts += 1
+            latest = (
+                {"M1": datetime(2026, 7, 17, 12, 34, tzinfo=timezone.utc)}
+                if attempts > 1
+                else None
+            )
+            chart = self._valid_mba_chart(
+                pair,
+                acquisition_started_at=acquisition_started_at,
+                timeframes=tuple(kwargs["timeframes"]),
+                count=int(kwargs["count"]),
+                latest_by_timeframe=latest,
+            )
+            if attempts > 1:
+                return chart
+            payload = chart.to_dict()
+            payload["technical_candle_integrity"]["timeframes"].pop("M1")
+            payload["views"] = [
+                view
+                for view in payload["views"]
+                if view["granularity"] != "M1"
+            ]
+            return self._FakeChart(pair, payload=payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            previous_output = '{"sentinel": "same-acquisition-cycle"}\n'
+            output.write_text(previous_output)
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_acquisition_now_utc",
+                    return_value=acquisition_started_at,
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.chart_reader.build_pair_chart",
+                    side_effect=fake_build,
+                ),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum") as momentum,
+                redirect_stdout(stdout),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "AUD_USD",
+                        "--timeframes",
+                        "M1,M5",
+                        "--workers",
+                        "1",
+                        "--output",
+                        str(output),
+                        "--require-complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 2)
+            self.assertEqual(output.read_text(), previous_output)
+            self.assertEqual(attempts, 3)
+            momentum.assert_not_called()
+            printed = json.loads(stdout.getvalue())
+            self.assertIn(
+                "PAIR_CHART_ACQUISITION_CEILING_EXCEEDED:M1",
+                printed["failures"][0]["error"],
+            )
+            self.assertEqual(
+                printed["acquisition_timeframe_ceilings_utc"]["M1"],
+                "2026-07-17T12:33:00+00:00",
+            )
+
+    def test_pair_charts_require_complete_freezes_chart_payload_once(self) -> None:
+        acquisition_started_at = datetime(
+            2026,
+            7,
+            17,
+            12,
+            34,
+            45,
+            tzinfo=timezone.utc,
+        )
+        valid_payload = self._valid_mba_chart(
+            "EUR_USD",
+            acquisition_started_at=acquisition_started_at,
+        ).to_dict()
+
+        class OneShotChart:
+            pair = "EUR_USD"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def to_dict(self) -> dict[str, object]:
+                self.calls += 1
+                if self.calls > 1:
+                    raise AssertionError("chart payload was materialized twice")
+                return valid_payload
+
+        chart = OneShotChart()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.cli._pair_chart_acquisition_now_utc",
+                    return_value=acquisition_started_at,
+                ),
+                mock.patch(
+                    "quant_rabbit.analysis.chart_reader.build_pair_chart",
+                    return_value=chart,
+                ),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
+                redirect_stdout(io.StringIO()),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD",
+                        "--timeframes",
+                        "M1,M5",
+                        "--workers",
+                        "1",
+                        "--output",
+                        str(output),
+                        "--require-complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(chart.calls, 1)
 
     def test_pair_charts_returns_failure_when_every_pair_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
