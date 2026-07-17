@@ -52,6 +52,15 @@ def test_stop_skips_only_after_realized_loss_is_knowable() -> None:
     assert kept_hours == [0, 0]
     assert skipped == 1  # only the 02:00 decision is stopped
 
+    # HALF_SIZE keeps the 02:00 winner at half participation instead of
+    # forfeiting it — the opportunity-cost-preserving variant.
+    halved, affected = apply_causal_daily_stop(
+        trades, stop_pips=25.0, mode="HALF_SIZE"
+    )
+    assert affected == 1
+    late = next(row for row in halved if row.decision_utc.hour == 2)
+    assert late.realized_pips == 25.0
+
 
 def test_selection_reduces_negative_days_within_retention_floor() -> None:
     trades = []
