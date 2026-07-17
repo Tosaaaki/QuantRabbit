@@ -255,12 +255,15 @@ family粒度GO/CAUTIONで切り替える。
   正直に露出 (現状8セル中5セル未カバー、range×highを含む)。
 - 脳は measured cell に eligible な family のみ入場許可。read の declared regime が測定と矛盾したら flag。
 
-**完成度批評が指摘した残り高レバレッジ4件** (全てshadow実装可、Codex/次サイクル):
-1. ~~regime分類器~~ **実装済み (今回)**。
-2. ポートフォリオ共分散リスクモデル: 名目netでなく相関行列→分散目標。high-volセルで現ガードが最も盲目。
-3. 合成脳のwalk-forwardシミュレータ: 全サイクルを歴史に流し regime cell別P&L帰属。all-weatherの実スコアカード。
-4. conviction接地+較正層: declared_condition を evidence packet から独立再計算し連続0-1確信度乗数へ。W25核心。
-5. レンジ/平均回帰 shadow family (レーンF): 空セルの本体。
+**完成度批評5件の進捗**:
+1. ~~regime分類器~~ **実装済み** (`regime_classifier_shadow.py`, scale-free/相対閾値)。
+2. ~~ポートフォリオ共分散リスクモデル~~ **実装済み** (`portfolio_covariance_shadow.py`, Meucci ENB + Jacobi)。
+3. ~~合成脳walk-forwardアトリビューション~~ **実装済み** (`run-all-weather-attribution.py`, W27セル別P&L)。
+4. conviction接地+較正層: **機構は設計済みだが較正データが必要** — declared_condition の evidence packet
+   独立再計算 + supervision ledger からの regime別実現期待値マッピング。ライブ read/outcome が
+   貯まってから (Codex, 月曜以降)。今は grounding データが存在しない。
+5. ~~レンジ/平均回帰 shadow family (レーンF)~~ **機構実装済み** (`range_rail_shadow.py`, 受動LIMIT→mid回帰)。
+   統計的proof は M5 corpus 待ち。W28が証明した「加算」の本体。
 
 ## W27 全天候アトリビューション (2026-07-18, 実測)
 
