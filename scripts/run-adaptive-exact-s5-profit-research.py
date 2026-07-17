@@ -24,6 +24,7 @@ from quant_rabbit.adaptive_exact_s5_profit_engine import (
     PROSPECTIVE_FINAL_FROM_UTC,
     PROSPECTIVE_FINAL_TO_UTC,
     build_prospective_final_test_lock,
+    evaluate_locked_final_test,
     evaluate_locked_spec,
     prepare_exact_s5_series,
     reconcile_prior_anchor_train,
@@ -78,12 +79,57 @@ def main() -> int:
         required=True,
     )
 
+    final_test = subparsers.add_parser("final-test")
+    _common_arguments(final_test)
+    final_test.add_argument("--research", type=Path, required=True)
+    final_test.add_argument("--lock", type=Path, required=True)
+    final_test.add_argument("--prospective-lock", type=Path, required=True)
+    final_test.add_argument("--output", type=Path, required=True)
+
     args = parser.parse_args()
     manifest = _load_object(args.manifest)
     _validate_manifest_scope(manifest)
     holdout_start = _parse_utc(args.holdout_start)
     if holdout_start != DEFAULT_HOLDOUT_START:
         raise ValueError("this research run must preserve the fixed holdout boundary")
+
+    if args.command == "final-test":
+        research = _load_object(args.research)
+        lock = _load_object(args.lock)
+        prospective_lock = _load_object(args.prospective_lock)
+        _require_absent_outputs(args.output)
+        # The maturity clock, prospective binding, and new-manifest identity
+        # are all enforced inside the engine before any price is read.
+        series, receipt_sha = _load_exact_series(
+            manifest,
+            from_utc=PROSPECTIVE_FINAL_FROM_UTC - MAX_LOOKBACK - WARMUP_SLACK,
+            to_utc=PROSPECTIVE_FINAL_TO_UTC,
+            holdout_start=PROSPECTIVE_FINAL_TO_UTC,
+        )
+        evaluation = evaluate_locked_final_test(
+            series,
+            lock=lock,
+            research=research,
+            prospective_lock=prospective_lock,
+            now_utc=datetime.now(timezone.utc),
+            source_manifest_sha256=str(manifest["manifest_sha256"]),
+            slice_receipts_sha256=receipt_sha,
+        )
+        _atomic_json(args.output, evaluation)
+        print(
+            json.dumps(
+                {
+                    "status": "FINAL_TEST_COMPLETE",
+                    "final_test_sha256": evaluation["final_test_sha256"],
+                    "verdict": evaluation["verdict"],
+                    "metrics": evaluation["metrics"],
+                    "monthly_multiple_goal_proven": False,
+                    "order_authority": "NONE",
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
 
     if args.command in {"train", "reconcile"}:
         train_from = _parse_utc(args.train_from)

@@ -360,6 +360,90 @@ def test_minted_lock_without_matching_research_survivor_is_refused() -> None:
         )
 
 
+def test_final_test_is_clock_manifest_and_binding_fail_closed() -> None:
+    from quant_rabbit.adaptive_exact_s5_profit_engine import (
+        PROSPECTIVE_FINAL_FROM_UTC,
+        PROSPECTIVE_FINAL_TO_UTC,
+        build_prospective_final_test_lock,
+        evaluate_locked_final_test,
+    )
+
+    source_start = datetime(2026, 1, 1, tzinfo=UTC)
+    train_from = datetime(2026, 1, 2, tzinfo=UTC)
+    train_to = datetime(2026, 1, 27, tzinfo=UTC)
+    series = _four_pair_trends(
+        start=source_start,
+        minutes=int((datetime(2026, 2, 2, tzinfo=UTC) - source_start).total_seconds() // 60),
+    )
+    research, lock = run_train_research(
+        series,
+        train_from_utc=train_from,
+        train_to_utc=train_to,
+        source_manifest_sha256="a" * 64,
+        slice_receipts_sha256="b" * 64,
+    )
+    assert lock is not None
+    prospective = build_prospective_final_test_lock(
+        lock=lock, source_manifest_sha256="a" * 64
+    )
+    future_series = _four_pair_trends(
+        start=PROSPECTIVE_FINAL_FROM_UTC - timedelta(minutes=800),
+        minutes=int(
+            (PROSPECTIVE_FINAL_TO_UTC - PROSPECTIVE_FINAL_FROM_UTC).total_seconds()
+            // 60
+        )
+        + 800,
+    )
+
+    common = {
+        "lock": lock,
+        "research": research,
+        "prospective_lock": prospective,
+        "slice_receipts_sha256": "c" * 64,
+    }
+    with pytest.raises(ValueError, match="not matured"):
+        evaluate_locked_final_test(
+            future_series,
+            now_utc=PROSPECTIVE_FINAL_TO_UTC - timedelta(minutes=1),
+            source_manifest_sha256="f" * 64,
+            **common,
+        )
+    with pytest.raises(ValueError, match="new independent acquisition"):
+        evaluate_locked_final_test(
+            future_series,
+            now_utc=PROSPECTIVE_FINAL_TO_UTC,
+            source_manifest_sha256="a" * 64,
+            **common,
+        )
+    tampered = dict(prospective)
+    tampered["shadow_lock_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="digest"):
+        evaluate_locked_final_test(
+            future_series,
+            lock=lock,
+            research=research,
+            prospective_lock=tampered,
+            now_utc=PROSPECTIVE_FINAL_TO_UTC,
+            source_manifest_sha256="f" * 64,
+            slice_receipts_sha256="c" * 64,
+        )
+
+    result = evaluate_locked_final_test(
+        future_series,
+        now_utc=PROSPECTIVE_FINAL_TO_UTC,
+        source_manifest_sha256="f" * 64,
+        **common,
+    )
+    assert result["verdict"] in {
+        "INDEPENDENT_POSITIVE_EVIDENCE",
+        "SURVIVOR_REJECTED_ON_FUTURE_DATA",
+    }
+    assert result["independent_future_test"] is True
+    assert result["monthly_multiple_goal_proven"] is False
+    assert result["order_authority"] == "NONE"
+    assert result["metrics"]["trade_count"] > 0
+
+
 def test_cost_stress_and_leave_best_group_are_explicit() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     outcomes = evaluate_spec(

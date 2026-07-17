@@ -835,6 +835,104 @@ def evaluate_locked_spec(
     return {**body, "evaluation_sha256": _canonical_sha(body)}
 
 
+FINAL_TEST_CONTRACT = "QR_ADAPTIVE_EXACT_S5_FINAL_TEST_EVALUATION_V1"
+FINAL_TEST_MIN_STRESSED_PF = 1.05
+
+
+def evaluate_locked_final_test(
+    series_by_pair: Mapping[str, ExactS5Series | Sequence[ExactMinutePoint]],
+    *,
+    lock: Mapping[str, Any],
+    research: Mapping[str, Any],
+    prospective_lock: Mapping[str, Any],
+    now_utc: datetime,
+    source_manifest_sha256: str,
+    slice_receipts_sha256: str,
+) -> dict[str, Any]:
+    """Evaluate the one frozen survivor on the pre-declared future window.
+
+    Admissible only after the window has matured on the wall clock, only
+    from a NEW acquisition manifest (never the research manifest), and only
+    for the exact survivor the prospective lock pre-declared.  The verdict
+    thresholds are fixed here, before any future price is read.
+    """
+
+    _validate_lock(lock)
+    _validate_research_lock_binding(research=research, lock=lock)
+    if not isinstance(prospective_lock, Mapping):
+        raise ValueError("prospective lock must be an object")
+    body = {
+        key: value
+        for key, value in prospective_lock.items()
+        if key != "prospective_lock_sha256"
+    }
+    if prospective_lock.get("prospective_lock_sha256") != _canonical_sha(body):
+        raise ValueError("prospective lock digest is invalid")
+    if prospective_lock.get("contract") != PROSPECTIVE_FINAL_LOCK_CONTRACT:
+        raise ValueError("prospective lock contract is invalid")
+    if prospective_lock.get("shadow_lock_sha256") != lock["lock_sha256"]:
+        raise ValueError("prospective lock is not bound to this survivor lock")
+    if prospective_lock.get("spec") != lock["spec"]:
+        raise ValueError("prospective lock spec diverged from the survivor lock")
+    now = _aware_utc(now_utc)
+    if now < PROSPECTIVE_FINAL_TO_UTC:
+        raise ValueError("final test window has not matured yet")
+    if source_manifest_sha256 == lock["source_manifest_sha256"]:
+        raise ValueError(
+            "final test requires a new independent acquisition manifest"
+        )
+    spec = _spec_from_payload(lock["spec"])
+    policy = _policy_from_payload(lock["evaluation_policy"])
+    outcomes = evaluate_spec(
+        series_by_pair,
+        spec=spec,
+        opened_from_utc=PROSPECTIVE_FINAL_FROM_UTC,
+        opened_to_utc=PROSPECTIVE_FINAL_TO_UTC,
+        policy=policy,
+    )
+    metrics = candidate_metrics(
+        outcomes,
+        spec_id=spec.spec_id,
+        stress_pips_per_trade=float(lock["train_metrics"]["stress_pips_per_trade"]),
+    )
+    stressed_pf = metrics.stressed_profit_factor
+    positive = bool(
+        metrics.trade_count > 0
+        and metrics.stressed_net_pips > 0.0
+        and (stressed_pf is None or stressed_pf >= FINAL_TEST_MIN_STRESSED_PF)
+    )
+    result_body: dict[str, Any] = {
+        "contract": FINAL_TEST_CONTRACT,
+        "schema_version": 1,
+        "lock_sha256": lock["lock_sha256"],
+        "research_sha256": research["research_sha256"],
+        "prospective_lock_sha256": prospective_lock["prospective_lock_sha256"],
+        "source_manifest_sha256": source_manifest_sha256,
+        "slice_receipts_sha256": slice_receipts_sha256,
+        "opened_from_utc": PROSPECTIVE_FINAL_FROM_UTC.isoformat(),
+        "opened_to_utc": PROSPECTIVE_FINAL_TO_UTC.isoformat(),
+        "evaluated_at_utc": now.isoformat(),
+        "spec": _spec_payload(spec),
+        "evaluation_policy": _policy_payload(policy),
+        "metrics": asdict(metrics),
+        "trade_outcomes_sha256": _canonical_sha(
+            [_trade_payload(row) for row in outcomes]
+        ),
+        "verdict_policy": (
+            "PREDECLARED_STRESSED_NET_POSITIVE_AND_STRESSED_PF_GE_1_05_V1"
+        ),
+        "verdict": (
+            "INDEPENDENT_POSITIVE_EVIDENCE"
+            if positive
+            else "SURVIVOR_REJECTED_ON_FUTURE_DATA"
+        ),
+        "independent_future_test": True,
+        "monthly_multiple_goal_proven": False,
+        **AUTHORITY,
+    }
+    return {**result_body, "final_test_sha256": _canonical_sha(result_body)}
+
+
 def build_prospective_final_test_lock(
     *, lock: Mapping[str, Any], source_manifest_sha256: str
 ) -> dict[str, Any]:
