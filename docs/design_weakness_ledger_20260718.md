@@ -76,6 +76,22 @@ live昇格はオペレーター明示承認) は全修理に適用。
   増えない。→ 並列事前登録: 複数候補それぞれに独立の将来窓lockを許可 (family横断のWRC分母は
   登録簿で管理)。登録簿 `research/data/prospective_registry_v1.json` を新設。
 
+## 実装状況 (2026-07-18 Claude、テスト付き・全suite green)
+
+| 弱点 | モジュール | 状態 |
+|---|---|---|
+| W16 | `micro_live_promotion_contract.py` | 実装済み (T1契約+承認束縛検証) |
+| S1/欠陥1 | `close_distance_gate.py` | 実装済み (pre-entry close-distance + max_admissible_hold) |
+| W12 | `currency_exposure_guard.py` | 実装済み (8通貨net NAV%キャップ、ヘッジ相殺対応) |
+| W2/W8/W15 | `regime_supervision_v2.py` | 実装済み (regime宣言×family行、不整合GO自動降格、6h TTL→UNSUPERVISED) |
+| S2/欠陥2 | `gate_throughput_slo.py` | 実装済み (ファネル封印、floor割れでkiller gate命名+P0フラグ) |
+| W14/S4 | `conviction_ladder.py` | 実装済み (0.25%基底、条件数で2x/4x、連敗半減、日次-3%停止) |
+| W20 | `prospective_registry.py` | 実装済み (hash鎖・事前登録・family分母・成熟前評価拒否) |
+
+残り: **runtime配線** (上記モジュールをfast bot admission / trader cycleへ接続 = Codex担当)、
+**データ待ち** (レーンA未来テスト8/3以降、レーンB/E/FはM5取得後)、
+**封印identity手術** (W1/W9のV3出口family、W13のNAV%化 = 新audit loopつきで実施)。
+
 ## 実行順 (Codex)
 
 P0: W16 (T1契約モジュール=Claude実装済みを検収) → W8+W2 (regime×order-type整合) → W4 (event gate) → W12 (通貨エクスポージャ制約)
