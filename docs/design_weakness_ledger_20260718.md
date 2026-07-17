@@ -259,9 +259,10 @@ family粒度GO/CAUTIONで切り替える。
 1. ~~regime分類器~~ **実装済み** (`regime_classifier_shadow.py`, scale-free/相対閾値)。
 2. ~~ポートフォリオ共分散リスクモデル~~ **実装済み** (`portfolio_covariance_shadow.py`, Meucci ENB + Jacobi)。
 3. ~~合成脳walk-forwardアトリビューション~~ **実装済み** (`run-all-weather-attribution.py`, W27セル別P&L)。
-4. conviction接地+較正層: **機構は設計済みだが較正データが必要** — declared_condition の evidence packet
-   独立再計算 + supervision ledger からの regime別実現期待値マッピング。ライブ read/outcome が
-   貯まってから (Codex, 月曜以降)。今は grounding データが存在しない。
+4. ~~conviction接地+較正層~~ **機構実装済み** (`conviction_calibration_shadow.py`): 独立再計算による
+   condition接地 (過信の読みを減点)、Brier/ECE較正、grounded conviction×regime→実現期待値の
+   連続0-1確信度乗数。**較正テーブル自体はライブ read/outcome ledger 待ち** (Codex,月曜以降)。
+   W25核心「勘=パターン認識×信頼度の自覚」の機構化。5件全て機構完成。
 5. ~~レンジ/平均回帰 shadow family (レーンF)~~ **機構実装済み** (`range_rail_shadow.py`, 受動LIMIT→mid回帰)。
    統計的proof は M5 corpus 待ち。W28が証明した「加算」の本体。
 
