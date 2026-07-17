@@ -93,11 +93,18 @@ live昇格はオペレーター明示承認) は全修理に適用。
 | W13 | `nav_normalization.py` | 実装済み (pips→NAV%変換、明示レート必須) |
 | W10 | `cost_window_mask.py` | 実装済み (事前宣言UTC高コスト窓マスク、デフォルトrollover 21-22) |
 
-残り (コードとして今ここでは完成させられないもの):
-- **runtime配線**: 上記12モジュールをfast bot admission / trader cycle / scorecard生成へ接続 (= Codex、実行順は下表)
-- **データ待ち**: レーンA未来テスト (8/3以降に取得→評価)、レーンB/E/F研究 (M5取得後)、W17/W18の実データ運転
-- **W1/W9のカタログ本体統合**: shadow評価器でのpaired証拠が正になった場合のみ、V3 familyとして
-  identity繰り上げ+独立audit付きで昇格 (証拠より先にカタログへ入れない)
+追加完了 (2026-07-18 第2弾):
+- **未来テストexecutor実装済み**: `final-test` subcommand + `evaluate_locked_final_test`。
+  8/3成熟前の実行・研究manifestの再利用・束縛改竄を全拒否。事前宣言判定
+  (stressed net>0 && stressed PF>=1.05) 封印済み。残るのは壁時計のみ。
+- **shadow層のruntime配線完了**: `build_fast_bot_shadow_admission_binding_v1` が
+  close-distance / cost-window / 通貨エクスポージャの3ゲート判定を毎サイクル封印し、
+  将来GO契約の必須提示物 (`future_go_contract_must_bind_this_artifact=true`) にbind。
+
+コードでは完成させられない残余 (時間・証拠・境界に依存し、先回りは契約違反):
+- レーンA未来テストの**実行** (8/3以降の新規取得後、コマンド1回)
+- live trader runtime (本体repo・ルーチン所有) への同ゲート接続 = Codex S1-S6
+- W1/W9のカタログ昇格 = shadow paired証拠が正になった時のみ (証拠先行の禁止は不変条件)
 
 ## 実行順 (Codex)
 
