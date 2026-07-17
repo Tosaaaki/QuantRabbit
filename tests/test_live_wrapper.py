@@ -2638,6 +2638,10 @@ class LiveWrapperTest(unittest.TestCase):
     def test_position_guardian_seals_exact_28_m1_and_retains_slow_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            guardian_tmp = root / "tmp"
+            guardian_tmp.mkdir()
+            stale_legacy_temp = guardian_tmp / "qr-guardian-all-pair-m1.XXXXXX.json"
+            stale_legacy_temp.write_text("stale interrupted cycle\n")
             now = datetime.now(timezone.utc).isoformat()
             env, capture = _guardian_wrapper_env(
                 root,
@@ -2658,6 +2662,7 @@ class LiveWrapperTest(unittest.TestCase):
                 candidate_limit=2,
             )
             env["QR_ALL_PAIR_OBSERVATION_ENABLED"] = "1"
+            env["TMPDIR"] = str(guardian_tmp)
 
             result = subprocess.run(
                 ["bash", str(GUARDIAN_WRAPPER)],
@@ -2687,6 +2692,13 @@ class LiveWrapperTest(unittest.TestCase):
                 all_pair[all_pair.index("--pairs") + 1].split(","),
                 list(DEFAULT_TRADER_PAIRS),
             )
+            all_pair_temp = Path(all_pair[all_pair.index("--output") + 1])
+            self.assertRegex(
+                all_pair_temp.name,
+                r"^qr-guardian-all-pair-m1\.json\.[A-Za-z0-9]{6}$",
+            )
+            self.assertFalse(all_pair_temp.exists())
+            self.assertEqual(stale_legacy_temp.read_text(), "stale interrupted cycle\n")
             self.assertIn("--require-complete", all_pair)
             self.assertEqual(sum("broker-snapshot" in call for call in calls), 2)
             current = json.loads(

@@ -1341,6 +1341,7 @@ fast_bot_episode_output="${QR_FAST_BOT_EPISODE_OUTPUT:-data/fast_bot_episode_sta
 fast_bot_episode_ledger="${QR_FAST_BOT_EPISODE_LEDGER:-data/fast_bot_episode_ledger.jsonl}"
 fast_bot_episode_source_archive="${QR_FAST_BOT_EPISODE_SOURCE_ARCHIVE:-data/fast_bot_episode_sources}"
 fast_bot_episode_handoff=""
+guardian_all_pair_raw=""
 
 if [[ "$guardian_all_pair_observation_enabled" != "0" \
   && "$guardian_all_pair_observation_enabled" != "1" ]]; then
@@ -1560,6 +1561,13 @@ discard_fast_bot_episode_handoff() {
   fast_bot_episode_handoff=""
 }
 
+discard_guardian_all_pair_raw() {
+  if [[ -n "$guardian_all_pair_raw" ]]; then
+    rm -f "$guardian_all_pair_raw" || true
+  fi
+  guardian_all_pair_raw=""
+}
+
 release_guardian_lock_before_episode() {
   local owner_token current_token current_pid
   owner_token="${QR_AUTOTRADE_LOCK_OWNER_TOKEN:-}"
@@ -1632,10 +1640,11 @@ finish_guardian_cycle_with_episode() {
 }
 
 # The helper's original trap releases the shared lock. Extend it so a normal
-# error or signal also removes a sealed handoff that was never consumed.
-trap 'discard_fast_bot_episode_handoff; qr_live_lock_release' EXIT
-trap 'discard_fast_bot_episode_handoff; qr_live_lock_release; exit 130' INT
-trap 'discard_fast_bot_episode_handoff; qr_live_lock_release; exit 143' TERM
+# error or signal also removes transient all-pair charts and a sealed handoff
+# that was never consumed.
+trap 'discard_guardian_all_pair_raw; discard_fast_bot_episode_handoff; qr_live_lock_release' EXIT
+trap 'discard_guardian_all_pair_raw; discard_fast_bot_episode_handoff; qr_live_lock_release; exit 130' INT
+trap 'discard_guardian_all_pair_raw; discard_fast_bot_episode_handoff; qr_live_lock_release; exit 143' TERM
 
 resolve_fast_bot_shadow_outcomes() {
   if [[ "$QR_FAST_BOT_OUTCOME_ENABLED" != "1" ]]; then
@@ -1781,7 +1790,10 @@ if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
       --current "$guardian_all_pair_m1"
   )"
   if [[ "$guardian_all_pair_due" == "1" ]]; then
-    guardian_all_pair_raw="$(mktemp "${TMPDIR:-/tmp}/qr-guardian-all-pair-m1.XXXXXX.json")"
+    # BSD/macOS mktemp replaces trailing Xs only. Keep them at the end so
+    # concurrent roots and a prior interrupted cycle cannot share one literal
+    # `XXXXXX.json` path.
+    guardian_all_pair_raw="$(mktemp "${TMPDIR:-/tmp}/qr-guardian-all-pair-m1.json.XXXXXX")"
     guardian_all_pair_started="$SECONDS"
     set +e
     "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
@@ -1831,7 +1843,7 @@ if [[ "$guardian_all_pair_observation_enabled" == "1" ]]; then
     else
       echo "[run-position-guardian-live] sealed exact-28 current-M1/M5 observation with post-chart quotes." >&2
     fi
-    rm -f "$guardian_all_pair_raw"
+    discard_guardian_all_pair_raw
   fi
 fi
 
