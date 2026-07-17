@@ -83,18 +83,20 @@ def _fake_locked_truth_fetch(command: list[str]) -> None:
     )
     payload = "\n".join(json.dumps(item) for item in rows) + "\n"
     candle_path.write_bytes(gzip.compress(payload.encode("utf-8")))
-    history_fetch._append_truth_acquisition_receipt(
-        output_root=root,
-        task=history_fetch.FetchTask(
-            pair=pair,
-            granularity=granularity,
-            start=start,
-            end=end,
-            price="BA",
-        ),
-        candle_path=candle_path,
-        rows=len(rows),
-    )
+    with patch.object(history_fetch, "datetime") as receipt_clock:
+        receipt_clock.now.return_value = end
+        history_fetch._append_truth_acquisition_receipt(
+            output_root=root,
+            task=history_fetch.FetchTask(
+                pair=pair,
+                granularity=granularity,
+                start=start,
+                end=end,
+                price="BA",
+            ),
+            candle_path=candle_path,
+            rows=len(rows),
+        )
 
 
 def _candidate() -> dict:
@@ -176,9 +178,12 @@ class ForwardHoldoutTest(unittest.TestCase):
     def _future_holdout_start() -> datetime:
         """Keep materialization tests valid beyond their original calendar day."""
 
-        return (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+        start = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
             microsecond=0
         )
+        while start.weekday() >= 5:
+            start += timedelta(days=1)
+        return start
 
     def _fixture(self, root: Path) -> tuple[Path, Path, Path, Path]:
         candidate = root / "candidate.json"
