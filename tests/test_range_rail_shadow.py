@@ -85,6 +85,18 @@ def test_long_rail_reverts_up_to_mid() -> None:
     assert result["realized_pips"] == pytest.approx(20.0)
 
 
+def test_horizon_close_settles_on_the_correct_side_of_the_spread() -> None:
+    # SHORT filled at rail 1.1020, price drifts but never reverts to mid or
+    # hits stop before the short horizon; the time-close must buy back at the
+    # ASK, not the bid (regression for the fabricated-spread-win bug).
+    mids = [1.1021] + [1.1019] * 40  # fills, then hovers just below rail
+    result = _resolve(mids, horizon_seconds=100)
+    assert result["exit_reason"] == "EXECUTABLE_TIME_CLOSE"
+    # entry 1.1020, close at ask ~1.1020 -> ~0 or small loss, never a
+    # spurious +spread win.
+    assert result["realized_pips"] <= 0.5
+
+
 def test_geometry_and_provenance_fail_closed() -> None:
     with pytest.raises(RangeRailError, match="stop > rail > mid"):
         _resolve([1.1021], stop_price=1.1010)  # stop below rail for a SHORT

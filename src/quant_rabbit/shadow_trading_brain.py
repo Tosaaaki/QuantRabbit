@@ -185,16 +185,24 @@ def run_shadow_brain_cycle(
         }
         if measured_regime.get("classification_sha256") != _canonical_sha(mbody):
             raise ShadowBrainError("measured_regime digest is invalid")
-        measured_regime_label = str(measured_regime.get("regime") or "")
-        measured_vol_state = str(measured_regime.get("vol_state") or "")
+        measured_regime_label = str(measured_regime.get("regime") or "").upper()
+        measured_vol_state = str(measured_regime.get("vol_state") or "").upper()
         if family_catalog is not None:
-            from quant_rabbit.regime_family_router import route_families
-
-            routing = route_families(
-                family_catalog,
-                declared_regime=measured_regime_label,
-                vol_state=measured_vol_state,
+            from quant_rabbit.regime_family_router import (
+                RegimeFamilyRouterError,
+                route_families,
             )
+
+            try:
+                routing = route_families(
+                    family_catalog,
+                    declared_regime=measured_regime_label,
+                    vol_state=measured_vol_state,
+                )
+            except RegimeFamilyRouterError as error:
+                raise ShadowBrainError(
+                    f"family catalog routing failed: {error}"
+                ) from error
             eligible_families = {str(f) for f in routing["eligible_families"]}
             routing_status = routing["routing_status"]
 

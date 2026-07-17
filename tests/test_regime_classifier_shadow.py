@@ -73,12 +73,49 @@ def test_high_vol_bucket_detects_volatility_expansion() -> None:
     assert result["vol_state"] == "HIGH"
 
 
+def test_frozen_feed_is_unclear_not_high_confidence_squeeze() -> None:
+    # A dead/constant feed must not be a tradeable regime.
+    flat = [1.1000] * 140
+    result = classify_regime(_candles(flat), as_of_utc=AS_OF)
+    assert result["regime"] == "UNCLEAR"
+    assert result["confidence"] == 0.0
+    assert result["degenerate_constant_window"] is True
+
+
+def test_percentile_is_independent_of_caller_history_length() -> None:
+    # A longer prefix must not change the classification: the rolling window
+    # is bounded internally, so the same recent bars yield the same result.
+    import random
+
+    rng = random.Random(7)
+    full_closes = [1.1000 + rng.uniform(-0.003, 0.003) for _ in range(400)]
+    full = _candles(full_closes)
+    as_of = full[-1]["time"] + timedelta(minutes=2)
+    short = full[-145:]  # same absolute bars, shorter prefix
+    r_full = classify_regime(full, as_of_utc=as_of)
+    r_short = classify_regime(short, as_of_utc=as_of)
+    assert r_full["regime"] == r_short["regime"]
+    assert r_full["vol_state"] == r_short["vol_state"]
+    assert r_full["components"] == r_short["components"]
+
+
+def test_open_keyed_candle_must_be_closed_before_decision() -> None:
+    closes = [1.1000 + i * 0.0002 for i in range(140)]
+    candles = _candles(closes)
+    # The last candle opens 30s before the decision: with a 60s period it has
+    # not closed yet -> non-causal, must fail closed.
+    near = AS_OF - timedelta(seconds=30)
+    candles[-1]["time"] = near
+    with pytest.raises(RegimeClassifierError, match="close at or before"):
+        classify_regime(candles, as_of_utc=AS_OF, candle_period_seconds=60)
+
+
 def test_causality_and_shape_fail_closed() -> None:
     closes = [1.1000 + i * 0.0002 for i in range(140)]
     # A candle at/after the decision clock is non-causal.
     future = _candles(closes)
     future[-1]["time"] = AS_OF
-    with pytest.raises(RegimeClassifierError, match="strictly before"):
+    with pytest.raises(RegimeClassifierError, match="close at or before"):
         classify_regime(future, as_of_utc=AS_OF)
 
     with pytest.raises(RegimeClassifierError, match="insufficient"):

@@ -133,7 +133,9 @@ def resolve_range_rail_rotation(
             if epoch >= horizon_epoch:
                 bid_open = float(series.bid_opens[index])
                 ask_open = float(series.ask_opens[index])
-                exit_price = bid_open if name == "SHORT" else ask_open
+                # Closing a SHORT buys back at the ASK; closing a LONG sells
+                # at the BID — the exit convention, not the entry one.
+                exit_price = ask_open if name == "SHORT" else bid_open
                 realized = (
                     (entry - exit_price) * factor
                     if name == "SHORT"

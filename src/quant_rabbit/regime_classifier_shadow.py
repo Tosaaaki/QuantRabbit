@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import fmean, pstdev
 from typing import Any, Mapping, Sequence
 
@@ -47,16 +47,21 @@ def _canonical_sha(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _closes(candles: Sequence[Mapping[str, Any]], as_of: datetime) -> list[float]:
+def _closes(
+    candles: Sequence[Mapping[str, Any]], as_of: datetime, *, period_seconds: int
+) -> list[float]:
     closes: list[float] = []
     previous: datetime | None = None
+    period = timedelta(seconds=period_seconds)
     for candle in candles:
         stamp = candle.get("time")
         if not isinstance(stamp, datetime) or stamp.tzinfo is None:
             raise RegimeClassifierError("candle time must be timezone-aware")
         stamp = stamp.astimezone(timezone.utc)
-        if stamp >= as_of:
-            raise RegimeClassifierError("candle must close strictly before decision")
+        # `time` is the candle OPEN; it is usable only once its close
+        # (open + period) has landed at or before the decision clock.
+        if stamp + period > as_of:
+            raise RegimeClassifierError("candle must close at or before decision")
         if previous is not None and stamp <= previous:
             raise RegimeClassifierError("candles must be chronological and unique")
         previous = stamp
@@ -93,33 +98,79 @@ def _realized_vol(closes: Sequence[float]) -> float:
 
 
 def _percentile_rank(samples: Sequence[float], current: float) -> float:
+    """Midrank percentile: ties share the average rank.
+
+    A value tied with the maximum ranks near 1 (not below it), and an
+    all-equal sample lands at 0.5 rather than 0 — so a frozen/constant feed
+    is not spuriously read as the bottom of its own distribution.
+    """
+
     if not samples:
         return 0.0
     below = sum(1 for value in samples if value < current)
-    return below / len(samples)
+    equal = sum(1 for value in samples if value == current)
+    return (below + 0.5 * equal) / len(samples)
 
 
 def classify_regime(
     candles: Sequence[Mapping[str, Any]],
     *,
     as_of_utc: datetime,
+    candle_period_seconds: int = 60,
     high_impact_event_active: bool = False,
 ) -> dict[str, Any]:
     """Classify the current regime and volatility from closed candles only."""
 
     if as_of_utc.tzinfo is None:
         raise RegimeClassifierError("decision clock must be timezone-aware")
+    if not isinstance(candle_period_seconds, int) or candle_period_seconds <= 0:
+        raise RegimeClassifierError("candle_period_seconds must be positive")
     as_of = as_of_utc.astimezone(timezone.utc)
-    closes = _closes(candles, as_of)
+    closes = _closes(candles, as_of, period_seconds=candle_period_seconds)
     if len(closes) < VOL_HISTORY_WINDOW:
         raise RegimeClassifierError(
             "insufficient closed-candle history for classification"
         )
+    # Bound the rolling history to exactly the declared window so the
+    # percentile does not depend on how many candles the caller passed.
+    closes = closes[-VOL_HISTORY_WINDOW:]
 
     window = closes[-SHORT_WINDOW:]
     efficiency = _efficiency_ratio(window)
     bb_width = _bb_width(window)
     current_vol = _realized_vol(window)
+
+    # Degenerate/frozen feed (no price variation in the current window) is not
+    # a tradeable regime — do not emit a high-confidence SQUEEZE for dead data.
+    if bb_width <= 0.0 and current_vol <= 0.0:
+        body = {
+            "contract": CONTRACT,
+            "schema_version": 1,
+            "as_of_utc": as_of.isoformat(),
+            "regime": "UNCLEAR",
+            "vol_state": "LOW",
+            "confidence": 0.0,
+            "degenerate_constant_window": True,
+            "components": {
+                "efficiency_ratio": 0.0,
+                "bb_width_fraction": 0.0,
+                "bb_width_percentile": 0.0,
+                "short_window_realized_vol": 0.0,
+                "vol_percentile": 0.0,
+            },
+            "thresholds": {
+                "trend_efficiency_floor": TREND_EFFICIENCY_FLOOR,
+                "squeeze_bb_width_percentile": SQUEEZE_BB_WIDTH_PERCENTILE,
+                "high_vol_percentile": HIGH_VOL_PERCENTILE,
+                "short_window": SHORT_WINDOW,
+                "vol_history_window": VOL_HISTORY_WINDOW,
+            },
+            "measured_from_candles_not_clock": True,
+            "uses_post_decision_information": False,
+            "order_authority": "NONE",
+            "live_permission": False,
+        }
+        return {**body, "classification_sha256": _canonical_sha(body)}
 
     # Both percentiles rank the current short-window measure against the
     # rolling distribution of the SAME measure over recent history — relative,
