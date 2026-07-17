@@ -22,6 +22,7 @@ CONTRACT = "QR_PROFIT_PATH_FEASIBILITY_V1"
 PIP_FRACTION = 0.0001
 LEVERAGE_GRID = (5.0, 10.0, 25.0)
 TARGET_MULTIPLE = 4.0
+ACCEPTED_FALLBACK_MULTIPLE = 3.0
 CALENDAR_DAYS = 30
 TRADING_DAYS = 22
 # hold 12h / cadence 4h / rank 2 on both sides -> up to 3 overlapping
@@ -86,9 +87,13 @@ def daily_return_fraction(
 
 
 def required_pips_per_day(
-    *, leverage: float, days: int, concurrent_positions: int
+    *,
+    leverage: float,
+    days: int,
+    concurrent_positions: int,
+    target_multiple: float = TARGET_MULTIPLE,
 ) -> float:
-    needed_daily = TARGET_MULTIPLE ** (1.0 / days) - 1.0
+    needed_daily = target_multiple ** (1.0 / days) - 1.0
     return needed_daily / (PIP_FRACTION * leverage / concurrent_positions)
 
 
@@ -215,6 +220,25 @@ def build_board(
         "scenarios": scenarios,
         "four_x_gap_pips_per_day_at_max_leverage": round(
             required_at_cap - float(survivor_lane["pips_per_day"]), 9
+        ),
+        "three_x_required_pips_per_day_at_max_leverage": round(
+            required_pips_per_day(
+                leverage=max_leverage,
+                days=CALENDAR_DAYS,
+                concurrent_positions=concurrent_positions,
+                target_multiple=ACCEPTED_FALLBACK_MULTIPLE,
+            ),
+            9,
+        ),
+        "three_x_gap_pips_per_day_at_max_leverage": round(
+            required_pips_per_day(
+                leverage=max_leverage,
+                days=CALENDAR_DAYS,
+                concurrent_positions=concurrent_positions,
+                target_multiple=ACCEPTED_FALLBACK_MULTIPLE,
+            )
+            - float(survivor_lane["pips_per_day"]),
+            9,
         ),
         "proven_lane_count": len(proven),
         "four_x_supported_by_proven_evidence": False,

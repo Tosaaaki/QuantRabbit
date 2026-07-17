@@ -77,6 +77,19 @@ def test_board_seals_gap_and_forbids_goal_claims() -> None:
     assert board["four_x_gap_pips_per_day_at_max_leverage"] == pytest.approx(
         expected_gap, abs=1e-6
     )
+    expected_3x_gap = (
+        required_pips_per_day(
+            leverage=25.0, days=30, concurrent_positions=12, target_multiple=3.0
+        )
+        - 97.0
+    )
+    assert board["three_x_gap_pips_per_day_at_max_leverage"] == pytest.approx(
+        expected_3x_gap, abs=1e-6
+    )
+    assert (
+        board["three_x_required_pips_per_day_at_max_leverage"]
+        < board["four_x_gap_pips_per_day_at_max_leverage"] + 97.0
+    )
 
 
 def test_board_refuses_tampered_or_unbound_artifacts() -> None:
