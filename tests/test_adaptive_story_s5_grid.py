@@ -147,6 +147,132 @@ def _forced_h25_decision(
     )
 
 
+def _resolved_factor_trade(
+    *,
+    candidate_id: str,
+    split_name: str,
+    trigger_at: datetime,
+    side: str = "LONG",
+    exact_net_r: float = 1.0,
+    entry_exec: float = 1.1,
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "split": split_name,
+        "side": side,
+        "setup_at_utc": (trigger_at - timedelta(minutes=1)).isoformat(),
+        "trigger_at_utc": trigger_at.isoformat(),
+        "quote_observed_at_utc": (trigger_at + timedelta(seconds=5)).isoformat(),
+        "entry_at_utc": (trigger_at + timedelta(seconds=10)).isoformat(),
+        "entry_exec": entry_exec,
+        "exit_policy_id": candidate_id.split(":", maxsplit=1)[1],
+        "exact_net_r": exact_net_r,
+    }
+
+
+def _install_factor_cluster_payload(
+    run: dict[str, object],
+    *,
+    pair: str,
+    candidate_id: str,
+    split_name: str,
+    trades: list[dict[str, object]],
+) -> None:
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    for trade in trades:
+        grid._record_currency_trigger_factor_trade(
+            pair,
+            trade,
+            clusters,
+            ownership,
+        )
+    trial = next(
+        row
+        for row in run["all_trials"]  # type: ignore[index]
+        if row["candidate_id"] == candidate_id
+    )
+    metric = trial["by_split"][split_name]
+    payload, metric_fields = grid._build_currency_trigger_cluster_payload(
+        candidate_id,
+        split_name,
+        clusters,
+        ownership,
+        resolved_trade_count=len(trades),
+        candidate_total_exact_net_r=sum(
+            float(trade["exact_net_r"]) for trade in trades
+        ),
+        expected_pair=pair,
+    )
+    trial["currency_trigger_factor_clusters_by_split"][split_name] = payload
+    metric.update(metric_fields)
+
+
+def _synthetic_factor_run(
+    *,
+    pair: str,
+    split: UtcSplit,
+    candidate_id: str,
+    trigger_at: datetime,
+    exact_net_r: float,
+    side: str = "LONG",
+) -> dict[str, object]:
+    run = run_adaptive_story_s5_grid(
+        pair,
+        (),
+        (split,),
+        candidate_ids=(candidate_id,),
+    )
+    trial = run["all_trials"][0]
+    metric = trial["by_split"][split.name]
+    metric.update(
+        {
+            "filled_count": 1,
+            "resolved_count": 1,
+            "exact_net_r": exact_net_r,
+            "gross_profit_r": max(0.0, exact_net_r),
+            "gross_loss_r": max(0.0, -exact_net_r),
+            "win_count": int(exact_net_r > 0.0),
+            "loss_count": int(exact_net_r < 0.0),
+        }
+    )
+    matching_day = next(
+        day
+        for day in trial["daily_aggregates_by_split"][split.name]
+        if day["utc_date"] == trigger_at.date().isoformat()
+    )
+    matching_day.update(
+        {
+            "filled_count": 1,
+            "resolved_count": 1,
+            "exact_net_r": exact_net_r,
+            "gross_profit_r": max(0.0, exact_net_r),
+            "gross_loss_r": max(0.0, -exact_net_r),
+        }
+    )
+    _install_factor_cluster_payload(
+        run,
+        pair=pair,
+        candidate_id=candidate_id,
+        split_name=split.name,
+        trades=[
+            _resolved_factor_trade(
+                candidate_id=candidate_id,
+                split_name=split.name,
+                trigger_at=trigger_at,
+                side=side,
+                exact_net_r=exact_net_r,
+            )
+        ],
+    )
+    run["status"] = "COMPLETE"
+    run["aggregation"]["source_candle_count"] = 1
+    run["result_sha256"] = grid._canonical_sha(
+        {key: value for key, value in run.items() if key != "result_sha256"}
+    )
+    return run
+
+
 def test_catalog_has_ten_stories_five_contextual_exits_and_control() -> None:
     templates = build_story_templates_v2()
     vehicles = build_story_vehicle_catalog_v2()
@@ -1445,6 +1571,295 @@ def test_intrabar_resting_fill_does_not_fabricate_mid_spread_decomposition() -> 
     assert trade["gross_spread_decomposition_status"].startswith("UNAVAILABLE")
 
 
+@pytest.mark.parametrize(
+    ("pair", "side", "expected_views"),
+    [
+        ("EUR_USD", "LONG", {("EUR", 1), ("USD", -1)}),
+        ("USD_JPY", "SHORT", {("USD", -1), ("JPY", 1)}),
+    ],
+)
+def test_currency_trigger_factor_views_use_base_quote_and_side_signs(
+    pair: str,
+    side: str,
+    expected_views: set[tuple[str, int]],
+) -> None:
+    candidate_id = "H21:TIME_1H"
+    trade = _resolved_factor_trade(
+        candidate_id=candidate_id,
+        split_name="TRAIN",
+        trigger_at=BASE + timedelta(hours=1),
+        side=side,
+        exact_net_r=0.5,
+    )
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    grid._record_currency_trigger_factor_trade(pair, trade, clusters, ownership)
+
+    payload, metric_fields = grid._build_currency_trigger_cluster_payload(
+        candidate_id,
+        "TRAIN",
+        clusters,
+        ownership,
+        resolved_trade_count=1,
+        candidate_total_exact_net_r=0.5,
+        expected_pair=pair,
+    )
+
+    assert {
+        (row["currency"], row["sign"]) for row in payload["cluster_rows"]
+    } == expected_views
+    assert payload["factor_membership_count"] == 2
+    assert payload[
+        "factor_membership_exact_net_r_sum_for_ownership_check"
+    ] == pytest.approx(1.0)
+    assert metric_fields["currency_trigger_factor_cluster_count"] == 2
+
+
+def test_currency_trigger_factor_clusters_merge_same_minute_and_split_other_minutes() -> (
+    None
+):
+    candidate_id = "H21:TIME_1H"
+    first_minute = BASE + timedelta(hours=1)
+    trades = [
+        _resolved_factor_trade(
+            candidate_id=candidate_id,
+            split_name="TRAIN",
+            trigger_at=first_minute,
+            exact_net_r=0.5,
+            entry_exec=1.1,
+        ),
+        _resolved_factor_trade(
+            candidate_id=candidate_id,
+            split_name="TRAIN",
+            trigger_at=first_minute,
+            exact_net_r=0.25,
+            entry_exec=1.2,
+        ),
+        _resolved_factor_trade(
+            candidate_id=candidate_id,
+            split_name="TRAIN",
+            trigger_at=first_minute + timedelta(minutes=1),
+            exact_net_r=-0.1,
+            entry_exec=1.3,
+        ),
+    ]
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    for trade in trades:
+        grid._record_currency_trigger_factor_trade(
+            "EUR_USD", trade, clusters, ownership
+        )
+
+    payload, _ = grid._build_currency_trigger_cluster_payload(
+        candidate_id,
+        "TRAIN",
+        clusters,
+        ownership,
+        resolved_trade_count=3,
+        candidate_total_exact_net_r=0.65,
+        expected_pair="EUR_USD",
+    )
+
+    assert len(payload["cluster_rows"]) == 4
+    first_rows = [
+        row
+        for row in payload["cluster_rows"]
+        if row["trigger_at_utc"] == first_minute.isoformat()
+    ]
+    second_rows = [
+        row
+        for row in payload["cluster_rows"]
+        if row["trigger_at_utc"] == (first_minute + timedelta(minutes=1)).isoformat()
+    ]
+    assert [row["member_count"] for row in first_rows] == [2, 2]
+    assert [row["member_count"] for row in second_rows] == [1, 1]
+
+
+def test_currency_trigger_factor_payload_rejects_factor_sum_as_candidate_total() -> (
+    None
+):
+    candidate_id = "H21:TIME_1H"
+    trade = _resolved_factor_trade(
+        candidate_id=candidate_id,
+        split_name="TRAIN",
+        trigger_at=BASE + timedelta(hours=1),
+        exact_net_r=0.5,
+    )
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    grid._record_currency_trigger_factor_trade("EUR_USD", trade, clusters, ownership)
+    payload, _ = grid._build_currency_trigger_cluster_payload(
+        candidate_id,
+        "TRAIN",
+        clusters,
+        ownership,
+        resolved_trade_count=1,
+        candidate_total_exact_net_r=0.5,
+        expected_pair="EUR_USD",
+    )
+    tampered = copy.deepcopy(payload)
+    for row in tampered["cluster_rows"]:
+        row["members"][0]["exact_net_r"] = 0.75
+        row["exact_net_r"] = 0.75
+    tampered["factor_membership_exact_net_r_sum_for_ownership_check"] = 1.5
+    tampered["cluster_rows_sha256"] = grid._canonical_sha(tampered["cluster_rows"])
+    expected_metric_fields = grid._currency_trigger_metric_fields(
+        tampered["cluster_rows"],
+        candidate_total_exact_net_r=0.5,
+        cluster_digest=tampered["cluster_rows_sha256"],
+    )
+
+    with pytest.raises(ValueError, match="ownership total invariant"):
+        grid._validate_currency_trigger_cluster_payload(
+            tampered,
+            expected_candidate_id=candidate_id,
+            expected_split_name="TRAIN",
+            expected_pair="EUR_USD",
+            expected_resolved_trade_count=1,
+            expected_candidate_total_exact_net_r=0.5,
+            expected_metric_fields=expected_metric_fields,
+        )
+
+
+@pytest.mark.parametrize(
+    ("trigger_at", "error"),
+    [
+        (
+            (BASE + timedelta(hours=1)).astimezone(timezone(timedelta(hours=9))),
+            "must be UTC",
+        ),
+        (BASE + timedelta(hours=1, seconds=1), "exact UTC minute"),
+    ],
+)
+def test_currency_trigger_factor_rejects_noncanonical_trigger_clocks(
+    trigger_at: datetime,
+    error: str,
+) -> None:
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    trade = _resolved_factor_trade(
+        candidate_id="H21:TIME_1H",
+        split_name="TRAIN",
+        trigger_at=trigger_at,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        grid._record_currency_trigger_factor_trade(
+            "EUR_USD", trade, clusters, ownership
+        )
+
+
+def test_currency_trigger_factor_rejects_duplicate_trade_identity() -> None:
+    trade = _resolved_factor_trade(
+        candidate_id="H21:TIME_1H",
+        split_name="TRAIN",
+        trigger_at=BASE + timedelta(hours=1),
+    )
+    clusters: grid._CurrencyTriggerClusterMap = {}
+    ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+    grid._record_currency_trigger_factor_trade("EUR_USD", trade, clusters, ownership)
+
+    with pytest.raises(ValueError, match="duplicate resolved factor trade identity"):
+        grid._record_currency_trigger_factor_trade(
+            "EUR_USD", trade, clusters, ownership
+        )
+
+
+def test_currency_trigger_factor_payload_is_deterministic_under_trade_order() -> None:
+    candidate_id = "H21:TIME_1H"
+    trades = [
+        _resolved_factor_trade(
+            candidate_id=candidate_id,
+            split_name="TRAIN",
+            trigger_at=BASE + timedelta(hours=1, minutes=index),
+            exact_net_r=value,
+            entry_exec=1.1 + index / 100.0,
+        )
+        for index, value in enumerate((0.5, -0.25, 0.75))
+    ]
+
+    def build(ordered: list[dict[str, object]]) -> dict[str, object]:
+        clusters: grid._CurrencyTriggerClusterMap = {}
+        ownership: dict[str, tuple[grid._CurrencyTriggerClusterKey, ...]] = {}
+        for trade in ordered:
+            grid._record_currency_trigger_factor_trade(
+                "EUR_USD", trade, clusters, ownership
+            )
+        payload, _ = grid._build_currency_trigger_cluster_payload(
+            candidate_id,
+            "TRAIN",
+            clusters,
+            ownership,
+            resolved_trade_count=3,
+            candidate_total_exact_net_r=1.0,
+            expected_pair="EUR_USD",
+        )
+        return payload
+
+    assert build(trades) == build(list(reversed(trades)))
+
+
+def test_currency_trigger_factor_clusters_are_independent_of_audit_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_feature(
+        bars: tuple[grid._Bar, ...], prior: grid._Feature | None
+    ) -> grid._Feature:
+        del prior
+        bar = bars[-1]
+        return _feature(
+            timeframe=bar.timeframe,
+            completed_at=bar.end,
+            close=bar.close + 0.0020,
+            current_open=bar.open,
+        )
+
+    monkeypatch.setattr(grid, "_feature", fake_feature)
+    monkeypatch.setattr(grid, "_story_decision", _forced_h25_decision)
+    candles = (
+        _candle(0),
+        _candle(60),
+        _candle(120),
+        _candle(180),
+        _candle(240),
+        _candle(300),
+        _candle(305),
+        _candle(310),
+        _candle(3910, bid=1.1010, ask=1.1012),
+    )
+    uncapped = run_adaptive_story_s5_grid(
+        "EUR_USD",
+        candles,
+        _split(),
+        candidate_ids=("H25:TIME_1H",),
+    )
+    monkeypatch.setattr(grid, "MAX_AUDIT_ROWS", 0)
+    capped = run_adaptive_story_s5_grid(
+        "EUR_USD",
+        candles,
+        _split(),
+        candidate_ids=("H25:TIME_1H",),
+    )
+
+    assert uncapped["trade_audit_rows"]
+    assert capped["trade_audit_rows"] == []
+    assert capped["signal_audit_rows"] == []
+    assert (
+        uncapped["all_trials"][0]["currency_trigger_factor_clusters_by_split"]
+        == capped["all_trials"][0]["currency_trigger_factor_clusters_by_split"]
+    )
+    for field in (
+        "currency_trigger_factor_cluster_count",
+        "currency_trigger_min_leave_one_cluster_out_total_r",
+        "currency_trigger_top_cluster",
+        "currency_trigger_cluster_digest",
+    ):
+        assert (
+            uncapped["all_trials"][0]["by_split"]["TRAIN"][field]
+            == capped["all_trials"][0]["by_split"]["TRAIN"][field]
+        )
+
+
 def test_combine_uses_complete_zero_filled_daily_vectors_and_sealed_whitelist() -> None:
     splits = (UtcSplit("TRAIN", BASE, BASE + timedelta(days=2)),)
     candidate_ids = ("H21:TIME_1H",)
@@ -1496,6 +1911,20 @@ def test_combine_economic_screen_uses_pooled_pairs_and_entry_days() -> None:
                     "gross_loss_r": 0.0,
                 }
             )
+        _install_factor_cluster_payload(
+            run,
+            pair=pair,
+            candidate_id=candidate_ids[0],
+            split_name="VALIDATION",
+            trades=[
+                _resolved_factor_trade(
+                    candidate_id=candidate_ids[0],
+                    split_name="VALIDATION",
+                    trigger_at=BASE + timedelta(days=day_index, hours=1),
+                )
+                for day_index in range(8)
+            ],
+        )
         run["status"] = "COMPLETE"
         run["aggregation"]["source_candle_count"] = 1
         run["result_sha256"] = grid._canonical_sha(
@@ -1517,8 +1946,131 @@ def test_combine_economic_screen_uses_pooled_pairs_and_entry_days() -> None:
     assert metric["gross_profit_r"] == 32.0
     assert screen["eligible"] is True
     assert screen["gates"]["no_unresolved_filled"] is True
+    assert (
+        screen["gates"]["leave_one_currency_trigger_cluster_min_total_r_positive"]
+        is True
+    )
     assert metric["unresolved_filled_count"] == 0
     assert combined["economic_survivor_ids"] == ["H21:TIME_1H"]
+
+
+def test_combiner_merges_same_currency_trigger_minute_and_splits_other_minutes() -> (
+    None
+):
+    split = UtcSplit("TRAIN", BASE, BASE + timedelta(days=2))
+    candidate_id = "H21:TIME_1H"
+    trigger_at = BASE + timedelta(hours=1)
+    eur_run = _synthetic_factor_run(
+        pair="EUR_USD",
+        split=split,
+        candidate_id=candidate_id,
+        trigger_at=trigger_at,
+        exact_net_r=0.6,
+    )
+    gbp_same_minute = _synthetic_factor_run(
+        pair="GBP_USD",
+        split=split,
+        candidate_id=candidate_id,
+        trigger_at=trigger_at,
+        exact_net_r=0.4,
+    )
+
+    combined = combine_adaptive_story_s5_grid_runs(
+        (eur_run, gbp_same_minute),
+        (split,),
+        candidate_ids=(candidate_id,),
+    )
+    reversed_combined = combine_adaptive_story_s5_grid_runs(
+        (gbp_same_minute, eur_run),
+        (split,),
+        candidate_ids=(candidate_id,),
+    )
+    candidate = combined["candidate_metrics"][0]
+    metric = candidate["by_split"]["TRAIN"]
+    payload = candidate["currency_trigger_factor_clusters_by_split"]["TRAIN"]
+    shared_usd = next(
+        row
+        for row in payload["cluster_rows"]
+        if row["currency"] == "USD" and row["sign"] == -1
+    )
+
+    assert combined == reversed_combined
+    assert metric["exact_net_r"] == pytest.approx(1.0)
+    assert metric["currency_trigger_factor_cluster_count"] == 3
+    assert shared_usd["member_count"] == 2
+    assert shared_usd["exact_net_r"] == pytest.approx(1.0)
+    assert payload["candidate_total_exact_net_r"] == pytest.approx(1.0)
+    assert payload[
+        "factor_membership_exact_net_r_sum_for_ownership_check"
+    ] == pytest.approx(2.0)
+
+    gbp_next_minute = _synthetic_factor_run(
+        pair="GBP_USD",
+        split=split,
+        candidate_id=candidate_id,
+        trigger_at=trigger_at + timedelta(minutes=1),
+        exact_net_r=0.4,
+    )
+    split_minutes = combine_adaptive_story_s5_grid_runs(
+        (eur_run, gbp_next_minute),
+        (split,),
+        candidate_ids=(candidate_id,),
+    )
+    split_payload = split_minutes["candidate_metrics"][0][
+        "currency_trigger_factor_clusters_by_split"
+    ]["TRAIN"]
+    assert len(split_payload["cluster_rows"]) == 4
+
+
+def test_combiner_rejects_currency_trigger_cluster_digest_tamper() -> None:
+    split = UtcSplit("TRAIN", BASE, BASE + timedelta(days=2))
+    candidate_id = "H21:TIME_1H"
+    run = _synthetic_factor_run(
+        pair="EUR_USD",
+        split=split,
+        candidate_id=candidate_id,
+        trigger_at=BASE + timedelta(hours=1),
+        exact_net_r=0.5,
+    )
+    payload = run["all_trials"][0]["currency_trigger_factor_clusters_by_split"]["TRAIN"]
+    payload["cluster_rows_sha256"] = "0" * 64
+    run["result_sha256"] = grid._canonical_sha(
+        {key: value for key, value in run.items() if key != "result_sha256"}
+    )
+
+    with pytest.raises(ValueError, match="cluster rows digest mismatch"):
+        combine_adaptive_story_s5_grid_runs(
+            (run,),
+            (split,),
+            candidate_ids=(candidate_id,),
+        )
+
+
+def test_combiner_rejects_factor_member_pair_alias_tamper() -> None:
+    split = UtcSplit("TRAIN", BASE, BASE + timedelta(days=2))
+    candidate_id = "H21:TIME_1H"
+    run = _synthetic_factor_run(
+        pair="EUR_USD",
+        split=split,
+        candidate_id=candidate_id,
+        trigger_at=BASE + timedelta(hours=1),
+        exact_net_r=0.5,
+    )
+    rows = run["all_trials"][0]["currency_trigger_factor_clusters_by_split"]["TRAIN"][
+        "cluster_rows"
+    ]
+    for row in rows:
+        row["members"][0]["pair"] = "eur_usd"
+    run["result_sha256"] = grid._canonical_sha(
+        {key: value for key, value in run.items() if key != "result_sha256"}
+    )
+
+    with pytest.raises(ValueError, match="pair is noncanonical"):
+        combine_adaptive_story_s5_grid_runs(
+            (run,),
+            (split,),
+            candidate_ids=(candidate_id,),
+        )
 
 
 @pytest.mark.parametrize(
@@ -1640,5 +2192,5 @@ def test_combiner_rejects_coherently_resealed_economics_inside_no_data_run() -> 
         {key: value for key, value in run.items() if key != "result_sha256"}
     )
 
-    with pytest.raises(ValueError, match="NO_DATA"):
+    with pytest.raises(ValueError, match="currency-trigger|NO_DATA"):
         combine_adaptive_story_s5_grid_runs((run,), splits, candidate_ids=candidate_ids)

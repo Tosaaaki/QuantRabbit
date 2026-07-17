@@ -40,15 +40,21 @@ TRAIN_CONTRACT = "QR_ADAPTIVE_STORY_S5_TRAIN_RECEIPT_V2"
 VALIDATION_CONTRACT = "QR_ADAPTIVE_STORY_S5_VALIDATION_RECEIPT_V2"
 HOLDOUT_CONTRACT = "QR_ADAPTIVE_STORY_S5_HOLDOUT_RECEIPT_V2"
 TRAIN_SELECTION_POLICY = (
-    "ONE_EXIT_PER_STORY_ONE_SE_COMPLETE_UTC_DAILY_NET_R_"
+    "TRAIN_PRIMARY_POSITIVE_ECONOMIC_ELIGIBILITY_THEN_"
+    "MAX_ONE_EXIT_PER_STORY_ONE_SE_COMPLETE_UTC_DAILY_NET_R_"
     "WEIGHTED_TWO_DAY_CLUSTER_ROBUST_SE_ANCHORED_AT_SPLIT_START_"
-    "BEST_MEAN_SE_COMPLEXITY_ID_THEN_SIMPLEST_MEAN_SE_ID_V2"
+    "NO_FORCED_DEFAULT_IF_NO_ELIGIBLE_EXIT_V3"
 )
 VALIDATION_SCREEN_POLICY = (
-    "ALL_TRAIN_FIXED_CANDIDATES_GLOBAL_ECONOMIC_SCREEN_"
+    "ALL_50_FIXED_CANDIDATES_GLOBAL_ECONOMIC_SCREEN_"
     "MIN30_RESOLVED_MIN8_DAYS_MIN4_CONTRIBUTING_PAIRS_"
     "POSITIVE_R_PF_ABOVE_ONE_LOOCV_POSITIVE_NO_UNRESOLVED_"
-    "TRAIN_VALIDATION_SAME_POSITIVE_SIGN_V2"
+    "LEAVE_ONE_CURRENCY_TRIGGER_CLUSTER_POSITIVE_"
+    "TRAIN_PRIMARY_CURRENT_COHORT_SHADOW_DIAGNOSTIC_ONLY_V3"
+)
+CANDIDATE_ROLE_POLICY = (
+    "TRAIN_PRIMARY_HOLDOUT_ELIGIBLE_VALIDATION_ALL_50_"
+    "TRAIN_SHADOW_DIAGNOSTIC_NEVER_REPLACES_PRIMARY_V3"
 )
 PORTFOLIO_ALLOCATION = "EQUAL_INITIAL_R_PER_FILLED_TRADE_UNBOUNDED_GROSS_DIAGNOSTIC_V2"
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
@@ -178,7 +184,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     phases = parser.add_subparsers(dest="phase", required=True)
 
-    train = phases.add_parser("train", help="freeze the ten validation candidates")
+    train = phases.add_parser(
+        "train",
+        help="freeze positive TRAIN-primary roles and the complementary shadow",
+    )
     train.add_argument("--history-root", type=Path, required=True)
     train.add_argument("--history-run-ids", type=_parse_run_ids, required=True)
     train.add_argument("--pairs", type=_parse_pairs, required=True)
@@ -193,7 +202,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     validation = phases.add_parser(
         "validation",
-        help="run only the ten candidates sealed by the train receipt",
+        help="run all 50 candidates; promote only the sealed TRAIN-primary cohort",
     )
     validation.add_argument("--history-root", type=Path, required=True)
     validation.add_argument("--train-receipt", type=Path, required=True)
@@ -202,7 +211,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     holdout = phases.add_parser(
         "holdout",
-        help="run only the validation survivors without reselection",
+        help="run only sealed current-cohort survivors without shadow substitution",
     )
     holdout.add_argument("--history-root", type=Path, required=True)
     holdout.add_argument("--train-receipt", type=Path, required=True)
@@ -466,7 +475,7 @@ def _selection_semantic_receipt() -> dict[str, Any]:
         for row in _catalog_rows()
     ]
     body: dict[str, Any] = {
-        "contract": "QR_ADAPTIVE_STORY_50_CANDIDATE_SELECTION_SEMANTICS_V1",
+        "contract": "QR_ADAPTIVE_STORY_50_CANDIDATE_SELECTION_SEMANTICS_V2",
         "selectable_candidate_count": 50,
         "candidate_rows": candidates,
         "core_story_catalog_policy": story_core.STORY_CATALOG_POLICY_V2,
@@ -481,7 +490,27 @@ def _selection_semantic_receipt() -> dict[str, Any]:
         "train_estimator": "COMPLETE_UTC_DAILY_NET_R_ZERO_DAYS_INCLUDED",
         "train_cluster_formula": ("SQRT(B/(B-1)*SUM((S_C-N_C*MEAN_DAILY_R)^2)/N^2)"),
         "train_cluster_unit": "NON_OVERLAPPING_TWO_UTC_CALENDAR_DAY_BLOCK",
+        "train_primary_economic_eligibility": {
+            "minimum_resolved_trades": 30,
+            "minimum_active_entry_utc_days": 8,
+            "minimum_contributing_pairs": 4,
+            "average_net_r_positive": True,
+            "average_daily_net_r_positive": True,
+            "profit_factor_r_above_one": True,
+            "unresolved_or_purged_required": 0,
+            "minimum_non_overlapping_clusters": 2,
+            "cluster_standard_error_required": True,
+            "forced_default_when_none_eligible": False,
+        },
         "validation_screen_policy": VALIDATION_SCREEN_POLICY,
+        "validation_currency_trigger_cluster_gate": (
+            "LEAVE_ONE_CURRENCY_DIRECTION_TRIGGER_M1_CLUSTER_"
+            "MIN_TOTAL_R_STRICTLY_POSITIVE"
+        ),
+        "candidate_role_policy": CANDIDATE_ROLE_POLICY,
+        "validation_executes_all_50": True,
+        "shadow_can_replace_current_cohort": False,
+        "shadow_holdout_eligible": False,
         "portfolio_allocation": PORTFOLIO_ALLOCATION,
         "price_only_cost_scope": dict(PRICE_ONLY_COST_SCOPE),
     }
@@ -955,6 +984,81 @@ def _catalog_rows() -> tuple[Any, ...]:
     return rows
 
 
+def _new_candidate_roles(primary_candidate_ids: Sequence[str]) -> dict[str, Any]:
+    catalog = _catalog_rows()
+    catalog_ids = [row.candidate_id for row in catalog]
+    primary = list(primary_candidate_ids)
+    primary_set = set(primary)
+    if (
+        len(primary) != len(primary_set)
+        or [candidate_id for candidate_id in catalog_ids if candidate_id in primary_set]
+        != primary
+    ):
+        raise AdaptiveStoryCliError("TRAIN-primary candidate order/scope is invalid")
+    by_id = {row.candidate_id: row for row in catalog}
+    hypotheses = [by_id[candidate_id].hypothesis_id for candidate_id in primary]
+    if len(hypotheses) != len(set(hypotheses)):
+        raise AdaptiveStoryCliError("TRAIN-primary contains multiple exits per story")
+    shadow = [
+        candidate_id for candidate_id in catalog_ids if candidate_id not in primary_set
+    ]
+    body: dict[str, Any] = {
+        "contract": "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V3",
+        "schema_version": 3,
+        "policy": CANDIDATE_ROLE_POLICY,
+        "catalog_candidate_ids": catalog_ids,
+        "catalog_candidate_ids_sha256": _canonical_sha(catalog_ids),
+        "validation_execution_candidate_ids": catalog_ids,
+        "train_primary_candidate_ids": primary,
+        "train_shadow_candidate_ids": shadow,
+        "train_primary_hypothesis_ids": hypotheses,
+        "train_primary_max_one_exit_per_story": True,
+        "roles_are_catalog_ordered": True,
+        "roles_form_exact_catalog_partition": True,
+        "validation_executes_shadow": True,
+        "shadow_current_cohort_promotion_allowed": False,
+        "shadow_holdout_eligible": False,
+        "shadow_can_replace_train_primary": False,
+    }
+    return {**body, "candidate_roles_sha256": _canonical_sha(body)}
+
+
+def _validate_candidate_roles(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AdaptiveStoryCliError("phase receipt has no candidate role seal")
+    roles = dict(value)
+    claimed = roles.pop("candidate_roles_sha256", None)
+    if (
+        not isinstance(claimed, str)
+        or _SHA_RE.fullmatch(claimed) is None
+        or _canonical_sha(roles) != claimed
+    ):
+        raise AdaptiveStoryCliError("candidate role digest mismatch")
+    if (
+        roles.get("contract") != "QR_ADAPTIVE_STORY_CANDIDATE_ROLES_V3"
+        or roles.get("schema_version") != 3
+        or roles.get("policy") != CANDIDATE_ROLE_POLICY
+    ):
+        raise AdaptiveStoryCliError("candidate role policy mismatch")
+    catalog_ids = [row.candidate_id for row in _catalog_rows()]
+    primary = roles.get("train_primary_candidate_ids")
+    shadow = roles.get("train_shadow_candidate_ids")
+    validation_ids = roles.get("validation_execution_candidate_ids")
+    if (
+        roles.get("catalog_candidate_ids") != catalog_ids
+        or roles.get("catalog_candidate_ids_sha256") != _canonical_sha(catalog_ids)
+        or validation_ids != catalog_ids
+        or not isinstance(primary, list)
+        or not isinstance(shadow, list)
+    ):
+        raise AdaptiveStoryCliError("candidate role catalog scope mismatch")
+    expected = _new_candidate_roles(primary)
+    complete = {**roles, "candidate_roles_sha256": claimed}
+    if complete != expected:
+        raise AdaptiveStoryCliError("candidate role partition/order mismatch")
+    return complete
+
+
 def _result_candidate_ids(result: Mapping[str, Any]) -> tuple[str, ...]:
     rows = result.get("all_trials")
     if not isinstance(rows, list):
@@ -1388,6 +1492,111 @@ def _daily_train_metrics(
             if cluster_variance < 0.0 or not math.isfinite(cluster_variance):
                 raise AdaptiveStoryCliError("train two-day cluster variance is invalid")
             standard_error = math.sqrt(cluster_variance)
+        resolved_total = sum(resolved_counts)
+        exact_net_r = sum(values)
+
+        def nonnegative_int(name: str) -> int:
+            value = train.get(name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise AdaptiveStoryCliError(f"train {name} is invalid")
+            return value
+
+        def finite_number(name: str) -> float:
+            value = train.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise AdaptiveStoryCliError(f"train {name} is invalid")
+            return float(value)
+
+        claimed_resolved = nonnegative_int("resolved_count")
+        active_days = nonnegative_int("active_entry_day_count")
+        contributing_pairs = nonnegative_int("contributing_pair_count")
+        unresolved_or_purged = nonnegative_int("unresolved_or_purged_count")
+        claimed_net = finite_number("exact_net_r")
+        average_daily = finite_number("average_daily_net_r")
+        if claimed_resolved != resolved_total or not math.isclose(
+            claimed_net,
+            exact_net_r,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise AdaptiveStoryCliError(
+                "train daily totals disagree with global metric"
+            )
+        if not math.isclose(
+            average_daily,
+            mean,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise AdaptiveStoryCliError("train average daily R disagrees with vector")
+        raw_average_net = train.get("average_net_r")
+        if claimed_resolved > 0:
+            average_net = finite_number("average_net_r")
+            if not math.isclose(
+                average_net,
+                exact_net_r / claimed_resolved,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise AdaptiveStoryCliError("train average net R is inconsistent")
+        elif raw_average_net is None:
+            average_net = None
+        else:
+            raise AdaptiveStoryCliError(
+                "zero-resolution train average net R is invalid"
+            )
+        gross_profit = finite_number("gross_profit_r")
+        gross_loss = finite_number("gross_loss_r")
+        if (
+            gross_profit < 0.0
+            or gross_loss < 0.0
+            or not math.isclose(
+                gross_profit - gross_loss,
+                exact_net_r,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        ):
+            raise AdaptiveStoryCliError("train gross R components are inconsistent")
+        profit_factor_infinite = train.get("profit_factor_r_infinite")
+        if not isinstance(profit_factor_infinite, bool):
+            raise AdaptiveStoryCliError("train profit-factor infinity flag is invalid")
+        raw_profit_factor = train.get("profit_factor_r")
+        if gross_loss > 0.0:
+            profit_factor = finite_number("profit_factor_r")
+            if profit_factor_infinite or not math.isclose(
+                profit_factor,
+                gross_profit / gross_loss,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
+                raise AdaptiveStoryCliError("train profit factor is inconsistent")
+        else:
+            if raw_profit_factor is not None:
+                raise AdaptiveStoryCliError(
+                    "zero-loss train profit factor must be null"
+                )
+            profit_factor = None
+            if profit_factor_infinite is not (gross_profit > 0.0):
+                raise AdaptiveStoryCliError(
+                    "zero-loss train profit-factor infinity flag is inconsistent"
+                )
+        gates = {
+            "resolved_trade_floor_passed": claimed_resolved >= 30,
+            "active_entry_day_floor_passed": active_days >= 8,
+            "contributing_pair_floor_passed": contributing_pairs >= 4,
+            "average_net_r_positive": average_net is not None and average_net > 0.0,
+            "average_daily_net_r_positive": average_daily > 0.0,
+            "profit_factor_r_above_one": profit_factor_infinite
+            or (profit_factor is not None and profit_factor > 1.0),
+            "no_unresolved_or_purged": unresolved_or_purged == 0,
+            "cluster_count_floor_passed": block_count >= 2,
+            "cluster_standard_error_defined": standard_error is not None,
+        }
         parsed[candidate_id] = {
             "daily_net_r": [
                 {
@@ -1404,7 +1613,7 @@ def _daily_train_metrics(
             "two_day_blocks": blocks,
             "two_day_block_sizes": [len(block["utc_dates"]) for block in blocks],
             "non_overlapping_two_day_block_cluster_count": block_count,
-            "resolved_count": sum(resolved_counts),
+            "resolved_count": resolved_total,
             "mean_daily_net_r": mean,
             "two_day_block_cluster_robust_standard_error_daily_r": standard_error,
             "two_day_block_standard_error_daily_r_compatibility_alias": (
@@ -1413,6 +1622,17 @@ def _daily_train_metrics(
             "cluster_robust_se_formula": (
                 "SQRT(B/(B-1)*SUM((S_C-N_C*MEAN_DAILY_R)^2)/N^2)"
             ),
+            "active_entry_day_count": active_days,
+            "contributing_pair_count": contributing_pairs,
+            "unresolved_or_purged_count": unresolved_or_purged,
+            "average_net_r": average_net,
+            "average_daily_net_r": average_daily,
+            "gross_profit_r": gross_profit,
+            "gross_loss_r": gross_loss,
+            "profit_factor_r": profit_factor,
+            "profit_factor_r_infinite": profit_factor_infinite,
+            "train_primary_eligibility_gates": gates,
+            "train_primary_eligible": all(gates.values()),
         }
     return parsed
 
@@ -1482,11 +1702,7 @@ def _train_selection(
             raise AdaptiveStoryCliError(
                 "TIME_1H is not the unique preregistered simplest exit"
             )
-        sufficient = all(
-            int(row["non_overlapping_two_day_block_cluster_count"]) >= 2
-            and row["two_day_block_cluster_robust_standard_error_daily_r"] is not None
-            for row in rows
-        )
+        eligible = [row for row in rows if row["train_primary_eligible"] is True]
         observed_leader = min(
             rows,
             key=lambda row: (
@@ -1499,9 +1715,9 @@ def _train_selection(
                 str(row["candidate_id"]),
             ),
         )
-        if sufficient:
+        if eligible:
             best = min(
-                rows,
+                eligible,
                 key=lambda row: (
                     -float(row["mean_daily_net_r"]),
                     float(row["two_day_block_cluster_robust_standard_error_daily_r"]),
@@ -1512,7 +1728,7 @@ def _train_selection(
             best_se = float(best["two_day_block_cluster_robust_standard_error_daily_r"])
             threshold = float(best["mean_daily_net_r"]) - best_se
             within = [
-                row for row in rows if float(row["mean_daily_net_r"]) >= threshold
+                row for row in eligible if float(row["mean_daily_net_r"]) >= threshold
             ]
             chosen = min(
                 within,
@@ -1523,25 +1739,33 @@ def _train_selection(
                     str(row["candidate_id"]),
                 ),
             )
-            basis = "OBSERVED_ONE_SE"
+            basis = "TRAIN_PRIMARY_ELIGIBLE_ONE_SE"
+            selected.append(str(chosen["candidate_id"]))
         else:
             best = None
-            chosen = defaults[0]
+            chosen = None
             threshold = None
-            basis = "TRAIN_EXIT_DEFAULT_INSUFFICIENT_CLUSTERS"
-        selected.append(str(chosen["candidate_id"]))
+            basis = "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
         story_receipts.append(
             {
                 "hypothesis_id": hypothesis_id,
+                "train_primary_eligible_candidate_ids": [
+                    row["candidate_id"] for row in eligible
+                ],
                 "best_candidate_id": best["candidate_id"] if best else None,
                 "observed_mean_leader_candidate_id": observed_leader["candidate_id"],
                 "one_se_threshold_r": threshold,
-                "selected_candidate_id": chosen["candidate_id"],
+                "selected_train_primary_candidate_id": (
+                    chosen["candidate_id"] if chosen else None
+                ),
                 "selection_basis": basis,
             }
         )
-    if len(selected) != 10 or len(set(selected)) != 10:
-        raise AdaptiveStoryCliError("train phase did not freeze exactly ten candidates")
+    if len(selected) > 10 or len(set(selected)) != len(selected):
+        raise AdaptiveStoryCliError("TRAIN-primary candidate scope is invalid")
+    selected_hypotheses = [candidate_id.split(":", 1)[0] for candidate_id in selected]
+    if len(selected_hypotheses) != len(set(selected_hypotheses)):
+        raise AdaptiveStoryCliError("TRAIN-primary contains duplicate story exits")
     return {
         "policy": TRAIN_SELECTION_POLICY,
         "estimator": "COMPLETE_UTC_DAILY_NET_R_ZERO_DAYS_INCLUDED",
@@ -1555,14 +1779,17 @@ def _train_selection(
         ),
         "final_incomplete_block_included": True,
         "insufficient_cluster_policy": (
-            "LESS_THAN_2_OR_UNDEFINED_SE_SELECT_PREREGISTERED_TIME_1H"
+            "LESS_THAN_2_OR_UNDEFINED_SE_IS_NOT_TRAIN_PRIMARY_ELIGIBLE"
         ),
+        "no_eligible_exit_policy": "NO_PRIMARY_FOR_STORY_NO_FORCED_TIME_1H",
         "best_tie_rule": "MEAN_DAILY_R_DESC_SE_ASC_COMPLEXITY_ASC_ID_ASC",
         "within_one_se_tie_rule": ("COMPLEXITY_ASC_MEAN_DAILY_R_DESC_SE_ASC_ID_ASC"),
         "pair_cluster_diagnostic_selection_eligible": False,
         "candidate_metrics": metrics,
         "story_selections": story_receipts,
-        "selected_candidate_ids": selected,
+        "train_primary_candidate_ids": selected,
+        "train_primary_candidate_count": len(selected),
+        "train_primary_max_one_exit_per_story": True,
         "selection_uses_validation": False,
         "selection_uses_holdout": False,
     }
@@ -1716,7 +1943,7 @@ def _no_survivor_holdout_skip_result(
         "source_manifest_sha256": manifest.get("manifest_sha256"),
         "requested_candidate_ids": [],
         "candidate_metrics": [],
-        "selected_candidate_ids": [],
+        "holdout_candidate_ids": [],
         "split_receipt": split_rows,
         "split_digest": _canonical_sha(split_rows),
         "price_only_cost_scope": dict(PRICE_ONLY_COST_SCOPE),
@@ -1753,9 +1980,13 @@ def _validation_survivors(
             "profit_factor_r_above_one",
             "loocv_each_day_removed_total_r_positive",
             "no_unresolved_or_purged",
+            "no_unresolved_filled",
+            "leave_one_currency_trigger_cluster_min_total_r_positive",
         )
-        if not isinstance(gates, Mapping) or any(
-            not isinstance(gates.get(name), bool) for name in required_gates
+        if (
+            not isinstance(gates, Mapping)
+            or set(gates) != set(required_gates)
+            or any(not isinstance(gates.get(name), bool) for name in required_gates)
         ):
             raise AdaptiveStoryCliError("global economic screen gates are invalid")
         eligible = screen.get("eligible")
@@ -1780,6 +2011,7 @@ def _apply_train_validation_same_sign_gate(
     candidate_ids: Sequence[str],
     core_survivors: Sequence[str],
     train_means: Mapping[str, float],
+    train_primary_candidate_ids: Sequence[str],
 ) -> tuple[list[str], list[dict[str, Any]]]:
     rows = global_result.get("candidate_metrics")
     if not isinstance(rows, list):
@@ -1790,6 +2022,12 @@ def _apply_train_validation_same_sign_gate(
         if isinstance(row, Mapping)
     }
     core_set = set(core_survivors)
+    primary = tuple(train_primary_candidate_ids)
+    primary_set = set(primary)
+    if [
+        candidate_id for candidate_id in candidate_ids if candidate_id in primary_set
+    ] != list(primary):
+        raise AdaptiveStoryCliError("validation TRAIN-primary order/scope is invalid")
     final: list[str] = []
     gates: list[dict[str, Any]] = []
     for candidate_id in candidate_ids:
@@ -1816,10 +2054,14 @@ def _apply_train_validation_same_sign_gate(
                 "core economic survivor has non-positive validation daily R"
             )
         same_sign_positive = train_mean > 0.0 and validation_mean > 0.0
-        selected = core_eligible and same_sign_positive
+        diagnostic_pass = core_eligible and same_sign_positive
+        is_primary = candidate_id in primary_set
+        selected = diagnostic_pass and is_primary
         if selected:
             final.append(candidate_id)
             rejection_reason = None
+        elif not is_primary:
+            rejection_reason = "TRAIN_SHADOW_DIAGNOSTIC_ONLY_NOT_HOLDOUT_ELIGIBLE"
         elif not core_eligible:
             rejection_reason = "VALIDATION_GLOBAL_ECONOMIC_SCREEN_FAILED"
         else:
@@ -1831,7 +2073,12 @@ def _apply_train_validation_same_sign_gate(
                 "validation_mean_daily_net_r": validation_mean,
                 "core_validation_economic_screen_eligible": core_eligible,
                 "train_validation_same_positive_sign_gate_passed": (same_sign_positive),
-                "selected_as_final_survivor": selected,
+                "candidate_role": "TRAIN_PRIMARY" if is_primary else "TRAIN_SHADOW",
+                "validation_diagnostic_passed": diagnostic_pass,
+                "current_cohort_promotion_allowed": selected,
+                "holdout_eligible": selected,
+                "selected_as_current_cohort_survivor": selected,
+                "shadow_can_replace_train_primary": False,
                 "rejection_reason": rejection_reason,
             }
         )
@@ -1848,8 +2095,8 @@ def _new_portfolio_spec(candidate_ids: Sequence[str]) -> dict[str, Any]:
         "allocation_label": PORTFOLIO_ALLOCATION,
         "candidate_ids": ids,
         "candidate_ids_sha256": _canonical_sha(ids),
-        "candidate_order_policy": "SEALED_VALIDATION_SURVIVOR_ORDER",
-        "all_validation_survivors_included": True,
+        "candidate_order_policy": ("SEALED_TRAIN_PRIMARY_VALIDATION_SURVIVOR_ORDER"),
+        "all_train_primary_validation_survivors_included": True,
         "subset_search_allowed": False,
         "weight_search_allowed": False,
         "gross_exposure_limit_applied": False,
@@ -1889,8 +2136,14 @@ def _validate_portfolio_spec(
         )
     ):
         raise AdaptiveStoryCliError("fixed portfolio permits adaptive capital choices")
-    if spec.get("all_validation_survivors_included") is not True:
-        raise AdaptiveStoryCliError("fixed portfolio omits validation survivors")
+    if spec.get("candidate_order_policy") != (
+        "SEALED_TRAIN_PRIMARY_VALIDATION_SURVIVOR_ORDER"
+    ):
+        raise AdaptiveStoryCliError("fixed portfolio candidate order policy changed")
+    if spec.get("all_train_primary_validation_survivors_included") is not True:
+        raise AdaptiveStoryCliError(
+            "fixed portfolio omits TRAIN-primary validation survivors"
+        )
     if spec.get("price_only_cost_scope") != PRICE_ONLY_COST_SCOPE:
         raise AdaptiveStoryCliError("fixed portfolio cost scope changed")
     if spec.get("fully_loaded_net_economics") is not False:
@@ -2250,7 +2503,7 @@ def _validate_train_receipt_for_downstream(
     *,
     scope: Mapping[str, Any],
     manifest: Mapping[str, Any],
-) -> tuple[list[str], dict[str, float]]:
+) -> tuple[dict[str, Any], dict[str, float]]:
     """Recompute the TRAIN result and selection from sealed pair evidence."""
 
     if train.get("status") != "SEALED":
@@ -2296,22 +2549,23 @@ def _validate_train_receipt_for_downstream(
         raise AdaptiveStoryCliError(
             "train selection differs from recomputed phase evidence"
         )
-    selected_candidate_ids = recomputed_selection["selected_candidate_ids"]
-    if (
-        not isinstance(selected_candidate_ids, list)
-        or len(selected_candidate_ids) != 10
-        or train.get("next_phase_candidate_ids") != selected_candidate_ids
+    roles = _validate_candidate_roles(train.get("candidate_roles"))
+    primary_candidate_ids = recomputed_selection["train_primary_candidate_ids"]
+    if roles["train_primary_candidate_ids"] != primary_candidate_ids:
+        raise AdaptiveStoryCliError("TRAIN-primary roles differ from selection")
+    for field in (
+        "validation_execution_candidate_ids",
+        "train_primary_candidate_ids",
+        "train_shadow_candidate_ids",
     ):
-        raise AdaptiveStoryCliError(
-            "train next-phase scope differs from recomputed selection"
-        )
-    _vehicles_for_candidate_ids(selected_candidate_ids)
+        if train.get(field) != roles[field]:
+            raise AdaptiveStoryCliError(f"train top-level {field} binding is invalid")
     daily_metrics = _daily_train_metrics(recomputed_global, train_split)
     train_means = {
         candidate_id: float(daily_metrics[candidate_id]["mean_daily_net_r"])
-        for candidate_id in selected_candidate_ids
+        for candidate_id in expected_catalog_ids
     }
-    return list(selected_candidate_ids), train_means
+    return roles, train_means
 
 
 def _validate_validation_receipt_for_holdout(
@@ -2319,7 +2573,7 @@ def _validate_validation_receipt_for_holdout(
     *,
     scope: Mapping[str, Any],
     manifest: Mapping[str, Any],
-    expected_candidate_ids: Sequence[str],
+    expected_roles: Mapping[str, Any],
     train_means: Mapping[str, float],
 ) -> tuple[list[str], dict[str, Any]]:
     """Rebuild the complete validation decision before any holdout read.
@@ -2334,14 +2588,15 @@ def _validate_validation_receipt_for_holdout(
 
     if validation.get("status") != "SEALED":
         raise AdaptiveStoryCliError("validation receipt status is not sealed")
+    roles = _validate_candidate_roles(validation.get("candidate_roles"))
+    if roles != dict(expected_roles):
+        raise AdaptiveStoryCliError("validation candidate roles differ from TRAIN")
+    validation_candidate_ids = roles["validation_execution_candidate_ids"]
+    train_primary_candidate_ids = roles["train_primary_candidate_ids"]
     input_candidate_ids = validation.get("executed_candidate_ids")
-    if not isinstance(input_candidate_ids, list) or len(input_candidate_ids) != 10:
+    if input_candidate_ids != validation_candidate_ids:
         raise AdaptiveStoryCliError(
             "validation receipt input candidate scope is invalid"
-        )
-    if input_candidate_ids != list(expected_candidate_ids):
-        raise AdaptiveStoryCliError(
-            "validation candidate scope differs from sealed train selection"
         )
     _vehicles_for_candidate_ids(input_candidate_ids)
     if tuple(train_means) != tuple(input_candidate_ids) or any(
@@ -2391,6 +2646,7 @@ def _validate_validation_receipt_for_holdout(
         input_candidate_ids,
         core_survivors,
         train_means,
+        train_primary_candidate_ids,
     )
     portfolio_spec = _new_portfolio_spec(survivors)
     recomputed_portfolio = _aggregate_fixed_portfolio(
@@ -2409,16 +2665,34 @@ def _validate_validation_receipt_for_holdout(
         )
     expected_selection = {
         "policy": VALIDATION_SCREEN_POLICY,
-        "input_candidate_ids": list(input_candidate_ids),
+        "validation_execution_candidate_ids": list(input_candidate_ids),
+        "train_primary_candidate_ids": list(train_primary_candidate_ids),
+        "train_shadow_candidate_ids": list(roles["train_shadow_candidate_ids"]),
         "core_validation_economic_survivor_ids": core_survivors,
         "same_sign_policy": (
             "CORE_VALIDATION_ELIGIBLE_AND_TRAIN_MEAN_DAILY_R_POSITIVE"
         ),
         "same_sign_gate_rows": recomputed_gate_rows,
-        "selected_candidate_ids": survivors,
+        "validation_diagnostic_pass_candidate_ids": [
+            row["candidate_id"]
+            for row in recomputed_gate_rows
+            if row["validation_diagnostic_passed"] is True
+        ],
+        "shadow_validation_diagnostic_pass_candidate_ids": [
+            row["candidate_id"]
+            for row in recomputed_gate_rows
+            if row["candidate_role"] == "TRAIN_SHADOW"
+            and row["validation_diagnostic_passed"] is True
+        ],
+        "current_cohort_selected_candidate_ids": survivors,
+        "holdout_candidate_ids": survivors,
         "fixed_portfolio_candidate_ids": survivors,
         "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
-        "all_final_same_sign_survivors_included": True,
+        "all_train_primary_final_same_sign_survivors_included": True,
+        "current_cohort_promotion_allowed_for_train_primary_only": True,
+        "shadow_current_cohort_promotion_allowed": False,
+        "shadow_holdout_eligible": False,
+        "shadow_can_replace_train_primary": False,
         "subset_or_weight_search_performed": False,
         "selection_uses_holdout": False,
     }
@@ -2426,10 +2700,19 @@ def _validate_validation_receipt_for_holdout(
         raise AdaptiveStoryCliError(
             "validation selection differs from recomputed screen decision"
         )
-    if validation.get("next_phase_candidate_ids") != survivors:
+    if validation.get("holdout_candidate_ids") != survivors:
         raise AdaptiveStoryCliError(
-            "validation next-phase scope differs from recomputed survivors"
+            "validation holdout scope differs from recomputed survivors"
         )
+    for field in (
+        "validation_execution_candidate_ids",
+        "train_primary_candidate_ids",
+        "train_shadow_candidate_ids",
+    ):
+        if validation.get(field) != roles[field]:
+            raise AdaptiveStoryCliError(
+                f"validation top-level {field} binding is invalid"
+            )
     return survivors, portfolio_spec
 
 
@@ -2528,6 +2811,7 @@ def _run_train(
     )
     global_result = _combine_phase(pair_results, train_split, train_candidate_ids)
     selection = _train_selection(global_result, pair_results, train_split)
+    candidate_roles = _new_candidate_roles(selection["train_primary_candidate_ids"])
     scope_body = dict(scope)
     scope = {**scope_body, "scope_sha256": _canonical_sha(scope_body)}
     return _new_receipt(
@@ -2544,7 +2828,14 @@ def _run_train(
             "pair_artifacts": artifacts,
             "global_result": global_result,
             "selection": selection,
-            "next_phase_candidate_ids": selection["selected_candidate_ids"],
+            "candidate_roles": candidate_roles,
+            "validation_execution_candidate_ids": candidate_roles[
+                "validation_execution_candidate_ids"
+            ],
+            "train_primary_candidate_ids": candidate_roles[
+                "train_primary_candidate_ids"
+            ],
+            "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
         },
     )
 
@@ -2573,11 +2864,13 @@ def _run_validation(
         history_root=args.history_root,
         scope=scope,
     )
-    candidate_ids, train_means = _validate_train_receipt_for_downstream(
+    candidate_roles, train_means = _validate_train_receipt_for_downstream(
         train,
         scope=scope,
         manifest=manifest,
     )
+    candidate_ids = candidate_roles["validation_execution_candidate_ids"]
+    train_primary_candidate_ids = candidate_roles["train_primary_candidate_ids"]
     split = _split_from_scope(scope, "VALIDATION")
     artifacts, pair_results = _run_pair_phase(
         manifest=manifest,
@@ -2593,6 +2886,7 @@ def _run_validation(
         candidate_ids,
         core_survivors,
         train_means,
+        train_primary_candidate_ids,
     )
     portfolio_spec = _new_portfolio_spec(survivors)
     fixed_portfolio = _aggregate_fixed_portfolio(
@@ -2615,22 +2909,50 @@ def _run_validation(
             "pair_artifacts": artifacts,
             "global_result": global_result,
             "fixed_portfolio": fixed_portfolio,
+            "candidate_roles": candidate_roles,
+            "validation_execution_candidate_ids": candidate_roles[
+                "validation_execution_candidate_ids"
+            ],
+            "train_primary_candidate_ids": candidate_roles[
+                "train_primary_candidate_ids"
+            ],
+            "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
             "selection": {
                 "policy": VALIDATION_SCREEN_POLICY,
-                "input_candidate_ids": list(candidate_ids),
+                "validation_execution_candidate_ids": list(candidate_ids),
+                "train_primary_candidate_ids": list(train_primary_candidate_ids),
+                "train_shadow_candidate_ids": list(
+                    candidate_roles["train_shadow_candidate_ids"]
+                ),
                 "core_validation_economic_survivor_ids": core_survivors,
                 "same_sign_policy": (
                     "CORE_VALIDATION_ELIGIBLE_AND_TRAIN_MEAN_DAILY_R_POSITIVE"
                 ),
                 "same_sign_gate_rows": same_sign_gates,
-                "selected_candidate_ids": survivors,
+                "validation_diagnostic_pass_candidate_ids": [
+                    row["candidate_id"]
+                    for row in same_sign_gates
+                    if row["validation_diagnostic_passed"] is True
+                ],
+                "shadow_validation_diagnostic_pass_candidate_ids": [
+                    row["candidate_id"]
+                    for row in same_sign_gates
+                    if row["candidate_role"] == "TRAIN_SHADOW"
+                    and row["validation_diagnostic_passed"] is True
+                ],
+                "current_cohort_selected_candidate_ids": survivors,
+                "holdout_candidate_ids": survivors,
                 "fixed_portfolio_candidate_ids": survivors,
                 "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
-                "all_final_same_sign_survivors_included": True,
+                "all_train_primary_final_same_sign_survivors_included": True,
+                "current_cohort_promotion_allowed_for_train_primary_only": True,
+                "shadow_current_cohort_promotion_allowed": False,
+                "shadow_holdout_eligible": False,
+                "shadow_can_replace_train_primary": False,
                 "subset_or_weight_search_performed": False,
                 "selection_uses_holdout": False,
             },
-            "next_phase_candidate_ids": survivors,
+            "holdout_candidate_ids": survivors,
         },
     )
 
@@ -2678,7 +3000,7 @@ def _run_holdout(
         raise AdaptiveStoryCliError(
             "validation manifest differs from supplied train receipt"
         )
-    train_candidate_ids, train_means = _validate_train_receipt_for_downstream(
+    candidate_roles, train_means = _validate_train_receipt_for_downstream(
         train,
         scope=train_scope,
         manifest=train_manifest,
@@ -2688,7 +3010,7 @@ def _run_holdout(
         validation,
         scope=scope,
         manifest=manifest,
-        expected_candidate_ids=train_candidate_ids,
+        expected_roles=candidate_roles,
         train_means=train_means,
     )
     if candidate_ids:
@@ -2729,11 +3051,22 @@ def _run_holdout(
             "pair_artifacts": artifacts,
             "global_result": global_result,
             "primary_result": fixed_portfolio,
+            "candidate_roles": candidate_roles,
+            "validation_execution_candidate_ids": candidate_roles[
+                "validation_execution_candidate_ids"
+            ],
+            "train_primary_candidate_ids": candidate_roles[
+                "train_primary_candidate_ids"
+            ],
+            "train_shadow_candidate_ids": candidate_roles["train_shadow_candidate_ids"],
+            "holdout_candidate_ids": list(candidate_ids),
             "selection": {
-                "source": "SEALED_VALIDATION_SURVIVORS_ONLY",
-                "selected_candidate_ids": list(candidate_ids),
+                "source": "SEALED_TRAIN_PRIMARY_VALIDATION_SURVIVORS_ONLY",
+                "holdout_candidate_ids": list(candidate_ids),
                 "fixed_portfolio_spec_sha256": portfolio_spec["portfolio_spec_sha256"],
                 "fixed_portfolio_is_primary_result": True,
+                "train_shadow_evaluated_in_holdout": False,
+                "shadow_substitution_performed": False,
                 "reselection_performed": False,
                 "subset_or_weight_search_performed": False,
                 "non_winner_results_calculated": False,
@@ -2778,9 +3111,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "phase": receipt["phase"],
         "status": receipt["status"],
         "executed_candidate_count": len(receipt["executed_candidate_ids"]),
-        "next_phase_candidate_count": len(
-            receipt.get("next_phase_candidate_ids") or ()
+        "validation_execution_candidate_count": len(
+            receipt.get("validation_execution_candidate_ids") or ()
         ),
+        "train_primary_candidate_count": len(
+            receipt.get("train_primary_candidate_ids") or ()
+        ),
+        "train_shadow_candidate_count": len(
+            receipt.get("train_shadow_candidate_ids") or ()
+        ),
+        "holdout_candidate_count": len(receipt.get("holdout_candidate_ids") or ()),
         "receipt_sha256": receipt["receipt_sha256"],
         "output": str(args.output),
         "order_authority": "NONE",

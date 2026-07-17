@@ -178,16 +178,32 @@ def _train_argv(history: Path, output: Path) -> list[str]:
     ]
 
 
+def _long_train_argv(history: Path, output: Path) -> list[str]:
+    argv = _train_argv(history, output)
+    replacements = {
+        "--train-to": "2026-05-09T00:00:00Z",
+        "--validation-from": "2026-05-09T00:05:00Z",
+        "--validation-to": "2026-05-17T00:00:00Z",
+        "--holdout-from": "2026-05-17T00:05:00Z",
+        "--holdout-to": "2026-05-25T00:00:00Z",
+    }
+    for flag, value in replacements.items():
+        argv[argv.index(flag) + 1] = value
+    return argv
+
+
 class AdaptiveStoryS5GridCliTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.cli = _load_script()
 
-    def _history(self, parent: Path) -> Path:
+    def _history(self, parent: Path, *, declared_days: int = 0) -> Path:
         root = parent / "history"
         root.mkdir()
         start = datetime(2026, 5, 1, tzinfo=UTC)
-        end = start + timedelta(hours=1)
+        end = start + (
+            timedelta(days=declared_days) if declared_days else timedelta(hours=1)
+        )
         _write_pair_cache(
             root,
             pair="EUR_USD",
@@ -361,9 +377,14 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 "profit_factor_r_above_one": eligible,
                 "loocv_each_day_removed_total_r_positive": eligible,
                 "no_unresolved_or_purged": eligible,
+                "no_unresolved_filled": eligible,
+                "leave_one_currency_trigger_cluster_min_total_r_positive": eligible,
             }
             total_r = sum(item["exact_net_r"] for item in daily)
             resolved = sum(item["resolved_count"] for item in daily)
+            gross_profit = max(total_r, 0.0)
+            gross_loss = max(-total_r, 0.0)
+            profit_factor = gross_profit / gross_loss if gross_loss > 0.0 else None
             vehicle = next(
                 item
                 for item in self.cli.story_core.build_story_vehicle_catalog_v2()
@@ -379,7 +400,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                     "economic_screen_by_split": {
                         split.name: {
                             "resolved_count": resolved,
-                            "active_entry_day_count": 8,
+                            "active_entry_day_count": min(len(daily), 8),
                             "contributing_pair_count": 4,
                             "resolved_pair_count": 4,
                             "gates": gates,
@@ -391,12 +412,17 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                         split.name: {
                             "resolved_count": resolved,
                             "unresolved_or_purged_count": 0,
-                            "active_entry_day_count": 8,
+                            "active_entry_day_count": min(len(daily), 8),
                             "contributing_pair_count": 4,
                             "exact_net_r": total_r,
-                            "gross_profit_r": max(total_r, 0.0),
-                            "gross_loss_r": max(-total_r, 0.0),
+                            "gross_profit_r": gross_profit,
+                            "gross_loss_r": gross_loss,
+                            "average_net_r": total_r / resolved,
                             "average_daily_net_r": total_r / len(daily),
+                            "profit_factor_r": profit_factor,
+                            "profit_factor_r_infinite": (
+                                gross_loss == 0.0 and gross_profit > 0.0
+                            ),
                             "daily_net_r": daily,
                         }
                     },
@@ -438,11 +464,52 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         }
         return {**body, "result_sha256": self.cli._canonical_sha(body)}
 
-    def test_train_one_day_high_mean_defaults_to_time_1h(self) -> None:
+    @staticmethod
+    def _set_candidate_daily_values(
+        global_result: dict,
+        candidate_id: str,
+        values: list[float],
+    ) -> None:
+        row = next(
+            item
+            for item in global_result["candidate_metrics"]
+            if item["candidate_id"] == candidate_id
+        )
+        metric = row["by_split"]["TRAIN"]
+        daily = metric["daily_net_r"]
+        if len(daily) != len(values):
+            raise AssertionError("test daily vector length mismatch")
+        for item, value in zip(daily, values, strict=True):
+            item["exact_net_r"] = value
+            item["resolved_count"] = 31
+        total = sum(values)
+        resolved = 31 * len(values)
+        gross_profit = sum(max(value, 0.0) for value in values)
+        gross_loss = sum(max(-value, 0.0) for value in values)
+        metric.update(
+            {
+                "resolved_count": resolved,
+                "unresolved_or_purged_count": 0,
+                "active_entry_day_count": min(len(values), 8),
+                "contributing_pair_count": 4,
+                "exact_net_r": total,
+                "gross_profit_r": gross_profit,
+                "gross_loss_r": gross_loss,
+                "average_net_r": total / resolved,
+                "average_daily_net_r": total / len(values),
+                "profit_factor_r": (
+                    gross_profit / gross_loss if gross_loss > 0.0 else None
+                ),
+                "profit_factor_r_infinite": (gross_loss == 0.0 and gross_profit > 0.0),
+            }
+        )
+
+    def test_train_one_day_high_mean_has_no_forced_primary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
             history = self._history(parent)
             output = parent / "train.json"
+            summary_stdout = io.StringIO()
             with (
                 mock.patch.object(
                     self.cli.story_core,
@@ -460,7 +527,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                     side_effect=self._fake_combine,
                     create=True,
                 ) as combiner,
-                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stdout(summary_stdout),
             ):
                 status = self.cli.main(_train_argv(history, output))
 
@@ -479,7 +546,12 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(combiner.call_count, 1)
             receipt = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(len(receipt["executed_candidate_ids"]), 50)
-            self.assertEqual(len(receipt["next_phase_candidate_ids"]), 10)
+            self.assertEqual(receipt["train_primary_candidate_ids"], [])
+            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 50)
+            self.assertEqual(
+                receipt["validation_execution_candidate_ids"],
+                receipt["executed_candidate_ids"],
+            )
             self.assertIsNone(
                 receipt["selection"]["story_selections"][0]["best_candidate_id"],
             )
@@ -490,13 +562,24 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 "H21:PROFIT_FIRST_24H",
             )
             self.assertEqual(
-                receipt["selection"]["story_selections"][0]["selected_candidate_id"],
-                "H21:TIME_1H",
+                receipt["selection"]["story_selections"][0][
+                    "selected_train_primary_candidate_id"
+                ],
+                None,
             )
             self.assertEqual(
                 receipt["selection"]["story_selections"][0]["selection_basis"],
-                "TRAIN_EXIT_DEFAULT_INSUFFICIENT_CLUSTERS",
+                "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT",
             )
+            self.assertEqual(
+                self.cli._validate_candidate_roles(receipt["candidate_roles"]),
+                receipt["candidate_roles"],
+            )
+            summary = json.loads(summary_stdout.getvalue())
+            self.assertNotIn("next_phase_candidate_count", summary)
+            self.assertEqual(summary["validation_execution_candidate_count"], 50)
+            self.assertEqual(summary["train_primary_candidate_count"], 0)
+            self.assertEqual(summary["train_shadow_candidate_count"], 50)
             body = dict(receipt)
             digest = body.pop("receipt_sha256")
             self.assertEqual(digest, self.cli._canonical_sha(body))
@@ -552,10 +635,12 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 )
             self.assertTrue(
                 all(
-                    row["selection_basis"] == "TRAIN_EXIT_DEFAULT_INSUFFICIENT_CLUSTERS"
+                    row["selection_basis"] == "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
                     for row in receipt["selection"]["story_selections"]
                 )
             )
+            self.assertEqual(receipt["train_primary_candidate_ids"], [])
+            self.assertEqual(len(receipt["train_shadow_candidate_ids"]), 50)
             validation_output = parent / "real-validation.json"
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(
@@ -575,7 +660,8 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                     0,
                 )
             validation = json.loads(validation_output.read_text(encoding="utf-8"))
-            self.assertEqual(validation["next_phase_candidate_ids"], [])
+            self.assertEqual(len(validation["executed_candidate_ids"]), 50)
+            self.assertEqual(validation["holdout_candidate_ids"], [])
             self.assertEqual(
                 validation["fixed_portfolio"]["portfolio_spec"]["candidate_ids"],
                 [],
@@ -613,7 +699,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         split = self.cli.story_core.UtcSplit(
             name="TRAIN",
             from_utc=datetime(2026, 5, 1, tzinfo=UTC),
-            to_utc=datetime(2026, 5, 4, tzinfo=UTC),
+            to_utc=datetime(2026, 5, 9, tzinfo=UTC),
         )
         candidate_ids = tuple(
             item.candidate_id
@@ -632,19 +718,31 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
         )
         first = selection["story_selections"][0]
         self.assertEqual(first["best_candidate_id"], "H21:PROFIT_FIRST_24H")
-        self.assertEqual(first["selected_candidate_id"], "H21:TIME_1H")
-        self.assertEqual(first["selection_basis"], "OBSERVED_ONE_SE")
+        self.assertEqual(
+            first["selected_train_primary_candidate_id"],
+            "H21:TIME_1H",
+        )
+        self.assertEqual(first["selection_basis"], "TRAIN_PRIMARY_ELIGIBLE_ONE_SE")
         metric = selection["candidate_metrics"][0]
-        self.assertEqual(metric["utc_calendar_day_count"], 3)
+        self.assertEqual(metric["utc_calendar_day_count"], 8)
         self.assertEqual(
             metric["non_overlapping_two_day_block_cluster_count"],
-            2,
+            4,
         )
-        self.assertEqual(metric["two_day_block_sizes"], [2, 1])
-        self.assertAlmostEqual(metric["mean_daily_net_r"], 3.1 / 3.0)
+        self.assertEqual(metric["two_day_block_sizes"], [2, 2, 2, 2])
+        self.assertAlmostEqual(metric["mean_daily_net_r"], 1.0)
         self.assertAlmostEqual(
             metric["two_day_block_cluster_robust_standard_error_daily_r"],
-            4.0 / 45.0,
+            (1.0 / 300.0) ** 0.5,
+        )
+        h22 = selection["story_selections"][1]
+        self.assertNotIn(
+            "H22:TIME_1H",
+            h22["train_primary_eligible_candidate_ids"],
+        )
+        self.assertNotEqual(
+            h22["selected_train_primary_candidate_id"],
+            "H22:TIME_1H",
         )
 
     def test_train_daily_vector_integrity_fails_closed(self) -> None:
@@ -686,10 +784,151 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             ):
                 self.cli._daily_train_metrics(result, split)
 
-    def test_validation_and_holdout_execute_only_prior_sealed_ids(self) -> None:
+    def test_h28_three_positive_exits_select_time_4h_not_negative_simplest(
+        self,
+    ) -> None:
+        split = self.cli.story_core.UtcSplit(
+            name="TRAIN",
+            from_utc=datetime(2026, 5, 1, tzinfo=UTC),
+            to_utc=datetime(2026, 5, 9, tzinfo=UTC),
+        )
+        candidate_ids = tuple(row.candidate_id for row in self.cli._catalog_rows())
+        global_result = self._fake_combine((), (split,), candidate_ids=candidate_ids)
+        for candidate_id in candidate_ids:
+            if candidate_id.startswith("H28:"):
+                self._set_candidate_daily_values(
+                    global_result,
+                    candidate_id,
+                    [-0.2] * 8,
+                )
+        self._set_candidate_daily_values(
+            global_result,
+            "H28:PROFIT_FIRST_24H",
+            [0.3] * 8,
+        )
+        self._set_candidate_daily_values(
+            global_result,
+            "H28:TIME_4H",
+            [0.5] * 8,
+        )
+        self._set_candidate_daily_values(
+            global_result,
+            "H28:TIME_24H",
+            [8.0, 8.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
+        )
+        pair_results = [
+            self._fake_run("EUR_USD", (), (split,)),
+            self._fake_run("GBP_JPY", (), (split,)),
+        ]
+
+        selection = self.cli._train_selection(global_result, pair_results, split)
+        h28 = next(
+            row
+            for row in selection["story_selections"]
+            if row["hypothesis_id"] == "H28"
+        )
+
+        self.assertEqual(
+            h28["train_primary_eligible_candidate_ids"],
+            [
+                "H28:PROFIT_FIRST_24H",
+                "H28:TIME_4H",
+                "H28:TIME_24H",
+            ],
+        )
+        self.assertEqual(h28["best_candidate_id"], "H28:TIME_24H")
+        self.assertEqual(
+            h28["selected_train_primary_candidate_id"],
+            "H28:TIME_4H",
+        )
+        time_1h = next(
+            row
+            for row in selection["candidate_metrics"]
+            if row["candidate_id"] == "H28:TIME_1H"
+        )
+        self.assertFalse(time_1h["train_primary_eligible"])
+        self.assertFalse(
+            time_1h["train_primary_eligibility_gates"]["average_net_r_positive"]
+        )
+
+    def test_no_positive_candidate_produces_zero_train_primary(self) -> None:
+        split = self.cli.story_core.UtcSplit(
+            name="TRAIN",
+            from_utc=datetime(2026, 5, 1, tzinfo=UTC),
+            to_utc=datetime(2026, 5, 9, tzinfo=UTC),
+        )
+        candidate_ids = tuple(row.candidate_id for row in self.cli._catalog_rows())
+        global_result = self._fake_combine((), (split,), candidate_ids=candidate_ids)
+        for candidate_id in candidate_ids:
+            self._set_candidate_daily_values(
+                global_result,
+                candidate_id,
+                [-0.25] * 8,
+            )
+        pair_results = [
+            self._fake_run("EUR_USD", (), (split,)),
+            self._fake_run("GBP_JPY", (), (split,)),
+        ]
+
+        selection = self.cli._train_selection(global_result, pair_results, split)
+
+        self.assertEqual(selection["train_primary_candidate_ids"], [])
+        self.assertTrue(
+            all(
+                row["selected_train_primary_candidate_id"] is None
+                and row["selection_basis"] == "NO_TRAIN_PRIMARY_ELIGIBLE_EXIT"
+                for row in selection["story_selections"]
+            )
+        )
+
+    def test_candidate_roles_support_variable_primary_and_reject_tamper(self) -> None:
+        catalog = list(self.cli._catalog_rows())
+        catalog_ids = [row.candidate_id for row in catalog]
+        variable_primary = [
+            next(
+                row.candidate_id
+                for row in catalog
+                if row.hypothesis_id == hypothesis_id
+                and row.exit_policy_id == "TIME_4H"
+            )
+            for hypothesis_id in ("H21", "H24", "H30")
+        ]
+        for primary in ([], variable_primary):
+            with self.subTest(primary_count=len(primary)):
+                roles = self.cli._new_candidate_roles(primary)
+                self.assertEqual(
+                    self.cli._validate_candidate_roles(roles),
+                    roles,
+                )
+                self.assertEqual(
+                    roles["validation_execution_candidate_ids"],
+                    catalog_ids,
+                )
+                self.assertEqual(
+                    len(roles["train_shadow_candidate_ids"]),
+                    50 - len(primary),
+                )
+
+        digest_tamper = copy.deepcopy(self.cli._new_candidate_roles(variable_primary))
+        digest_tamper["train_primary_candidate_ids"] = []
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_candidate_roles(digest_tamper)
+
+        semantic_tamper = copy.deepcopy(self.cli._new_candidate_roles(variable_primary))
+        shadow = semantic_tamper["train_shadow_candidate_ids"]
+        shadow[0], shadow[1] = shadow[1], shadow[0]
+        body = dict(semantic_tamper)
+        body.pop("candidate_roles_sha256")
+        semantic_tamper["candidate_roles_sha256"] = self.cli._canonical_sha(body)
+        with self.assertRaises(self.cli.AdaptiveStoryCliError):
+            self.cli._validate_candidate_roles(semantic_tamper)
+
+    def test_validation_runs_all_50_but_holdout_uses_primary_survivors_only(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
-            history = self._history(parent)
+            history = self._history(parent, declared_days=30)
             train_path = parent / "train.json"
             validation_path = parent / "validation.json"
             holdout_path = parent / "holdout.json"
@@ -707,7 +946,10 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(self.cli.main(_train_argv(history, train_path)), 0)
+                self.assertEqual(
+                    self.cli.main(_long_train_argv(history, train_path)),
+                    0,
+                )
 
             train = json.loads(train_path.read_text(encoding="utf-8"))
             validation_calls: list[tuple[str, ...]] = []
@@ -748,24 +990,35 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 )
 
             self.assertEqual(
-                validation_calls, [tuple(train["next_phase_candidate_ids"])] * 2
+                validation_calls,
+                [tuple(train["validation_execution_candidate_ids"])] * 2,
             )
             validation = json.loads(validation_path.read_text(encoding="utf-8"))
-            survivors = validation["next_phase_candidate_ids"]
-            self.assertEqual(survivors, train["next_phase_candidate_ids"][:1])
+            self.assertEqual(len(validation["executed_candidate_ids"]), 50)
+            self.assertEqual(
+                validation["executed_candidate_ids"],
+                train["validation_execution_candidate_ids"],
+            )
+            survivors = validation["holdout_candidate_ids"]
+            self.assertEqual(survivors, ["H21:TIME_1H"])
             self.assertEqual(
                 validation["selection"]["core_validation_economic_survivor_ids"],
-                train["next_phase_candidate_ids"][:2],
+                train["validation_execution_candidate_ids"][:2],
             )
-            second_gate = validation["selection"]["same_sign_gate_rows"][1]
-            self.assertTrue(second_gate["core_validation_economic_screen_eligible"])
-            self.assertFalse(
-                second_gate["train_validation_same_positive_sign_gate_passed"]
-            )
+            shadow_gate = validation["selection"]["same_sign_gate_rows"][0]
+            self.assertEqual(shadow_gate["candidate_role"], "TRAIN_SHADOW")
+            self.assertTrue(shadow_gate["validation_diagnostic_passed"])
+            self.assertFalse(shadow_gate["current_cohort_promotion_allowed"])
+            self.assertFalse(shadow_gate["holdout_eligible"])
+            self.assertFalse(shadow_gate["selected_as_current_cohort_survivor"])
             self.assertEqual(
-                second_gate["rejection_reason"],
-                "TRAIN_VALIDATION_MEAN_DAILY_R_NOT_BOTH_POSITIVE",
+                shadow_gate["rejection_reason"],
+                "TRAIN_SHADOW_DIAGNOSTIC_ONLY_NOT_HOLDOUT_ELIGIBLE",
             )
+            primary_gate = validation["selection"]["same_sign_gate_rows"][1]
+            self.assertEqual(primary_gate["candidate_role"], "TRAIN_PRIMARY")
+            self.assertTrue(primary_gate["holdout_eligible"])
+            self.assertTrue(primary_gate["selected_as_current_cohort_survivor"])
             self.assertEqual(
                 validation["selection"]["fixed_portfolio_candidate_ids"],
                 survivors,
@@ -782,7 +1035,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(validation_portfolio["candidate_count"], 1)
             self.assertAlmostEqual(
                 validation_portfolio["total_exact_net_r"],
-                0.95,
+                7.6,
             )
             self.assertFalse(
                 validation["selection"]["subset_or_weight_search_performed"]
@@ -831,6 +1084,8 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertEqual(holdout_calls, [tuple(survivors)] * 2)
             holdout = json.loads(holdout_path.read_text(encoding="utf-8"))
             self.assertEqual(holdout["executed_candidate_ids"], survivors)
+            self.assertFalse(holdout["selection"]["train_shadow_evaluated_in_holdout"])
+            self.assertFalse(holdout["selection"]["shadow_substitution_performed"])
             self.assertEqual(
                 [
                     row["candidate_id"]
@@ -853,6 +1108,57 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
             self.assertFalse(
                 holdout["primary_result"]["subset_or_weight_search_performed"]
             )
+
+            tampered_validation = copy.deepcopy(validation)
+            different_roles = self.cli._new_candidate_roles([])
+            tampered_validation["candidate_roles"] = different_roles
+            for field in (
+                "validation_execution_candidate_ids",
+                "train_primary_candidate_ids",
+                "train_shadow_candidate_ids",
+            ):
+                tampered_validation[field] = different_roles[field]
+            tampered_body = dict(tampered_validation)
+            tampered_body.pop("receipt_sha256")
+            tampered_validation["receipt_sha256"] = self.cli._canonical_sha(
+                tampered_body
+            )
+            tampered_validation_path = parent / "validation-role-tamper.json"
+            tampered_validation_path.write_text(
+                json.dumps(tampered_validation),
+                encoding="utf-8",
+            )
+            rejected_holdout_path = parent / "holdout-role-tamper.json"
+            with (
+                mock.patch.object(
+                    self.cli.story_core,
+                    "run_adaptive_story_s5_grid",
+                ) as runner,
+                mock.patch.object(
+                    self.cli.story_core,
+                    "combine_adaptive_story_s5_grid_runs",
+                    side_effect=self._fake_combine,
+                ),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                status = self.cli.main(
+                    [
+                        "holdout",
+                        "--history-root",
+                        str(history),
+                        "--train-receipt",
+                        str(train_path),
+                        "--validation-receipt",
+                        str(tampered_validation_path),
+                        "--workers",
+                        "1",
+                        "--output",
+                        str(rejected_holdout_path),
+                    ]
+                )
+            self.assertEqual(status, 1)
+            runner.assert_not_called()
+            self.assertFalse(rejected_holdout_path.exists())
 
     def test_downstream_parser_has_no_pair_or_split_override(self) -> None:
         with (
@@ -931,7 +1237,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
     def test_tampered_train_receipt_fails_before_core_or_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
-            history = self._history(parent)
+            history = self._history(parent, declared_days=30)
             train_path = parent / "train.json"
             output = parent / "validation.json"
             with (
@@ -948,13 +1254,24 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(self.cli.main(_train_argv(history, train_path)), 0)
+                self.assertEqual(
+                    self.cli.main(_long_train_argv(history, train_path)),
+                    0,
+                )
             train = json.loads(train_path.read_text(encoding="utf-8"))
-            train["next_phase_candidate_ids"] = list(
-                reversed(train["next_phase_candidate_ids"])
+            train["candidate_roles"]["train_shadow_candidate_ids"] = list(
+                reversed(train["candidate_roles"]["train_shadow_candidate_ids"])
             )
+            body = dict(train)
+            body.pop("receipt_sha256")
+            train["receipt_sha256"] = self.cli._canonical_sha(body)
             train_path.write_text(json.dumps(train), encoding="utf-8")
             with (
+                mock.patch.object(
+                    self.cli.story_core,
+                    "combine_adaptive_story_s5_grid_runs",
+                    side_effect=self._fake_combine,
+                ),
                 mock.patch.object(
                     self.cli.story_core,
                     "run_adaptive_story_s5_grid",
@@ -981,7 +1298,7 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
     def test_resealed_validation_cannot_forge_train_mean_to_hide_winner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
-            history = self._history(parent)
+            history = self._history(parent, declared_days=30)
             train_path = parent / "train.json"
             validation_path = parent / "validation.json"
             holdout_path = parent / "holdout.json"
@@ -998,7 +1315,10 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(self.cli.main(_train_argv(history, train_path)), 0)
+                self.assertEqual(
+                    self.cli.main(_long_train_argv(history, train_path)),
+                    0,
+                )
                 self.assertEqual(
                     self.cli.main(
                         [
@@ -1017,17 +1337,19 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 )
 
             validation = json.loads(validation_path.read_text(encoding="utf-8"))
-            self.assertTrue(validation["next_phase_candidate_ids"])
+            self.assertTrue(validation["holdout_candidate_ids"])
             selected_gate_rows = [
                 row
                 for row in validation["selection"]["same_sign_gate_rows"]
-                if row["selected_as_final_survivor"]
+                if row["selected_as_current_cohort_survivor"]
             ]
             self.assertTrue(selected_gate_rows)
             for row in selected_gate_rows:
                 row["train_mean_daily_net_r"] = -1.0
                 row["train_validation_same_positive_sign_gate_passed"] = False
-                row["selected_as_final_survivor"] = False
+                row["validation_diagnostic_passed"] = False
+                row["holdout_eligible"] = False
+                row["selected_as_current_cohort_survivor"] = False
                 row["rejection_reason"] = (
                     "TRAIN_VALIDATION_MEAN_DAILY_R_NOT_BOTH_POSITIVE"
                 )
@@ -1039,12 +1361,18 @@ class AdaptiveStoryS5GridCliTest(unittest.TestCase):
                 split,
                 empty_spec,
             )
-            validation["selection"]["selected_candidate_ids"] = []
+            validation["selection"]["validation_diagnostic_pass_candidate_ids"] = [
+                row["candidate_id"]
+                for row in validation["selection"]["same_sign_gate_rows"]
+                if row["validation_diagnostic_passed"]
+            ]
+            validation["selection"]["current_cohort_selected_candidate_ids"] = []
+            validation["selection"]["holdout_candidate_ids"] = []
             validation["selection"]["fixed_portfolio_candidate_ids"] = []
             validation["selection"]["fixed_portfolio_spec_sha256"] = empty_spec[
                 "portfolio_spec_sha256"
             ]
-            validation["next_phase_candidate_ids"] = []
+            validation["holdout_candidate_ids"] = []
             body = dict(validation)
             body.pop("receipt_sha256")
             validation["receipt_sha256"] = self.cli._canonical_sha(body)

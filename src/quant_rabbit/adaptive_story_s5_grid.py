@@ -38,8 +38,15 @@ from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 
 STORY_GRID_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_V2"
 STORY_GRID_COMBINED_CONTRACT_V2 = "QR_ADAPTIVE_STORY_S5_GRID_COMBINED_V2"
+CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1 = (
+    "QR_ADAPTIVE_STORY_CURRENCY_TRIGGER_M1_FACTOR_CLUSTERS_V1"
+)
 STORY_CATALOG_POLICY_V2 = "PREDECLARED_CAUSAL_STORY_CONTEXTUAL_ORDER_V2"
 STORY_TRUTH_POLICY_V2 = "EXACT_S5_BID_ASK_EQUAL_INITIAL_R_V2"
+CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1 = (
+    "SPLIT_CANDIDATE_EXACT_TRIGGER_M1_UTC_CURRENCY_SIGN_V1"
+)
+CURRENCY_FACTOR_VIEW_POLICY_V1 = "LONG_BASE_PLUS_QUOTE_MINUS_SHORT_INVERSE_V1"
 EXIT_POLICY_IDS = (
     "PROFIT_FIRST_24H",
     "TIME_1H",
@@ -121,6 +128,10 @@ FLOAT_BOUNDARY_ABS_TOL = 1e-12
 # sums.  This constant accepts only machine-level reassociation, not economic
 # drift; exact Decimal aggregate storage should replace it if introduced.
 AGGREGATE_REASSOCIATION_TOL = 1e-12
+# Every FX trade has exactly two currency-leg views: one base leg and one quote
+# leg.  Two is a market-identity invariant rather than a tuned threshold; a
+# non-FX instrument model must introduce a new factor-view policy.
+CURRENCY_FACTOR_VIEWS_PER_TRADE = 2
 PAIR_RUN_ALLOWED_STATUSES = ("COMPLETE", "NO_DATA")
 
 PRICE_PRECISION_POLICY_V2 = "BROKER_TICK_ONE_TENTH_PIP_DIRECTION_PRESERVING_V2"
@@ -422,6 +433,334 @@ def _canonical_sha(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_CurrencyTriggerClusterKey = tuple[str, str, str, str, int]
+_CurrencyTriggerClusterMap = dict[_CurrencyTriggerClusterKey, dict[str, dict[str, Any]]]
+
+
+def _parse_canonical_utc_instant(
+    value: Any,
+    *,
+    field: str,
+    exact_minute: bool = False,
+) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a canonical UTC instant")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{field} must be a canonical UTC instant") from error
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ValueError(f"{field} must be UTC")
+    canonical = parsed.astimezone(timezone.utc)
+    if value != canonical.isoformat():
+        raise ValueError(f"{field} must use canonical UTC ISO format")
+    if exact_minute and (canonical.second != 0 or canonical.microsecond != 0):
+        raise ValueError(f"{field} must be an exact UTC minute")
+    return canonical
+
+
+def _pair_currency_factor_views(
+    pair: str,
+    side: str,
+) -> tuple[tuple[str, int], tuple[str, int]]:
+    if not _is_canonical_pair_name(pair) or pair[:3] == pair[4:]:
+        raise ValueError("factor pair must be canonical distinct-currency AAA_BBB")
+    if side == "LONG":
+        return ((pair[:3], 1), (pair[4:], -1))
+    if side == "SHORT":
+        return ((pair[:3], -1), (pair[4:], 1))
+    raise ValueError("factor trade side must be LONG or SHORT")
+
+
+def _trade_identity_body(member: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "candidate_id": member["candidate_id"],
+        "pair": member["pair"],
+        "side": member["side"],
+        "setup_at_utc": member["setup_at_utc"],
+        "trigger_at_utc": member["trigger_at_utc"],
+        "quote_observed_at_utc": member["quote_observed_at_utc"],
+        "entry_at_utc": member["entry_at_utc"],
+        "entry_exec": member["entry_exec"],
+        "exit_policy_id": member["exit_policy_id"],
+    }
+
+
+def _validated_factor_member(
+    member: Mapping[str, Any],
+    *,
+    expected_candidate_id: str,
+    expected_pair: str | None,
+) -> dict[str, Any]:
+    expected_fields = {
+        "trade_identity_sha256",
+        "candidate_id",
+        "pair",
+        "side",
+        "setup_at_utc",
+        "trigger_at_utc",
+        "quote_observed_at_utc",
+        "entry_at_utc",
+        "entry_exec",
+        "exit_policy_id",
+        "exact_net_r",
+    }
+    if not isinstance(member, Mapping) or set(member) != expected_fields:
+        raise ValueError("currency-trigger factor member schema mismatch")
+    candidate_id = member.get("candidate_id")
+    if candidate_id != expected_candidate_id:
+        raise ValueError("currency-trigger factor member candidate mismatch")
+    pair = member.get("pair")
+    if not isinstance(pair, str) or not _is_canonical_pair_name(pair):
+        raise ValueError("currency-trigger factor member pair is noncanonical")
+    if expected_pair is not None and pair != expected_pair:
+        raise ValueError("currency-trigger factor member pair scope mismatch")
+    side = member.get("side")
+    if not isinstance(side, str):
+        raise ValueError("currency-trigger factor member side is invalid")
+    _pair_currency_factor_views(pair, side)
+    setup_at = _parse_canonical_utc_instant(
+        member.get("setup_at_utc"), field="factor member setup_at_utc"
+    )
+    trigger_at = _parse_canonical_utc_instant(
+        member.get("trigger_at_utc"),
+        field="factor member trigger_at_utc",
+        exact_minute=True,
+    )
+    quote_at = _parse_canonical_utc_instant(
+        member.get("quote_observed_at_utc"),
+        field="factor member quote_observed_at_utc",
+    )
+    entry_at = _parse_canonical_utc_instant(
+        member.get("entry_at_utc"), field="factor member entry_at_utc"
+    )
+    if not setup_at < trigger_at < quote_at < entry_at:
+        raise ValueError("currency-trigger factor member causal clocks are invalid")
+    entry_exec = _require_finite_number(
+        member.get("entry_exec"), field="factor member entry_exec"
+    )
+    if entry_exec <= 0.0:
+        raise ValueError("currency-trigger factor member entry_exec must be positive")
+    exact_net_r = _require_finite_number(
+        member.get("exact_net_r"), field="factor member exact_net_r"
+    )
+    exit_policy_id = member.get("exit_policy_id")
+    if not isinstance(exit_policy_id, str) or not exit_policy_id:
+        raise ValueError("currency-trigger factor member exit policy is invalid")
+    expected_exit_policy_id = expected_candidate_id.partition(":")[2]
+    if not expected_exit_policy_id or exit_policy_id != expected_exit_policy_id:
+        raise ValueError("currency-trigger factor member exit policy mismatch")
+    normalized = {
+        "trade_identity_sha256": member["trade_identity_sha256"],
+        "candidate_id": candidate_id,
+        "pair": pair,
+        "side": side,
+        "setup_at_utc": setup_at.isoformat(),
+        "trigger_at_utc": trigger_at.isoformat(),
+        "quote_observed_at_utc": quote_at.isoformat(),
+        "entry_at_utc": entry_at.isoformat(),
+        "entry_exec": entry_exec,
+        "exit_policy_id": exit_policy_id,
+        "exact_net_r": exact_net_r,
+    }
+    identity = normalized["trade_identity_sha256"]
+    if (
+        not isinstance(identity, str)
+        or len(identity) != 64
+        or any(character not in "0123456789abcdef" for character in identity)
+        or identity != _canonical_sha(_trade_identity_body(normalized))
+    ):
+        raise ValueError("currency-trigger factor trade identity is invalid")
+    return normalized
+
+
+def _factor_member_from_trade(
+    pair: str,
+    trade: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidate_id = trade.get("candidate_id")
+    if not isinstance(candidate_id, str) or not candidate_id:
+        raise ValueError("resolved factor trade candidate is invalid")
+    provisional = {
+        "trade_identity_sha256": "",
+        "candidate_id": candidate_id,
+        "pair": pair,
+        "side": trade.get("side"),
+        "setup_at_utc": trade.get("setup_at_utc"),
+        "trigger_at_utc": trade.get("trigger_at_utc"),
+        "quote_observed_at_utc": trade.get("quote_observed_at_utc"),
+        "entry_at_utc": trade.get("entry_at_utc"),
+        "entry_exec": trade.get("entry_exec"),
+        "exit_policy_id": trade.get("exit_policy_id"),
+        "exact_net_r": trade.get("exact_net_r"),
+    }
+    provisional["trade_identity_sha256"] = _canonical_sha(
+        _trade_identity_body(provisional)
+    )
+    return _validated_factor_member(
+        provisional,
+        expected_candidate_id=candidate_id,
+        expected_pair=pair,
+    )
+
+
+def _record_currency_trigger_factor_trade(
+    pair: str,
+    trade: Mapping[str, Any],
+    clusters: _CurrencyTriggerClusterMap,
+    ownership: dict[str, tuple[_CurrencyTriggerClusterKey, ...]],
+) -> str:
+    member = _factor_member_from_trade(pair, trade)
+    identity = str(member["trade_identity_sha256"])
+    if identity in ownership:
+        raise ValueError("duplicate resolved factor trade identity")
+    split_name = trade.get("split")
+    if not isinstance(split_name, str) or not split_name:
+        raise ValueError("resolved factor trade split is invalid")
+    candidate_id = str(member["candidate_id"])
+    trigger_at = str(member["trigger_at_utc"])
+    factor_keys = tuple(
+        (split_name, candidate_id, trigger_at, currency, sign)
+        for currency, sign in _pair_currency_factor_views(pair, str(member["side"]))
+    )
+    if len(set(factor_keys)) != CURRENCY_FACTOR_VIEWS_PER_TRADE:
+        raise ValueError("resolved factor trade does not own two distinct factor views")
+    for key in factor_keys:
+        cluster = clusters.setdefault(key, {})
+        if identity in cluster:
+            raise ValueError("duplicate trade identity inside factor cluster")
+        cluster[identity] = dict(member)
+    ownership[identity] = factor_keys
+    return identity
+
+
+def _currency_trigger_cluster_key_from_row(
+    row: Mapping[str, Any],
+) -> _CurrencyTriggerClusterKey:
+    return (
+        str(row["split"]),
+        str(row["candidate_id"]),
+        str(row["trigger_at_utc"]),
+        str(row["currency"]),
+        int(row["sign"]),
+    )
+
+
+def _currency_trigger_cluster_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "split": row["split"],
+        "candidate_id": row["candidate_id"],
+        "trigger_at_utc": row["trigger_at_utc"],
+        "currency": row["currency"],
+        "sign": row["sign"],
+        "member_count": row["member_count"],
+        "exact_net_r": row["exact_net_r"],
+        "member_identity_digest": row["member_identity_digest"],
+    }
+
+
+def _currency_trigger_metric_fields(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    candidate_total_exact_net_r: float,
+    cluster_digest: str,
+) -> dict[str, Any]:
+    top_row = (
+        min(
+            rows,
+            key=lambda row: (
+                -float(row["exact_net_r"]),
+                _currency_trigger_cluster_key_from_row(row),
+            ),
+        )
+        if rows
+        else None
+    )
+    return {
+        "currency_trigger_factor_cluster_count": len(rows),
+        "currency_trigger_min_leave_one_cluster_out_total_r": (
+            min(candidate_total_exact_net_r - float(row["exact_net_r"]) for row in rows)
+            if rows
+            else None
+        ),
+        "currency_trigger_top_cluster": (
+            _currency_trigger_cluster_summary(top_row) if top_row is not None else None
+        ),
+        "currency_trigger_cluster_digest": cluster_digest,
+    }
+
+
+def _build_currency_trigger_cluster_payload(
+    candidate_id: str,
+    split_name: str,
+    clusters: Mapping[_CurrencyTriggerClusterKey, Mapping[str, Mapping[str, Any]]],
+    ownership: Mapping[str, tuple[_CurrencyTriggerClusterKey, ...]],
+    *,
+    resolved_trade_count: int,
+    candidate_total_exact_net_r: float,
+    expected_pair: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for key in sorted(clusters):
+        if key[0] != split_name or key[1] != candidate_id:
+            continue
+        members_by_id = clusters[key]
+        members = [dict(members_by_id[identity]) for identity in sorted(members_by_id)]
+        identities = [str(member["trade_identity_sha256"]) for member in members]
+        rows.append(
+            {
+                "split": key[0],
+                "candidate_id": key[1],
+                "trigger_at_utc": key[2],
+                "currency": key[3],
+                "sign": key[4],
+                "member_count": len(members),
+                "exact_net_r": sum(float(member["exact_net_r"]) for member in members),
+                "member_identity_digest": _canonical_sha(identities),
+                "members": members,
+            }
+        )
+    cluster_digest = _canonical_sha(rows)
+    factor_membership_count = sum(int(row["member_count"]) for row in rows)
+    factor_exact_net_r_sum = sum(float(row["exact_net_r"]) for row in rows)
+    payload: dict[str, Any] = {
+        "contract": CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1,
+        "schema_version": 1,
+        "cluster_key_policy": CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1,
+        "factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+        "split": split_name,
+        "candidate_id": candidate_id,
+        "cluster_rows_untruncated": True,
+        "factor_clusters_are_not_candidate_summed": True,
+        "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+        "resolved_trade_count": resolved_trade_count,
+        "factor_membership_count": factor_membership_count,
+        "candidate_total_exact_net_r": candidate_total_exact_net_r,
+        "factor_membership_exact_net_r_sum_for_ownership_check": (
+            factor_exact_net_r_sum
+        ),
+        "cluster_rows": rows,
+        "cluster_rows_sha256": cluster_digest,
+        "ownership_invariant_passed": True,
+    }
+    metric_fields = _currency_trigger_metric_fields(
+        rows,
+        candidate_total_exact_net_r=candidate_total_exact_net_r,
+        cluster_digest=cluster_digest,
+    )
+    _validate_currency_trigger_cluster_payload(
+        payload,
+        expected_candidate_id=candidate_id,
+        expected_split_name=split_name,
+        expected_pair=expected_pair,
+        expected_resolved_trade_count=resolved_trade_count,
+        expected_candidate_total_exact_net_r=candidate_total_exact_net_r,
+        expected_metric_fields=metric_fields,
+        expected_ownership=ownership,
+    )
+    return payload, metric_fields
+
+
 def _story_catalog_receipt_v2() -> dict[str, Any]:
     return {
         "story_catalog_policy": STORY_CATALOG_POLICY_V2,
@@ -522,12 +861,57 @@ def _truth_evaluator_receipt_v2() -> dict[str, Any]:
             "SHORT": "CEILING_THEN_MIN",
         },
         "price_cost_scope": dict(PRICE_COST_SCOPE_V2),
+        "currency_trigger_factor_clusters": {
+            "contract": CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1,
+            "cluster_key_policy": CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1,
+            "cluster_key_fields": [
+                "split",
+                "candidate_id",
+                "trigger_at_utc",
+                "currency",
+                "sign",
+            ],
+            "factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+            "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+            "trade_identity_fields": [
+                "candidate_id",
+                "pair",
+                "side",
+                "setup_at_utc",
+                "trigger_at_utc",
+                "quote_observed_at_utc",
+                "entry_at_utc",
+                "entry_exec",
+                "exit_policy_id",
+            ],
+            "trigger_clock_policy": "CANONICAL_EXACT_UTC_MINUTE",
+            "trade_identity_policy": "UNIQUE_SHA256_CANONICAL_BODY",
+            "accumulation_policy": "BEFORE_BOUNDED_AUDIT_ROW_CAP",
+            "cluster_rows_untruncated": True,
+            "factor_clusters_are_not_candidate_summed": True,
+            "factor_membership_total_policy": (
+                "VERIFY_ONLY_EQUALS_TWO_TIMES_CANDIDATE_TOTAL_R"
+            ),
+            "leave_one_cluster_out_policy": (
+                "CANDIDATE_TOTAL_R_MINUS_FACTOR_CLUSTER_R"
+            ),
+            "top_cluster_policy": ("MAX_EXACT_NET_R_THEN_CANONICAL_CLUSTER_KEY"),
+            "global_merge_policy": (
+                "MERGE_EQUAL_CLUSTER_KEYS_ACROSS_PAIRS;"
+                "REJECT_CROSS_PAIR_DUPLICATE_TRADE_IDENTITIES"
+            ),
+            "economic_gate": (
+                "leave_one_currency_trigger_cluster_min_total_r_positive"
+            ),
+            "economic_gate_boundary": "STRICTLY_GREATER_THAN_ZERO",
+        },
         "economic_screen": {
             "minimum_resolved_trades": SCREEN_MIN_RESOLVED_TRADES,
             "minimum_active_days": SCREEN_MIN_ACTIVE_DAYS,
             "minimum_contributing_pairs": SCREEN_MIN_CONTRIBUTING_PAIRS,
             "minimum_profit_factor_r_exclusive": SCREEN_MIN_PROFIT_FACTOR_R,
             "unresolved_filled_count_required": 0,
+            "leave_one_currency_trigger_cluster_min_total_r_required_positive": (True),
         },
     }
 
@@ -1599,6 +1983,7 @@ def run_adaptive_story_s5_grid(
     pair_name = str(pair).strip().upper()
     if not pair_name:
         raise ValueError("pair is required")
+    _pair_currency_factor_views(pair_name, "LONG")
     normalized_splits = _normalise_splits(splits)
     unavailable = tuple(str(item).strip().upper() for item in unavailable_pairs)
     if len(unavailable) != len(set(unavailable)):
@@ -1611,6 +1996,8 @@ def run_adaptive_story_s5_grid(
         for split in normalized_splits
     }
     daily_stats: dict[tuple[str, str, str], dict[str, Any]] = {}
+    currency_trigger_clusters: _CurrencyTriggerClusterMap = {}
+    currency_trigger_ownership: dict[str, tuple[_CurrencyTriggerClusterKey, ...]] = {}
     if pair_name in unavailable:
         return _build_result(
             pair_name,
@@ -1626,6 +2013,8 @@ def run_adaptive_story_s5_grid(
             trade_rows=[],
             blocked_rows=[],
             daily_stats=daily_stats,
+            currency_trigger_clusters=currency_trigger_clusters,
+            currency_trigger_ownership=currency_trigger_ownership,
         )
     if isinstance(candles, (str, bytes)):
         raise ValueError("candles must be an iterable of S5BidAskCandle")
@@ -2021,6 +2410,12 @@ def run_adaptive_story_s5_grid(
                 ),
                 trade,
             )
+            _record_currency_trigger_factor_trade(
+                pair_name,
+                trade,
+                currency_trigger_clusters,
+                currency_trigger_ownership,
+            )
             if len(trade_rows) < MAX_AUDIT_ROWS:
                 trade_rows.append(trade)
             resolved.append(candidate_id)
@@ -2059,6 +2454,8 @@ def run_adaptive_story_s5_grid(
         trade_rows=trade_rows,
         blocked_rows=blocked_rows,
         daily_stats=daily_stats,
+        currency_trigger_clusters=currency_trigger_clusters,
+        currency_trigger_ownership=currency_trigger_ownership,
     )
 
 
@@ -2100,14 +2497,32 @@ def _build_result(
     trade_rows: Sequence[Mapping[str, Any]],
     blocked_rows: Sequence[Mapping[str, Any]],
     daily_stats: Mapping[tuple[str, str, str], Mapping[str, Any]],
+    currency_trigger_clusters: Mapping[
+        _CurrencyTriggerClusterKey, Mapping[str, Mapping[str, Any]]
+    ],
+    currency_trigger_ownership: Mapping[str, tuple[_CurrencyTriggerClusterKey, ...]],
 ) -> dict[str, Any]:
     trials: list[dict[str, Any]] = []
     for vehicle in vehicles:
-        by_split = {
-            split.name: _metric(stats[(vehicle.candidate_id, split.name)])
-            for split in splits
-            if not vehicle.no_trade_control
-        }
+        by_split: dict[str, dict[str, Any]] = {}
+        currency_clusters_by_split: dict[str, dict[str, Any]] = {}
+        if not vehicle.no_trade_control:
+            for split in splits:
+                metric = _metric(stats[(vehicle.candidate_id, split.name)])
+                cluster_payload, cluster_metric_fields = (
+                    _build_currency_trigger_cluster_payload(
+                        vehicle.candidate_id,
+                        split.name,
+                        currency_trigger_clusters,
+                        currency_trigger_ownership,
+                        resolved_trade_count=int(metric["resolved_count"]),
+                        candidate_total_exact_net_r=float(metric["exact_net_r"]),
+                        expected_pair=pair,
+                    )
+                )
+                metric.update(cluster_metric_fields)
+                by_split[split.name] = metric
+                currency_clusters_by_split[split.name] = cluster_payload
         daily_by_split = {
             split.name: [
                 {
@@ -2139,6 +2554,9 @@ def _build_result(
                 "no_trade_control": vehicle.no_trade_control,
                 "by_split": by_split,
                 "daily_aggregates_by_split": daily_by_split,
+                "currency_trigger_factor_clusters_by_split": (
+                    currency_clusters_by_split
+                ),
                 "scorecard_eligible": not vehicle.no_trade_control,
             }
         )
@@ -2153,6 +2571,12 @@ def _build_result(
         "truth_evaluator_sha256": _canonical_sha(_truth_evaluator_receipt_v2()),
         "price_precision_policy": PRICE_PRECISION_POLICY_V2,
         "price_cost_scope": dict(PRICE_COST_SCOPE_V2),
+        "currency_trigger_cluster_contract": (CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1),
+        "currency_trigger_cluster_key_policy": (CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1),
+        "currency_factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+        "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+        "currency_trigger_cluster_rows_untruncated": True,
+        "currency_trigger_factor_clusters_are_not_candidate_summed": True,
         "entry_ttl_boundary": "EXCLUSIVE",
         "intrabar_resting_fill_s5_policy": (
             "NO_TARGET;STOP_RANGE_CHARGED_CONSERVATIVELY;NO_PREFILL_OPEN_GAP"
@@ -2238,6 +2662,238 @@ def _same_total(left: float, right: float) -> bool:
         rel_tol=AGGREGATE_REASSOCIATION_TOL,
         abs_tol=AGGREGATE_REASSOCIATION_TOL,
     )
+
+
+def _validate_currency_trigger_cluster_payload(
+    payload: Mapping[str, Any],
+    *,
+    expected_candidate_id: str,
+    expected_split_name: str,
+    expected_pair: str | None,
+    expected_resolved_trade_count: int,
+    expected_candidate_total_exact_net_r: float,
+    expected_metric_fields: Mapping[str, Any],
+    expected_ownership: Mapping[str, tuple[_CurrencyTriggerClusterKey, ...]]
+    | None = None,
+) -> tuple[tuple[dict[str, Any], ...], frozenset[str]]:
+    expected_payload_fields = {
+        "contract",
+        "schema_version",
+        "cluster_key_policy",
+        "factor_view_policy",
+        "split",
+        "candidate_id",
+        "cluster_rows_untruncated",
+        "factor_clusters_are_not_candidate_summed",
+        "currency_factor_views_per_trade",
+        "resolved_trade_count",
+        "factor_membership_count",
+        "candidate_total_exact_net_r",
+        "factor_membership_exact_net_r_sum_for_ownership_check",
+        "cluster_rows",
+        "cluster_rows_sha256",
+        "ownership_invariant_passed",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_payload_fields:
+        raise ValueError("currency-trigger factor payload schema mismatch")
+    expected_policy = {
+        "contract": CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1,
+        "schema_version": 1,
+        "cluster_key_policy": CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1,
+        "factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+        "split": expected_split_name,
+        "candidate_id": expected_candidate_id,
+        "cluster_rows_untruncated": True,
+        "factor_clusters_are_not_candidate_summed": True,
+        "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+        "ownership_invariant_passed": True,
+    }
+    if any(payload.get(key) != value for key, value in expected_policy.items()):
+        raise ValueError("currency-trigger factor payload policy mismatch")
+    resolved_count = _require_nonnegative_int(
+        payload.get("resolved_trade_count"),
+        field="currency-trigger resolved_trade_count",
+    )
+    if resolved_count != expected_resolved_trade_count:
+        raise ValueError("currency-trigger resolved trade count mismatch")
+    candidate_total = _require_finite_number(
+        payload.get("candidate_total_exact_net_r"),
+        field="currency-trigger candidate_total_exact_net_r",
+    )
+    if not _same_total(candidate_total, expected_candidate_total_exact_net_r):
+        raise ValueError("currency-trigger candidate total R mismatch")
+    rows_raw = payload.get("cluster_rows")
+    if not isinstance(rows_raw, list):
+        raise ValueError("currency-trigger cluster rows are invalid")
+    expected_row_fields = {
+        "split",
+        "candidate_id",
+        "trigger_at_utc",
+        "currency",
+        "sign",
+        "member_count",
+        "exact_net_r",
+        "member_identity_digest",
+        "members",
+    }
+    normalized_rows: list[dict[str, Any]] = []
+    occurrence_keys: defaultdict[str, list[_CurrencyTriggerClusterKey]] = defaultdict(
+        list
+    )
+    canonical_member_by_identity: dict[str, dict[str, Any]] = {}
+    prior_key: _CurrencyTriggerClusterKey | None = None
+    for row_raw in rows_raw:
+        if not isinstance(row_raw, Mapping) or set(row_raw) != expected_row_fields:
+            raise ValueError("currency-trigger cluster row schema mismatch")
+        split_name = row_raw.get("split")
+        candidate_id = row_raw.get("candidate_id")
+        if split_name != expected_split_name or candidate_id != expected_candidate_id:
+            raise ValueError("currency-trigger cluster row scope mismatch")
+        trigger_at = _parse_canonical_utc_instant(
+            row_raw.get("trigger_at_utc"),
+            field="currency-trigger cluster trigger_at_utc",
+            exact_minute=True,
+        ).isoformat()
+        currency = row_raw.get("currency")
+        if (
+            not isinstance(currency, str)
+            or len(currency) != 3
+            or any(character < "A" or character > "Z" for character in currency)
+        ):
+            raise ValueError("currency-trigger cluster currency is noncanonical")
+        sign = row_raw.get("sign")
+        if isinstance(sign, bool) or sign not in {-1, 1}:
+            raise ValueError("currency-trigger cluster sign must be -1 or +1")
+        key: _CurrencyTriggerClusterKey = (
+            expected_split_name,
+            expected_candidate_id,
+            trigger_at,
+            currency,
+            int(sign),
+        )
+        if prior_key is not None and key <= prior_key:
+            raise ValueError("currency-trigger cluster rows are not canonical unique")
+        prior_key = key
+        members_raw = row_raw.get("members")
+        if not isinstance(members_raw, list):
+            raise ValueError("currency-trigger cluster members are invalid")
+        members: list[dict[str, Any]] = []
+        prior_identity: str | None = None
+        for member_raw in members_raw:
+            member = _validated_factor_member(
+                member_raw,
+                expected_candidate_id=expected_candidate_id,
+                expected_pair=expected_pair,
+            )
+            identity = str(member["trade_identity_sha256"])
+            if prior_identity is not None and identity <= prior_identity:
+                raise ValueError(
+                    "currency-trigger cluster member identities are not unique sorted"
+                )
+            prior_identity = identity
+            if member["trigger_at_utc"] != trigger_at:
+                raise ValueError("factor member trigger does not match cluster key")
+            factor_views = _pair_currency_factor_views(
+                str(member["pair"]), str(member["side"])
+            )
+            if (currency, int(sign)) not in factor_views:
+                raise ValueError("factor member currency/sign does not match trade")
+            prior_member = canonical_member_by_identity.get(identity)
+            if prior_member is not None and prior_member != member:
+                raise ValueError("factor trade identity has conflicting member values")
+            canonical_member_by_identity[identity] = member
+            occurrence_keys[identity].append(key)
+            members.append(member)
+        member_count = _require_nonnegative_int(
+            row_raw.get("member_count"),
+            field="currency-trigger cluster member_count",
+        )
+        if member_count != len(members):
+            raise ValueError("currency-trigger cluster member count mismatch")
+        identities = [str(member["trade_identity_sha256"]) for member in members]
+        if row_raw.get("member_identity_digest") != _canonical_sha(identities):
+            raise ValueError("currency-trigger cluster member digest mismatch")
+        row_total = _require_finite_number(
+            row_raw.get("exact_net_r"), field="currency-trigger cluster exact_net_r"
+        )
+        member_total = sum(float(member["exact_net_r"]) for member in members)
+        if not _same_total(row_total, member_total):
+            raise ValueError("currency-trigger cluster R total mismatch")
+        normalized_rows.append(
+            {
+                "split": expected_split_name,
+                "candidate_id": expected_candidate_id,
+                "trigger_at_utc": trigger_at,
+                "currency": currency,
+                "sign": int(sign),
+                "member_count": member_count,
+                "exact_net_r": row_total,
+                "member_identity_digest": row_raw["member_identity_digest"],
+                "members": members,
+            }
+        )
+    if payload.get("cluster_rows_sha256") != _canonical_sha(normalized_rows):
+        raise ValueError("currency-trigger cluster rows digest mismatch")
+    identities = frozenset(occurrence_keys)
+    if len(identities) != resolved_count:
+        raise ValueError("resolved trades do not uniquely own factor cluster rows")
+    for identity, keys in occurrence_keys.items():
+        if len(keys) != CURRENCY_FACTOR_VIEWS_PER_TRADE or len(set(keys)) != len(keys):
+            raise ValueError("resolved trade does not own exactly two factor clusters")
+        member = canonical_member_by_identity[identity]
+        expected_keys = {
+            (
+                expected_split_name,
+                expected_candidate_id,
+                str(member["trigger_at_utc"]),
+                currency,
+                sign,
+            )
+            for currency, sign in _pair_currency_factor_views(
+                str(member["pair"]), str(member["side"])
+            )
+        }
+        if set(keys) != expected_keys:
+            raise ValueError("resolved trade factor ownership is incomplete")
+    factor_memberships = sum(len(keys) for keys in occurrence_keys.values())
+    if factor_memberships != resolved_count * CURRENCY_FACTOR_VIEWS_PER_TRADE:
+        raise ValueError("factor membership total invariant failed")
+    claimed_memberships = _require_nonnegative_int(
+        payload.get("factor_membership_count"),
+        field="currency-trigger factor_membership_count",
+    )
+    if claimed_memberships != factor_memberships:
+        raise ValueError("factor membership count mismatch")
+    factor_total = sum(float(row["exact_net_r"]) for row in normalized_rows)
+    claimed_factor_total = _require_finite_number(
+        payload.get("factor_membership_exact_net_r_sum_for_ownership_check"),
+        field="currency-trigger factor membership R sum",
+    )
+    if not _same_total(claimed_factor_total, factor_total) or not _same_total(
+        factor_total,
+        candidate_total * CURRENCY_FACTOR_VIEWS_PER_TRADE,
+    ):
+        raise ValueError("factor membership R ownership total invariant failed")
+    metric_fields = _currency_trigger_metric_fields(
+        normalized_rows,
+        candidate_total_exact_net_r=candidate_total,
+        cluster_digest=str(payload["cluster_rows_sha256"]),
+    )
+    if metric_fields != dict(expected_metric_fields):
+        raise ValueError("currency-trigger cluster metric fields mismatch")
+    if expected_ownership is not None:
+        scoped_expected = {
+            identity: set(keys)
+            for identity, keys in expected_ownership.items()
+            if keys
+            and keys[0][0] == expected_split_name
+            and keys[0][1] == expected_candidate_id
+        }
+        if scoped_expected != {
+            identity: set(keys) for identity, keys in occurrence_keys.items()
+        }:
+            raise ValueError("producer factor ownership registry mismatch")
+    return tuple(normalized_rows), identities
 
 
 def _validate_trial_daily_summary(
@@ -2361,6 +3017,8 @@ def _validated_trials_for_run(
     run: Mapping[str, Any],
     vehicles: Sequence[StoryVehicleV2],
     split_dates: Mapping[str, Sequence[str]],
+    *,
+    expected_pair: str,
 ) -> dict[str, Mapping[str, Any]]:
     trials = run.get("all_trials")
     if not isinstance(trials, list) or len(trials) != len(vehicles):
@@ -2393,20 +3051,27 @@ def _validated_trials_for_run(
             *expected_metadata,
             "by_split",
             "daily_aggregates_by_split",
+            "currency_trigger_factor_clusters_by_split",
         }:
             raise ValueError("pair run candidate trial schema mismatch")
         if any(trial.get(key) != value for key, value in expected_metadata.items()):
             raise ValueError("pair run candidate trial metadata mismatch")
         metrics_by_split = trial.get("by_split")
         daily_by_split = trial.get("daily_aggregates_by_split")
-        if not isinstance(metrics_by_split, Mapping) or not isinstance(
-            daily_by_split, Mapping
+        currency_clusters_by_split = trial.get(
+            "currency_trigger_factor_clusters_by_split"
+        )
+        if (
+            not isinstance(metrics_by_split, Mapping)
+            or not isinstance(daily_by_split, Mapping)
+            or not isinstance(currency_clusters_by_split, Mapping)
         ):
             raise ValueError("pair run candidate aggregates are invalid")
         expected_split_names = set() if vehicle.no_trade_control else set(split_dates)
         if (
             set(metrics_by_split) != expected_split_names
             or set(daily_by_split) != expected_split_names
+            or set(currency_clusters_by_split) != expected_split_names
         ):
             raise ValueError("pair run candidate split trial definition mismatch")
         for split_name, dates in split_dates.items():
@@ -2421,6 +3086,30 @@ def _validated_trials_for_run(
                 daily_rows,
                 dates,
                 field=f"{vehicle.candidate_id}.{split_name}",
+            )
+            cluster_payload = currency_clusters_by_split[split_name]
+            cluster_metric_fields = {
+                "currency_trigger_factor_cluster_count": metric.get(
+                    "currency_trigger_factor_cluster_count"
+                ),
+                "currency_trigger_min_leave_one_cluster_out_total_r": metric.get(
+                    "currency_trigger_min_leave_one_cluster_out_total_r"
+                ),
+                "currency_trigger_top_cluster": metric.get(
+                    "currency_trigger_top_cluster"
+                ),
+                "currency_trigger_cluster_digest": metric.get(
+                    "currency_trigger_cluster_digest"
+                ),
+            }
+            _validate_currency_trigger_cluster_payload(
+                cluster_payload,
+                expected_candidate_id=vehicle.candidate_id,
+                expected_split_name=split_name,
+                expected_pair=expected_pair,
+                expected_resolved_trade_count=int(metric["resolved_count"]),
+                expected_candidate_total_exact_net_r=float(metric["exact_net_r"]),
+                expected_metric_fields=cluster_metric_fields,
             )
         validated[vehicle.candidate_id] = trial
     return validated
@@ -2512,6 +3201,14 @@ def combine_adaptive_story_s5_grid_runs(
                 "BROKER_ON_FILL_DEPENDENT_ORDER_LOSS_CANCEL_NO_FILL"
             ),
             "split_embargo_seconds": ENTRY_TTL_SECONDS + MAX_HOLD_SECONDS,
+            "currency_trigger_cluster_contract": (CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1),
+            "currency_trigger_cluster_key_policy": (
+                CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1
+            ),
+            "currency_factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+            "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+            "currency_trigger_cluster_rows_untruncated": True,
+            "currency_trigger_factor_clusters_are_not_candidate_summed": True,
         }
         if any(
             run.get(key) != value for key, value in expected_run_policy_fields.items()
@@ -2533,6 +3230,7 @@ def combine_adaptive_story_s5_grid_runs(
         if not _is_canonical_pair_name(pair_value):
             raise ValueError("pair run pair must use canonical uppercase AAA_BBB")
         pair = pair_value
+        _pair_currency_factor_views(pair, "LONG")
         if pair in run_by_pair:
             raise ValueError("pair runs must have unique canonical pairs")
         aggregation = run.get("aggregation")
@@ -2544,7 +3242,12 @@ def combine_adaptive_story_s5_grid_runs(
         )
         if (run.get("status") == "COMPLETE") != (source_count > 0):
             raise ValueError("pair run status/source-count mismatch")
-        validated_trials = _validated_trials_for_run(run, vehicles, split_dates)
+        validated_trials = _validated_trials_for_run(
+            run,
+            vehicles,
+            split_dates,
+            expected_pair=pair,
+        )
         if run.get("status") == "NO_DATA":
             for vehicle in evaluated:
                 trial = validated_trials[vehicle.candidate_id]
@@ -2571,11 +3274,13 @@ def combine_adaptive_story_s5_grid_runs(
                     "no_trade_control": True,
                     "by_split": {},
                     "economic_screen_by_split": {},
+                    "currency_trigger_factor_clusters_by_split": {},
                 }
             )
             continue
         by_split: dict[str, Any] = {}
         screen_by_split: dict[str, Any] = {}
+        currency_clusters_by_split: dict[str, dict[str, Any]] = {}
         for split in normalized_splits:
             dates = split_dates[split.name]
             pooled_daily = {
@@ -2596,17 +3301,30 @@ def combine_adaptive_story_s5_grid_runs(
             exact_net_r = 0.0
             contributing_pairs: set[str] = set()
             reason_counts: defaultdict[str, int] = defaultdict(int)
-            for pair in run_by_pair:
+            global_factor_clusters: _CurrencyTriggerClusterMap = {}
+            global_factor_ownership_lists: defaultdict[
+                str, list[_CurrencyTriggerClusterKey]
+            ] = defaultdict(list)
+            global_identity_pair: dict[str, str] = {}
+            for pair in sorted(run_by_pair):
                 trial = trials_by_pair[pair][vehicle.candidate_id]
                 metrics_by_split = trial.get("by_split")
                 daily_by_split = trial.get("daily_aggregates_by_split")
-                if not isinstance(metrics_by_split, Mapping) or not isinstance(
-                    daily_by_split, Mapping
+                factor_by_split = trial.get("currency_trigger_factor_clusters_by_split")
+                if (
+                    not isinstance(metrics_by_split, Mapping)
+                    or not isinstance(daily_by_split, Mapping)
+                    or not isinstance(factor_by_split, Mapping)
                 ):
                     raise ValueError("pair run candidate aggregates are invalid")
                 metric = metrics_by_split.get(split.name)
                 daily_rows = daily_by_split.get(split.name)
-                if not isinstance(metric, Mapping) or not isinstance(daily_rows, list):
+                factor_payload = factor_by_split.get(split.name)
+                if (
+                    not isinstance(metric, Mapping)
+                    or not isinstance(daily_rows, list)
+                    or not isinstance(factor_payload, Mapping)
+                ):
                     raise ValueError("pair run split candidate aggregates are missing")
                 if [row.get("utc_date") for row in daily_rows] != list(dates):
                     raise ValueError("pair run daily UTC vector mismatch")
@@ -2636,6 +3354,55 @@ def combine_adaptive_story_s5_grid_runs(
                     day["filled_count"] += int(row.get("filled_count") or 0)
                     day["gross_profit_r"] += float(row.get("gross_profit_r") or 0.0)
                     day["gross_loss_r"] += float(row.get("gross_loss_r") or 0.0)
+                factor_metric_fields = {
+                    "currency_trigger_factor_cluster_count": metric.get(
+                        "currency_trigger_factor_cluster_count"
+                    ),
+                    "currency_trigger_min_leave_one_cluster_out_total_r": metric.get(
+                        "currency_trigger_min_leave_one_cluster_out_total_r"
+                    ),
+                    "currency_trigger_top_cluster": metric.get(
+                        "currency_trigger_top_cluster"
+                    ),
+                    "currency_trigger_cluster_digest": metric.get(
+                        "currency_trigger_cluster_digest"
+                    ),
+                }
+                factor_rows, factor_identities = (
+                    _validate_currency_trigger_cluster_payload(
+                        factor_payload,
+                        expected_candidate_id=vehicle.candidate_id,
+                        expected_split_name=split.name,
+                        expected_pair=pair,
+                        expected_resolved_trade_count=pair_resolved,
+                        expected_candidate_total_exact_net_r=float(
+                            metric.get("exact_net_r") or 0.0
+                        ),
+                        expected_metric_fields=factor_metric_fields,
+                    )
+                )
+                duplicate_identities = set(factor_identities) & set(
+                    global_identity_pair
+                )
+                if duplicate_identities:
+                    raise ValueError(
+                        "duplicate currency-trigger factor trade identity "
+                        "across pair runs"
+                    )
+                for identity in factor_identities:
+                    global_identity_pair[identity] = pair
+                for factor_row in factor_rows:
+                    cluster_key = _currency_trigger_cluster_key_from_row(factor_row)
+                    global_cluster = global_factor_clusters.setdefault(cluster_key, {})
+                    for factor_member in factor_row["members"]:
+                        identity = str(factor_member["trade_identity_sha256"])
+                        if identity in global_cluster:
+                            raise ValueError(
+                                "duplicate trade identity in merged currency-trigger "
+                                "factor cluster"
+                            )
+                        global_cluster[identity] = dict(factor_member)
+                        global_factor_ownership_lists[identity].append(cluster_key)
             daily_net_r = [
                 {
                     "utc_date": utc_date,
@@ -2661,6 +3428,25 @@ def combine_adaptive_story_s5_grid_runs(
                 if dates
                 else None
             )
+            global_factor_ownership = {
+                identity: tuple(keys)
+                for identity, keys in global_factor_ownership_lists.items()
+            }
+            global_factor_payload, global_factor_metric_fields = (
+                _build_currency_trigger_cluster_payload(
+                    vehicle.candidate_id,
+                    split.name,
+                    global_factor_clusters,
+                    global_factor_ownership,
+                    resolved_trade_count=resolved,
+                    candidate_total_exact_net_r=exact_net_r,
+                    expected_pair=None,
+                )
+            )
+            currency_clusters_by_split[split.name] = global_factor_payload
+            minimum_currency_trigger_loco_total_r = global_factor_metric_fields[
+                "currency_trigger_min_leave_one_cluster_out_total_r"
+            ]
             gates = {
                 "resolved_trade_floor_passed": resolved >= SCREEN_MIN_RESOLVED_TRADES,
                 "active_entry_day_floor_passed": active_days >= SCREEN_MIN_ACTIVE_DAYS,
@@ -2677,6 +3463,10 @@ def combine_adaptive_story_s5_grid_runs(
                 ),
                 "loocv_each_day_removed_total_r_positive": loocv_min is not None
                 and loocv_min > 0.0,
+                "leave_one_currency_trigger_cluster_min_total_r_positive": (
+                    minimum_currency_trigger_loco_total_r is not None
+                    and minimum_currency_trigger_loco_total_r > 0.0
+                ),
                 "no_unresolved_or_purged": unresolved_or_purged == 0,
                 "no_unresolved_filled": unresolved_filled == 0,
             }
@@ -2686,6 +3476,7 @@ def combine_adaptive_story_s5_grid_runs(
                 "active_entry_day_count": active_days,
                 "contributing_pair_count": len(contributing_pairs),
                 "resolved_pair_count": len(contributing_pairs),
+                **global_factor_metric_fields,
                 "gates": gates,
                 "eligible": all(gates.values()),
                 "screen_is_statistical_proof": False,
@@ -2708,6 +3499,7 @@ def combine_adaptive_story_s5_grid_runs(
                 "trades_per_day": resolved / len(dates) if dates else None,
                 "reason_counts": dict(sorted(reason_counts.items())),
                 "daily_net_r": daily_net_r,
+                **global_factor_metric_fields,
             }
             screen_by_split[split.name] = screen
         combined_rows.append(
@@ -2719,6 +3511,9 @@ def combine_adaptive_story_s5_grid_runs(
                 "no_trade_control": False,
                 "by_split": by_split,
                 "economic_screen_by_split": screen_by_split,
+                "currency_trigger_factor_clusters_by_split": (
+                    currency_clusters_by_split
+                ),
             }
         )
 
@@ -2749,6 +3544,16 @@ def combine_adaptive_story_s5_grid_runs(
         "accepted_pair_run_statuses": list(PAIR_RUN_ALLOWED_STATUSES),
         "price_precision_policy": PRICE_PRECISION_POLICY_V2,
         "price_cost_scope": dict(PRICE_COST_SCOPE_V2),
+        "currency_trigger_cluster_contract": (CURRENCY_TRIGGER_CLUSTER_CONTRACT_V1),
+        "currency_trigger_cluster_key_policy": (CURRENCY_TRIGGER_CLUSTER_KEY_POLICY_V1),
+        "currency_factor_view_policy": CURRENCY_FACTOR_VIEW_POLICY_V1,
+        "currency_factor_views_per_trade": CURRENCY_FACTOR_VIEWS_PER_TRADE,
+        "currency_trigger_cluster_rows_untruncated": True,
+        "currency_trigger_factor_clusters_are_not_candidate_summed": True,
+        "currency_trigger_global_merge_policy": (
+            "MERGE_EQUAL_CLUSTER_KEYS_ACROSS_PAIRS;"
+            "REJECT_CROSS_PAIR_DUPLICATE_TRADE_IDENTITIES"
+        ),
         "split_receipt": expected_split_rows,
         "split_digest": expected_split_digest,
         "daily_cluster_basis": "ENTRY_UTC_DATE",
