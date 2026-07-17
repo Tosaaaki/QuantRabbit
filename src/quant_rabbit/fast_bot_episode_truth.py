@@ -346,9 +346,7 @@ def _run_locked(
             "outcome_ledger_appended": 0,
             "error": str(verify_error or "EPISODE_LEDGER_INVALID"),
         }
-    events_by_sha = {
-        str(event.get("event_sha256") or ""): event for event in events
-    }
+    events_by_sha = {str(event.get("event_sha256") or ""): event for event in events}
     vehicles = _load_vehicles(vehicle_ledger_path, events_by_sha=events_by_sha)
     projected = _project_handoffs(
         events=events,
@@ -390,9 +388,7 @@ def _run_locked(
             "outcome_ledger_appended": 0,
             "error": f"{type(error).__name__}: {error}"[:320],
         }
-    vehicle_by_sha = {
-        str(vehicle["contract_sha256"]): vehicle for vehicle in vehicles
-    }
+    vehicle_by_sha = {str(vehicle["contract_sha256"]): vehicle for vehicle in vehicles}
     current_rows: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for outcome in outcomes:
         identity = _outcome_identity(outcome)
@@ -602,18 +598,12 @@ def _project_handoffs(
                     unscored_examples.append(
                         {
                             "pair": pair,
-                            "confirmed_event_sha256": str(
-                                event["event_sha256"]
-                            ),
-                            "handoff_contract_sha256": str(
-                                handoff["contract_sha256"]
-                            ),
+                            "confirmed_event_sha256": str(event["event_sha256"]),
+                            "handoff_contract_sha256": str(handoff["contract_sha256"]),
                             "prospective_shadow_status": str(
                                 shadow.get("status") or "UNKNOWN"
                             ),
-                            "reason": (
-                                "CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"
-                            ),
+                            "reason": ("CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"),
                         }
                     )
                 continue
@@ -633,12 +623,8 @@ def _project_handoffs(
                     unscored_examples.append(
                         {
                             "pair": pair,
-                            "confirmed_event_sha256": str(
-                                event["event_sha256"]
-                            ),
-                            "handoff_contract_sha256": str(
-                                handoff["contract_sha256"]
-                            ),
+                            "confirmed_event_sha256": str(event["event_sha256"]),
+                            "handoff_contract_sha256": str(handoff["contract_sha256"]),
                             "confirmation_candle_close_utc": str(
                                 event["observation"]["candle_close_utc"]
                             ),
@@ -692,23 +678,17 @@ def _projection_summary(projected: Mapping[str, Any]) -> dict[str, Any]:
     unscored = no_frozen_seat + no_confirmation_candle_seat
     reason_counts = {}
     if no_frozen_seat:
-        reason_counts["CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"] = (
-            no_frozen_seat
-        )
+        reason_counts["CONFIRMED_EVENT_NO_FROZEN_VEHICLE_SEAT"] = no_frozen_seat
     if no_confirmation_candle_seat:
-        reason_counts[
-            "CONFIRMED_EVENT_NO_FROZEN_SEAT_AT_CONFIRMATION_CANDLE"
-        ] = no_confirmation_candle_seat
+        reason_counts["CONFIRMED_EVENT_NO_FROZEN_SEAT_AT_CONFIRMATION_CANDLE"] = (
+            no_confirmation_candle_seat
+        )
     return {
-        "handoff_confirmed_event_count": int(
-            projected["confirmed_event_count"]
-        ),
+        "handoff_confirmed_event_count": int(projected["confirmed_event_count"]),
         "handoff_confirmed_vehicle_count": int(projected["matched_count"]),
         "handoff_confirmed_unscored_count": unscored,
         "handoff_confirmed_unscored_reason_counts": reason_counts,
-        "handoff_confirmed_unscored_examples": list(
-            projected["unscored_examples"]
-        ),
+        "handoff_confirmed_unscored_examples": list(projected["unscored_examples"]),
         "vehicle_ledger_idempotent": int(projected["idempotent_count"]),
     }
 
@@ -738,12 +718,9 @@ def _late_confirmation_has_no_same_candle_seat(
         event.get("state") == "CONFIRMED"
         and event.get("late_detected") is True
         and seat.get("pair") == event.get("pair")
-        and seat.get("generated_at_utc")
-        == handoff.get("cycle_generated_at_utc")
-        and seat.get("regime_contract_sha256")
-        == handoff.get("regime_contract_sha256")
-        and seat.get("broker_snapshot_sha256")
-        == handoff.get("broker_snapshot_sha256")
+        and seat.get("generated_at_utc") == handoff.get("cycle_generated_at_utc")
+        and seat.get("regime_contract_sha256") == handoff.get("regime_contract_sha256")
+        and seat.get("broker_snapshot_sha256") == handoff.get("broker_snapshot_sha256")
         and observation.get("regime_contract_sha256")
         == handoff.get("regime_contract_sha256")
         and seat_m1_close > confirmation_close
@@ -764,7 +741,9 @@ def _build_vehicle(
         if isinstance(candidate, Mapping)
     }
     if cells != set(CELL_ORDER):
-        raise ValueError("prospective episode seat must freeze all six side-method cells")
+        raise ValueError(
+            "prospective episode seat must freeze all six side-method cells"
+        )
     if any(not candidate.get("arms") for candidate in seat["candidates"]):
         raise ValueError("prospective episode candidate has no frozen arms")
     route = event.get("route")
@@ -779,10 +758,8 @@ def _build_vehicle(
         or seat.get("pair") != pair
         or seat.get("generated_at_utc") != cycle
         or seat.get("m1_closed_candle_utc") != observation.get("candle_close_utc")
-        or seat.get("regime_contract_sha256")
-        != handoff.get("regime_contract_sha256")
-        or seat.get("broker_snapshot_sha256")
-        != handoff.get("broker_snapshot_sha256")
+        or seat.get("regime_contract_sha256") != handoff.get("regime_contract_sha256")
+        or seat.get("broker_snapshot_sha256") != handoff.get("broker_snapshot_sha256")
         or observation.get("regime_contract_sha256")
         != handoff.get("regime_contract_sha256")
     ):
@@ -828,9 +805,7 @@ def _build_vehicle(
     technical_hypothesis_catalog_sha = str(
         technical_hypothesis_shadow["catalog_contract_sha256"]
     )
-    technical_cost_state_sha = str(
-        technical_hypothesis_shadow["cost_state_sha256"]
-    )
+    technical_cost_state_sha = str(technical_hypothesis_shadow["cost_state_sha256"])
     technical_hypothesis_evaluator_policy = str(
         technical_hypothesis_shadow["evaluator_policy"]
     )
@@ -868,9 +843,7 @@ def _build_vehicle(
     if event.get("late_detected") is True:
         scorecard_ineligibility_reasons.append("LATE_DETECTED_EPISODE")
     if not input_proof_eligible:
-        scorecard_ineligibility_reasons.append(
-            "INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY"
-        )
+        scorecard_ineligibility_reasons.append("INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY")
     body = {
         "contract": VEHICLE_CONTRACT,
         "schema_version": 1,
@@ -947,10 +920,7 @@ def resolve_fast_bot_episode_vehicle(
         resolved_at_utc=resolved,
         truth_chunk_sha256=truth_chunk_sha256,
     )
-    roles = {
-        str(row["candidate_sha256"]): row
-        for row in vehicle["candidate_roles"]
-    }
+    roles = {str(row["candidate_sha256"]): row for row in vehicle["candidate_roles"]}
     ordered = sorted(candles, key=lambda item: item.timestamp_utc)
     truth_path_candles = [_truth_candle_receipt(item) for item in ordered]
     truth_path_candles_sha = _canonical_sha(truth_path_candles)
@@ -987,9 +957,7 @@ def resolve_fast_bot_episode_vehicle(
         "scorecard_eligible": vehicle.get("scorecard_eligible") is True,
         "resolved_at_utc": resolved.isoformat(),
         "maturity_at_utc": str(vehicle["maturity_at_utc"]),
-        "learning_outcome_contract_sha256": str(
-            learning_outcome["contract_sha256"]
-        ),
+        "learning_outcome_contract_sha256": str(learning_outcome["contract_sha256"]),
         "learning_outcome": learning_outcome,
         "truth_source": "OANDA_S5_BID_ASK",
         "truth_request_from_utc": str(learning_outcome["truth_request_from_utc"]),
@@ -1002,9 +970,7 @@ def resolve_fast_bot_episode_vehicle(
         "candidate_count": len(learning_outcome["candidates"]),
         "arm_observation_count": len(observations),
         "arm_observations": observations,
-        "proof_score_semantics": (
-            "LEARNING_CONSERVATIVE_FULL_SL_IF_OPEN_AT_HORIZON"
-        ),
+        "proof_score_semantics": ("LEARNING_CONSERVATIVE_FULL_SL_IF_OPEN_AT_HORIZON"),
         "observed_mark_semantics": (
             "SEPARATE_LAST_EXECUTABLE_BID_ASK_CLOSE_NOT_PROOF_SCORE"
         ),
@@ -1050,9 +1016,7 @@ def _arm_observation(
         if fill_at is None or exit_at is None:
             raise ValueError("horizon full-stop outcome has no fill/exit clock")
         eligible = [
-            candle
-            for candle in candles
-            if fill_at <= candle.timestamp_utc < exit_at
+            candle for candle in candles if fill_at <= candle.timestamp_utc < exit_at
         ]
         if not eligible:
             raise ValueError("open-at-horizon arm has no executable close mark")
@@ -1085,9 +1049,7 @@ def _arm_observation(
         "fill_s5_interval_utc": fill_interval,
         "proof_exit_reason": reason,
         "proof_exit_at_utc": arm.get("exit_at_utc"),
-        "proof_post_cost_realized_pips": float(
-            arm["post_cost_realized_pips"]
-        ),
+        "proof_post_cost_realized_pips": float(arm["post_cost_realized_pips"]),
         "exit_s5_interval_utc": exit_interval,
         "exit_s5_interval_semantics": exit_interval_semantics,
         "observed_position_state": observed_state,
@@ -1185,8 +1147,7 @@ def build_fast_bot_episode_scorecard(
                 {
                     str(row["arm_id"])
                     for row in outcome["arm_observations"]
-                    if row["episode_role"] == ROUTE_ALIGNED
-                    and row["method"] == method
+                    if row["episode_role"] == ROUTE_ALIGNED and row["method"] == method
                 }
             )
             for arm_id in arm_ids:
@@ -1250,9 +1211,7 @@ def build_fast_bot_episode_scorecard(
                 "route_method": key[3],
                 "arm_id": key[4],
                 "episode_count": len(row["all_episode_ids"]),
-                "scorecard_eligible_episode_count": len(
-                    row["eligible_episode_ids"]
-                ),
+                "scorecard_eligible_episode_count": len(row["eligible_episode_ids"]),
                 "diagnostic_late_episode_count": len(row["late_episode_ids"]),
                 "proof_score": {
                     "basis": "CONSERVATIVE_LEARNING_SCORE",
@@ -1277,9 +1236,7 @@ def build_fast_bot_episode_scorecard(
         technical_hypothesis_clusters,
         technical_hypothesis_unscored,
         no_trade_control,
-    ) = (
-        _build_technical_hypothesis_scorecard(resolved)
-    )
+    ) = _build_technical_hypothesis_scorecard(resolved)
     body = {
         "contract": SCORECARD_CONTRACT,
         "schema_version": 1,
@@ -1306,22 +1263,14 @@ def build_fast_bot_episode_scorecard(
             "BRANCH_ATTEMPT_ROUTE_FAMILY_METHOD_ARM_EPISODE_UNIQUE_V1"
         ),
         "clusters": clusters,
-        "technical_hypothesis_cluster_count": len(
-            technical_hypothesis_clusters
-        ),
+        "technical_hypothesis_cluster_count": len(technical_hypothesis_clusters),
         "technical_hypothesis_clusters": technical_hypothesis_clusters,
-        "technical_hypothesis_unscored_count": len(
-            technical_hypothesis_unscored
-        ),
+        "technical_hypothesis_unscored_count": len(technical_hypothesis_unscored),
         "technical_hypothesis_unscored": technical_hypothesis_unscored,
         "no_trade_control": no_trade_control,
-        "technical_forecast_values_status": (
-            "PENDING_PROSPECTIVE_FORWARD_CALIBRATION"
-        ),
+        "technical_forecast_values_status": ("PENDING_PROSPECTIVE_FORWARD_CALIBRATION"),
         "technical_cluster_statistics_are_forecast_probabilities": False,
-        "proof_score_semantics": (
-            "LEARNING_CONSERVATIVE_FULL_SL_IF_OPEN_AT_HORIZON"
-        ),
+        "proof_score_semantics": ("LEARNING_CONSERVATIVE_FULL_SL_IF_OPEN_AT_HORIZON"),
         "observed_mark_semantics": (
             "SEPARATE_LAST_EXECUTABLE_BID_ASK_CLOSE_NOT_PROOF_SCORE"
         ),
@@ -1356,9 +1305,7 @@ def _build_technical_hypothesis_scorecard(
         if episode_id in row["all_episode_ids"]:
             raise ValueError(f"episode would inflate {label}")
         row["all_episode_ids"].add(episode_id)
-        row[
-            "eligible_episode_ids" if eligible else "late_episode_ids"
-        ].add(episode_id)
+        row["eligible_episode_ids" if eligible else "late_episode_ids"].add(episode_id)
 
     for vehicle, outcome in resolved:
         shadow = vehicle.get("technical_hypothesis_shadow")
@@ -1368,9 +1315,7 @@ def _build_technical_hypothesis_scorecard(
         if not isinstance(hypotheses, list):
             raise ValueError("technical hypothesis shadow has no rows")
         observations = [
-            row
-            for row in outcome["arm_observations"]
-            if isinstance(row, Mapping)
+            row for row in outcome["arm_observations"] if isinstance(row, Mapping)
         ]
         episode_id = str(vehicle["episode_id"])
         eligible = vehicle.get("scorecard_eligible") is True
@@ -1517,24 +1462,16 @@ def _build_technical_hypothesis_scorecard(
             {
                 **row["identity"],
                 "episode_count": len(row["all_episode_ids"]),
-                "scorecard_eligible_episode_count": len(
-                    row["eligible_episode_ids"]
-                ),
+                "scorecard_eligible_episode_count": len(row["eligible_episode_ids"]),
                 "diagnostic_late_episode_count": len(row["late_episode_ids"]),
                 "observed_forward_statistics": {
-                    "basis": (
-                        "EXISTING_PASSIVE_QUOTE_ARM_PROXY_EXACT_S5_BID_ASK"
-                    ),
+                    "basis": ("EXISTING_PASSIVE_QUOTE_ARM_PROXY_EXACT_S5_BID_ASK"),
                     "sample_count": len(row["proof_pips"]),
                     "fill_rate": _mean(row["filled"]),
-                    "tp_before_sl_rate_given_fill": _mean(
-                        row["tp_given_fill"]
-                    ),
+                    "tp_before_sl_rate_given_fill": _mean(row["tp_given_fill"]),
                     "mean_post_cost_pips": _mean(row["proof_pips"]),
                     "net_positive_rate": _positive_rate(row["proof_pips"]),
-                    "open_horizon_mark_sample_count": len(
-                        row["observed_mark_pips"]
-                    ),
+                    "open_horizon_mark_sample_count": len(row["observed_mark_pips"]),
                     "open_horizon_mark_mean_post_cost_pips": _mean(
                         row["observed_mark_pips"]
                     ),
@@ -1542,18 +1479,14 @@ def _build_technical_hypothesis_scorecard(
                 "strategy_entry_vehicle_exact_match": False,
                 "statistics_scope": "DIRECTION_METHOD_PROXY_NOT_FULL_STRATEGY",
                 "observed_statistics_are_forecast_probabilities": False,
-                "forecast_values_status": (
-                    "PENDING_PROSPECTIVE_FORWARD_CALIBRATION"
-                ),
+                "forecast_values_status": ("PENDING_PROSPECTIVE_FORWARD_CALIBRATION"),
             }
         )
     unscored_rows = [
         {
             **row["identity"],
             "episode_count": len(row["all_episode_ids"]),
-            "scorecard_eligible_episode_count": len(
-                row["eligible_episode_ids"]
-            ),
+            "scorecard_eligible_episode_count": len(row["eligible_episode_ids"]),
             "diagnostic_late_episode_count": len(row["late_episode_ids"]),
             "pnl_joined": False,
         }
@@ -1563,9 +1496,7 @@ def _build_technical_hypothesis_scorecard(
         {
             **row["identity"],
             "episode_count": len(row["all_episode_ids"]),
-            "scorecard_eligible_episode_count": len(
-                row["eligible_episode_ids"]
-            ),
+            "scorecard_eligible_episode_count": len(row["eligible_episode_ids"]),
             "diagnostic_late_episode_count": len(row["late_episode_ids"]),
         }
         for _, row in sorted(controls.items())
@@ -1659,7 +1590,14 @@ def _build_technical_feature_snapshot(
         for key in sorted(NUMERIC_INDICATOR_FEATURES):
             if key not in indicators:
                 continue
-            parsed = _finite_feature_number(indicators.get(key))
+            raw = indicators.get(key)
+            # Indicator generation preserves an unavailable optional value as
+            # explicit JSON null.  Treat it exactly like an absent optional
+            # key: do not invent a value, and do not let one unavailable
+            # diagnostic discard the otherwise frozen causal snapshot.
+            if raw is None:
+                continue
+            parsed = _finite_feature_number(raw)
             if parsed is None:
                 raise ValueError(f"invalid episode numeric feature: {key}")
             indicator_features[key] = parsed
@@ -1720,9 +1658,7 @@ def _build_technical_feature_snapshot(
     return snapshot
 
 
-def _technical_feature_snapshot_valid(
-    value: Any, *, pair: str, cycle: str
-) -> bool:
+def _technical_feature_snapshot_valid(value: Any, *, pair: str, cycle: str) -> bool:
     if not isinstance(value, Mapping) or not _sealed_valid(
         value, "QR_FAST_BOT_EPISODE_TECHNICAL_FEATURE_SNAPSHOT_V1"
     ):
@@ -1755,9 +1691,7 @@ def _technical_feature_snapshot_valid(
             market = row.get("market_state")
             indicators = row.get("indicators")
             indicator_series = row.get("indicator_series")
-            body = {
-                key: item for key, item in row.items() if key != "feature_sha256"
-            }
+            body = {key: item for key, item in row.items() if key != "feature_sha256"}
             if not bool(
                 timeframe in TIMEFRAMES
                 and timeframe not in seen
@@ -1775,7 +1709,10 @@ def _technical_feature_snapshot_valid(
                 return False
             for key, item in market.items():
                 if key in MARKET_STATE_ENUM_FEATURES:
-                    if not isinstance(item, str) or item not in MARKET_STATE_ENUM_FEATURES[key]:
+                    if (
+                        not isinstance(item, str)
+                        or item not in MARKET_STATE_ENUM_FEATURES[key]
+                    ):
                         return False
                 elif key == "confidence":
                     parsed = _finite_feature_number(item)
@@ -1793,7 +1730,10 @@ def _technical_feature_snapshot_valid(
                 elif _bounded_enum(item) != item:
                     return False
             for values in indicator_series.values():
-                if not isinstance(values, list) or len(values) > MAX_INDICATOR_SERIES_VALUES:
+                if (
+                    not isinstance(values, list)
+                    or len(values) > MAX_INDICATOR_SERIES_VALUES
+                ):
                     return False
                 if any(_finite_feature_number(item) != item for item in values):
                     return False
@@ -1854,10 +1794,8 @@ def _validate_v2_handoff(value: Mapping[str, Any]) -> None:
         and value.get("prospective_vehicle_shadow_sha256")
         == shadow.get("contract_sha256")
         and shadow.get("generated_at_utc") == value.get("cycle_generated_at_utc")
-        and shadow.get("regime_contract_sha256")
-        == value.get("regime_contract_sha256")
-        and shadow.get("broker_snapshot_sha256")
-        == value.get("broker_snapshot_sha256")
+        and shadow.get("regime_contract_sha256") == value.get("regime_contract_sha256")
+        and shadow.get("broker_snapshot_sha256") == value.get("broker_snapshot_sha256")
         and value.get("diagnostic_only") is True
         and value.get("order_authority") == "NONE"
         and value.get("shadow_only") is True
@@ -1913,9 +1851,7 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
     if value.get("late_detected") is True:
         expected_ineligibility_reasons.append("LATE_DETECTED_EPISODE")
     if not input_proof_eligible:
-        expected_ineligibility_reasons.append(
-            "INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY"
-        )
+        expected_ineligibility_reasons.append("INPUT_BLOCKED_SHADOW_DIAGNOSTIC_ONLY")
     legacy_eligibility_contract = all(
         key not in value
         for key in (
@@ -1932,10 +1868,8 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         )
         or (
             not legacy_eligibility_contract
-            and value.get("causal_input_proof_eligible")
-            is input_proof_eligible
-            and value.get("scorecard_eligible")
-            is (not expected_ineligibility_reasons)
+            and value.get("causal_input_proof_eligible") is input_proof_eligible
+            and value.get("scorecard_eligible") is (not expected_ineligibility_reasons)
             and value.get("scorecard_ineligibility_reasons")
             == expected_ineligibility_reasons
         )
@@ -1947,8 +1881,7 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         and _sha_text(value.get("confirmed_event_sha256"))
         and isinstance(seat, Mapping)
         and _learning_seat_deep_valid(seat)
-        and value.get("learning_seat_contract_sha256")
-        == seat.get("contract_sha256")
+        and value.get("learning_seat_contract_sha256") == seat.get("contract_sha256")
         and value.get("learning_seat_id") == seat.get("seat_id")
         and _technical_feature_snapshot_valid(
             technical_features,
@@ -1979,11 +1912,7 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         == technical_hypotheses.get("evaluator_policy")
         and value.get("technical_hypothesis_evaluator_policy_sha256")
         == _canonical_sha(
-            {
-                "evaluator_policy": technical_hypotheses.get(
-                    "evaluator_policy"
-                )
-            }
+            {"evaluator_policy": technical_hypotheses.get("evaluator_policy")}
         )
         and source_binding.get("technical_hypothesis_shadow_sha256")
         == value.get("technical_hypothesis_shadow_sha256")
@@ -1991,9 +1920,7 @@ def _vehicle_valid(value: Mapping[str, Any]) -> bool:
         == value.get("technical_hypothesis_catalog_sha256")
         and source_binding.get("technical_cost_state_sha256")
         == value.get("technical_cost_state_sha256")
-        and source_binding.get(
-            "technical_hypothesis_evaluator_policy_sha256"
-        )
+        and source_binding.get("technical_hypothesis_evaluator_policy_sha256")
         == value.get("technical_hypothesis_evaluator_policy_sha256")
         and value.get("technical_feature_hypothesis_families")
         == list(HYPOTHESIS_FAMILIES)
@@ -2104,9 +2031,7 @@ def _episode_outcome_valid(
         learning_outcome = value["learning_outcome"]
         observations = value["arm_observations"]
         truth_path_receipts = value["truth_path_candles"]
-        truth_path_candles = _truth_candles_from_receipts(
-            truth_path_receipts
-        )
+        truth_path_candles = _truth_candles_from_receipts(truth_path_receipts)
         if truth_path_candles is None:
             return False
         if not _outcome_valid_for_seat(learning_outcome, vehicle["learning_seat"]):
@@ -2131,11 +2056,9 @@ def _episode_outcome_valid(
         value.get("schema_version") == 1
         and value.get("scoring_policy") == SCORING_POLICY
         and value.get("vehicle_id") == vehicle.get("vehicle_id")
-        and value.get("vehicle_contract_sha256")
-        == vehicle.get("contract_sha256")
+        and value.get("vehicle_contract_sha256") == vehicle.get("contract_sha256")
         and value.get("episode_id") == vehicle.get("episode_id")
-        and value.get("confirmed_event_sha256")
-        == vehicle.get("confirmed_event_sha256")
+        and value.get("confirmed_event_sha256") == vehicle.get("confirmed_event_sha256")
         and value.get("pair") == vehicle.get("pair")
         and value.get("branch_outcome") == vehicle.get("branch_outcome")
         and value.get("attempt_direction") == vehicle.get("attempt_direction")
@@ -2152,14 +2075,12 @@ def _episode_outcome_valid(
         == learning_outcome.get("truth_request_from_utc")
         and value.get("truth_request_to_utc")
         == learning_outcome.get("truth_request_to_utc")
-        and value.get("truth_path_sha256")
-        == learning_outcome.get("truth_path_sha256")
+        and value.get("truth_path_sha256") == learning_outcome.get("truth_path_sha256")
         and value.get("truth_chunk_sha256")
         == learning_outcome.get("truth_chunk_sha256")
         and value.get("truth_path_candles_sha256")
         == _canonical_sha(truth_path_receipts)
-        and value.get("truth_path_candles_persisted_for_membership_validation")
-        is True
+        and value.get("truth_path_candles_persisted_for_membership_validation") is True
         and len(truth_path_candles)
         == int(learning_outcome.get("truth_candle_count") or -1)
         and expected_truth_path_sha == value.get("truth_path_sha256")
@@ -2183,9 +2104,7 @@ def _episode_outcome_valid(
         for role in vehicle["candidate_roles"]
     }
     seen: set[tuple[str, str]] = set()
-    truth_by_timestamp = {
-        candle.timestamp_utc: candle for candle in truth_path_candles
-    }
+    truth_by_timestamp = {candle.timestamp_utc: candle for candle in truth_path_candles}
     for observation in observations:
         if not isinstance(observation, Mapping):
             return False
@@ -2211,8 +2130,7 @@ def _episode_outcome_valid(
             and observation.get("side") == candidate.get("side")
             and observation.get("method") == candidate.get("method")
             and observation.get("episode_role") == roles.get(key[0])
-            and observation.get("arm_outcome_sha256")
-            == arm.get("arm_outcome_sha256")
+            and observation.get("arm_outcome_sha256") == arm.get("arm_outcome_sha256")
             and observation.get("filled") is (arm.get("filled") is True)
             and observation.get("proof_exit_reason") == arm.get("exit_reason")
             and observation.get("proof_exit_at_utc") == arm.get("exit_at_utc")
@@ -2224,8 +2142,7 @@ def _episode_outcome_valid(
             )
             and observation.get("fill_s5_interval_utc")
             == _s5_interval(_parse_optional_utc(arm.get("fill_at_utc")))
-            and observation.get("proof_and_observed_mark_must_not_be_mixed")
-            is True
+            and observation.get("proof_and_observed_mark_must_not_be_mixed") is True
         ):
             return False
         reason = str(arm["exit_reason"])
@@ -2233,9 +2150,7 @@ def _episode_outcome_valid(
         if reason == "HORIZON_FULL_STOP_LOSS":
             try:
                 price = float(observation["observed_horizon_mark_price"])
-                mark_interval = observation[
-                    "observed_horizon_mark_s5_interval_utc"
-                ]
+                mark_interval = observation["observed_horizon_mark_s5_interval_utc"]
                 if not isinstance(mark_interval, Mapping):
                     return False
                 mark_clock = _parse_utc(mark_interval["from_utc"])
@@ -2269,8 +2184,7 @@ def _episode_outcome_valid(
                 return False
             if not bool(
                 observation.get("observed_position_state") == "OPEN_AT_HORIZON"
-                and mark_candle.timestamp_utc
-                == last_executable_mark.timestamp_utc
+                and mark_candle.timestamp_utc == last_executable_mark.timestamp_utc
                 and math.isclose(
                     price,
                     executable_price,
@@ -2302,8 +2216,7 @@ def _episode_outcome_valid(
                 and observation.get("observed_horizon_mark_price_side") is None
                 and observation.get("observed_horizon_mark_s5_interval_utc") is None
                 and observation.get("observed_position_state") == expected_state
-                and observation.get("exit_s5_interval_utc")
-                == expected_exit_interval
+                and observation.get("exit_s5_interval_utc") == expected_exit_interval
                 and observation.get("exit_s5_interval_semantics")
                 == (
                     "EXECUTABLE_ATTACHED_EXIT_TOUCH"
@@ -2351,9 +2264,7 @@ def _load_outcomes(
         max_bytes=MAX_OUTCOME_LEDGER_BYTES,
         max_rows=MAX_LEDGER_ROWS,
     )
-    vehicle_by_sha = {
-        str(vehicle["contract_sha256"]): vehicle for vehicle in vehicles
-    }
+    vehicle_by_sha = {str(vehicle["contract_sha256"]): vehicle for vehicle in vehicles}
     for index, row in enumerate(rows, start=1):
         vehicle = vehicle_by_sha.get(str(row.get("vehicle_contract_sha256") or ""))
         if vehicle is None or not _episode_outcome_valid(row, vehicle):
@@ -2553,7 +2464,9 @@ def _mean(values: Sequence[float]) -> float | None:
 
 
 def _positive_rate(values: Sequence[float]) -> float | None:
-    return _round(sum(value > 0.0 for value in values) / len(values)) if values else None
+    return (
+        _round(sum(value > 0.0 for value in values) / len(values)) if values else None
+    )
 
 
 def _round(value: float) -> float:
@@ -2613,8 +2526,10 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 
 def _sha_text(value: Any) -> bool:
-    return isinstance(value, str) and len(value) == 64 and all(
-        character in "0123456789abcdef" for character in value
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )
 
 

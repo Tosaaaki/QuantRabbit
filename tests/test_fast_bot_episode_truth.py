@@ -43,6 +43,7 @@ TIMEFRAME_MINUTES = {
     "H4": 240,
     "D": 1440,
 }
+_UNSET = object()
 
 
 def _sha(value: object) -> str:
@@ -210,8 +211,18 @@ def _handoff(
     )
 
 
-def _build_fixture(root: Path, *, late_confirmation: bool = False) -> dict:
+def _build_fixture(
+    root: Path,
+    *,
+    late_confirmation: bool = False,
+    optional_numeric_value: object = _UNSET,
+) -> dict:
     fast, slow, snapshot = _inputs()
+    if optional_numeric_value is not _UNSET:
+        for packet in (fast, slow):
+            for chart in packet["charts"]:
+                for view in chart["views"]:
+                    view["indicators"]["half_life_60"] = optional_numeric_value
     ledger = root / "episode_ledger.jsonl"
     sources = root / "episode_sources"
     state = root / "episode_state.json"
@@ -277,9 +288,7 @@ def _build_fixture(root: Path, *, late_confirmation: bool = False) -> dict:
         source_archive_dir=sources,
         now_utc=CONFIRMED_AT,
         processed_at_utc=(
-            CONFIRMED_AT + timedelta(minutes=2)
-            if late_confirmation
-            else CONFIRMED_AT
+            CONFIRMED_AT + timedelta(minutes=2) if late_confirmation else CONFIRMED_AT
         ),
     )
     if second["latest_episodes"][0]["state"] != "CONFIRMED":
@@ -326,9 +335,7 @@ def _build_mixed_confirmation_fixture(root: Path) -> dict:
         second_chart = copy.deepcopy(packet["charts"][0])
         second_chart["pair"] = "GBP_USD"
         packet["charts"].append(second_chart)
-    snapshot["quotes"]["GBP_USD"] = copy.deepcopy(
-        snapshot["quotes"]["EUR_USD"]
-    )
+    snapshot["quotes"]["GBP_USD"] = copy.deepcopy(snapshot["quotes"]["EUR_USD"])
     ledger = root / "episode_ledger.jsonl"
     sources = root / "episode_sources"
     state = root / "episode_state.json"
@@ -431,9 +438,7 @@ def _build_mixed_confirmation_fixture(root: Path) -> dict:
         now_utc=delayed_cycle,
     )
     delayed_event = next(
-        row
-        for row in delayed["latest_episodes"]
-        if row["pair"] == "GBP_USD"
+        row for row in delayed["latest_episodes"] if row["pair"] == "GBP_USD"
     )
     if delayed_event["state"] != "CONFIRMED" or not delayed_event["late_detected"]:
         raise AssertionError("mixed fixture delayed episode must confirm late")
@@ -528,7 +533,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 )
             self.assertFalse(path.exists())
 
-    def test_projects_all_six_cells_generic_arms_features_and_is_idempotent(self) -> None:
+    def test_projects_all_six_cells_generic_arms_features_and_is_idempotent(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = _build_fixture(Path(temp_dir))
 
@@ -570,7 +577,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 INVERSE_SIDE_OTHER_METHOD,
             )
             features = vehicle["technical_feature_snapshot"]["timeframes"]
-            self.assertEqual([row["timeframe"] for row in features], list(TIMEFRAME_MINUTES))
+            self.assertEqual(
+                [row["timeframe"] for row in features], list(TIMEFRAME_MINUTES)
+            )
             for row in features:
                 self.assertEqual(
                     set(row["indicator_series"]),
@@ -587,7 +596,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 self.assertEqual(row["indicators"]["ichimoku_cloud_pos"], -1)
                 self.assertIn("z_score_20", row["indicators"])
                 self.assertNotIn("unknown_indicator_must_not_leak", row["indicators"])
-                self.assertNotIn("unknown_series_must_not_leak", row["indicator_series"])
+                self.assertNotIn(
+                    "unknown_series_must_not_leak", row["indicator_series"]
+                )
             technical_shadow = vehicle["technical_hypothesis_shadow"]
             self.assertEqual(technical_shadow["status"], "EMITTED")
             self.assertEqual(len(technical_shadow["hypotheses"]), 8)
@@ -604,8 +615,7 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 technical_shadow["evaluator_policy"],
             )
             hypothesis_rows = {
-                row["hypothesis_id"]: row
-                for row in technical_shadow["hypotheses"]
+                row["hypothesis_id"]: row for row in technical_shadow["hypotheses"]
             }
             self.assertEqual(hypothesis_rows["H05"]["status"], "ACTIVE_SHADOW")
             self.assertEqual(hypothesis_rows["H07"]["status"], "INACTIVE_SHADOW")
@@ -628,13 +638,63 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             self.assertEqual(second["vehicle_ledger_idempotent"], 1)
             self.assertEqual(len(paths["vehicle_ledger"].read_text().splitlines()), 1)
 
+    def test_optional_null_numeric_feature_is_omitted_without_fabrication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = _build_fixture(
+                Path(temp_dir),
+                optional_numeric_value=None,
+            )
+            result = _run(
+                paths,
+                handoffs=[paths["handoff"]],
+                now=CONFIRMED_AT,
+                client_factory=lambda: (_ for _ in ()).throw(
+                    AssertionError("immature projection must not fetch truth")
+                ),
+            )
+
+            self.assertEqual(result["vehicle_projection_status"], "VERIFIED")
+            vehicle = _load_one(paths["vehicle_ledger"])
+            self.assertTrue(
+                all(
+                    "half_life_60" not in row["indicators"]
+                    for row in vehicle["technical_feature_snapshot"]["timeframes"]
+                )
+            )
+
+    def test_non_null_invalid_numeric_feature_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = _build_fixture(
+                Path(temp_dir),
+                optional_numeric_value="not-a-number",
+            )
+            result = _run(
+                paths,
+                handoffs=[paths["handoff"]],
+                now=CONFIRMED_AT,
+                client_factory=lambda: None,
+            )
+
+            self.assertEqual(
+                result["status"],
+                "PRECHECK_OR_PERSISTENCE_FAILED_CLOSED",
+            )
+            self.assertEqual(result["vehicle_projection_status"], "FAILED")
+            self.assertIn(
+                "invalid episode numeric feature: half_life_60",
+                result["error"],
+            )
+            self.assertFalse(paths["vehicle_ledger"].exists())
+
     def test_v1_or_no_same_cycle_confirmed_event_projects_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = _build_fixture(Path(temp_dir))
             v1 = copy.deepcopy(paths["handoff"])
             v1["contract"] = "QR_FAST_BOT_EPISODE_HANDOFF_V1"
             v1["schema_version"] = 1
-            v1 = _seal({key: value for key, value in v1.items() if key != "contract_sha256"})
+            v1 = _seal(
+                {key: value for key, value in v1.items() if key != "contract_sha256"}
+            )
             failed = _run(
                 paths,
                 handoffs=[v1],
@@ -788,9 +848,7 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             shadow_body["seats"] = seats
             corrupt_shadow = _seal(shadow_body)
             handoff_body = {
-                key: value
-                for key, value in corrupt.items()
-                if key != "contract_sha256"
+                key: value for key, value in corrupt.items() if key != "contract_sha256"
             }
             handoff_body["prospective_vehicle_shadow"] = corrupt_shadow
             handoff_body["prospective_vehicle_shadow_sha256"] = corrupt_shadow[
@@ -813,7 +871,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             self.assertIn("source binding is invalid", result["error"])
             self.assertFalse(paths["vehicle_ledger"].exists())
 
-    def test_mature_cycle_uses_one_path_and_separates_proof_from_bid_ask_mark(self) -> None:
+    def test_mature_cycle_uses_one_path_and_separates_proof_from_bid_ask_mark(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = _build_fixture(Path(temp_dir))
             seat = paths["shadow"]["seats"][0]
@@ -841,9 +901,7 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             vehicle = _load_one(paths["vehicle_ledger"])
             self.assertTrue(outcome["truth_path_candles"])
             self.assertTrue(
-                outcome[
-                    "truth_path_candles_persisted_for_membership_validation"
-                ]
+                outcome["truth_path_candles_persisted_for_membership_validation"]
             )
             by_clock = {row.timestamp_utc.isoformat(): row for row in candles}
             long_seen = short_seen = False
@@ -851,15 +909,21 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 self.assertEqual(row["proof_exit_reason"], "HORIZON_FULL_STOP_LOSS")
                 self.assertLess(row["proof_post_cost_realized_pips"], 0.0)
                 self.assertEqual(row["observed_position_state"], "OPEN_AT_HORIZON")
-                candle = by_clock[row["observed_horizon_mark_s5_interval_utc"]["from_utc"]]
+                candle = by_clock[
+                    row["observed_horizon_mark_s5_interval_utc"]["from_utc"]
+                ]
                 if row["side"] == "LONG":
                     long_seen = True
                     self.assertEqual(row["observed_horizon_mark_price_side"], "BID")
-                    self.assertAlmostEqual(row["observed_horizon_mark_price"], candle.bid_c)
+                    self.assertAlmostEqual(
+                        row["observed_horizon_mark_price"], candle.bid_c
+                    )
                 else:
                     short_seen = True
                     self.assertEqual(row["observed_horizon_mark_price_side"], "ASK")
-                    self.assertAlmostEqual(row["observed_horizon_mark_price"], candle.ask_c)
+                    self.assertAlmostEqual(
+                        row["observed_horizon_mark_price"], candle.ask_c
+                    )
                 self.assertEqual(
                     row["exit_s5_interval_semantics"],
                     "LAST_EXECUTABLE_MARK_ONLY_NOT_PROOF_EXIT",
@@ -871,7 +935,8 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             self.assertTrue(
                 all(
                     cluster["proof_score"]["paired_episode_count"] == 1
-                    and cluster["observed_open_horizon_mark"]["paired_episode_count"] == 1
+                    and cluster["observed_open_horizon_mark"]["paired_episode_count"]
+                    == 1
                     for cluster in scorecard["clusters"]
                 )
             )
@@ -885,9 +950,7 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 )
             )
             self.assertFalse(
-                scorecard[
-                    "technical_cluster_statistics_are_forecast_probabilities"
-                ]
+                scorecard["technical_cluster_statistics_are_forecast_probabilities"]
             )
             self.assertEqual(
                 scorecard["no_trade_control"]["basis"],
@@ -973,9 +1036,7 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                 "to_utc": (earlier_clock + timedelta(seconds=5)).isoformat(),
             }
             earlier_price = float(
-                earlier["bid"][3]
-                if mark_row["side"] == "LONG"
-                else earlier["ask"][3]
+                earlier["bid"][3] if mark_row["side"] == "LONG" else earlier["ask"][3]
             )
             mark_row["observed_horizon_mark_price"] = earlier_price
             mark_row["observed_horizon_mark_post_cost_pips"] = round(
@@ -1044,7 +1105,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
                     "EXECUTABLE_ATTACHED_EXIT_TOUCH",
                 )
 
-    def test_client_factory_failure_after_durable_projection_stays_verified(self) -> None:
+    def test_client_factory_failure_after_durable_projection_stays_verified(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = _build_fixture(Path(temp_dir))
             maturity = _seat_maturity(paths["shadow"]["seats"][0])
@@ -1063,7 +1126,9 @@ class FastBotEpisodeTruthTest(unittest.TestCase):
             self.assertIn("missing credentials", result["errors"][0]["error"])
             self.assertTrue(paths["vehicle_ledger"].exists())
 
-    def test_late_episode_is_diagnostic_and_duplicate_outcome_cannot_inflate(self) -> None:
+    def test_late_episode_is_diagnostic_and_duplicate_outcome_cannot_inflate(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = _build_fixture(Path(temp_dir), late_confirmation=True)
             _run(
