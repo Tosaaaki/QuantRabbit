@@ -299,7 +299,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                     "SHORT_HALF": -0.02,
                     "SHORT_FULL": -0.04,
                 },
-                sealed_at_utc=NOW - timedelta(days=1),
+                sealed_at_utc=NOW + timedelta(microseconds=1),
             )
 
         with self.assertRaisesRegex(ValueError, "response receipt seal"):
@@ -502,7 +502,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                     "SHORT_HALF": -0.01,
                     "SHORT_FULL": -0.02,
                 },
-                sealed_at_utc=NOW - timedelta(days=1),
+                sealed_at_utc=NOW + timedelta(microseconds=1),
             )
             scores.append(
                 score_sealed_response(
@@ -597,7 +597,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.02,
                 "SHORT_FULL": -0.04,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         positive_score = score_sealed_response(
             valid_response,
@@ -639,7 +639,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.02,
                 "SHORT_FULL": -0.04,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         positive = score_sealed_response(
             response,
@@ -654,18 +654,70 @@ class DojoAiDiscretionTest(unittest.TestCase):
         self.assertNotIn("positive_evidence", positive)
         self.assertEqual(positive["diagnostic_status"], "DIAGNOSTIC_ONLY")
 
+    def test_positive_numeric_metric_is_stale_even_without_verdict(self) -> None:
+        with self.assertRaisesRegex(ValueError, "validity is missing or not VALID"):
+            assert_no_stale_positive_artifacts(
+                [
+                    {
+                        "contract": SCORE_CONTRACT,
+                        "validity_status": "INVALIDATED",
+                        "diagnostic_return_sign": "POSITIVE",
+                        "net_return": 0.01,
+                    }
+                ]
+            )
+
+    def test_answer_key_sealed_before_response_is_rejected(self) -> None:
+        response, packet, capability, prompt, scorer, model = _sealed_response()
+        early_key = seal_answer_key(
+            trial_id=str(packet["trial_id"]),
+            packet_sha256=str(packet["packet_sha256"]),
+            returns={
+                "FLAT": 0.0,
+                "LONG_HALF": 0.01,
+                "LONG_FULL": 0.02,
+                "SHORT_HALF": -0.01,
+                "SHORT_FULL": -0.02,
+            },
+            sealed_at_utc=NOW - timedelta(days=1),
+        )
+        with self.assertRaisesRegex(ValueError, "sealed after response"):
+            score_sealed_response(
+                response,
+                packet=packet,
+                prompt_lock=prompt,
+                model_manifest=model,
+                capability_manifest=capability,
+                scorer_lock=scorer,
+                answer_key_loader=lambda: early_key,
+                opened_at_utc=NOW + timedelta(seconds=1),
+            )
+
+    def test_resealed_diagnostic_parent_cannot_grant_live_permission(self) -> None:
+        capability, prompt, scorer, _model = _locked_artifacts()
+        forged_body = {
+            key: value for key, value in prompt.items() if key != "prompt_lock_sha256"
+        }
+        forged_body["live_permission"] = True
+        forged = {
+            **forged_body,
+            "prompt_lock_sha256": canonical_sha256(forged_body),
+        }
+        with self.assertRaisesRegex(ValueError, "grants live permission"):
+            build_day_packet(
+                _source(),
+                prompt_lock=forged,
+                capability_manifest=capability,
+                scorer_lock=scorer,
+            )
+
     def test_packet_builder_cli_emits_only_offline_prelocked_bundle(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source_path = root / "source.json"
-            prompt_path = root / "prompt.txt"
             output_dir = root / "bundle"
             source_path.write_text(json.dumps(_source()), encoding="utf-8")
-            prompt_path.write_text(
-                "Use only the inline packet. Return the fixed JSON decision schema.",
-                encoding="utf-8",
-            )
             environment = dict(os.environ)
             environment["PYTHONPATH"] = str(repo / "src")
             command = [
@@ -673,10 +725,14 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 str(repo / "scripts/build-dojo-ai-packet.py"),
                 "--source",
                 str(source_path),
-                "--prompt-file",
-                str(prompt_path),
                 "--variant-id",
-                "neutral-v1",
+                "A_FABLE_MINIMAL",
+                "--phase-id",
+                "phase_1_diagnostic",
+                "--blind-day-rank",
+                "1",
+                "--blind-day-id",
+                "b" * 64,
                 "--context-id",
                 "fresh-cli-context",
                 "--model-name",
@@ -712,6 +768,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "model": "model_sha256",
                 "packet": "packet_sha256",
                 "request": "request_receipt_sha256",
+                "cell": "cell_id",
             }
             for role, artifact_path_text in result["artifacts"].items():
                 artifact_path = Path(artifact_path_text)
@@ -719,7 +776,8 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 self.assertIn(
                     str(artifact[builder_sha_fields[role]]), artifact_path.name
                 )
-                self.assertEqual(artifact["evidence_tier"], DIAGNOSTIC_TIER)
+                if role != "cell":
+                    self.assertEqual(artifact["evidence_tier"], DIAGNOSTIC_TIER)
                 self.assertEqual(artifact_path.stat().st_mode & 0o777, 0o600)
             repeated = subprocess.run(
                 command,
@@ -755,7 +813,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.01,
                 "SHORT_FULL": -0.02,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -783,6 +841,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
             command = [
                 sys.executable,
                 str(repo / "scripts/score-dojo-ai-pilot.py"),
+                "--legacy-per-trial-diagnostic",
                 "--response",
                 str(response_path),
                 "--answer-key",
@@ -810,6 +869,16 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 capture_output=True,
                 check=True,
             )
+            no_acknowledgement = list(command)
+            no_acknowledgement.remove("--legacy-per-trial-diagnostic")
+            refused = subprocess.run(
+                no_acknowledgement,
+                cwd=repo,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
             result = json.loads(completed.stdout)
             bundle_path = Path(result["artifacts"]["bundle"])
             bundle = json.loads(bundle_path.read_text())
@@ -828,6 +897,11 @@ class DojoAiDiscretionTest(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "VALID")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("registered 90-cell denominator", refused.stderr)
+        self.assertIs(result["legacy_per_trial_diagnostic"], True)
+        self.assertIs(result["registered_experiment_evidence"], False)
+        self.assertIs(result["prompt_selection_allowed"], False)
         self.assertNotIn("effective_independent_n", result)
         self.assertEqual(result["declared_lineage_cluster_count_diagnostic"], 1)
         self.assertAlmostEqual(bundle["scores"][0]["net_return"], 0.01)
@@ -836,6 +910,8 @@ class DojoAiDiscretionTest(unittest.TestCase):
         )
         self.assertIs(bundle["live_permission"], False)
         self.assertIs(bundle["model_api_invoked"], False)
+        self.assertIs(bundle["registered_experiment_evidence"], False)
+        self.assertIs(bundle["registered_phase_denominator_enforced"], False)
         self.assertEqual(bundle["evidence_tier"], DIAGNOSTIC_TIER)
         self.assertIn(str(bundle["bundle_sha256"]), bundle_path.name)
         self.assertNotEqual(repeated.returncode, 0)
@@ -853,7 +929,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.25,
                 "SHORT_FULL": -0.50,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         score = score_sealed_response(
             response,
@@ -955,7 +1031,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.01,
                 "SHORT_FULL": -0.02,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         score = score_sealed_response(
             response,
@@ -1042,7 +1118,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.01,
                 "SHORT_FULL": -0.02,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         forged_key = {
             **answer_key,
@@ -1127,7 +1203,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                 "SHORT_HALF": -0.01,
                 "SHORT_FULL": -0.02,
             },
-            sealed_at_utc=NOW - timedelta(days=1),
+            sealed_at_utc=NOW + timedelta(microseconds=1),
         )
         registry = seal_validity_registry(
             {str(response["response_receipt_sha256"]): "VALID"},
@@ -1170,7 +1246,7 @@ class DojoAiDiscretionTest(unittest.TestCase):
                     "SHORT_HALF": -0.10,
                     "SHORT_FULL": -0.20,
                 },
-                sealed_at_utc=NOW - timedelta(days=1),
+                sealed_at_utc=NOW + timedelta(microseconds=1),
             )
             scores.append(
                 score_sealed_response(

@@ -47,6 +47,10 @@ WINDOWS = {"TRAIN": TRAIN, "VAL": VAL, "FINAL": FINAL}
 SCREENED_WINDOWS = {"LEGACY_S5_SCREEN": LEGACY_S5_SCREEN}
 INTRABAR_PATHS = ("OHLC", "OLHC")
 BOT_MODULE_PATH = REPO / "bots/lab_bot.py"
+BOT_DEPENDENCY_PATHS = (
+    REPO / "src" / "quant_rabbit" / "dojo_lab_provenance.py",
+    REPO / "src" / "quant_rabbit" / "virtual_broker.py",
+)
 
 NEW_PAIRS = [
     "EUR_GBP",
@@ -125,6 +129,7 @@ def run(
     session = create_trial_dir(run_root, trial_key)
     owned_cfg = dict(cfg)
     owned_cfg["strategy_owner_id"] = f"pair:{window_role}:{tag}"
+    strategy_owner_id = owned_cfg["strategy_owner_id"]
     config_text = json.dumps(
         owned_cfg, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
@@ -161,6 +166,14 @@ def run(
         str(HARDENED_FINANCING_PIPS_PER_DAY),
         "--bot-module",
         str(BOT_MODULE_PATH) + ":Bot",
+        "--settle-at-end",
+        "--strategy-owner-id",
+        strategy_owner_id,
+        *[
+            item
+            for path in BOT_DEPENDENCY_PATHS
+            for item in ("--bot-dependency", str(path))
+        ],
     ]
     if s5:
         command += [
@@ -214,10 +227,18 @@ def run(
             expected_pairs=tuple(feed_pairs(pair).split(",")),
             expected_granularity="S5" if s5 else "M1",
             expected_bot_bar="M1" if s5 else "feed",
+            expected_period_end_settlement=True,
             expected_slippage_pips=HARDENED_SLIPPAGE_PIPS,
             expected_financing_pips_per_day=HARDENED_FINANCING_PIPS_PER_DAY,
             expected_bot_module_path=BOT_MODULE_PATH,
             expected_bot_module_sha256=bot_module_sha256,
+            expected_bot_dependency_sha256={
+                str(path.relative_to(REPO)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in BOT_DEPENDENCY_PATHS
+            },
+            expected_strategy_owner_id=strategy_owner_id,
             expected_bot_config_sha256=hashlib.sha256(
                 config_text.encode("utf-8")
             ).hexdigest(),
@@ -280,9 +301,7 @@ def run_gate(
         "tag": tag,
         "pair": pair,
         "window_role": window_role,
-        "geometry": {
-            key: cfg[key] for key in ("fade_atr", "eff_max", "tp_atr")
-        },
+        "geometry": {key: cfg[key] for key in ("fade_atr", "eff_max", "tp_atr")},
         **combined,
     }
 
@@ -336,7 +355,7 @@ def main() -> int:
             all(int(entries.get(path, 0)) > 0 for path in INTRABAR_PATHS)
             and all(int(closeouts.get(path, 0)) == 0 for path in INTRABAR_PATHS)
             and all(bool(resolved.get(path)) for path in INTRABAR_PATHS)
-            and float(gate.get("pessimistic_terminal_net_jpy", -10**12)) > -20_000
+            and float(gate.get("pessimistic_terminal_net_jpy", -(10**12))) > -20_000
         ):
             phase1_pass.append(pair)
 
@@ -445,7 +464,9 @@ def main() -> int:
     }
     out = run_root / "pair_adaptation_board.json"
     write_new_json(out, result)
-    print(f"SURVIVORS (hypothesis only): {json.dumps(final_hypotheses, ensure_ascii=False)}")
+    print(
+        f"SURVIVORS (hypothesis only): {json.dumps(final_hypotheses, ensure_ascii=False)}"
+    )
     print(f"board -> {out}", flush=True)
     return 0
 

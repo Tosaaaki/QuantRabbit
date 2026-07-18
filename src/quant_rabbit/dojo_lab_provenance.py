@@ -50,6 +50,25 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _ZERO_SHA256 = "0" * 64
 
 
+def _strategy_affecting_event(event: str) -> bool:
+    return bool(
+        event.startswith("EXIT")
+        or event
+        in {
+            "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+            "FILL_MARKET",
+            "ORDER_LIMIT",
+            "ORDER_STOP",
+            "ORDER_CANCEL",
+            "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+            "FILL_LIMIT",
+            "CLOSE",
+            "SET_EXIT",
+            "MARGIN_CLOSEOUT",
+        }
+    )
+
+
 class DojoLabProvenanceError(ValueError):
     """The experiment cannot produce trustworthy evidence."""
 
@@ -214,6 +233,10 @@ def reserve_window_plan(
         spec = WindowSpec.from_pair(role, pair)
         holdout_specs[role] = spec
         holdouts[role] = spec.to_dict()
+    reserved_at = datetime.now(UTC)
+    reserved_before_every_holdout = all(
+        reserved_at < spec.start for spec in holdout_specs.values()
+    )
 
     registry_path = registry_path.expanduser().resolve()
     registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,7 +308,7 @@ def reserve_window_plan(
 
         body = {
             "seq": len(prior_records) + 1,
-            "reserved_at_utc": datetime.now(UTC).isoformat(),
+            "reserved_at_utc": reserved_at.isoformat(),
             "experiment_id": experiment_id.strip(),
             "run_id": run_id,
             "window_plan_sha256": _canonical_sha256(plan),
@@ -300,10 +323,20 @@ def reserve_window_plan(
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     return {
-        "status": "RESERVED",
+        "status": (
+            "RESERVED"
+            if reserved_before_every_holdout
+            else "RESERVED_HISTORICAL_DIAGNOSTIC"
+        ),
         "promotion_eligible": False,
-        "promotion_blocker": "EXTERNAL_MONOTONIC_RESERVATION_ATTESTATION_ABSENT",
-        "local_reservation_verified": True,
+        "promotion_blocker": (
+            "EXTERNAL_MONOTONIC_RESERVATION_ATTESTATION_ABSENT"
+            if reserved_before_every_holdout
+            else "HOLDOUT_RESERVED_AFTER_START"
+        ),
+        "local_reservation_verified": reserved_before_every_holdout,
+        "reserved_before_every_holdout": reserved_before_every_holdout,
+        "historical_diagnostic_only": not reserved_before_every_holdout,
         "external_monotonicity_attested": False,
         "monotonicity_status": "LOCAL_HASH_CHAIN_NOT_EXTERNALLY_MONOTONIC",
         "registry_path": str(registry_path),
@@ -620,10 +653,13 @@ def score_session_ledger(
     expected_pairs: Sequence[str],
     expected_granularity: str,
     expected_bot_bar: str,
+    expected_period_end_settlement: bool,
     expected_slippage_pips: float,
     expected_financing_pips_per_day: float,
     expected_bot_module_path: Path,
     expected_bot_module_sha256: str,
+    expected_bot_dependency_sha256: Mapping[str, str],
+    expected_strategy_owner_id: str,
     expected_bot_config_sha256: str,
     expected_bot_config_length: int,
     reservation_evidence: Mapping[str, Any] | None = None,
@@ -644,6 +680,8 @@ def score_session_ledger(
         raise DojoLabProvenanceError("expected granularity must be M1 or S5")
     if expected_bot_bar not in {"feed", "M1"}:
         raise DojoLabProvenanceError("expected bot bar must be feed or M1")
+    if not isinstance(expected_period_end_settlement, bool):
+        raise DojoLabProvenanceError("expected period-end settlement must be boolean")
     for field, value in (
         ("slippage", expected_slippage_pips),
         ("financing", expected_financing_pips_per_day),
@@ -655,6 +693,28 @@ def score_session_ledger(
     expected_module_sha = _require_sha256(
         expected_bot_module_sha256, field="expected bot module sha"
     )
+    expected_dependencies: dict[str, str] = {}
+    for path, digest in expected_bot_dependency_sha256.items():
+        if (
+            not isinstance(path, str)
+            or not path
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+            or path in expected_dependencies
+        ):
+            raise DojoLabProvenanceError("expected bot dependency path is unsafe")
+        expected_dependencies[path] = _require_sha256(
+            digest, field=f"expected bot dependency {path}"
+        )
+    if not expected_dependencies:
+        raise DojoLabProvenanceError("expected bot dependency closure is empty")
+    if (
+        not isinstance(expected_strategy_owner_id, str)
+        or not expected_strategy_owner_id
+        or len(expected_strategy_owner_id) > 128
+        or any(ord(char) < 33 or ord(char) > 126 for char in expected_strategy_owner_id)
+    ):
+        raise DojoLabProvenanceError("expected strategy owner id is invalid")
     expected_config_sha = _require_sha256(
         expected_bot_config_sha256, field="expected bot config sha"
     )
@@ -716,6 +776,11 @@ def score_session_ledger(
 
             event = record["event"]
             payload = record["payload"]
+            if _strategy_affecting_event(event):
+                if payload.get("strategy_owner_id") != expected_strategy_owner_id:
+                    raise DojoLabProvenanceError(
+                        "strategy-affecting ledger event has missing or mismatched owner"
+                    )
             if event in {"FILL_MARKET", "FILL_LIMIT"}:
                 entry_count += 1
                 try:
@@ -849,6 +914,8 @@ def score_session_ledger(
         raise DojoLabProvenanceError("manifest granularity mismatch")
     if replay.get("bot_bar") != expected_bot_bar:
         raise DojoLabProvenanceError("manifest bot cadence mismatch")
+    if replay.get("period_end_settlement") is not expected_period_end_settlement:
+        raise DojoLabProvenanceError("manifest period-end settlement mismatch")
     if replay.get("intrabar") != intrabar:
         raise DojoLabProvenanceError("manifest intrabar path mismatch")
 
@@ -929,8 +996,10 @@ def score_session_ledger(
         raise DojoLabProvenanceError("manifest bot module digest mismatch")
     if bot.get("class") != "Bot":
         raise DojoLabProvenanceError("manifest bot class mismatch")
-    if bot.get("dependency_sha256") != {}:
-        raise DojoLabProvenanceError("custom bot declared unexpected dependencies")
+    if bot.get("strategy_owner_id") != expected_strategy_owner_id:
+        raise DojoLabProvenanceError("manifest strategy owner mismatch")
+    if bot.get("dependency_sha256") != dict(sorted(expected_dependencies.items())):
+        raise DojoLabProvenanceError("custom bot dependency closure mismatch")
     if bot.get("configuration_bindings") != {
         "DOJO_BOT_CONFIG": {
             "sha256": expected_config_sha,
@@ -938,6 +1007,24 @@ def score_session_ledger(
         }
     }:
         raise DojoLabProvenanceError("manifest bot configuration binding mismatch")
+
+    settlement_records = [
+        row for row in records if row["event"] == "PERIOD_END_SETTLEMENT"
+    ]
+    if expected_period_end_settlement:
+        if len(settlement_records) != 1:
+            raise DojoLabProvenanceError(
+                "period-end settlement requires exactly one receipt"
+            )
+        settlement = settlement_records[0]["payload"]
+        if (
+            settlement.get("strategy_owner_id") != expected_strategy_owner_id
+            or settlement.get("complete") is not True
+            or settlement.get("errors") != []
+        ):
+            raise DojoLabProvenanceError("period-end settlement is incomplete")
+    elif settlement_records:
+        raise DojoLabProvenanceError("unexpected period-end settlement receipt")
 
     comparison_manifest = json.loads(json.dumps(manifest_body))
     comparison_manifest["replay"].pop("intrabar", None)
@@ -1216,7 +1303,15 @@ class StrategyOwnershipRegistry:
         return value if isinstance(value, str) and value else None
 
     def _owner_for_event(self, event: str, payload: Mapping[str, Any]) -> str | None:
-        if event in {"ORDER_LIMIT", "ORDER_STOP", "FILL_MARKET"}:
+        if event == "PERIOD_END_SETTLEMENT":
+            declared = self._identity(payload, "strategy_owner_id")
+            return declared if declared in self._owners else None
+        if event in {
+            "ORDER_LIMIT",
+            "ORDER_STOP",
+            "FILL_MARKET",
+            "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+        }:
             return self._current_owner()
         if event in {
             "FILL_LIMIT",

@@ -41,6 +41,10 @@ HARDENED_SLIPPAGE_PIPS = 0.3
 HARDENED_FINANCING_PIPS_PER_DAY = 0.8
 M1_ROOT = "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"
 BOT_MODULE_PATH = REPO / "bots/lab_bot.py"
+BOT_DEPENDENCY_PATHS = (
+    REPO / "src" / "quant_rabbit" / "dojo_lab_provenance.py",
+    REPO / "src" / "quant_rabbit" / "virtual_broker.py",
+)
 TRAIN = ("2024-01-02T00:00:00", "2025-07-01T00:00:00")
 VAL = ("2025-07-01T00:00:00", "2026-05-10T00:00:00")
 FINAL = ("2026-07-04T00:00:00", "2026-07-19T00:00:00")
@@ -72,6 +76,7 @@ def run_config(
     session = create_trial_dir(run_root, trial_key)
     owned_cfg = dict(cfg)
     owned_cfg["strategy_owner_id"] = f"dojo:{window_role}:{name}"
+    strategy_owner_id = owned_cfg["strategy_owner_id"]
     config_text = json.dumps(
         owned_cfg, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
@@ -111,6 +116,14 @@ def run_config(
             str(HARDENED_FINANCING_PIPS_PER_DAY),
             "--bot-module",
             str(BOT_MODULE_PATH) + ":Bot",
+            "--settle-at-end",
+            "--strategy-owner-id",
+            strategy_owner_id,
+            *[
+                item
+                for path in BOT_DEPENDENCY_PATHS
+                for item in ("--bot-dependency", str(path))
+            ],
         ],
         capture_output=True,
         text=True,
@@ -149,10 +162,18 @@ def run_config(
             expected_pairs=("USD_JPY",),
             expected_granularity="M1",
             expected_bot_bar="feed",
+            expected_period_end_settlement=True,
             expected_slippage_pips=HARDENED_SLIPPAGE_PIPS,
             expected_financing_pips_per_day=HARDENED_FINANCING_PIPS_PER_DAY,
             expected_bot_module_path=BOT_MODULE_PATH,
             expected_bot_module_sha256=bot_module_sha256,
+            expected_bot_dependency_sha256={
+                str(path.relative_to(REPO)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in BOT_DEPENDENCY_PATHS
+            },
+            expected_strategy_owner_id=strategy_owner_id,
             expected_bot_config_sha256=hashlib.sha256(
                 config_text.encode("utf-8")
             ).hexdigest(),

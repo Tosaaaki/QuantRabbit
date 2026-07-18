@@ -53,8 +53,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from quant_rabbit.analysis.market_status import compute_market_status
-from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
+from quant_rabbit.analysis.market_status import compute_market_status  # noqa: E402
+from quant_rabbit.dojo_lab_provenance import (  # noqa: E402
+    strategy_ownership_registry,
+)
+from quant_rabbit.virtual_broker import (  # noqa: E402
+    VirtualBroker,
+    VirtualBrokerError,
+)
 
 
 PHASE_ORDERS = {
@@ -68,7 +74,19 @@ def _reject_json_constant(value: str):
 
 
 def _strict_json_loads(value: str):
-    return json.loads(value, parse_constant=_reject_json_constant)
+    def reject_duplicates(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key is forbidden: {key}")
+            result[key] = item
+        return result
+
+    return json.loads(
+        value,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=reject_duplicates,
+    )
 
 
 def _finite_number(name: str, value, *, positive: bool = False) -> float:
@@ -93,12 +111,8 @@ def _normalized_pairs(raw: str) -> list[str]:
         raise ValueError("duplicate pairs are forbidden")
     for pair in pairs:
         parts = pair.split("_")
-        if (
-            len(parts) != 2
-            or any(
-                len(part) != 3 or not part.isalpha() or not part.isupper()
-                for part in parts
-            )
+        if len(parts) != 2 or any(
+            len(part) != 3 or not part.isalpha() or not part.isupper() for part in parts
         ):
             raise ValueError(f"invalid pair: {pair}")
     return sorted(pairs)
@@ -145,7 +159,11 @@ def _parse_corpus_time(value: object) -> datetime:
 def _canonical_sha256(value) -> str:
     return hashlib.sha256(
         json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
 
@@ -156,6 +174,65 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _repo_dependency_path(raw: str) -> Path:
+    path = Path(raw).expanduser()
+    resolved = (
+        (REPO_ROOT / path).resolve() if not path.is_absolute() else path.resolve()
+    )
+    try:
+        resolved.relative_to(REPO_ROOT)
+    except ValueError as exc:
+        raise ValueError("bot dependencies must stay inside the repository") from exc
+    if not resolved.is_file():
+        raise ValueError(f"bot dependency is not a file: {resolved}")
+    return resolved
+
+
+def _verify_custom_bot_seal(bot_manifest: dict) -> bytes:
+    """Read the exact custom-module bytes and recheck its declared closure."""
+
+    module_path = Path(bot_manifest["module_path"])
+    module_bytes = module_path.read_bytes()
+    if hashlib.sha256(module_bytes).hexdigest() != bot_manifest["module_sha256"]:
+        raise ValueError("custom bot module changed after SESSION_START seal")
+    for relative, expected_sha in bot_manifest["dependency_sha256"].items():
+        dependency = _repo_dependency_path(relative)
+        if _file_sha256(dependency) != expected_sha:
+            raise ValueError(f"custom bot dependency changed after seal: {relative}")
+    return module_bytes
+
+
+def _settle_custom_bot_at_end(broker: VirtualBroker, owner_id: str) -> None:
+    """Resolve only the declared custom worker's orders and positions."""
+
+    ownership = strategy_ownership_registry(broker)
+    order_ids = ownership.active_order_ids(owner_id)
+    trade_ids = ownership.active_trade_ids(owner_id)
+    errors: list[str] = []
+    for order_id in order_ids:
+        try:
+            broker.cancel_order(order_id)
+        except VirtualBrokerError as exc:
+            errors.append(f"cancel:{order_id}:{str(exc)[:120]}")
+    for trade_id in trade_ids:
+        try:
+            broker.close_trade(trade_id)
+        except VirtualBrokerError as exc:
+            errors.append(f"close:{trade_id}:{str(exc)[:120]}")
+    broker._log(
+        "PERIOD_END_SETTLEMENT",
+        {
+            "strategy_owner_id": owner_id,
+            "requested_order_ids": list(order_ids),
+            "requested_trade_ids": list(trade_ids),
+            "errors": errors,
+            "complete": not errors
+            and not ownership.active_order_ids(owner_id)
+            and not ownership.active_trade_ids(owner_id),
+        },
+    )
 
 
 def _git_head() -> str:
@@ -282,6 +359,9 @@ def _build_reproducibility_manifest(args) -> dict:
     _finite_number("financing_pips_day", args.financing_pips_day)
     if args.slippage_pips < 0 or args.financing_pips_day < 0:
         raise ValueError("cost parameters must be non-negative")
+    settle_at_end = bool(getattr(args, "settle_at_end", False))
+    if settle_at_end and (args.feed != "replay" or not args.bot_module):
+        raise ValueError("--settle-at-end requires replay with a custom bot")
     root = Path(args.corpus_root).expanduser().resolve()
     shards = (
         _selected_corpus_shards(
@@ -317,12 +397,36 @@ def _build_reproducibility_manifest(args) -> dict:
         module_path = Path(module_path_raw).expanduser().resolve()
         if not module_path.is_file():
             raise ValueError(f"bot module is not a file: {module_path}")
+        strategy_owner_id = getattr(args, "strategy_owner_id", None)
+        if (
+            not isinstance(strategy_owner_id, str)
+            or not strategy_owner_id
+            or len(strategy_owner_id) > 128
+            or any(ord(char) < 33 or ord(char) > 126 for char in strategy_owner_id)
+        ):
+            raise ValueError("custom bot requires a visible --strategy-owner-id")
+        raw_dependencies = list(getattr(args, "bot_dependency", None) or [])
+        if not raw_dependencies:
+            raise ValueError("custom bot requires a non-empty dependency closure")
+        dependency_paths = [_repo_dependency_path(item) for item in raw_dependencies]
+        relative_dependencies = [
+            str(path.relative_to(REPO_ROOT)) for path in dependency_paths
+        ]
+        if len(relative_dependencies) != len(set(relative_dependencies)):
+            raise ValueError("custom bot dependency paths must be unique")
         bot_manifest = {
             "kind": "custom_module",
             "name": None,
             "module_path": str(module_path),
             "module_sha256": _file_sha256(module_path),
             "class": class_name or "Bot",
+            "strategy_owner_id": strategy_owner_id,
+            "dependency_sha256": {
+                relative: _file_sha256(path)
+                for relative, path in sorted(
+                    zip(relative_dependencies, dependency_paths, strict=True)
+                )
+            },
         }
     elif args.bot:
         vendor = REPO_ROOT / "vendored" / "golden_20251209"
@@ -397,6 +501,7 @@ def _build_reproducibility_manifest(args) -> dict:
             "granularity": args.granularity,
             "intrabar": args.intrabar,
             "bot_bar": args.bot_bar,
+            "period_end_settlement": settle_at_end,
         },
         "corpus": corpus_manifest,
         "costs": {
@@ -446,6 +551,7 @@ class GoldenBurstBot:
     def __init__(self, broker: VirtualBroker, blind_spread: bool = False):
         import importlib.util
         from types import ModuleType
+
         vendor = REPO_ROOT / "vendored" / "golden_20251209"
 
         def load(name, path):
@@ -455,11 +561,16 @@ class GoldenBurstBot:
             spec.loader.exec_module(mod)
             return mod
 
-        pkg = ModuleType("analysis"); pkg.__path__ = []
+        pkg = ModuleType("analysis")
+        pkg.__path__ = []
         sys.modules["analysis"] = pkg
-        pkg.ma_projection = load("analysis.ma_projection", vendor / "analysis_ma_projection.py")
+        pkg.ma_projection = load(
+            "analysis.ma_projection", vendor / "analysis_ma_projection.py"
+        )
         self.calc_core = load("golden_calc_core", vendor / "indicators_calc_core.py")
-        self.strategy = load("golden_momentum_burst", vendor / "strategies_micro_momentum_burst.py").MomentumBurstMicro
+        self.strategy = load(
+            "golden_momentum_burst", vendor / "strategies_micro_momentum_burst.py"
+        ).MomentumBurstMicro
         self.broker = broker
         self.blind_spread = blind_spread
         self.bars: list[dict] = []
@@ -488,6 +599,7 @@ class GoldenBurstBot:
         if len(live_mine) >= self.MAX_CONCURRENT:
             return
         import pandas as pd
+
         mid_c = pd.Series([(b["bid_c"] + b["ask_c"]) / 2 for b in self.bars])
         mid_h = pd.Series([(b["bid_h"] + b["ask_h"]) / 2 for b in self.bars])
         mid_l = pd.Series([(b["bid_l"] + b["ask_l"]) / 2 for b in self.bars])
@@ -503,13 +615,23 @@ class GoldenBurstBot:
         last = self.bars[-1]
         fac = {
             "close": float(mid_c.iloc[-1]),
-            "ma10": float(ma10), "ma20": float(ma20), "ema20": float(ema20),
-            "rsi": float(rsi), "atr": float(atr), "adx": float(adx),
+            "ma10": float(ma10),
+            "ma20": float(ma20),
+            "ema20": float(ema20),
+            "rsi": float(rsi),
+            "atr": float(atr),
+            "adx": float(adx),
             "vol_5m": float(vol_5m),
-            "spread_pips": 0.0 if self.blind_spread else (last["ask_c"] - last["bid_c"]) / 0.01,
+            "spread_pips": 0.0
+            if self.blind_spread
+            else (last["ask_c"] - last["bid_c"]) / 0.01,
             "candles": [
-                {"high": (b["bid_h"] + b["ask_h"]) / 2, "low": (b["bid_l"] + b["ask_l"]) / 2,
-                 "open": (b["bid_o"] + b["ask_o"]) / 2, "close": (b["bid_c"] + b["ask_c"]) / 2}
+                {
+                    "high": (b["bid_h"] + b["ask_h"]) / 2,
+                    "low": (b["bid_l"] + b["ask_l"]) / 2,
+                    "open": (b["bid_o"] + b["ask_o"]) / 2,
+                    "close": (b["bid_c"] + b["ask_c"]) / 2,
+                }
                 for b in self.bars[-4:]
             ],
         }
@@ -523,19 +645,25 @@ class GoldenBurstBot:
             if units <= 0:
                 return
             trade_id = self.broker.market_order(
-                self.PAIR, side, units,
-                tp_pips=float(signal["tp_pips"]), sl_pips=float(signal["sl_pips"]))
+                self.PAIR,
+                side,
+                units,
+                tp_pips=float(signal["tp_pips"]),
+                sl_pips=float(signal["sl_pips"]),
+            )
             self.my_trades[trade_id] = bar_epoch
         except VirtualBrokerError:
             return
+
 
 UTC = timezone.utc
 POLL_SECONDS = 5.0
 STALE_QUOTE_MAX_S = 90.0
 
 
-def _write_state(session_dir: Path, broker: VirtualBroker, sim_time: str,
-                 mode: str, note: str = "") -> None:
+def _write_state(
+    session_dir: Path, broker: VirtualBroker, sim_time: str, mode: str, note: str = ""
+) -> None:
     state = {
         "mode": mode,
         "sim_time_utc": sim_time,
@@ -585,31 +713,44 @@ def _process_inbox(
                 raise ValueError(f"pair is not active in this session: {action_pair}")
             if kind == "MARKET":
                 broker.market_order(
-                    action["pair"], action["side"], float(action["units"]),
-                    tp_pips=action.get("tp_pips"), sl_pips=action.get("sl_pips"),
+                    action["pair"],
+                    action["side"],
+                    float(action["units"]),
+                    tp_pips=action.get("tp_pips"),
+                    sl_pips=action.get("sl_pips"),
                 )
             elif kind == "LIMIT":
                 broker.limit_order(
-                    action["pair"], action["side"], float(action["units"]),
+                    action["pair"],
+                    action["side"],
+                    float(action["units"]),
                     price=float(action["price"]),
-                    tp_pips=action.get("tp_pips"), sl_pips=action.get("sl_pips"),
+                    tp_pips=action.get("tp_pips"),
+                    sl_pips=action.get("sl_pips"),
                 )
             elif kind == "CLOSE":
                 units = action.get("units")
-                broker.close_trade(action["trade_id"],
-                                   units=float(units) if units is not None else None)
+                broker.close_trade(
+                    action["trade_id"],
+                    units=float(units) if units is not None else None,
+                )
             elif kind == "CANCEL":
                 broker.cancel_order(action["order_id"])
             elif kind == "SET_EXIT":
-                broker.set_exit(action["trade_id"],
-                                tp_price=action.get("tp_price"),
-                                sl_price=action.get("sl_price"))
+                broker.set_exit(
+                    action["trade_id"],
+                    tp_price=action.get("tp_price"),
+                    sl_price=action.get("sl_price"),
+                )
             else:
-                broker._log("AGENT_ACTION_REJECTED",
-                            {"file": path.name, "error": f"unknown action {kind}"})
+                broker._log(
+                    "AGENT_ACTION_REJECTED",
+                    {"file": path.name, "error": f"unknown action {kind}"},
+                )
         except (VirtualBrokerError, KeyError, ValueError, json.JSONDecodeError) as exc:
-            broker._log("AGENT_ACTION_REJECTED",
-                        {"file": path.name, "error": str(exc)[:200]})
+            broker._log(
+                "AGENT_ACTION_REJECTED", {"file": path.name, "error": str(exc)[:200]}
+            )
         os.replace(path, done / f"{int(time_mod.time()*1000)}_{path.name}")
         handled += 1
     return handled
@@ -620,9 +761,9 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
 
     client = OandaReadOnlyClient()
     pairs = _normalized_pairs(args.pairs)
-    exposure_pairs = {
-        position.pair for position in broker.positions.values()
-    } | {order.pair for order in broker.orders.values()}
+    exposure_pairs = {position.pair for position in broker.positions.values()} | {
+        order.pair for order in broker.orders.values()
+    }
     if not exposure_pairs.issubset(set(pairs)):
         raise VirtualBrokerError(
             "live session pairs do not cover restored exposure: "
@@ -633,8 +774,13 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     while time_mod.time() < deadline:
         now = datetime.now(UTC)
         if not compute_market_status(now).is_fx_open:
-            _write_state(session_dir, broker, now.isoformat(), "live",
-                         "MARKET_CLOSED: no fills, orders not processed")
+            _write_state(
+                session_dir,
+                broker,
+                now.isoformat(),
+                "live",
+                "MARKET_CLOSED: no fills, orders not processed",
+            )
             time_mod.sleep(30.0)
             continue
         try:
@@ -662,14 +808,26 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
                 "invalid_freshness": invalid_freshness,
             }
             broker._log("QUOTE_BATCH_REJECTED", detail)
-            _write_state(session_dir, broker, now.isoformat(), "live",
-                         "INCOMPLETE_OR_STALE_QUOTES: refusing actions")
+            _write_state(
+                session_dir,
+                broker,
+                now.isoformat(),
+                "live",
+                "INCOMPLETE_OR_STALE_QUOTES: refusing actions",
+            )
             time_mod.sleep(POLL_SECONDS)
             continue
-        broker.on_quote_batch([
-            (pair, quotes[pair].bid, quotes[pair].ask, quotes[pair].timestamp_utc.isoformat())
-            for pair in pairs
-        ])
+        broker.on_quote_batch(
+            [
+                (
+                    pair,
+                    quotes[pair].bid,
+                    quotes[pair].ask,
+                    quotes[pair].timestamp_utc.isoformat(),
+                )
+                for pair in pairs
+            ]
+        )
         for pair in pairs:
             q = quotes[pair]
             minute = int(q.timestamp_utc.timestamp() // 60) * 60
@@ -679,21 +837,38 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
                     bot.on_bar_closed(pair, bar, bar["epoch"])
                 bar = None
             if bar is None:
-                live_bars[pair] = {"epoch": minute,
-                                   "bid_o": q.bid, "bid_h": q.bid, "bid_l": q.bid, "bid_c": q.bid,
-                                   "ask_o": q.ask, "ask_h": q.ask, "ask_l": q.ask, "ask_c": q.ask}
+                live_bars[pair] = {
+                    "epoch": minute,
+                    "bid_o": q.bid,
+                    "bid_h": q.bid,
+                    "bid_l": q.bid,
+                    "bid_c": q.bid,
+                    "ask_o": q.ask,
+                    "ask_h": q.ask,
+                    "ask_l": q.ask,
+                    "ask_c": q.ask,
+                }
             else:
-                bar["bid_h"] = max(bar["bid_h"], q.bid); bar["bid_l"] = min(bar["bid_l"], q.bid)
-                bar["ask_h"] = max(bar["ask_h"], q.ask); bar["ask_l"] = min(bar["ask_l"], q.ask)
-                bar["bid_c"] = q.bid; bar["ask_c"] = q.ask
+                bar["bid_h"] = max(bar["bid_h"], q.bid)
+                bar["bid_l"] = min(bar["bid_l"], q.bid)
+                bar["ask_h"] = max(bar["ask_h"], q.ask)
+                bar["ask_l"] = min(bar["ask_l"], q.ask)
+                bar["bid_c"] = q.bid
+                bar["ask_c"] = q.ask
         _process_inbox(session_dir, broker, allowed_pairs=set(pairs))
         _write_state(session_dir, broker, now.isoformat(), "live")
         time_mod.sleep(POLL_SECONDS)
 
 
-def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
-                        time_to: str, intrabar: str = "OHLC",
-                        granularity: str = "M1", expected_shards=None):
+def _iter_replay_quotes(
+    root: Path,
+    pairs: list[str],
+    time_from: str,
+    time_to: str,
+    intrabar: str = "OHLC",
+    granularity: str = "M1",
+    expected_shards=None,
+):
     """Merge pairs' M1 bars in time order; yield (epoch, pair, bid, ask, phase).
 
     Streams year by year so full-history sessions stay in bounded memory.
@@ -707,11 +882,11 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
     if len(pairs) != len(set(pairs)) or not pairs:
         raise ValueError("replay pairs must be unique and non-empty")
     start, end = _validate_time_window(time_from, time_to)
-    phase_keys = {"OHLC": (("O", "o"), ("H", "h"), ("L", "l"), ("C", "c")),
-                  "OLHC": (("O", "o"), ("L", "l"), ("H", "h"), ("C", "c"))}[intrabar]
-    discovered = _selected_corpus_shards(
-        root, pairs, time_from, time_to, granularity
-    )
+    phase_keys = {
+        "OHLC": (("O", "o"), ("H", "h"), ("L", "l"), ("C", "c")),
+        "OLHC": (("O", "o"), ("L", "l"), ("H", "h"), ("C", "c")),
+    }[intrabar]
+    discovered = _selected_corpus_shards(root, pairs, time_from, time_to, granularity)
     expected_by_path: dict[Path, dict] = {}
     if expected_shards is not None:
         for row in expected_shards:
@@ -741,9 +916,7 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
                     for line_number, line in enumerate(handle, start=1):
                         try:
                             row = _strict_json_loads(line)
-                            stamp = _validate_replay_row(
-                                row, pair, expected_year=year
-                            )
+                            stamp = _validate_replay_row(row, pair, expected_year=year)
                         except (json.JSONDecodeError, ValueError) as exc:
                             raise ValueError(
                                 f"invalid corpus row {shard.name}:{line_number}: {exc}"
@@ -755,7 +928,9 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
                         rows.append((epoch, pair, row))
                 expected = expected_by_path.get(shard)
                 if expected is not None and _file_sha256(shard) != expected["sha256"]:
-                    raise ValueError(f"corpus shard changed during replay: {shard.name}")
+                    raise ValueError(
+                        f"corpus shard changed during replay: {shard.name}"
+                    )
         rows.sort(key=lambda r: (r[0], r[1]))
         cursor = 0
         while cursor < len(rows):
@@ -785,9 +960,7 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
                     )
     missing = [pair for pair in pairs if pair not in eligible_pairs]
     if missing:
-        raise ValueError(
-            "replay corpus has no eligible rows for: " + ",".join(missing)
-        )
+        raise ValueError("replay corpus has no eligible rows for: " + ",".join(missing))
 
 
 def _iter_replay_quote_batches(*args, **kwargs):
@@ -845,22 +1018,27 @@ def run_replay(
     if cursor is not None:
         if cursor.get("mode") != "replay":
             raise VirtualBrokerError("snapshot feed mode is not replay")
-        if replay_identity_sha256 is None or cursor.get(
-            "replay_identity_sha256"
-        ) != replay_identity_sha256:
+        if (
+            replay_identity_sha256 is None
+            or cursor.get("replay_identity_sha256") != replay_identity_sha256
+        ):
             raise VirtualBrokerError("replay resume identity mismatch")
         if bot is not None:
             raise VirtualBrokerError("bot replay resume requires persisted bot state")
         epoch_value = _finite_number("resume cursor epoch", cursor.get("epoch"))
         if not epoch_value.is_integer():
             raise VirtualBrokerError("resume cursor epoch must be an integer")
-        resume_key = _cursor_key(int(epoch_value), str(cursor.get("phase")), args.intrabar)
+        resume_key = _cursor_key(
+            int(epoch_value), str(cursor.get("phase")), args.intrabar
+        )
         current_epoch = resume_key[0]
         bar_count_value = _finite_number(
             "resume cursor bar_count", cursor.get("bar_count", 0)
         )
         if not bar_count_value.is_integer() or bar_count_value < 0:
-            raise VirtualBrokerError("resume cursor bar_count must be non-negative integer")
+            raise VirtualBrokerError(
+                "resume cursor bar_count must be non-negative integer"
+            )
         bar_count = int(bar_count_value)
     elif broker.positions or broker.orders:
         raise VirtualBrokerError(
@@ -902,8 +1080,10 @@ def run_replay(
                     time_mod.sleep(0.2)
                 os.replace(
                     step_file,
-                    session_dir / "inbox" / "processed" /
-                    f"{int(time_mod.time()*1000)}_STEP",
+                    session_dir
+                    / "inbox"
+                    / "processed"
+                    / f"{int(time_mod.time()*1000)}_STEP",
                 )
             elif not no_sleep:
                 time_mod.sleep(bar_sleep)
@@ -946,10 +1126,14 @@ def run_replay(
         for pair, bid, ask, _ in quote_batch:
             if phase == "O":
                 pending_bars[pair] = {
-                    "bid_o": bid, "ask_o": ask,
-                    "bid_h": bid, "bid_l": bid,
-                    "ask_h": ask, "ask_l": ask,
-                    "bid_c": bid, "ask_c": ask,
+                    "bid_o": bid,
+                    "ask_o": ask,
+                    "bid_h": bid,
+                    "bid_l": bid,
+                    "ask_h": ask,
+                    "ask_l": ask,
+                    "bid_c": bid,
+                    "ask_c": ask,
                     "epoch": epoch,
                 }
             else:
@@ -967,8 +1151,14 @@ def run_replay(
                 if mb is None:
                     bot_minute[pair] = {
                         "epoch": minute,
-                        "bid_o": bid, "bid_h": bid, "bid_l": bid, "bid_c": bid,
-                        "ask_o": ask, "ask_h": ask, "ask_l": ask, "ask_c": ask,
+                        "bid_o": bid,
+                        "bid_h": bid,
+                        "bid_l": bid,
+                        "bid_c": bid,
+                        "ask_o": ask,
+                        "ask_h": ask,
+                        "ask_l": ask,
+                        "ask_c": ask,
                     }
                 else:
                     mb["bid_h"] = max(mb["bid_h"], bid)
@@ -992,14 +1182,23 @@ def main() -> int:
     parser.add_argument("--session-dir", type=Path, required=True)
     parser.add_argument("--pairs", default="USD_JPY,EUR_USD")
     parser.add_argument("--balance", type=float, default=200_000.0)
-    parser.add_argument("--minutes", type=float, default=480.0, help="live mode duration")
-    parser.add_argument("--corpus-root", default=(
-        "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"))
+    parser.add_argument(
+        "--minutes", type=float, default=480.0, help="live mode duration"
+    )
+    parser.add_argument(
+        "--corpus-root",
+        default=(
+            "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"
+        ),
+    )
     parser.add_argument("--from", dest="time_from", default="2026-01-05T00:00:00")
     parser.add_argument("--to", dest="time_to", default="2026-01-10T00:00:00")
     parser.add_argument("--bars-per-second", type=float, default=20.0)
-    parser.add_argument("--step", action="store_true",
-                        help="replay: advance one bar per inbox/STEP file")
+    parser.add_argument(
+        "--step",
+        action="store_true",
+        help="replay: advance one bar per inbox/STEP file",
+    )
     bot_group = parser.add_mutually_exclusive_group()
     bot_group.add_argument(
         "--bot",
@@ -1013,29 +1212,75 @@ def main() -> int:
         help="path to ANY bot file: <file.py>[:ClassName]; the class "
         "takes (broker) and implements on_bar_closed(pair, bar, epoch)",
     )
-    parser.add_argument("--granularity", choices=["M1", "S5"], default="M1",
-                        help="replay feed granularity (S5 = 12x finer fill realism)")
-    parser.add_argument("--bot-bar", choices=["feed", "M1"], default="feed",
-                        help="bot decision cadence: per feed bar, or aggregated M1")
-    parser.add_argument("--state-every", type=int, default=1,
-                        help="replay: write state/process inbox every N bars (lab speed)")
-    parser.add_argument("--fast-ledger", action="store_true",
-                        help="ledger flush without fsync (lab runs)")
-    parser.add_argument("--slippage-pips", type=float, default=0.0,
-                        help="stress: extra pips against the trader on every fill")
-    parser.add_argument("--financing-pips-day", type=float, default=0.0,
-                        help="holding cost in pips per 24h held (pro-rata)")
-    parser.add_argument("--intrabar", choices=["OHLC", "OLHC"], default="OHLC",
-                        help="declared synthetic intrabar path; run both to bracket "
-                             "both-touch ambiguity")
+    parser.add_argument(
+        "--granularity",
+        choices=["M1", "S5"],
+        default="M1",
+        help="replay feed granularity (S5 = 12x finer fill realism)",
+    )
+    parser.add_argument(
+        "--bot-bar",
+        choices=["feed", "M1"],
+        default="feed",
+        help="bot decision cadence: per feed bar, or aggregated M1",
+    )
+    parser.add_argument(
+        "--state-every",
+        type=int,
+        default=1,
+        help="replay: write state/process inbox every N bars (lab speed)",
+    )
+    parser.add_argument(
+        "--fast-ledger",
+        action="store_true",
+        help="ledger flush without fsync (lab runs)",
+    )
+    parser.add_argument(
+        "--slippage-pips",
+        type=float,
+        default=0.0,
+        help="stress: extra pips against the trader on every fill",
+    )
+    parser.add_argument(
+        "--financing-pips-day",
+        type=float,
+        default=0.0,
+        help="holding cost in pips per 24h held (pro-rata)",
+    )
+    parser.add_argument(
+        "--intrabar",
+        choices=["OHLC", "OLHC"],
+        default="OHLC",
+        help="declared synthetic intrabar path; run both to bracket "
+        "both-touch ambiguity",
+    )
+    parser.add_argument(
+        "--strategy-owner-id",
+        default=None,
+        help="required custom-bot owner identity, ledger-bound and scorer-checked",
+    )
+    parser.add_argument(
+        "--bot-dependency",
+        action="append",
+        default=[],
+        help="repo-local custom-bot dependency path; repeat for the complete closure",
+    )
+    parser.add_argument(
+        "--settle-at-end",
+        action="store_true",
+        help="replay custom bot: cancel its owned orders and close its owned trades",
+    )
     args = parser.parse_args()
 
     session_dir = args.session_dir
     (session_dir / "inbox" / "processed").mkdir(parents=True, exist_ok=True)
     broker = VirtualBroker(
-        ledger_path=session_dir / "ledger.jsonl", balance_jpy=args.balance,
-        fast_ledger=args.fast_ledger, slippage_pips=args.slippage_pips,
-        financing_pips_per_day=args.financing_pips_day)
+        ledger_path=session_dir / "ledger.jsonl",
+        balance_jpy=args.balance,
+        fast_ledger=args.fast_ledger,
+        slippage_pips=args.slippage_pips,
+        financing_pips_per_day=args.financing_pips_day,
+    )
     snap_path = session_dir / "broker_snapshot.json"
     if snap_path.exists():
         broker.restore(_strict_json_loads(snap_path.read_text()))
@@ -1045,15 +1290,20 @@ def main() -> int:
         if args.feed == "replay"
         else None
     )
-    broker._log("SESSION_START", {
-        "contract": "QR_VIRTUAL_MARKET_SESSION_V1",
-        "feed": args.feed, "pairs": args.pairs, "balance": broker.balance_jpy,
-        "order_authority": "NONE",
-        "reproducibility_manifest": reproducibility_manifest,
-        "reproducibility_manifest_sha256": reproducibility_manifest[
-            "manifest_sha256"
-        ],
-    })
+    broker._log(
+        "SESSION_START",
+        {
+            "contract": "QR_VIRTUAL_MARKET_SESSION_V1",
+            "feed": args.feed,
+            "pairs": args.pairs,
+            "balance": broker.balance_jpy,
+            "order_authority": "NONE",
+            "reproducibility_manifest": reproducibility_manifest,
+            "reproducibility_manifest_sha256": reproducibility_manifest[
+                "manifest_sha256"
+            ],
+        },
+    )
     bot = None
     if args.bot == "golden_burst":
         bot = GoldenBurstBot(broker)
@@ -1062,17 +1312,27 @@ def main() -> int:
         # monitor supplied nothing, so its gate never saw the spread
         bot = GoldenBurstBot(broker, blind_spread=True)
     elif args.bot_module:
-        import importlib.util as _ilu
+        import types as _types
+
         spec_str = args.bot_module
         module_path, _, class_name = spec_str.partition(":")
         module_path = str(Path(module_path).expanduser().resolve())
-        _spec = _ilu.spec_from_file_location("dojo_custom_bot", module_path)
-        _mod = _ilu.module_from_spec(_spec)
+        module_bytes = _verify_custom_bot_seal(reproducibility_manifest["bot"])
+        _mod = _types.ModuleType("dojo_custom_bot")
+        _mod.__file__ = module_path
         sys.modules["dojo_custom_bot"] = _mod
-        _spec.loader.exec_module(_mod)
+        exec(compile(module_bytes, module_path, "exec"), _mod.__dict__)
         bot_cls = getattr(_mod, class_name or "Bot")
         bot = bot_cls(broker)
-        broker._log("BOT_LOADED", {"module": module_path, "class": class_name or "Bot"})
+        _verify_custom_bot_seal(reproducibility_manifest["bot"])
+        broker._log(
+            "BOT_LOADED",
+            {
+                "module": module_path,
+                "class": class_name or "Bot",
+                "strategy_owner_id": args.strategy_owner_id,
+            },
+        )
     try:
         if args.feed == "live":
             run_live(args, broker, session_dir, bot=bot)
@@ -1085,6 +1345,8 @@ def main() -> int:
                 replay_identity_sha256=replay_identity,
                 expected_shards=reproducibility_manifest["corpus"]["shards"],
             )
+            if args.settle_at_end:
+                _settle_custom_bot_at_end(broker, args.strategy_owner_id)
     finally:
         try:
             stop_account = broker.account() if broker.last_quotes else None
@@ -1102,9 +1364,15 @@ def main() -> int:
             )
         )
         os.replace(tmp, snap_path)
-    print(json.dumps({"status": "SESSION_DONE",
-                      "account": broker.account() if broker.last_quotes else None},
-                     sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": "SESSION_DONE",
+                "account": broker.account() if broker.last_quotes else None,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

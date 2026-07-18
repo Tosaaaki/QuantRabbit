@@ -27,6 +27,9 @@ EXPECTED_PROMPT_HASHES = {
 EXPECTED_SCORER_POLICY_SHA256 = (
     "76eff0705971fdd149bdf4364b240e9c60d61ac8fb61542e80345472008b8496"
 )
+EXPECTED_REGISTRY_SHA256 = (
+    "cee86c2060511389183591cf071ff91eeb20c45a9c29ba6481d1619f61cb0272"
+)
 EXPECTED_RESPONSE_KEYS = [
     "trial_id",
     "action",
@@ -239,6 +242,27 @@ def _validate_variants(registry: dict[str, Any], repo_root: Path) -> None:
 
 def _validate_protocol(registry: dict[str, Any]) -> None:
     _expect(
+        set(registry),
+        {
+            "contract",
+            "schema_version",
+            "experiment_id",
+            "locked_at_utc",
+            "lock_status",
+            "evidence_tier",
+            "purpose",
+            "variants",
+            "response_schema",
+            "allocation",
+            "lock_rules",
+            "score_policy",
+            "scorer_policy_sha256",
+            "execution_guards",
+            "attestations",
+        },
+        "root fields",
+    )
+    _expect(
         registry.get("contract"), "DOJO_PROMPT_EXPERIMENT_PREREGISTRATION", "contract"
     )
     _expect(registry.get("schema_version"), 1, "schema version")
@@ -261,6 +285,11 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
 
     response_schema = registry.get("response_schema", {})
     _expect(
+        set(response_schema),
+        {"exact_keys_in_order", "action_enum", "size_enum", "additional_properties"},
+        "response schema fields",
+    )
+    _expect(
         response_schema.get("exact_keys_in_order"),
         EXPECTED_RESPONSE_KEYS,
         "response keys",
@@ -272,8 +301,38 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
     )
 
     allocation = registry.get("allocation", {})
+    _expect(
+        set(allocation),
+        {
+            "eligible_day_order",
+            "phase_1_diagnostic",
+            "future_confirmation",
+            "per_day_variant_allocation",
+            "fresh_context_policy",
+            "shared_packet_policy",
+            "context_reuse_allowed",
+            "cross_variant_message_history_allowed",
+            "total_unique_blind_days",
+            "total_allocated_cells",
+        },
+        "allocation fields",
+    )
     phase_1 = allocation.get("phase_1_diagnostic", {})
     confirmation = allocation.get("future_confirmation", {})
+    phase_fields = {
+        "blind_day_ranks_in_eligible_order",
+        "unique_blind_days",
+        "cells_per_variant",
+        "total_allocated_cells",
+        "use",
+    }
+    _expect(set(phase_1), phase_fields, "phase-1 fields")
+    _expect(set(confirmation), phase_fields, "confirmation fields")
+    _expect(
+        allocation.get("eligible_day_order"),
+        "STRICT_CHRONOLOGICAL_ORDER_AFTER_LOCK_WITH_PACKET_AND_SEALED_KEY_AVAILABLE",
+        "eligible day order",
+    )
     _expect(phase_1.get("blind_day_ranks_in_eligible_order"), "1-30", "phase-1 ranks")
     _expect(phase_1.get("unique_blind_days"), 30, "phase-1 day count")
     _expect(phase_1.get("cells_per_variant"), 30, "phase-1 cells per variant")
@@ -306,6 +365,11 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
         "ONE_NEW_STATELESS_MODEL_CONTEXT_PER_BLIND_DAY_PER_VARIANT",
         "fresh-context policy",
     )
+    _expect(
+        allocation.get("shared_packet_policy"),
+        "SAME_DATE_HIDDEN_PACKET_ACROSS_VARIANTS_WITHIN_BLIND_DAY",
+        "shared packet policy",
+    )
     _expect(allocation.get("context_reuse_allowed"), False, "context reuse")
     _expect(
         allocation.get("cross_variant_message_history_allowed"),
@@ -316,6 +380,19 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
     _expect(allocation.get("total_allocated_cells"), 180, "total cell count")
 
     lock_rules = registry.get("lock_rules", {})
+    _expect(
+        set(lock_rules),
+        {
+            "prompt_edits_after_lock_allowed",
+            "scorer_edits_after_lock_allowed",
+            "allocation_edits_after_lock_allowed",
+            "phase_1_can_select_or_drop_variants",
+            "hash_drift_policy",
+            "response_visibility_before_all_phase_cells_sealed",
+            "answer_key_visibility_before_response_seal",
+        },
+        "lock rule fields",
+    )
     for key in (
         "prompt_edits_after_lock_allowed",
         "scorer_edits_after_lock_allowed",
@@ -329,6 +406,32 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
     score_policy = registry.get("score_policy")
     if not isinstance(score_policy, dict):
         raise ValidationError("score_policy must be an object")
+    _expect(
+        set(score_policy),
+        {
+            "policy_id",
+            "primary_metric",
+            "answer_key_return_keys",
+            "flat_return",
+            "per_cell_transform",
+            "variant_aggregate",
+            "primary_contrasts",
+            "contrast_method",
+            "missing_or_schema_invalid_response",
+            "missing_response_action",
+            "missing_response_is_failure",
+            "invalid_parent_policy",
+            "same_model_lineage_handling",
+            "lineage_cluster_key",
+            "day_pairing_key",
+            "independent_model_n",
+            "phase_1_inference",
+            "future_confirmation_inference",
+            "secondary_diagnostics",
+            "positive_result_grants_live_permission",
+        },
+        "score policy fields",
+    )
     _expect(
         registry.get("scorer_policy_sha256"),
         canonical_sha256(score_policy),
@@ -385,6 +488,19 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
     )
 
     guards = registry.get("execution_guards", {})
+    _expect(
+        set(guards),
+        {
+            "model_calls_performed_by_registration",
+            "guarantee_monthly_3x",
+            "guarantee_any_return",
+            "live_trading_authorized",
+            "ai_order_authority",
+            "broker_mutation_allowed",
+            "read_only_diagnostic",
+        },
+        "execution guard fields",
+    )
     for key in (
         "model_calls_performed_by_registration",
         "guarantee_monthly_3x",
@@ -397,6 +513,18 @@ def _validate_protocol(registry: dict[str, Any]) -> None:
     _expect(guards.get("read_only_diagnostic"), True, "read-only diagnostic guard")
 
     attestations = registry.get("attestations", {})
+    _expect(
+        set(attestations),
+        {
+            "external_capability_attestation_present",
+            "provider_model_identity_and_lineage_attestation_present",
+            "external_answer_key_absence_and_open_chronology_attestation_present",
+            "external_registry_monotonicity_attestation_present",
+            "required_before_evidence_tier_upgrade",
+            "tier_upgrade_allowed_now",
+        },
+        "attestation fields",
+    )
     for key in (
         "external_capability_attestation_present",
         "provider_model_identity_and_lineage_attestation_present",
@@ -417,6 +545,11 @@ def validate_registry(
     registry = _load_registry(registry_path)
     _validate_protocol(registry)
     _validate_variants(registry, repo_root)
+    _expect(
+        canonical_sha256(registry),
+        EXPECTED_REGISTRY_SHA256,
+        "locked registry SHA-256",
+    )
     return registry
 
 

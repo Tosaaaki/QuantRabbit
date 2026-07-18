@@ -129,3 +129,22 @@ def test_validator_rejects_coordinated_scorer_rehash(tmp_path: Path) -> None:
 
     with pytest.raises(VALIDATOR.ValidationError, match="locked scorer policy SHA-256"):
         VALIDATOR.validate_registry(target_registry, repo_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda registry: registry.update({"promotion_eligible": True}),
+        lambda registry: registry["allocation"].update({"live_permission": True}),
+        lambda registry: registry["score_policy"].update({"verdict": "EDGE_PROVEN"}),
+    ],
+)
+def test_validator_rejects_unknown_or_promotion_fields(
+    tmp_path: Path, mutation
+) -> None:
+    target_registry, registry = _copy_experiment(tmp_path)
+    mutation(registry)
+    _write_registry(target_registry, registry)
+
+    with pytest.raises(VALIDATOR.ValidationError, match="fields"):
+        VALIDATOR.validate_registry(target_registry, repo_root=tmp_path)

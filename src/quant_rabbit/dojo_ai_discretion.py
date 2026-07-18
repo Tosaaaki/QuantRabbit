@@ -140,6 +140,39 @@ _CAPABILITY_KEYS = {
     "attestation_gap_codes",
     "capability_manifest_sha256",
 }
+_PROMPT_LOCK_KEYS = {
+    "contract",
+    "schema_version",
+    "validity_status",
+    "locked_at_utc",
+    "variant_id",
+    "prompt_text",
+    "prompt_sha256",
+    "fixed_output_schema",
+    "output_schema_sha256",
+    "optimization_after_lock_allowed",
+    "live_permission",
+    "chronology_attestation_status",
+    "evidence_tier",
+    "external_attestations_verified",
+    "attestation_gap_codes",
+    "prompt_lock_sha256",
+}
+_SCORER_LOCK_KEYS = {
+    "contract",
+    "schema_version",
+    "validity_status",
+    "locked_at_utc",
+    "policy",
+    "scorer_sha256",
+    "answer_key_open_before_response_seal_allowed",
+    "live_permission",
+    "chronology_attestation_status",
+    "evidence_tier",
+    "external_attestations_verified",
+    "attestation_gap_codes",
+    "scorer_lock_sha256",
+}
 _RETURN_KEYS = {
     "FLAT",
     "LONG_HALF",
@@ -262,7 +295,11 @@ def prelock_prompt(
 ) -> dict[str, Any]:
     """Freeze a prompt and the only accepted response schema before a trial."""
 
-    text = _bounded_text(prompt_text, "prompt_text", maximum=8_000)
+    # Prompt preregistration hashes the exact UTF-8 file bytes.  Do not call
+    # ``strip()`` here: doing so used to make every honest runtime prompt hash
+    # differ from its registered hash merely because the file ended in a
+    # newline.
+    text = _bounded_exact_text(prompt_text, "prompt_text", maximum=8_000)
     variant = _bounded_text(variant_id, "variant_id", maximum=120)
     if _DATE_TEXT.search(text):
         raise ValueError("prompt must not contain an identifiable decision date")
@@ -668,6 +705,13 @@ def score_sealed_response(
         raise ValueError("answer key trial binding is stale")
     if answer_key["packet_sha256"] != response["packet_sha256"]:
         raise ValueError("answer key packet binding is stale")
+    answer_key_sealed = _parse_utc_required(
+        answer_key.get("sealed_at_utc"), "answer key seal"
+    )
+    if answer_key_sealed <= response_sealed:
+        raise ValueError("answer key must be sealed after response seal")
+    if answer_key_sealed > opened:
+        raise ValueError("answer key cannot be sealed after it is opened")
 
     decision = response["response"]
     action = decision["action"]
@@ -704,6 +748,7 @@ def score_sealed_response(
         "scorer_sha256": scorer["scorer_sha256"],
         "answer_key_sha256": answer_key["answer_key_sha256"],
         "answer_key_opened_after_response_seal": True,
+        "answer_key_sealed_after_response_seal": True,
         "return_key": return_key,
         "net_return": net_return,
         "net_log_growth": log_growth,
@@ -803,6 +848,14 @@ def score_pilot(scores: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         **_diagnostic_fields(),
     }
     return _seal(body, "pilot_score_sha256")
+
+
+def validate_score_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a finite snapshot after validating one diagnostic score seal."""
+
+    value = _snapshot(receipt)
+    _validate_score_receipt(value)
+    return value
 
 
 def invalidate_artifact(
@@ -1107,6 +1160,11 @@ def _validate_capability_manifest(value: Mapping[str, Any]) -> None:
 
 def _validate_prompt_lock(value: Mapping[str, Any]) -> None:
     _validate_contract_seal(value, PROMPT_LOCK_CONTRACT)
+    allowed = _PROMPT_LOCK_KEYS | _INVALIDATION_METADATA_KEYS
+    if not _PROMPT_LOCK_KEYS.issubset(value) or not set(value).issubset(allowed):
+        raise ValueError("prompt lock shape is invalid")
+    if value.get("validity_status") == VALID and set(value) != _PROMPT_LOCK_KEYS:
+        raise ValueError("valid prompt lock contains invalidation metadata")
     if value.get("fixed_output_schema") != FIXED_RESPONSE_SCHEMA:
         raise ValueError("prompt fixed output schema is stale")
     if value.get("output_schema_sha256") != canonical_sha256(FIXED_RESPONSE_SCHEMA):
@@ -1122,6 +1180,11 @@ def _validate_prompt_lock(value: Mapping[str, Any]) -> None:
 
 def _validate_scorer_lock(value: Mapping[str, Any]) -> None:
     _validate_contract_seal(value, SCORER_LOCK_CONTRACT)
+    allowed = _SCORER_LOCK_KEYS | _INVALIDATION_METADATA_KEYS
+    if not _SCORER_LOCK_KEYS.issubset(value) or not set(value).issubset(allowed):
+        raise ValueError("scorer lock shape is invalid")
+    if value.get("validity_status") == VALID and set(value) != _SCORER_LOCK_KEYS:
+        raise ValueError("valid scorer lock contains invalidation metadata")
     if value.get("policy") != _SCORER_POLICY or value.get(
         "scorer_sha256"
     ) != canonical_sha256(_SCORER_POLICY):
@@ -1377,6 +1440,12 @@ def _validate_diagnostic_boundary(value: Mapping[str, Any]) -> None:
         or value.get("attestation_gap_codes") != _ATTESTATION_GAPS
     ):
         raise ValueError("artifact overstates external attestation")
+    if value.get("live_permission") is not False:
+        raise ValueError("diagnostic artifact grants live permission")
+    if value.get("broker_mutation_allowed") not in {None, False}:
+        raise ValueError("diagnostic artifact grants broker mutation")
+    if value.get("ai_order_authority") not in {None, "NONE"}:
+        raise ValueError("diagnostic artifact grants AI order authority")
     forbidden_fields = {
         "positive_evidence",
         "effective_independent_n",
@@ -1413,6 +1482,22 @@ def _invalid_parent_contracts(values: Sequence[Mapping[str, Any]]) -> list[str]:
 def _claims_positive(value: Mapping[str, Any]) -> bool:
     if value.get("positive_evidence") is True:
         return True
+    if str(value.get("diagnostic_return_sign") or "").upper() == "POSITIVE":
+        return True
+    for key in (
+        "net_return",
+        "net_log_growth",
+        "compounded_net_return",
+        "total_log_growth",
+    ):
+        raw = value.get(key)
+        if (
+            isinstance(raw, (int, float))
+            and not isinstance(raw, bool)
+            and math.isfinite(float(raw))
+            and float(raw) > 0.0
+        ):
+            return True
     verdict = str(value.get("verdict") or "").upper()
     return verdict.startswith("FIRST_POSITIVE") or verdict in {
         "POSITIVE",
@@ -1458,6 +1543,16 @@ def _bounded_text(value: Any, field: str, *, maximum: int) -> str:
     if not 1 <= len(text) <= maximum:
         raise ValueError(f"{field} is required and bounded")
     return text
+
+
+def _bounded_exact_text(value: Any, field: str, *, maximum: int) -> str:
+    """Validate text while preserving every registered byte-equivalent char."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    if not value.strip() or len(value) > maximum:
+        raise ValueError(f"{field} is required and bounded")
+    return value
 
 
 def _finite_number(value: Any, field: str) -> float:
@@ -1528,4 +1623,5 @@ __all__ = [
     "seal_model_manifest",
     "seal_response",
     "seal_validity_registry",
+    "validate_score_receipt",
 ]

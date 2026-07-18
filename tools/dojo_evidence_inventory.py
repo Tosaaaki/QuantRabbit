@@ -613,6 +613,12 @@ def build_manifest(
                 path=mirror_candidates[relative],
                 hash_reader=_mirror_hash_reader,
             )
+            source_state_key = source_by_relative[relative].relative_to(root).as_posix()
+            source_state = source_states[source_state_key]
+            if stable_state[:2] == source_state[:2]:
+                raise InventoryError(
+                    "mirror is a hardlink alias of the source: " + relative
+                )
             if digest != expected["sha256"]:
                 raise InventoryError(f"mirror SHA-256 mismatch: {relative}")
             mirror_rows.append({"path": relative, "size": size, "sha256": digest})

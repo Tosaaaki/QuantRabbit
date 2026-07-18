@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score sealed DOJO responses offline; never invoke a model or live gateway."""
+"""Legacy one-variant diagnostic scorer; never aggregate the 90-cell experiment."""
 
 from __future__ import annotations
 
@@ -21,6 +21,11 @@ from quant_rabbit.dojo_ai_discretion import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--legacy-per-trial-diagnostic",
+        action="store_true",
+        help="acknowledge that pilot aggregation is not registered-experiment evidence",
+    )
     parser.add_argument("--response", type=Path, action="append", required=True)
     parser.add_argument("--answer-key", type=Path, action="append", required=True)
     parser.add_argument("--packet", type=Path, action="append", required=True)
@@ -45,6 +50,11 @@ def main() -> int:
     parser.add_argument("--opened-at-utc")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
+    if not args.legacy_per_trial_diagnostic:
+        raise ValueError(
+            "legacy scorer requires --legacy-per-trial-diagnostic; use "
+            "run-dojo-ai-experiment.py for the registered 90-cell denominator"
+        )
 
     trial_counts = {
         len(args.response),
@@ -115,6 +125,12 @@ def main() -> int:
             )
         )
 
+    prompt_hashes = {str(score["prompt_sha256"]) for score in scores}
+    if len(prompt_hashes) != 1:
+        raise ValueError(
+            "legacy pilot cannot combine prompt variants; score each variant "
+            "separately and use the registered experiment-level scorer"
+        )
     pilot = score_pilot(scores)
     bundle_body = {
         "contract": "QR_DOJO_AI_DISCRETION_SCORE_BUNDLE_V1",
@@ -123,6 +139,11 @@ def main() -> int:
         "generated_at_utc": opened_at.isoformat(),
         "scores": scores,
         "pilot": pilot,
+        "legacy_per_trial_diagnostic": True,
+        "registered_experiment_evidence": False,
+        "registered_phase_denominator_enforced": False,
+        "prompt_variant_count": 1,
+        "prompt_selection_allowed": False,
         "active_artifact_count": len(active_artifacts),
         "answer_keys_opened_only_after_response_seals": True,
         "answer_key_open_order_attestation_status": "SELF_ATTESTED_UNVERIFIED",
@@ -166,6 +187,9 @@ def main() -> int:
                 "external_attestations_verified": False,
                 "model_api_invoked": False,
                 "live_permission": False,
+                "legacy_per_trial_diagnostic": True,
+                "registered_experiment_evidence": False,
+                "prompt_selection_allowed": False,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -175,8 +199,22 @@ def main() -> int:
 
 
 def _read_object(path: Path) -> dict[str, Any]:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON number: {token}")
+            ),
+        )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"invalid JSON object: {path}") from exc
     if not isinstance(value, dict):

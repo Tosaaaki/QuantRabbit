@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from quant_rabbit.dojo_lab_provenance import OwnedBrokerView
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
 
@@ -108,7 +109,10 @@ def test_reproducibility_manifest_binds_sources_costs_and_bot(tmp_path):
         intrabar="OHLC",
         bot=None,
         bot_module=f"{bot_module}:Worker",
+        strategy_owner_id="test:worker",
+        bot_dependency=["src/quant_rabbit/virtual_broker.py"],
         bot_bar="feed",
+        settle_at_end=False,
         slippage_pips=0.7,
         financing_pips_day=0.2,
     )
@@ -118,12 +122,17 @@ def test_reproducibility_manifest_binds_sources_costs_and_bot(tmp_path):
     assert manifest["schema"] == "QR_VIRTUAL_SESSION_REPRODUCIBILITY_V1"
     assert manifest["replay"]["pairs"] == ["USD_JPY"]
     assert manifest["replay"]["intrabar"] == "OHLC"
+    assert manifest["replay"]["period_end_settlement"] is False
     assert manifest["costs"] == {
         "slippage_pips_per_fill": 0.7,
         "financing_pips_per_day": 0.2,
         "leverage": 25.0,
     }
     assert manifest["bot"]["class"] == "Worker"
+    assert manifest["bot"]["strategy_owner_id"] == "test:worker"
+    assert set(manifest["bot"]["dependency_sha256"]) == {
+        "src/quant_rabbit/virtual_broker.py"
+    }
     assert len(manifest["bot"]["module_sha256"]) == 64
     assert len(manifest["corpus"]["shards"]) == 1
     assert len(manifest["corpus"]["shards"][0]["sha256"]) == 64
@@ -180,6 +189,29 @@ def test_session_start_ledger_binds_reproducibility_manifest(tmp_path):
     body = dict(manifest)
     digest = body.pop("manifest_sha256")
     assert digest == SESSION._canonical_sha256(body)
+
+
+def test_period_end_settlement_resolves_only_declared_owner(tmp_path: Path) -> None:
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0)
+    broker.on_quote("USD_JPY", 150.0, 150.02, "2026-01-01T00:00:00+00:00")
+    owner = OwnedBrokerView(broker, "dojo:settle")
+    sibling = OwnedBrokerView(broker, "dojo:sibling")
+    own_trade = owner.market_order("USD_JPY", "LONG", 100)
+    own_order = owner.limit_order("USD_JPY", "LONG", 100, price=149.0)
+    sibling_trade = sibling.market_order("USD_JPY", "SHORT", 100)
+
+    SESSION._settle_custom_bot_at_end(broker, "dojo:settle")
+
+    assert own_trade not in broker.positions
+    assert own_order not in broker.orders
+    assert sibling_trade in broker.positions
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    settlement = next(
+        row["payload"] for row in records if row["event"] == "PERIOD_END_SETTLEMENT"
+    )
+    assert settlement["strategy_owner_id"] == "dojo:settle"
+    assert settlement["complete"] is True
+    assert settlement["errors"] == []
 
 
 def _replay_args(corpus: Path, **overrides):

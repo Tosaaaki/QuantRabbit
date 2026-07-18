@@ -29,6 +29,23 @@ BOT_PATH = Path("/tmp/dojo-lab-bot.py")
 BOT_SHA = "c" * 64
 CONFIG_TEXT = '{"signal":"test"}'
 CONFIG_SHA = hashlib.sha256(CONFIG_TEXT.encode()).hexdigest()
+OWNER_ID = "dojo:test-owner"
+DEPENDENCIES = {"src/quant_rabbit/virtual_broker.py": "e" * 64}
+
+
+def _strategy_event(event: str) -> bool:
+    return event.startswith("EXIT") or event in {
+        "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+        "FILL_MARKET",
+        "ORDER_LIMIT",
+        "ORDER_STOP",
+        "ORDER_CANCEL",
+        "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+        "FILL_LIMIT",
+        "CLOSE",
+        "SET_EXIT",
+        "MARGIN_CLOSEOUT",
+    }
 
 
 def _sha(value: object) -> str:
@@ -63,6 +80,7 @@ def _manifest(*, intrabar: str = "OHLC", slippage: float = 0.3) -> dict:
             "granularity": "M1",
             "intrabar": intrabar,
             "bot_bar": "feed",
+            "period_end_settlement": False,
         },
         "corpus": {},
         "costs": {
@@ -78,7 +96,8 @@ def _manifest(*, intrabar: str = "OHLC", slippage: float = 0.3) -> dict:
             "module_path": str(BOT_PATH),
             "module_sha256": BOT_SHA,
             "class": "Bot",
-            "dependency_sha256": {},
+            "strategy_owner_id": OWNER_ID,
+            "dependency_sha256": DEPENDENCIES,
             "configuration_bindings": {
                 "DOJO_BOT_CONFIG": {
                     "sha256": CONFIG_SHA,
@@ -110,6 +129,20 @@ def _ledger_lines(
     manifest_slippage: float = 0.3,
 ) -> list[str]:
     manifest = _manifest(intrabar=intrabar, slippage=manifest_slippage)
+    owned_events = [
+        (
+            event,
+            {
+                **payload,
+                **(
+                    {"strategy_owner_id": payload.get("strategy_owner_id", OWNER_ID)}
+                    if _strategy_event(event)
+                    else {}
+                ),
+            },
+        )
+        for event, payload in events
+    ]
     all_events = [
         (
             "SESSION_START",
@@ -123,7 +156,7 @@ def _ledger_lines(
                 "reproducibility_manifest_sha256": manifest["manifest_sha256"],
             },
         ),
-        *events,
+        *owned_events,
     ]
     previous = "0" * 64
     lines: list[str] = []
@@ -150,10 +183,13 @@ def _score_kwargs(*, intrabar: str = "OHLC") -> dict:
         "expected_pairs": ("USD_JPY",),
         "expected_granularity": "M1",
         "expected_bot_bar": "feed",
+        "expected_period_end_settlement": False,
         "expected_slippage_pips": 0.3,
         "expected_financing_pips_per_day": 0.8,
         "expected_bot_module_path": BOT_PATH,
         "expected_bot_module_sha256": BOT_SHA,
+        "expected_bot_dependency_sha256": DEPENDENCIES,
+        "expected_strategy_owner_id": OWNER_ID,
         "expected_bot_config_sha256": CONFIG_SHA,
         "expected_bot_config_length": len(CONFIG_TEXT),
         "reservation_evidence": {
@@ -222,8 +258,8 @@ def test_global_holdout_reservation_is_durable_and_reuse_fails_closed(
 ) -> None:
     windows = {
         "TRAIN": ("2024-01-01T00:00:00", "2025-01-01T00:00:00"),
-        "VAL": ("2025-01-01T00:00:00", "2026-01-01T00:00:00"),
-        "FINAL": ("2026-02-01T00:00:00", "2026-03-01T00:00:00"),
+        "VAL": ("2030-01-01T00:00:00", "2030-02-01T00:00:00"),
+        "FINAL": ("2031-02-01T00:00:00", "2031-03-01T00:00:00"),
     }
     plan = validate_window_plan(windows)
     absent = reserve_window_plan(
@@ -425,7 +461,7 @@ def test_zero_trade_and_missing_global_registry_are_explicit(tmp_path: Path) -> 
     assert "GLOBAL_WINDOW_RESERVATION_ABSENT" in score["promotion_blockers"]
 
 
-def test_positive_score_requires_reauthenticated_durable_reservation(
+def test_past_holdout_reservation_is_permanently_diagnostic(
     tmp_path: Path,
 ) -> None:
     plan = validate_window_plan(
@@ -480,13 +516,14 @@ def test_positive_score_requires_reauthenticated_durable_reservation(
     kwargs["reservation_evidence"] = reservation
     score = score_session_ledger(ledger, **kwargs)
     assert score["economic_gate_passed"] is True
-    assert score["local_candidate_eligible"] is True
+    assert reservation["status"] == "RESERVED_HISTORICAL_DIAGNOSTIC"
+    assert reservation["reserved_before_every_holdout"] is False
+    assert reservation["historical_diagnostic_only"] is True
+    assert reservation["promotion_blocker"] == "HOLDOUT_RESERVED_AFTER_START"
+    assert score["local_candidate_eligible"] is False
     assert score["promotion_eligible"] is False
-    assert (
-        "EXTERNAL_MONOTONIC_RESERVATION_ATTESTATION_ABSENT"
-        in score["promotion_blockers"]
-    )
-    assert score["reservation_status"] == "RESERVED"
+    assert "GLOBAL_WINDOW_RESERVATION_UNVERIFIED" in score["promotion_blockers"]
+    assert score["reservation_status"] == "RESERVED_HISTORICAL_DIAGNOSTIC"
 
 
 def test_ledger_chain_manifest_cost_and_terminal_framing_are_authenticated(
@@ -551,6 +588,46 @@ def test_ledger_chain_manifest_cost_and_terminal_framing_are_authenticated(
     ledger.write_text("\n".join(_ledger_lines(missing_exit_cost)) + "\n")
     with pytest.raises(DojoLabProvenanceError, match="exit cost evidence"):
         score_session_ledger(ledger, **_score_kwargs())
+
+
+def test_strategy_owner_and_dependency_closure_are_fail_closed(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    events = [
+        ("FILL_MARKET", {"trade_id": "T1", "slippage_pips": 0.3}),
+        (
+            "CLOSE",
+            {
+                "trade_id": "T1",
+                "pl_jpy": 100.0,
+                "financing_jpy": 1.0,
+                "slippage_pips": 0.3,
+            },
+        ),
+        (
+            "SESSION_STOP",
+            {
+                "account": {
+                    "balance_jpy": 200_100.0,
+                    "equity_jpy": 200_100.0,
+                    "open_positions": 0,
+                    "resting_orders": 0,
+                }
+            },
+        ),
+    ]
+    ledger.write_text("\n".join(_ledger_lines(events)) + "\n")
+
+    owner_kwargs = _score_kwargs()
+    owner_kwargs["expected_strategy_owner_id"] = "dojo:wrong-owner"
+    with pytest.raises(DojoLabProvenanceError, match="mismatched owner"):
+        score_session_ledger(ledger, **owner_kwargs)
+
+    dependency_kwargs = _score_kwargs()
+    dependency_kwargs["expected_bot_dependency_sha256"] = {
+        "src/quant_rabbit/virtual_broker.py": "f" * 64
+    }
+    with pytest.raises(DojoLabProvenanceError, match="dependency closure mismatch"):
+        score_session_ledger(ledger, **dependency_kwargs)
 
 
 def test_both_intrabar_paths_are_required_and_lower_path_is_authoritative() -> None:

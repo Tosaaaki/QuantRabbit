@@ -252,6 +252,23 @@ class DojoEvidenceInventoryTest(unittest.TestCase):
                 ).hexdigest(),
             )
 
+    def test_mirror_hardlink_alias_is_not_independent_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, mirror = _mirror_fixture(Path(directory))
+            source_file = root / "evidence/source/alpha.bin"
+            mirror_file = mirror / "alpha.bin"
+            mirror_file.unlink()
+            os.link(source_file, mirror_file)
+
+            with self.assertRaisesRegex(
+                inventory.InventoryError, "hardlink alias"
+            ):
+                inventory.build_manifest(
+                    project_root=root,
+                    source_paths=["evidence/source"],
+                    mirror_root=mirror,
+                )
+
     def test_mirror_requires_one_source_directory_and_real_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
