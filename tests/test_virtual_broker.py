@@ -124,3 +124,17 @@ def test_snapshot_restore_roundtrip(broker, tmp_path):
     assert b2.account()["open_positions"] == 1
     assert b2.account()["resting_orders"] == 1
     assert b2.balance_jpy == broker.balance_jpy
+
+
+def test_stop_order_triggers_only_on_breakout(broker):
+    oid = broker.stop_order("USD_JPY", "LONG", 10_000, price=150.10, tp_pips=5)
+    assert not broker.on_quote("USD_JPY", 150.05, 150.07, "t1")  # below trigger
+    events = broker.on_quote("USD_JPY", 150.09, 150.11, "t2")  # ask crosses
+    assert events[0]["event"] == "FILL_LIMIT"
+    assert events[0]["price"] == 150.11  # level or worse, never better
+
+
+def test_stop_order_gap_fills_worse(broker):
+    broker.stop_order("USD_JPY", "SHORT", 10_000, price=149.90)
+    events = broker.on_quote("USD_JPY", 149.80, 149.82, "t1")  # gap through
+    assert events[0]["price"] == 149.80  # the worse real bid

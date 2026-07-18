@@ -30,6 +30,8 @@ def _pip(pair: str) -> float:
 
 class _PairState:
     def __init__(self):
+        self.closes20: deque[float] = deque(maxlen=20)
+        self.width_hist: deque[float] = deque(maxlen=720)  # 12h of 20-bar widths
         self.closes: deque[float] = deque(maxlen=1441)
         self.diffs_6h: deque[float] = deque(maxlen=360)
         self.highs3: deque[float] = deque(maxlen=3)
@@ -73,6 +75,9 @@ class Bot:
             st.diffs_6h.append(abs(mid_c - st.prev_close))
         st.prev_close = mid_c
         st.closes.append(mid_c)
+        st.closes20.append(mid_c)
+        if len(st.closes20) == 20:
+            st.width_hist.append(max(st.closes20) - min(st.closes20))
         st.highs3.append(mid_h)
         st.lows3.append(mid_l)
 
@@ -182,6 +187,64 @@ class Bot:
             try:
                 oid = self.broker.limit_order(
                     pair, trend, units, price=round(price, digits),
+                    tp_pips=tp_pips, sl_pips=self.sl_pips)
+                st.my_orders = [oid]
+            except VirtualBrokerError:
+                pass
+
+        elif self.signal == "compression_break":
+            # SQUEEZE cell: when the 20-bar width is in its lowest quintile
+            # of the last 12h, straddle LIMIT stops beyond the box; the
+            # first real breakout fills one side, the other is cancelled
+            # next bar.  SL-free + ceiling as configured.
+            for oid in st.my_orders:
+                try:
+                    self.broker.cancel_order(oid)
+                except VirtualBrokerError:
+                    pass
+            st.my_orders = []
+            if open_n >= self.max_concurrent or len(st.width_hist) < 360:
+                return
+            width = max(st.closes20) - min(st.closes20)
+            rank = sum(1 for w in st.width_hist if w < width) / len(st.width_hist)
+            if rank > 0.2:
+                return
+            box_h = max(st.closes20); box_l = min(st.closes20)
+            units = units_for(mid_c)
+            if units <= 0:
+                return
+            for side, price in (("LONG", box_h + 2 * pip), ("SHORT", box_l - 2 * pip)):
+                try:
+                    oid = self.broker.stop_order(
+                        pair, side, units, price=round(price, digits),
+                        tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_orders.append(oid)
+                except VirtualBrokerError:
+                    pass
+
+        elif self.signal == "spike_fade":
+            # counter a >2.5-ATR one-bar spike with a passive fade LIMIT at
+            # the spike extreme; TP scale-free; SL-free + ceiling.
+            for oid in st.my_orders:
+                try:
+                    self.broker.cancel_order(oid)
+                except VirtualBrokerError:
+                    pass
+            st.my_orders = []
+            if open_n >= self.max_concurrent or st.prev_close is None:
+                return
+            bar_range = (bar["bid_h"] + bar["ask_h"]) / 2 - (bar["bid_l"] + bar["ask_l"]) / 2
+            if bar_range < 2.5 * st.atr:
+                return
+            up_spike = mid_c > (bar["bid_o"] + bar["ask_o"]) / 2
+            units = units_for(mid_c)
+            if units <= 0:
+                return
+            side = "SHORT" if up_spike else "LONG"
+            edge = (bar["bid_h"] + bar["ask_h"]) / 2 if up_spike else (bar["bid_l"] + bar["ask_l"]) / 2
+            try:
+                oid = self.broker.limit_order(
+                    pair, side, units, price=round(edge, digits),
                     tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_orders = [oid]
             except VirtualBrokerError:

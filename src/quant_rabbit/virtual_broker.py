@@ -79,6 +79,7 @@ class VBOrder:
     limit_price: float
     tp_pips: Optional[float] = None
     sl_pips: Optional[float] = None
+    kind: str = "LIMIT"  # LIMIT (at level or better) / STOP (breakout trigger)
 
 
 @dataclass
@@ -256,6 +257,27 @@ class VirtualBroker:
         })
         return order_id
 
+    def stop_order(self, pair: str, side: str, units: float, price: float,
+                   tp_pips: Optional[float] = None,
+                   sl_pips: Optional[float] = None) -> str:
+        """Breakout entry: LONG fills once the real ask reaches price (at
+        the level or WORSE when gapped); SHORT once the real bid does."""
+
+        if side not in {"LONG", "SHORT"}:
+            raise VirtualBrokerError(f"invalid side: {side}")
+        if units <= 0 or price <= 0:
+            raise VirtualBrokerError("units and price must be positive")
+        order_id = self._next_id("O")
+        self.orders[order_id] = VBOrder(
+            order_id=order_id, pair=pair, side=side, units=units,
+            limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips, kind="STOP",
+        )
+        self._log("ORDER_STOP", {
+            "order_id": order_id, "pair": pair, "side": side,
+            "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
+        })
+        return order_id
+
     def cancel_order(self, order_id: str) -> None:
         if order_id not in self.orders:
             raise VirtualBrokerError(f"unknown order: {order_id}")
@@ -311,10 +333,16 @@ class VirtualBroker:
             if order.pair != pair:
                 continue
             filled_price = None
-            if order.side == "LONG" and ask <= order.limit_price:
-                filled_price = min(order.limit_price, ask)
-            elif order.side == "SHORT" and bid >= order.limit_price:
-                filled_price = max(order.limit_price, bid)
+            if order.kind == "LIMIT":
+                if order.side == "LONG" and ask <= order.limit_price:
+                    filled_price = min(order.limit_price, ask)
+                elif order.side == "SHORT" and bid >= order.limit_price:
+                    filled_price = max(order.limit_price, bid)
+            else:  # STOP: triggers at the level, fills at level or worse
+                if order.side == "LONG" and ask >= order.limit_price:
+                    filled_price = max(order.limit_price, ask)
+                elif order.side == "SHORT" and bid <= order.limit_price:
+                    filled_price = min(order.limit_price, bid)
             if filled_price is None:
                 continue
             if not self._margin_headroom_ok(pair, order.side, order.units):
