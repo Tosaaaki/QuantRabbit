@@ -1,0 +1,22 @@
+{
+  "allocation_nonce": "d9b19206eb677d40b1e7437af33c09c8eaf4bedea239138540edf57cbe6f49e1",
+  "first_cutoff_utc": "2026-07-22T15:00:00Z",
+  "model_policy": {
+    "model_lineage": "openai-gpt-5.5",
+    "model_name": "gpt-5.5",
+    "model_version": "gpt-5.5",
+    "reasoning_effort": "high"
+  },
+  "source_bindings": {
+    "files": {
+      "scripts/run-dojo-ai-forward.py": "0d4aa9ece5bfccddd4d69c65d2037be759500f9b47d6f26bbfc5ef93b959c7bc",
+      "src/quant_rabbit/broker/oanda.py": "e00212f04b8fa7cefdb81458f956b1c1dbadbf2c496768f01398cc049b20a1dc",
+      "src/quant_rabbit/dojo_ai_discretion.py": "21c7c172b0ae04a46efc8ba0889313247867f738f49d253588b6146e151bc717",
+      "src/quant_rabbit/dojo_ai_forward.py": "6df0960cbc4c2a84e1041d0698cd82d8ce9828cf8b8b4b89613756abf998d755",
+      "src/quant_rabbit/dojo_ai_truth.py": "dee82f3e0616ba21f2b5a273600a22e572f9cdf540846f462bdba2d7faa29bb3",
+      "src/quant_rabbit/dojo_market_calendar.py": "ecbdcf4f3b43a1f78b3b6989d262e2f8ea39d1aa590187c81aeab1ba2f89a155",
+      "src/quant_rabbit/dojo_prompt_phase.py": "592472a5a4172a9359f9821ac4a525669f2ecc1dc209fc7a6c95b40cd57830c3"
+    },
+    "git_commit": "107e57497dbe70e718827a90df48967749a8b775"
+  }
+}

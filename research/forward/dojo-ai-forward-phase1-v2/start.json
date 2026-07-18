@@ -1,0 +1,20 @@
+{
+  "allocated_cell_count": 90,
+  "authority": {
+    "ai_order_authority": "NONE",
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "positive_result_grants_live_permission": false,
+    "read_only": true
+  },
+  "contract": "QR_DOJO_AI_FORWARD_START_V2",
+  "experiment_id": "dojo-prompt-experiment-v1",
+  "phase_id": "phase_1_diagnostic",
+  "precommit_sha256": "6e02b6ac43329afb50d793e40658cb8dc11700e1122d39f3408f387b4ceef431",
+  "previous_receipt_sha256": "6e02b6ac43329afb50d793e40658cb8dc11700e1122d39f3408f387b4ceef431",
+  "scheduled_day_count": 30,
+  "schema_version": 2,
+  "start_receipt_sha256": "fbcf8d55d2665ac95b490fd27835cd780635b8d6682e33c6df6d81206c2aee6a",
+  "started_at_utc": "2026-07-18T22:17:10.690958Z",
+  "state": "STARTED"
+}

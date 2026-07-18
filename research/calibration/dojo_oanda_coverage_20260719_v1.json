@@ -1,0 +1,676 @@
+{
+  "calibrated_worker_policy": {
+    "boundary_tolerance_seconds": 900,
+    "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+    "full_day_minimum_coverage": [
+      98,
+      100
+    ],
+    "max_contiguous_gap_seconds": 900,
+    "partial_day_minimum_coverage": [
+      80,
+      100
+    ]
+  },
+  "calibration_sha256": "2d61fff0b93d44215e8a4cbba56dd62e06c066505b7989ecdf90d7674db31e1d",
+  "completed_at_utc": "2026-07-18T22:15:55Z",
+  "contract": "QR_DOJO_OANDA_COVERAGE_CALIBRATION_V1",
+  "git_commit": "107e57497dbe70e718827a90df48967749a8b775",
+  "limitations": [
+    "CALIBRATION_WAS_NOT_PREREGISTERED_BEFORE_OBSERVING_THESE_WINDOWS",
+    "CANONICAL_RESPONSE_HASH_WITHOUT_RAW_HTTP_HEADER_ATTESTATION",
+    "SELF_ATTESTED_NO_EXTERNAL_WITNESS",
+    "NOT_FORWARD_PERFORMANCE_EVIDENCE"
+  ],
+  "live_permission": false,
+  "m1_windows": [
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 0,
+        "first_boundary_lag_seconds": null,
+        "last_boundary_lead_seconds": null,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 0,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 100,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 0,
+        "returned_slot_count": 0
+      },
+      "normalized_row_count": 0,
+      "query": {
+        "from": "2026-07-04T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-05T00:00:00Z"
+      },
+      "response_candle_count": 0,
+      "response_sha256": "7e70f2fef8997fe59ed0b57c7be48fff54915770d54ff813c291ab16034be352"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 176,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 720,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 80,
+        "missing_slot_count": 25,
+        "missing_slots_sha256": "ad4ce944c8438f94f8dbd031969b60ee11eae8641db3ee075d88694304d0a2f8",
+        "required_returned_slot_count": 141,
+        "returned_slot_count": 151
+      },
+      "normalized_row_count": 151,
+      "query": {
+        "from": "2026-07-05T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-06T00:00:00Z"
+      },
+      "response_candle_count": 151,
+      "response_sha256": "0b2589bb25ad84375fffb3d41a442643f20882d58218ced9bfb831088c44cd78"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 11,
+        "missing_slots_sha256": "78860f3b1a681c083f2f80cb65d281c3a7d236b4cc2913f8e6a33071d302fc21",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1425
+      },
+      "normalized_row_count": 1425,
+      "query": {
+        "from": "2026-07-06T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-07T00:00:00Z"
+      },
+      "response_candle_count": 1425,
+      "response_sha256": "8e53767f28dc90b8cd741a9fca02840fea0b381b8d3251497dca1e77dd76e847"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 4,
+        "missing_slots_sha256": "c9e15e24624214cdfa6ffef56f04fec4e032010fc66aa571a6c63d0207ff1986",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1432
+      },
+      "normalized_row_count": 1432,
+      "query": {
+        "from": "2026-07-07T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-08T00:00:00Z"
+      },
+      "response_candle_count": 1432,
+      "response_sha256": "e52b5e57ad644813ce5a836bc0fc01525a812ea42b1fcd6643d5dc35f19e756f"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 6,
+        "missing_slots_sha256": "7f4279b0fefbe02225087c333d52e77b244c4c5eec81045e804f984e50ad339e",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1430
+      },
+      "normalized_row_count": 1430,
+      "query": {
+        "from": "2026-07-08T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-09T00:00:00Z"
+      },
+      "response_candle_count": 1430,
+      "response_sha256": "68ed97299199ab67c73dde8e153f5df5ab3711b0476aee8fd69d3246077b3ab3"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 420,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 22,
+        "missing_slots_sha256": "fe662b1272aa51069aa206d21cb47ca3d2b35f817446a9f27d849345d7ecee60",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1414
+      },
+      "normalized_row_count": 1414,
+      "query": {
+        "from": "2026-07-09T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-10T00:00:00Z"
+      },
+      "response_candle_count": 1414,
+      "response_sha256": "f5ebf99dc2fe5487df453316026d1f06d3c2842165e64fe71762ed8ad84a246d"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1260,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 60,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 1235,
+        "returned_slot_count": 1260
+      },
+      "normalized_row_count": 1260,
+      "query": {
+        "from": "2026-07-10T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-11T00:00:00Z"
+      },
+      "response_candle_count": 1260,
+      "response_sha256": "b065f845cf0b5780b01e8110e251232b7d6c741aa488f720aadb1ef4a423da75"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 0,
+        "first_boundary_lag_seconds": null,
+        "last_boundary_lead_seconds": null,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 0,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 100,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 0,
+        "returned_slot_count": 0
+      },
+      "normalized_row_count": 0,
+      "query": {
+        "from": "2026-07-11T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-12T00:00:00Z"
+      },
+      "response_candle_count": 0,
+      "response_sha256": "7e70f2fef8997fe59ed0b57c7be48fff54915770d54ff813c291ab16034be352"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 176,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 120,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 80,
+        "missing_slot_count": 2,
+        "missing_slots_sha256": "d9df1545640f616c18ae97bdb4e5c89f0cad5a03087bc2697b17d78248a2e465",
+        "required_returned_slot_count": 141,
+        "returned_slot_count": 174
+      },
+      "normalized_row_count": 174,
+      "query": {
+        "from": "2026-07-12T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-13T00:00:00Z"
+      },
+      "response_candle_count": 174,
+      "response_sha256": "83314a3d0d186cc9d0cf478ffeac26bc2d1ac6648054f875e4bb0fd06d9a733f"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 13,
+        "missing_slots_sha256": "d5dd0b12f078139fca8d0f9347920144db11d3c7d879c16abf4b1fd3f9ba5831",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1423
+      },
+      "normalized_row_count": 1423,
+      "query": {
+        "from": "2026-07-13T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-14T00:00:00Z"
+      },
+      "response_candle_count": 1423,
+      "response_sha256": "854dc4ffb82583e99172672ab154ccd553a5515602331689b560c2b4b22c6beb"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 14,
+        "missing_slots_sha256": "1cf521da537ad7ebe04817f1b258da532951eb5d302ecb13dd04b8e7c5e3b808",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1422
+      },
+      "normalized_row_count": 1422,
+      "query": {
+        "from": "2026-07-14T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-15T00:00:00Z"
+      },
+      "response_candle_count": 1422,
+      "response_sha256": "dce2ccd099eb2d3a52c1b3075786fbf2a06f52359ba82930aec9f7f5e58edc2b"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 5,
+        "missing_slots_sha256": "0eb73dc4d71f7ce211acc9f3cb626fc9982374fb76533190904a6598e76de1e4",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1431
+      },
+      "normalized_row_count": 1431,
+      "query": {
+        "from": "2026-07-15T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-16T00:00:00Z"
+      },
+      "response_candle_count": 1431,
+      "response_sha256": "6d8cb71897696948a72eff7eb24cc8807bf3a6c082153233f12391f33ec615e6"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1436,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 300,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 1,
+        "missing_slots_sha256": "1224746abf187195abfc47433caba5e43ddc8b976120fc7530a78ff969b497cc",
+        "required_returned_slot_count": 1408,
+        "returned_slot_count": 1435
+      },
+      "normalized_row_count": 1435,
+      "query": {
+        "from": "2026-07-16T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-17T00:00:00Z"
+      },
+      "response_candle_count": 1435,
+      "response_sha256": "8b23efcf08ae6f9ebecfd2b60c71f8e8a3d262eb6058147c6805584d69b6f03d"
+    },
+    {
+      "coverage": {
+        "boundary_tolerance_seconds": 900,
+        "coverage_passed": true,
+        "coverage_policy": "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+        "expected_open_slot_count": 1260,
+        "first_boundary_lag_seconds": 0,
+        "last_boundary_lead_seconds": 0,
+        "max_contiguous_gap_seconds": 900,
+        "max_observed_gap_seconds": 60,
+        "minimum_coverage_denominator": 100,
+        "minimum_coverage_numerator": 98,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 1235,
+        "returned_slot_count": 1260
+      },
+      "normalized_row_count": 1260,
+      "query": {
+        "from": "2026-07-17T00:00:00Z",
+        "granularity": "M1",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-18T00:00:00Z"
+      },
+      "response_candle_count": 1260,
+      "response_sha256": "2b1ca21d1d30b6bdb37420973851a8bce4fe7045159a2bb776026cb3219da906"
+    }
+  ],
+  "m5_windows": [
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 215,
+        "expected_slot_count": 216,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-05T21:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-06T14:55:00Z",
+        "max_observed_gap_seconds": 600,
+        "missing_slot_count": 1,
+        "missing_slots_sha256": "1fce11a4cf222387f86ec3672404cad41951abb4c7eb9af68d07bc362833385b",
+        "required_returned_slot_count": 212,
+        "returned_slot_count": 215
+      },
+      "query": {
+        "from": "2026-07-05T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-06T15:00:00Z"
+      },
+      "response_candle_count": 215,
+      "response_sha256": "986c017237ab25a14986234022f4a15a755f0464cd629b02fadd9409fe28b188"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-06T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-07T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-06T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-07T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "da823331e94f1ac8f26cc47aa780881568696f3b95a8a01eca00c06a1b86122c"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-07T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-08T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-07T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-08T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "6f0cf946550add4d6442d0a1645f3034fea23a34fdafd990d8cb6f047b710b8e"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-08T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-09T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-08T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-09T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "6c256668ce1cb1738baa641d114cc21dafc638fdfe68382c2a3c98651e6b7369"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 216,
+        "expected_slot_count": 216,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-12T21:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-13T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 212,
+        "returned_slot_count": 216
+      },
+      "query": {
+        "from": "2026-07-12T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-13T15:00:00Z"
+      },
+      "response_candle_count": 216,
+      "response_sha256": "a76be6c1c972a5b266f85f9afeaf3b23d47d3b0572ecd02177a3db71df6f4906"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-13T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-14T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-13T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-14T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "2932fa573b49ba856c30b26ed70e75fbd16033610fd68e1fbb2b23eb64afeaf1"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-14T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-15T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-14T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-15T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "bf12da1760d67d821733108bad9a28cbe49e6687f930dbbfaa79322a9650243a"
+    },
+    {
+      "coverage": {
+        "calendar_matches_observed": true,
+        "coverage_passed": true,
+        "covered_slot_count": 288,
+        "expected_slot_count": 288,
+        "extra_slot_count": 0,
+        "extra_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "first_boundary_lag_seconds": 0,
+        "first_event_utc": "2026-07-15T15:00:00Z",
+        "last_boundary_lead_seconds": 0,
+        "last_event_utc": "2026-07-16T14:55:00Z",
+        "max_observed_gap_seconds": 300,
+        "missing_slot_count": 0,
+        "missing_slots_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "required_returned_slot_count": 283,
+        "returned_slot_count": 288
+      },
+      "query": {
+        "from": "2026-07-15T15:00:00Z",
+        "granularity": "M5",
+        "includeFirst": "true",
+        "price": "BA",
+        "to": "2026-07-16T15:00:00Z"
+      },
+      "response_candle_count": 288,
+      "response_sha256": "80b5fbd290ee597dc853fce73af5e294731f41899dc051705bc74c37f975ed82"
+    }
+  ],
+  "promotion_eligible": false,
+  "schema_version": 1,
+  "source": {
+    "base_url": "https://api-fxtrade.oanda.com",
+    "credentials_persisted": false,
+    "instrument": "USD_JPY",
+    "market_hours_policy": "OANDA_US_FX_SUN1705_FRI1659_ALIGNED_CANDLE_BOUNDARIES_NY_V2",
+    "market_hours_source": "https://www.oanda.com/us-en/trading/hours-of-operation/",
+    "method": "GET",
+    "path": "/v3/instruments/USD_JPY/candles",
+    "price": "BA",
+    "raw_http_headers_persisted": false
+  },
+  "source_file_sha256": {
+    "bots/lab_bot.py": "4ed189b0e54d375949d8c987a221a015d5edca73e7c339d00036ef5a65f7bbb4",
+    "scripts/preflight-dojo-oanda-coverage.py": "25b93afd8f306c457edb2db43ea4a312d96a1a36b1a0df8f04ef958575a4708e",
+    "scripts/run-dojo-ai-forward.py": "0d4aa9ece5bfccddd4d69c65d2037be759500f9b47d6f26bbfc5ef93b959c7bc",
+    "scripts/run-dojo-worker-forward.py": "e7016939c11c2e0b88530d333e4c871a0a657012c7418c8189c743279bab2dfc",
+    "scripts/run-virtual-market-session.py": "c246e9743baa5d2557ad90a0bf760284909b3956392889833295c4319c743192",
+    "src/quant_rabbit/broker/oanda.py": "e00212f04b8fa7cefdb81458f956b1c1dbadbf2c496768f01398cc049b20a1dc",
+    "src/quant_rabbit/dojo_ai_discretion.py": "21c7c172b0ae04a46efc8ba0889313247867f738f49d253588b6146e151bc717",
+    "src/quant_rabbit/dojo_ai_forward.py": "6df0960cbc4c2a84e1041d0698cd82d8ce9828cf8b8b4b89613756abf998d755",
+    "src/quant_rabbit/dojo_ai_truth.py": "dee82f3e0616ba21f2b5a273600a22e572f9cdf540846f462bdba2d7faa29bb3",
+    "src/quant_rabbit/dojo_lab_provenance.py": "3377eab068a7595820b26272588d8a9a658692f60d26dd6db152c337ac7af446",
+    "src/quant_rabbit/dojo_market_calendar.py": "ecbdcf4f3b43a1f78b3b6989d262e2f8ea39d1aa590187c81aeab1ba2f89a155",
+    "src/quant_rabbit/dojo_worker_execution.py": "c44c2b47c661d54fc3fd50089903333f34fcb664b3bdde6d09c63e17b4adf84c",
+    "src/quant_rabbit/dojo_worker_source.py": "34a7e15fcb12be34b62abcb160477011d5948f110b7321c2608dceb9e51def9a"
+  },
+  "started_at_utc": "2026-07-18T22:15:49Z",
+  "state": "POST_HOC_CALIBRATION_BEFORE_FORWARD_WINDOW"
+}

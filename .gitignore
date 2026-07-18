@@ -14,6 +14,12 @@ secrets/
 .quant_rabbit_live.lock/
 .quant_rabbit_live.lock.acquire.guard
 
+# Ephemeral coordination locks for append-only DOJO forward runs. Evidence
+# receipts and ledgers remain tracked; these zero-byte local mutexes do not.
+research/forward/**/.ai-forward.lock
+research/forward/**/.source-collector.lock
+research/forward/**/.worker-execution.lock
+
 # Accidentally-created top-level verdict marker files from operator-side
 # shell redirection around read-only position sidecars. The real reports live
 # under data/*.json and docs/*_report.md; these empty markers must not block a
