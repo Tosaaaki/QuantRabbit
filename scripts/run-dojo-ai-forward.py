@@ -1335,6 +1335,10 @@ def main() -> int:
     invalidate.set_defaults(handler=_invalidate)
 
     args = parser.parse_args()
+    # Every artifact helper treats child paths as relative to one canonical
+    # run root.  Resolve the CLI root once so a caller's relative `--run-dir`
+    # cannot be prefixed a second time during validity-ledger registration.
+    args.run_dir = args.run_dir.resolve()
     result = args.handler(args)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
     return 0

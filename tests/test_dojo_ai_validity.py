@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -155,3 +157,32 @@ def test_registry_never_claims_external_monotonicity_or_authority(
     assert status["proof_eligible"] is False
     assert status["promotion_eligible"] is False
     assert status["live_permission"] is False
+
+
+def test_ai_forward_cli_canonicalizes_relative_run_dir_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts/run-dojo-ai-forward.py"
+    module_spec = importlib.util.spec_from_file_location(
+        "dojo_ai_forward_cli_test", script
+    )
+    assert module_spec is not None and module_spec.loader is not None
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    observed: dict[str, Path] = {}
+
+    def handler(args: object) -> dict[str, str]:
+        observed["run_dir"] = args.run_dir
+        return {"status": "OBSERVED"}
+
+    monkeypatch.setattr(module, "_validity_status", handler)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(script), "validity-status", "--run-dir", "relative-run"],
+    )
+
+    assert module.main() == 0
+    assert observed["run_dir"] == (tmp_path / "relative-run").resolve()
+    assert json.loads(capsys.readouterr().out)["status"] == "OBSERVED"

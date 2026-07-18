@@ -1,0 +1,25 @@
+{
+  "allocation_nonce": "a4e5051abd17fe061f698cb27153f5fc3d734a817d75423243db9d2d8a8963da",
+  "first_cutoff_utc": "2026-07-22T15:00:00Z",
+  "model_policy": {
+    "model_lineage": "REQUESTED_OPENAI_GPT_5_5_UNVERIFIED",
+    "model_name": "gpt-5.5",
+    "model_version": "CLI_ALIAS_NOT_PROVIDER_SNAPSHOT",
+    "reasoning_effort": "high"
+  },
+  "source_bindings": {
+    "files": {
+      "scripts/run-dojo-ai-forward.py": "03b1029d9bf084c88154a3a6e457f75771510b036df17b0a4d64c71908f2c1c8",
+      "src/quant_rabbit/broker/oanda.py": "e00212f04b8fa7cefdb81458f956b1c1dbadbf2c496768f01398cc049b20a1dc",
+      "src/quant_rabbit/dojo_ai_discretion.py": "ad4abcd45aeefdc47b15365ad4222f4d001b12650824931b9a310202a0d9cd7e",
+      "src/quant_rabbit/dojo_ai_execution.py": "77348fe8d4797cbb1870f7155584895f2e0587db198a1f9063c4e04552668df9",
+      "src/quant_rabbit/dojo_ai_forward.py": "10db6b8d5bdc1e7442a72e1d511ed6445c56453eff1ffb6c6f853a21b1f7e868",
+      "src/quant_rabbit/dojo_ai_truth.py": "2271917d5aa11aba0bf1665da938faaa7c6141a50651da0e18f4f2cc0b0dfc92",
+      "src/quant_rabbit/dojo_ai_validity.py": "a6a3ed26445045ac148a44aca4f948c4a21fe01e119bec81b7f720ae62915fac",
+      "src/quant_rabbit/dojo_market_calendar.py": "ecbdcf4f3b43a1f78b3b6989d262e2f8ea39d1aa590187c81aeab1ba2f89a155",
+      "src/quant_rabbit/dojo_prompt_phase.py": "592472a5a4172a9359f9821ac4a525669f2ecc1dc209fc7a6c95b40cd57830c3",
+      "tools/run-dojo-ai-model-cell.py": "bfd234372877cd8aa9c3b9bc7fe0c3dadff7b86888bb99f6fd30ac70b62146cb"
+    },
+    "git_commit": "c740085a3e96f3a2a0f9b65538d65c09cc722d8e"
+  }
+}
