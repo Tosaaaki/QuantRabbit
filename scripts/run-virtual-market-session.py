@@ -405,6 +405,10 @@ def main() -> int:
                         help="replay: write state/process inbox every N bars (lab speed)")
     parser.add_argument("--fast-ledger", action="store_true",
                         help="ledger flush without fsync (lab runs)")
+    parser.add_argument("--slippage-pips", type=float, default=0.0,
+                        help="stress: extra pips against the trader on every fill")
+    parser.add_argument("--financing-pips-day", type=float, default=0.0,
+                        help="holding cost in pips per 24h held (pro-rata)")
     parser.add_argument("--intrabar", choices=["OHLC", "OLHC"], default="OHLC",
                         help="declared synthetic intrabar path; run both to bracket "
                              "both-touch ambiguity")
@@ -414,7 +418,8 @@ def main() -> int:
     (session_dir / "inbox" / "processed").mkdir(parents=True, exist_ok=True)
     broker = VirtualBroker(
         ledger_path=session_dir / "ledger.jsonl", balance_jpy=args.balance,
-        fast_ledger=args.fast_ledger)
+        fast_ledger=args.fast_ledger, slippage_pips=args.slippage_pips,
+        financing_pips_per_day=args.financing_pips_day)
     snap_path = session_dir / "broker_snapshot.json"
     if snap_path.exists():
         broker.restore(json.loads(snap_path.read_text()))

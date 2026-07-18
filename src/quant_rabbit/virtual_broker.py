@@ -87,6 +87,8 @@ class VirtualBroker:
     ledger_path: Path
     balance_jpy: float = 200_000.0
     fast_ledger: bool = False  # flush without fsync (lab runs)
+    slippage_pips: float = 0.0  # stress: extra pips against the trader per fill
+    financing_pips_per_day: float = 0.0  # holding cost, pro-rata vs opened_ts
     leverage: float = LEVERAGE_DEFAULT
     positions: dict[str, VBPosition] = field(default_factory=dict)
     orders: dict[str, VBOrder] = field(default_factory=dict)
@@ -143,6 +145,24 @@ class VirtualBroker:
             if mid > 0:
                 return usdjpy_mid / mid
         raise VirtualBrokerError(f"no conversion path for quote currency {quote_ccy}")
+
+    @staticmethod
+    def _ts_epoch(ts: str) -> Optional[float]:
+        try:
+            return datetime.fromisoformat(ts.split("#")[0]).timestamp()
+        except Exception:
+            return None
+
+    def _financing_jpy(self, pos: VBPosition, exit_ts: str) -> float:
+        if self.financing_pips_per_day <= 0:
+            return 0.0
+        t0 = self._ts_epoch(pos.opened_ts)
+        t1 = self._ts_epoch(exit_ts)
+        if t0 is None or t1 is None or t1 <= t0:
+            return 0.0
+        days = (t1 - t0) / 86400.0
+        return (self.financing_pips_per_day * _pip(pos.pair) * pos.units
+                * self._jpy_per_quote_unit(pos.pair) * days)
 
     def _position_pl_jpy(self, pos: VBPosition, bid: float, ask: float) -> float:
         mark = bid if pos.side == "LONG" else ask
@@ -222,8 +242,10 @@ class VirtualBroker:
                       {"pair": pair, "side": side, "units": units})
             raise VirtualBrokerError("insufficient margin for market order")
         bid, ask, ts = q
-        entry = ask if side == "LONG" else bid
         pip = _pip(pair)
+        slip = self.slippage_pips * pip
+        entry = (ask + slip) if side == "LONG" else (bid - slip)
+        entry = _round_price(pair, entry)
         tp = _round_price(pair, entry + tp_pips * pip if side == "LONG" else entry - tp_pips * pip) if tp_pips else None
         sl = _round_price(pair, entry - sl_pips * pip if side == "LONG" else entry + sl_pips * pip) if sl_pips else None
         trade_id = self._next_id("T")
@@ -298,6 +320,7 @@ class VirtualBroker:
         price = bid if pos.side == "LONG" else ask
         diff = (price - pos.entry_price) if pos.side == "LONG" else (pos.entry_price - price)
         pl = diff * close_units * self._jpy_per_quote_unit(pos.pair)
+        pl -= self._financing_jpy(pos, ts) * (close_units / pos.units)
         self.balance_jpy += pl
         if close_units >= pos.units:
             del self.positions[trade_id]
@@ -345,6 +368,11 @@ class VirtualBroker:
                     filled_price = min(order.limit_price, bid)
             if filled_price is None:
                 continue
+            if self.slippage_pips > 0:
+                slip = self.slippage_pips * _pip(pair)
+                filled_price = _round_price(
+                    pair,
+                    filled_price + slip if order.side == "LONG" else filled_price - slip)
             if not self._margin_headroom_ok(pair, order.side, order.units):
                 del self.orders[order_id]
                 self._log("LIMIT_REJECTED_INSUFFICIENT_MARGIN",
@@ -391,6 +419,7 @@ class VirtualBroker:
             diff = (exit_price - pos.entry_price) if pos.side == "LONG" else (
                 pos.entry_price - exit_price)
             pl = diff * pos.units * self._jpy_per_quote_unit(pos.pair)
+            pl -= self._financing_jpy(pos, ts)
             self.balance_jpy += pl
             del self.positions[trade_id]
             event = {
