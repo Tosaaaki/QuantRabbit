@@ -652,10 +652,17 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     lanes = {lane["lane_id"]: lane for lane in source["lanes"]}
 
     idea = lanes["usd_jpy_mean_reversion_strategy_ideas_v1"]
+    forward_smoke = lanes["worker_forward_smoke_v1_started"]
     worker_legacy = lanes["worker_w46_w53_legacy_performance_invalid"]
+    ai_phase = lanes["ai_prompt_phase_v1_registered_zero_cells"]
     clean_legacy = lanes["ai_dayread_w54_clean_legacy_contract_invalid"]
     assert idea["status"] == "HYPOTHESIS"
     assert idea["distribution_30d"]["stressed_median_multiple"] is None
+    assert forward_smoke["status"] == "HYPOTHESIS"
+    assert forward_smoke["provenance"]["prospective"] is True
+    assert forward_smoke["distribution_30d"]["active_days"] == 0
+    assert ai_phase["status"] == "HYPOTHESIS"
+    assert ai_phase["distribution_30d"]["active_days"] == 0
     assert worker_legacy["status"] == "INVALID"
     assert (
         "LEGACY_PERFORMANCE_PROVENANCE_INVALIDATED"
@@ -671,3 +678,24 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     assert board["proof_admission"]["promotion_possible"] is False
     assert board["portfolio"]["independent_correlation_cluster_count"] == 0
     assert board["portfolio"]["included_lane_ids"] == []
+    assert _evaluation(board, "worker_forward_smoke_v1_started")["edge_status"] == (
+        "HYPOTHESIS"
+    )
+    assert _evaluation(
+        board, "ai_prompt_phase_v1_registered_zero_cells"
+    )["edge_status"] == "HYPOTHESIS"
+
+
+def test_current_content_addressed_board_exactly_matches_registry_input() -> None:
+    registry_dir = ROOT / "research/registries"
+    board_paths = sorted(registry_dir.glob("dojo_goal_board_20260719_*.json"))
+    assert len(board_paths) == 1
+
+    source = load_goal_board_input(
+        registry_dir / "dojo_goal_board_input_20260719.json"
+    )
+    expected = build_goal_board(source, project_root=ROOT)
+    actual = json.loads(board_paths[0].read_text(encoding="utf-8"))
+
+    assert actual == expected
+    assert board_paths[0].stem.endswith(expected["board_sha256"])

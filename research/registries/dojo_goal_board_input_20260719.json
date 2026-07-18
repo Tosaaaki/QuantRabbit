@@ -49,6 +49,53 @@
       }
     },
     {
+      "lane_id": "worker_forward_smoke_v1_started",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "provenance": {
+        "valid": true,
+        "prospective": true,
+        "lookahead_free": true,
+        "content_sha256": "4024f7748acb5a78d376f85cab1bf36f3be56387207161df6247306c125a0097",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/forward/dojo-worker-forward-smoke-v1/precommit.json",
+        "evidence_contract": "QR_DOJO_WORKER_FORWARD_PRECOMMIT_V1"
+      },
+      "risk": {
+        "mark_to_market": true,
+        "bounded": true,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_FORWARD_SMOKE_UNVERIFIED",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "FIXED_3_FAMILY_12_CANDIDATE_GRID",
+        "cohort_id": "DOJO_WORKER_FORWARD_SMOKE_V1_20260720_20260803"
+      },
+      "distribution_30d": {
+        "method": "PROSPECTIVE_FORWARD",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
       "lane_id": "worker_w46_w53_legacy_performance_invalid",
       "lane_type": "WORKER",
       "status": "INVALID",
@@ -98,6 +145,57 @@
       },
       "sizing": {
         "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_prompt_phase_v1_registered_zero_cells",
+      "lane_type": "AI",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "provenance": {
+        "valid": true,
+        "prospective": true,
+        "lookahead_free": true,
+        "content_sha256": "0238dab1e9d2855e0c526784c4bf899a9a8a3028b684368b60f449538cfd96ec",
+        "invalid_reasons": [],
+        "parent_digests": {
+          "usd_jpy_mean_reversion_strategy_ideas_v1": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c"
+        },
+        "evidence_path": "research/registries/dojo_prompt_experiment_v1.json",
+        "evidence_contract": "DOJO_PROMPT_EXPERIMENT_PREREGISTRATION"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_RETEST_REQUIRED"
+      },
+      "distribution_30d": {
+        "method": null,
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
         "reverse_engineered_from_goal": false
       }
     },

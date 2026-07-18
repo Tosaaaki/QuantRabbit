@@ -1,5 +1,5 @@
 {
-  "board_sha256": "b472c764437efeab54e8d0b4e21514a4d8a99008f66d9809aa18ffd842dfb97d",
+  "board_sha256": "62dec2849c3dcf62c5358471a54762b8d8e21423ac2caefa3c048a70dba6938d",
   "broker_mutation_allowed": false,
   "contract": "QR_DOJO_GOAL_BOARD_V2",
   "correlation_clusters": [
@@ -12,14 +12,18 @@
       "lane_ids": [
         "ai_dayread_w54_clean_legacy_contract_invalid",
         "ai_dayread_w54_leaked",
+        "ai_prompt_phase_v1_registered_zero_cells",
         "usd_jpy_mean_reversion_strategy_ideas_v1",
+        "worker_forward_smoke_v1_started",
         "worker_w46_w53_legacy_performance_invalid"
       ],
-      "representative_lane_id": "usd_jpy_mean_reversion_strategy_ideas_v1",
+      "representative_lane_id": "ai_prompt_phase_v1_registered_zero_cells",
       "return_summation_allowed": false,
       "suppressed_correlated_lane_ids": [
         "ai_dayread_w54_clean_legacy_contract_invalid",
         "ai_dayread_w54_leaked",
+        "usd_jpy_mean_reversion_strategy_ideas_v1",
+        "worker_forward_smoke_v1_started",
         "worker_w46_w53_legacy_performance_invalid"
       ]
     }
@@ -34,7 +38,7 @@
   },
   "goal_status": "3X_NOT_REACHABLE",
   "guarantee": false,
-  "input_sha256": "cf49029ebd3960f927c41371755ac36c08569eecfc5f44e5e747dab1255b12b8",
+  "input_sha256": "c164519952f0b610d321b0c4ff22b08d1d24fb14b6c7c162b2c42002dbbd897d",
   "lane_evaluations": [
     {
       "correlation_cluster": "UNVERIFIED_DEPENDENCE",
@@ -98,6 +102,63 @@
     },
     {
       "correlation_cluster": "UNVERIFIED_DEPENDENCE",
+      "declared_correlation_cluster": "USDJPY_FORWARD_SMOKE_UNVERIFIED",
+      "declared_status": "HYPOTHESIS",
+      "dependence": {
+        "cohort_id": "DOJO_WORKER_FORWARD_SMOKE_V1_20260720_20260803",
+        "instrument": "USD_JPY",
+        "strategy_family": "FIXED_3_FAMILY_12_CANDIDATE_GRID"
+      },
+      "distribution_30d": {
+        "active_days": 0,
+        "method": "PROSPECTIVE_FORWARD",
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_drawdown_20pct": null,
+        "probability_losing_month": null,
+        "probability_ruin_12m": null,
+        "sample_months": 0,
+        "stressed_median_multiple": null
+      },
+      "edge_blockers": [
+        "DECLARED_HYPOTHESIS",
+        "PROSPECTIVE_MONTH_FLOOR_NOT_MET",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "POST_COST_EDGE_LOWER_BOUND_NOT_POSITIVE",
+        "NORMAL_MTM_DRAWDOWN_UNKNOWN",
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "MARGIN_PEAK_USAGE_UNKNOWN",
+        "DECLARED_SIZE_NOT_OBSERVED"
+      ],
+      "edge_status": "HYPOTHESIS",
+      "evidence_verification": {
+        "actual_sha256": "4024f7748acb5a78d376f85cab1bf36f3be56387207161df6247306c125a0097",
+        "artifact_path": "research/forward/dojo-worker-forward-smoke-v1/precommit.json",
+        "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "contract": "QR_DOJO_WORKER_FORWARD_PRECOMMIT_V1",
+        "expected_sha256": "4024f7748acb5a78d376f85cab1bf36f3be56387207161df6247306c125a0097",
+        "size_bytes": 9589,
+        "status": "UNTRUSTED_CONTRACT",
+        "trusted": false,
+        "verified_dependence": null
+      },
+      "goal_blockers": [
+        "EDGE_NOT_PROVEN",
+        "STRESSED_MEDIAN_MULTIPLE_UNKNOWN",
+        "PROBABILITY_3X_LCB_UNKNOWN",
+        "LOSING_MONTH_PROBABILITY_UNKNOWN",
+        "DRAWDOWN_20PCT_PROBABILITY_UNKNOWN",
+        "RUIN_12M_PROBABILITY_UNKNOWN"
+      ],
+      "goal_status": "3X_NOT_REACHABLE",
+      "lane_id": "worker_forward_smoke_v1_started",
+      "lane_type": "WORKER",
+      "parent_lane_ids": [],
+      "reverse_engineered_from_goal": false
+    },
+    {
+      "correlation_cluster": "UNVERIFIED_DEPENDENCE",
       "declared_correlation_cluster": "USDJPY_MEAN_REVERSION",
       "declared_status": "INVALID",
       "dependence": {
@@ -147,6 +208,69 @@
       "lane_id": "worker_w46_w53_legacy_performance_invalid",
       "lane_type": "WORKER",
       "parent_lane_ids": [],
+      "reverse_engineered_from_goal": false
+    },
+    {
+      "correlation_cluster": "UNVERIFIED_DEPENDENCE",
+      "declared_correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "declared_status": "HYPOTHESIS",
+      "dependence": {
+        "cohort_id": "USDJPY_RETEST_REQUIRED",
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION"
+      },
+      "distribution_30d": {
+        "active_days": 0,
+        "method": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_drawdown_20pct": null,
+        "probability_losing_month": null,
+        "probability_ruin_12m": null,
+        "sample_months": 0,
+        "stressed_median_multiple": null
+      },
+      "edge_blockers": [
+        "DECLARED_HYPOTHESIS",
+        "DISTRIBUTION_METHOD_UNKNOWN",
+        "PROSPECTIVE_MONTH_FLOOR_NOT_MET",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "POST_COST_EDGE_LOWER_BOUND_NOT_POSITIVE",
+        "MARK_TO_MARKET_RISK_REQUIRED",
+        "BOUNDED_RISK_REQUIRED",
+        "NORMAL_MTM_DRAWDOWN_UNKNOWN",
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "MARGIN_PEAK_USAGE_UNKNOWN",
+        "DECLARED_SIZE_NOT_OBSERVED",
+        "PARENT_EDGE_NOT_PROVEN:usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "edge_status": "HYPOTHESIS",
+      "evidence_verification": {
+        "actual_sha256": "0238dab1e9d2855e0c526784c4bf899a9a8a3028b684368b60f449538cfd96ec",
+        "artifact_path": "research/registries/dojo_prompt_experiment_v1.json",
+        "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "contract": "DOJO_PROMPT_EXPERIMENT_PREREGISTRATION",
+        "expected_sha256": "0238dab1e9d2855e0c526784c4bf899a9a8a3028b684368b60f449538cfd96ec",
+        "size_bytes": 5679,
+        "status": "UNTRUSTED_CONTRACT",
+        "trusted": false,
+        "verified_dependence": null
+      },
+      "goal_blockers": [
+        "EDGE_NOT_PROVEN",
+        "STRESSED_MEDIAN_MULTIPLE_UNKNOWN",
+        "PROBABILITY_3X_LCB_UNKNOWN",
+        "LOSING_MONTH_PROBABILITY_UNKNOWN",
+        "DRAWDOWN_20PCT_PROBABILITY_UNKNOWN",
+        "RUIN_12M_PROBABILITY_UNKNOWN"
+      ],
+      "goal_status": "3X_NOT_REACHABLE",
+      "lane_id": "ai_prompt_phase_v1_registered_zero_cells",
+      "lane_type": "AI",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
       "reverse_engineered_from_goal": false
     },
     {
@@ -268,12 +392,16 @@
     "suppressed_correlated_lane_ids": [
       "ai_dayread_w54_clean_legacy_contract_invalid",
       "ai_dayread_w54_leaked",
+      "usd_jpy_mean_reversion_strategy_ideas_v1",
+      "worker_forward_smoke_v1_started",
       "worker_w46_w53_legacy_performance_invalid"
     ],
     "unverified_dependence_lane_ids": [
       "ai_dayread_w54_clean_legacy_contract_invalid",
       "ai_dayread_w54_leaked",
+      "ai_prompt_phase_v1_registered_zero_cells",
       "usd_jpy_mean_reversion_strategy_ideas_v1",
+      "worker_forward_smoke_v1_started",
       "worker_w46_w53_legacy_performance_invalid"
     ]
   },

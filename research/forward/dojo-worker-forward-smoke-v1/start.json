@@ -1,0 +1,27 @@
+{
+  "attestations": {
+    "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+    "external_monotonic_witness_verified": false,
+    "independent_market_source_attestation_verified": false,
+    "local_hash_chain_verified": true,
+    "self_attested_only": true
+  },
+  "authority": {
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false,
+    "read_only": true
+  },
+  "candidate_count": 12,
+  "candidate_set_sha256": "304428cc6d0e36dd1afe7cca561b4aea003f7c441846de776fa5be61b1161d4f",
+  "contract": "QR_DOJO_WORKER_FORWARD_START_V1",
+  "experiment_id": "dojo-worker-forward-smoke-v1",
+  "precommit_sha256": "7d849052082049721c9f83d658190d163dc7aa00e7c17c25d7ec50e487d71c5d",
+  "previous_receipt_sha256": "7d849052082049721c9f83d658190d163dc7aa00e7c17c25d7ec50e487d71c5d",
+  "schema_version": 1,
+  "start_receipt_sha256": "4b8fadbb452e304ae1e4f9721db3a8da93b212c08354b938abf1cda50a5523b9",
+  "started_at_utc": "2026-07-18T19:26:26.134630Z",
+  "state": "STARTED",
+  "window_start_utc": "2026-07-20T00:00:00Z"
+}

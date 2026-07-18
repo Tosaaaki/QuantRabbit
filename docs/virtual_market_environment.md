@@ -64,6 +64,32 @@ QR_OANDA_ENV_FILE=... python3 scripts/run-virtual-market-session.py \
 - 採点は台帳をそのまま供給 (prospective registry / supervision_outcome_scorer と接続可)
 - 受動シャドー環境 (`run-live-shadow-environment.py`) は機械ワーカー観測用として併存
 
+## 前向き評価の操作
+
+workerは候補・コード・依存・期間・市場mechanicsを開始前に固定し、UTC日を順番どおり封印する。
+現在のsmokeは既に `precommit` と `start` を完了しているため、同じrun-dirへ再実行して上書きしない。
+
+```bash
+PYTHONPATH=src python3 scripts/run-dojo-worker-forward.py status \
+  --run-dir research/forward/dojo-worker-forward-smoke-v1
+
+PYTHONPATH=src python3 scripts/run-dojo-worker-forward.py seal-day \
+  --run-dir research/forward/dojo-worker-forward-smoke-v1 \
+  --ordinal <1..14> --source-manifest <sealed-source-manifest.json>
+
+PYTHONPATH=src python3 scripts/run-dojo-worker-forward.py finalize \
+  --run-dir research/forward/dojo-worker-forward-smoke-v1 \
+  --result-manifest <fixed-denominator-results.json>
+```
+
+`seal-day` は期間内の全sourceをmanifestへ束縛してから使う。欠測日、閉場日、遅延は黙って飛ばさず、
+契約どおりreceiptまたはblockerとして残す。period-endは各strategy ownerの注文をcancelしてから同ownerの
+建玉だけをcloseし、全candidateをfully-resolved balanceで採点する。
+
+AIは `run-dojo-ai-experiment.py build-manifest` で90セルを応答前に固定し、各responseを
+`seal-dojo-ai-response.py` でanswer keyをmountする前に封印する。`score` はexact 90-cell phaseだけを受理し、
+欠測やschema failureを分母から落とさない。現在は登録・評価器実装までで、新規responseは0件である。
+
 ## ボット搭載 (W44追補)
 
 `--bot golden_burst` でワーカーボットがセッション内で稼働 (エージェントと同一ブローカー・同一台帳)。

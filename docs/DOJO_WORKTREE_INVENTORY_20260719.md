@@ -8,9 +8,9 @@
 
 | path | branch / HEAD | 状態 | 方針 |
 |---|---|---|---|
-| `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval` | `codex/dojo-dual-eval` / `dc3179af4`起点 | 統合実装中 | KEEP。DOJO研究コードとtracked registryの唯一の編集面 |
+| `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval` | `codex/dojo-dual-eval` / `d835d2499`以降 | 統合実装をcommit、前向き証拠を追記中 | KEEP。DOJO研究コードとtracked registryの唯一の編集面 |
 | `/private/tmp/QuantRabbit-episode-outcome` | `codex/episode-s5-outcome` / `dc3179af4` | 4件dirty、worktree lock済み | ARCHIVE CARRIER。未追跡4.4GBの参照移行・push完了まで削除禁止 |
-| `/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719` | Git外archive | code bundle + research data + Fable handoff + repaired worker rerun | KEEP。元data 463 files / 4,690,853,483 bytesをexact mirror manifestで全SHA照合済み |
+| `/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719` | Git外archive | code bundle + research data + Fable handoff + repaired worker rerun | KEEP。元data 463 files / 4,690,853,483 bytesと追補256 files / 2,057,789,055 bytesを別manifestで全SHA固定 |
 
 episode branchからDOJO branchまでは線形で、元コードはbundle
 `dojo-code-dc3179af4.bundle`（SHA-256
@@ -55,6 +55,19 @@ backupを満たしてから別タスクでremoveする。
 7. 修理後worker 12設定をOHLC/OLHCの計24 trialで再審判。TRAIN通過0。1.9GBのrunを
    `codex-worker-rerun-v1`へ保存し、scoreboard SHA-256を
    `dbe2f5e4f441e6c723e44cee6d447955941d8d093e345e820b01f6dd949328fd` として固定。
+8. AI 90セルのexact denominator、response-before-key封印、variant別NAV、欠測fail-closedを統合commit
+   `d835d24994e6f4020a81096346015690ec61ad26`へ固定。
+9. worker forward smokeを同commitと依存SHAへ束縛し、`precommit.json` と `start.json` をO_EXCL、
+   作成時mode 0600で固定。状態は `STARTED`、0/14日、live/promotion権限なし。
+
+10. `fable-ai-discretion` 内の58 outputがarchive外を指す絶対symlinkだと検出。元carrierは保持し、
+    `fable-ai-discretion-materialized-v1`へ122 regular + 58 link targetを全180 regular fileとして実体化。
+    元の各path/targetと新コピーのSHAを全件一致確認した。
+11. materialized Fable、worker rerun、accidental runsの計256 files / 2,057,789,055 bytesを
+    `supplemental-evidence-manifest-v1.json`へappend-only固定。relative-inventory SHA-256は
+    `7ecc9116bf80b66a954f8b30df2257e56c8b7a2d10d53e9d5d5bcb4e30faf18a`、manifest canonical SHA-256は
+    `0374dbaddc5759490b7a43d1e235e76b755e1bb43cc14376adccee36925deb98`、manifest file-bytes SHA-256は
+    `5262f2ff6e5d9b414733c2b8291e452a922b36d642935ea3ed0fe57ac15503f8`。
 
 ## 解錠・削除条件
 

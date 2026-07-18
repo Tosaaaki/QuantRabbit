@@ -1,0 +1,260 @@
+{
+  "candidate_set": {
+    "candidates": [
+      {
+        "candidate_id": "burst__E1_tp3_nosl_c240",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 240,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "burst",
+          "sl_pips": null,
+          "tp_pips": 3
+        },
+        "config_sha256": "354e036d7c329d7f14eca57661550dfde9a13090eed8444dc38661dda3703ab4",
+        "family_id": "burst"
+      },
+      {
+        "candidate_id": "burst__E2_tp6_nosl_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "burst",
+          "sl_pips": null,
+          "tp_pips": 6
+        },
+        "config_sha256": "ea8c6fde6248af1d106f0584f9c21d2ae2eae58800ddb73d3c47560f8d79336a",
+        "family_id": "burst"
+      },
+      {
+        "candidate_id": "burst__E3_tp4_sl12_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "burst",
+          "sl_pips": 12,
+          "tp_pips": 4
+        },
+        "config_sha256": "f3e1959c11d746f958330978c18a8a8490a5a2e0a18d94d1ec289189c8f690b0",
+        "family_id": "burst"
+      },
+      {
+        "candidate_id": "burst__E4_tp10_sl30_c1440",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 1440,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "burst",
+          "sl_pips": 30,
+          "tp_pips": 10
+        },
+        "config_sha256": "83cda06782339e15bbd3b186d6f215aa41feaf5a9e3009a5cfcd40def0cd89c4",
+        "family_id": "burst"
+      },
+      {
+        "candidate_id": "pullback_limit__E1_tp3_nosl_c240",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 240,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "pullback_limit",
+          "sl_pips": null,
+          "tp_pips": 3
+        },
+        "config_sha256": "988ca8787a8c676e58706eb234cd524c900a565fc6d17d6b814e4f68adea31b8",
+        "family_id": "pullback_limit"
+      },
+      {
+        "candidate_id": "pullback_limit__E2_tp6_nosl_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "pullback_limit",
+          "sl_pips": null,
+          "tp_pips": 6
+        },
+        "config_sha256": "69d07a0a1140d44a2855dbd24fa392ff10a61f2c4ec9dfe32ccfe118ed49e34e",
+        "family_id": "pullback_limit"
+      },
+      {
+        "candidate_id": "pullback_limit__E3_tp4_sl12_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "pullback_limit",
+          "sl_pips": 12,
+          "tp_pips": 4
+        },
+        "config_sha256": "e8b13f5e93d97498bf8d25636ce8ff02b91951f6abb89b7a26020b7baae68e3b",
+        "family_id": "pullback_limit"
+      },
+      {
+        "candidate_id": "pullback_limit__E4_tp10_sl30_c1440",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 1440,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "pullback_limit",
+          "sl_pips": 30,
+          "tp_pips": 10
+        },
+        "config_sha256": "66375134d89db20bb3ebca6d0b8be374db415b169f1f12255999d1dbf53a5f6c",
+        "family_id": "pullback_limit"
+      },
+      {
+        "candidate_id": "range_fade_limit__E1_tp3_nosl_c240",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 240,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "range_fade_limit",
+          "sl_pips": null,
+          "tp_pips": 3
+        },
+        "config_sha256": "44390b01902f41d658d874a368750274e20f1aaad93754ff6c8db24e33598da7",
+        "family_id": "range_fade_limit"
+      },
+      {
+        "candidate_id": "range_fade_limit__E2_tp6_nosl_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "range_fade_limit",
+          "sl_pips": null,
+          "tp_pips": 6
+        },
+        "config_sha256": "4b0875f47b7b752c08fa97aaf1f8c8f41a2015dee9d638580d58dcb165ff2286",
+        "family_id": "range_fade_limit"
+      },
+      {
+        "candidate_id": "range_fade_limit__E3_tp4_sl12_c480",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 480,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "range_fade_limit",
+          "sl_pips": 12,
+          "tp_pips": 4
+        },
+        "config_sha256": "b24bf134f4d9f1eff66f0fc59c6e7d4b02726bd2d55d88a6990799d4b28fd44b",
+        "family_id": "range_fade_limit"
+      },
+      {
+        "candidate_id": "range_fade_limit__E4_tp10_sl30_c1440",
+        "config": {
+          "atr_floor_pips": 1.0,
+          "ceiling_min": 1440,
+          "eff_max": 0.2,
+          "fade_atr": 1.2,
+          "max_concurrent": 3,
+          "per_pos_lev": 4.3,
+          "pull_atr": 0.6,
+          "signal": "range_fade_limit",
+          "sl_pips": 30,
+          "tp_pips": 10
+        },
+        "config_sha256": "b337c1c5873845825ac27caed3a9c780d26c341c7a551dd7ac17dec1186ad6d9",
+        "family_id": "range_fade_limit"
+      }
+    ],
+    "declared_grid_size": 12,
+    "family_denominator": 3
+  },
+  "daily_source_policy": {
+    "expected_source_ids": [
+      "USD_JPY:M1"
+    ],
+    "late_backfill_allowed": false,
+    "market_closed_days_require_explicit_receipt": true,
+    "minimum_open_market_days": 10,
+    "seal_grace_hours": 12,
+    "source_origin": "OANDA historical bid/ask closed-candle export"
+  },
+  "experiment_id": "dojo-worker-forward-smoke-v1",
+  "mechanics": {
+    "bot_bar": "feed",
+    "financing_pips_per_day": 0.8,
+    "granularity": "M1",
+    "initial_balance_jpy": 200000.0,
+    "intrabar_paths": [
+      "OHLC",
+      "OLHC"
+    ],
+    "leverage": 25.0,
+    "pairs": [
+      "USD_JPY"
+    ],
+    "period_end_settlement": "CANCEL_OWNED_ORDERS_THEN_CLOSE_OWNED_POSITIONS",
+    "slippage_pips_per_fill": 0.3,
+    "terminal_score_basis": "FULLY_RESOLVED_BALANCE"
+  },
+  "source_bindings": {
+    "bot_dependency_sha256": {
+      "src/quant_rabbit/dojo_lab_provenance.py": "6bf672406b7a4621ffbc58b21dced46968471b8dcbe8ccfe97f9fdbca028e065",
+      "src/quant_rabbit/virtual_broker.py": "1da2d059b5ac95a3e92f941c7771a8ef9965b5e7ed301a21cc57551beb07ab0e"
+    },
+    "bot_module_sha256": "4ed189b0e54d375949d8c987a221a015d5edca73e7c339d00036ef5a65f7bbb4",
+    "git_commit": "d835d24994e6f4020a81096346015690ec61ad26",
+    "precommit_builder_sha256": "38e3fb9153b5733d72184ed75fb88ed10739f41ddeb14f13519c168cb8f8c2e2",
+    "runner_sha256": "c246e9743baa5d2557ad90a0bf760284909b3956392889833295c4319c743192",
+    "scorer_sha256": "6bf672406b7a4621ffbc58b21dced46968471b8dcbe8ccfe97f9fdbca028e065"
+  },
+  "thresholds": {
+    "maximum_margin_closeouts": 0,
+    "minimum_calendar_30d_multiple": 3.0,
+    "zero_trade_policy": "FAIL_CLOSED"
+  },
+  "window": {
+    "end_utc": "2026-08-03T00:00:00Z",
+    "start_utc": "2026-07-20T00:00:00Z"
+  }
+}
