@@ -168,6 +168,32 @@ class VirtualBroker:
             "resting_orders": len(self.orders),
         }
 
+    def _margin_headroom_ok(self, pair: str, side: str, units: float) -> bool:
+        """OANDA-faithful: refuse orders whose margin would not fit."""
+
+        try:
+            acct = self.account()
+        except VirtualBrokerError:
+            return True  # no marks yet; nothing to measure against
+        q = self.last_quotes.get(pair)
+        if q is None:
+            return False
+        mid = (q[0] + q[1]) / 2.0
+        long_u = sum(p.units for p in self.positions.values()
+                     if p.pair == pair and p.side == "LONG")
+        short_u = sum(p.units for p in self.positions.values()
+                      if p.pair == pair and p.side == "SHORT")
+        if side == "LONG":
+            long_u += units
+        else:
+            short_u += units
+        new_pair_margin = self._exposure_jpy(pair, max(long_u, short_u), mid) / self.leverage
+        old_pair_margin = self._exposure_jpy(
+            pair, max(long_u - (units if side == "LONG" else 0),
+                      short_u - (units if side == "SHORT" else 0)), mid) / self.leverage
+        new_total = acct["margin_used_jpy"] - old_pair_margin + new_pair_margin
+        return new_total <= acct["equity_jpy"]
+
     # ---- agent actions ---------------------------------------------------
     def market_order(self, pair: str, side: str, units: float,
                      tp_pips: Optional[float] = None,
@@ -179,6 +205,10 @@ class VirtualBroker:
         q = self.last_quotes.get(pair)
         if q is None:
             raise VirtualBrokerError(f"no live quote for {pair}; cannot fill")
+        if not self._margin_headroom_ok(pair, side, units):
+            self._log("ORDER_REJECTED_INSUFFICIENT_MARGIN",
+                      {"pair": pair, "side": side, "units": units})
+            raise VirtualBrokerError("insufficient margin for market order")
         bid, ask, ts = q
         entry = ask if side == "LONG" else bid
         pip = _pip(pair)
@@ -275,6 +305,11 @@ class VirtualBroker:
             elif order.side == "SHORT" and bid >= order.limit_price:
                 filled_price = max(order.limit_price, bid)
             if filled_price is None:
+                continue
+            if not self._margin_headroom_ok(pair, order.side, order.units):
+                del self.orders[order_id]
+                self._log("LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                          {"order_id": order_id, "pair": pair})
                 continue
             pip = _pip(pair)
             tp = _round_price(pair, filled_price + order.tp_pips * pip if order.side == "LONG"

@@ -24,14 +24,27 @@ from collections import deque
 
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
-PAIR = "USD_JPY"
-PIP = 0.01
+def _pip(pair: str) -> float:
+    return 0.01 if pair.endswith("JPY") else 0.0001
+
+
+class _PairState:
+    def __init__(self):
+        self.closes: deque[float] = deque(maxlen=1441)
+        self.diffs_6h: deque[float] = deque(maxlen=360)
+        self.highs3: deque[float] = deque(maxlen=3)
+        self.lows3: deque[float] = deque(maxlen=3)
+        self.atr: float | None = None
+        self.prev_close: float | None = None
+        self.my_trades: dict[str, float] = {}
+        self.my_orders: list[str] = []
 
 
 class Bot:
     def __init__(self, broker: VirtualBroker):
         self.broker = broker
         cfg = json.loads(os.environ["DOJO_BOT_CONFIG"])
+        self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
         self.tp_pips = float(cfg["tp_pips"])
         self.sl_pips = cfg.get("sl_pips")
@@ -42,81 +55,92 @@ class Bot:
         self.pull_atr = float(cfg.get("pull_atr", 0.6))
         self.fade_atr = float(cfg.get("fade_atr", 1.2))
         self.eff_max = float(cfg.get("eff_max", 0.2))
-
-        self.closes: deque[float] = deque(maxlen=1441)  # 24h of M1 mids
-        self.diffs_6h: deque[float] = deque(maxlen=360)
-        self.highs3: deque[float] = deque(maxlen=3)
-        self.lows3: deque[float] = deque(maxlen=3)
-        self.atr: float | None = None
-        self.prev_close: float | None = None
-        self.my_trades: dict[str, float] = {}
-        self.my_orders: list[str] = []
+        self.global_max = int(cfg.get("global_max_concurrent",
+                                      self.max_concurrent * len(self.pairs)))
+        self.state: dict[str, _PairState] = {p: _PairState() for p in self.pairs}
+        self._owner: dict[str, str] = {}  # trade_id -> pair
 
     # ---- incremental indicators -----------------------------------------
-    def _update(self, bar: dict) -> None:
+    def _update(self, st: "_PairState", bar: dict) -> None:
         mid_c = (bar["bid_c"] + bar["ask_c"]) / 2
         mid_h = (bar["bid_h"] + bar["ask_h"]) / 2
         mid_l = (bar["bid_l"] + bar["ask_l"]) / 2
-        if self.prev_close is not None:
-            tr = max(mid_h - mid_l, abs(mid_h - self.prev_close),
-                     abs(mid_l - self.prev_close))
-            self.atr = tr if self.atr is None else self.atr + (tr - self.atr) / 14.0
-            self.diffs_6h.append(abs(mid_c - self.prev_close))
-        self.prev_close = mid_c
-        self.closes.append(mid_c)
-        self.highs3.append(mid_h)
-        self.lows3.append(mid_l)
+        if st.prev_close is not None:
+            tr = max(mid_h - mid_l, abs(mid_h - st.prev_close),
+                     abs(mid_l - st.prev_close))
+            st.atr = tr if st.atr is None else st.atr + (tr - st.atr) / 14.0
+            st.diffs_6h.append(abs(mid_c - st.prev_close))
+        st.prev_close = mid_c
+        st.closes.append(mid_c)
+        st.highs3.append(mid_h)
+        st.lows3.append(mid_l)
 
-    def _trend(self) -> str | None:
-        if len(self.closes) < 1441:
+    @staticmethod
+    def _trend(st: "_PairState") -> str | None:
+        if len(st.closes) < 1441:
             return None
-        return "LONG" if self.closes[-1] > self.closes[0] else "SHORT"
+        return "LONG" if st.closes[-1] > st.closes[0] else "SHORT"
 
-    def _efficiency_6h(self) -> float | None:
-        if len(self.diffs_6h) < 360 or len(self.closes) < 361:
+    @staticmethod
+    def _efficiency_6h(st: "_PairState") -> float | None:
+        if len(st.diffs_6h) < 360 or len(st.closes) < 361:
             return None
-        path = sum(self.diffs_6h)
+        path = sum(st.diffs_6h)
         if path <= 0:
             return None
-        return abs(self.closes[-1] - self.closes[-361]) / path
+        return abs(st.closes[-1] - st.closes[-361]) / path
 
     # ---- lifecycle -------------------------------------------------------
     def on_bar_closed(self, pair: str, bar: dict, epoch: int) -> None:
-        if pair != PAIR:
+        st = self.state.get(pair)
+        if st is None:
             return
-        prior_h3 = max(self.highs3) if len(self.highs3) == 3 else None
-        prior_l3 = min(self.lows3) if len(self.lows3) == 3 else None
-        self._update(bar)
+        pip = _pip(pair)
+        prior_h3 = max(st.highs3) if len(st.highs3) == 3 else None
+        prior_l3 = min(st.lows3) if len(st.lows3) == 3 else None
+        self._update(st, bar)
 
-        # adopt limit fills into my book; ceiling exits
-        for trade_id in list(self.broker.positions):
-            if trade_id not in self.my_trades:
-                self.my_trades[trade_id] = epoch
-        for trade_id in list(self.my_trades):
+        # adopt limit fills into this pair's book; ceiling exits
+        for trade_id, pos in list(self.broker.positions.items()):
+            if trade_id not in self._owner and pos.pair == pair:
+                self._owner[trade_id] = pair
+                st.my_trades[trade_id] = epoch
+        for trade_id in list(st.my_trades):
             if trade_id not in self.broker.positions:
-                del self.my_trades[trade_id]
-            elif epoch - self.my_trades[trade_id] >= self.ceiling_s:
+                del st.my_trades[trade_id]
+                self._owner.pop(trade_id, None)
+            elif epoch - st.my_trades[trade_id] >= self.ceiling_s:
                 try:
                     self.broker.close_trade(trade_id)
                 except VirtualBrokerError:
                     pass
-                self.my_trades.pop(trade_id, None)
+                st.my_trades.pop(trade_id, None)
+                self._owner.pop(trade_id, None)
 
-        trend = self._trend()
-        if trend is None or self.atr is None:
+        trend = self._trend(st)
+        if trend is None or st.atr is None:
             return
-        atr_pips = self.atr / PIP
+        atr_pips = st.atr / pip
         if atr_pips < self.atr_floor:
             return
-        open_n = len(self.my_trades)
+        total_open = sum(len(s.my_trades) for s in self.state.values())
+        if total_open >= self.global_max:
+            open_n = self.max_concurrent  # treat as full
+        else:
+            open_n = len(st.my_trades)
         mid_c = (bar["bid_c"] + bar["ask_c"]) / 2
 
         def units_for(price: float) -> float:
             try:
                 equity = self.broker.account()["equity_jpy"]
+                jpy_per_unit = price * self.broker._jpy_per_quote_unit(pair)
             except VirtualBrokerError:
                 return 0.0
-            return max(equity, 0.0) * self.per_pos_lev / price
+            if jpy_per_unit <= 0:
+                return 0.0
+            return max(equity, 0.0) * self.per_pos_lev / jpy_per_unit
+
+        digits = 3 if pair.endswith("JPY") else 5
 
         if self.signal == "burst":
             if open_n >= self.max_concurrent or prior_h3 is None:
@@ -130,53 +154,53 @@ class Bot:
                 return
             try:
                 tid = self.broker.market_order(
-                    PAIR, trend, units, tp_pips=self.tp_pips, sl_pips=self.sl_pips)
-                self.my_trades[tid] = epoch
+                    pair, trend, units, tp_pips=self.tp_pips, sl_pips=self.sl_pips)
+                st.my_trades[tid] = epoch
+                self._owner[tid] = pair
             except VirtualBrokerError:
                 pass
 
         elif self.signal == "pullback_limit":
-            # one resting trend-side limit, re-priced every bar
-            for oid in self.my_orders:
+            for oid in st.my_orders:
                 try:
                     self.broker.cancel_order(oid)
                 except VirtualBrokerError:
                     pass
-            self.my_orders = []
+            st.my_orders = []
             if open_n >= self.max_concurrent:
                 return
-            dist = self.pull_atr * self.atr
+            dist = self.pull_atr * st.atr
             price = mid_c - dist if trend == "LONG" else mid_c + dist
             units = units_for(price)
             if units <= 0:
                 return
             try:
                 oid = self.broker.limit_order(
-                    PAIR, trend, units, price=round(price, 3),
+                    pair, trend, units, price=round(price, digits),
                     tp_pips=self.tp_pips, sl_pips=self.sl_pips)
-                self.my_orders = [oid]
+                st.my_orders = [oid]
             except VirtualBrokerError:
                 pass
 
         elif self.signal == "range_fade_limit":
-            for oid in self.my_orders:
+            for oid in st.my_orders:
                 try:
                     self.broker.cancel_order(oid)
                 except VirtualBrokerError:
                     pass
-            self.my_orders = []
-            eff = self._efficiency_6h()
+            st.my_orders = []
+            eff = self._efficiency_6h(st)
             if eff is None or eff > self.eff_max or open_n >= self.max_concurrent:
                 return
-            dist = self.fade_atr * self.atr
+            dist = self.fade_atr * st.atr
             units = units_for(mid_c)
             if units <= 0:
                 return
             for side, price in (("LONG", mid_c - dist), ("SHORT", mid_c + dist)):
                 try:
                     oid = self.broker.limit_order(
-                        PAIR, side, units, price=round(price, 3),
+                        pair, side, units, price=round(price, digits),
                         tp_pips=self.tp_pips, sl_pips=self.sl_pips)
-                    self.my_orders.append(oid)
+                    st.my_orders.append(oid)
                 except VirtualBrokerError:
                     pass
