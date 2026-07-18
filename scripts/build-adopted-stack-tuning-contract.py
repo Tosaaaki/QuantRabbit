@@ -31,8 +31,12 @@ REQUIRED_SOURCES = {
     "cell_gating": "regime_cell_gating_rehearsal_v1.json",
     "lane_addition": "lane_addition_combination_v1.json",
 }
-OPTIONAL_SOURCES = {"discovery_batch_2": "discovery_batch_2_v1.json"}
+OPTIONAL_SOURCES = {
+    "discovery_batch_2": "discovery_batch_2_v1.json",
+    "state_conditional_tactics": "state_conditional_tactics_v1.json",
+}
 DIGEST_KEYS = (
+    "tactics_sha256",
     "lock_sha256", "evaluation_sha256", "comparison_sha256", "sweep_sha256",
     "rehearsal_sha256", "distribution_sha256", "attribution_sha256",
     "combination_sha256", "batch_sha256",
