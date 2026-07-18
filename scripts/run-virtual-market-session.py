@@ -273,7 +273,8 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
 
 
 def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
-                        time_to: str, intrabar: str = "OHLC"):
+                        time_to: str, intrabar: str = "OHLC",
+                        granularity: str = "M1"):
     """Merge pairs' M1 bars in time order; yield (epoch, pair, bid, ask, phase).
 
     Streams year by year so full-history sessions stay in bounded memory.
@@ -287,7 +288,7 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
     for year in range(int(time_from[:4]), int(time_to[:4]) + 1):
         rows = []
         for pair in pairs:
-            for shard in sorted(root.glob(f"*/{pair}/{pair}_M1_BA_{year}*.jsonl.gz")):
+            for shard in sorted(root.glob(f"*/{pair}/{pair}_{granularity}_BA_{year}*.jsonl.gz")):
                 with gzip.open(shard, "rt", encoding="utf-8") as handle:
                     for line in handle:
                         row = json.loads(line)
@@ -316,10 +317,27 @@ def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None
     step_file = session_dir / "inbox" / "STEP"
     current_epoch = None
     pending_bars: dict[str, dict] = {}
+    bot_minute: dict[str, dict] = {}
+    aggregate_bot_bars = bot is not None and args.bot_bar == "M1" and args.granularity != "M1"
     for epoch, pair, bid, ask, phase in _iter_replay_quotes(
-            root, pairs, args.time_from, args.time_to, args.intrabar):
+            root, pairs, args.time_from, args.time_to, args.intrabar,
+            args.granularity):
+        if aggregate_bot_bars:
+            minute = epoch // 60 * 60
+            mb = bot_minute.get(pair)
+            if mb is not None and mb["epoch"] != minute:
+                bot.on_bar_closed(pair, mb, mb["epoch"])
+                mb = None
+            if mb is None:
+                bot_minute[pair] = {"epoch": minute,
+                                    "bid_o": bid, "bid_h": bid, "bid_l": bid, "bid_c": bid,
+                                    "ask_o": ask, "ask_h": ask, "ask_l": ask, "ask_c": ask}
+            else:
+                mb["bid_h"] = max(mb["bid_h"], bid); mb["bid_l"] = min(mb["bid_l"], bid)
+                mb["ask_h"] = max(mb["ask_h"], ask); mb["ask_l"] = min(mb["ask_l"], ask)
+                mb["bid_c"] = bid; mb["ask_c"] = ask
         boundary = epoch != current_epoch
-        if boundary and current_epoch is not None and bot is not None:
+        if boundary and current_epoch is not None and bot is not None and not aggregate_bot_bars:
             # previous bar(s) are complete NOW, before the new bar's O
             # quote overwrites pending_bars
             for bpair, bbar in list(pending_bars.items()):
@@ -379,6 +397,10 @@ def main() -> int:
     parser.add_argument("--bot-module", default=None,
                         help="path to ANY bot file: <file.py>[:ClassName]; the class "
                              "takes (broker) and implements on_bar_closed(pair, bar, epoch)")
+    parser.add_argument("--granularity", choices=["M1", "S5"], default="M1",
+                        help="replay feed granularity (S5 = 12x finer fill realism)")
+    parser.add_argument("--bot-bar", choices=["feed", "M1"], default="feed",
+                        help="bot decision cadence: per feed bar, or aggregated M1")
     parser.add_argument("--state-every", type=int, default=1,
                         help="replay: write state/process inbox every N bars (lab speed)")
     parser.add_argument("--fast-ledger", action="store_true",
