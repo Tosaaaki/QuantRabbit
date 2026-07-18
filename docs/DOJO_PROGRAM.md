@@ -1,0 +1,127 @@
+# DOJO（道場）評価プログラム
+
+DOJOは、戦略ワーカーとAI裁量を同じ実市場メカニクスで鍛え、再現可能な証拠を持つ候補だけを
+次の前向き段階へ進める研究環境である。月次3倍は研究目標であって保証ではなく、DOJOの成績は
+実弾権限を一切与えない。ライブ運用の権限境界と最上位KPIは `docs/AGENT_CONTRACT.md` が優先する。
+
+## 2026-07-19時点の結論
+
+| 対象 | 状態 | 結論 |
+|---|---|---|
+| W_FADE / W_SPIKE_FADE / W_ROUND / W_LADDERという戦略案 | `HYPOTHESIS` | アイデアは再試験可能だが、live昇段可能な生存者は0 |
+| W46〜W53の旧worker成績証拠 | `INVALIDATED` | 誤帰属、同一建玉の複数bot所有、出口コスト欠落、摩耗holdoutがある |
+| W37 AI方向読み | `UNESTABLISHED` | 40場面を4読者へ分割した結果で、4×40の独立試行ではない。的中41.18%、Wilson 95% CI 26.4–57.8% |
+| W39 AI出口読み | `INVALIDATED` | 判定時点と同じM5バーの高値・安値・終値を入力していた。点推定+0.562 pipsのcluster bootstrap CIも -1.699〜+2.453でゼロを跨ぐ |
+| W54/W55 AI日次読み | `INVALIDATED` | 後続日の履歴から先行日の答えを読めるpacket lookahead。単ペア89/90日、複数ペア79/80日が露出 |
+| W54 legacy clean再試行 | `SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC` | 40日中19応答のみ。旧packetは日付を保持し、応答schema・prompt/model/scorer/key隔離receiptも新契約を満たさない。旧計算は15 commit、8勝、NAV 0.975293、月換算0.971832だが再現可能な最終判定には使わない |
+| 月次3倍 | `3X_NOT_REACHABLE` | 現在の有効証拠からは到達不能。サイズ逆算による帳尻合わせは禁止 |
+
+修理後workerの実データ再審判も実施した。12設定をTRAINのOHLC/OLHC両経路、slippage 0.3 pips、
+financing 0.8 pips/dayで計24試行した結果、通過0、VAL/FINAL進出0だった。trial内訳は
+`INVALID_ZERO_TRADES` 6、`INVALID_TERMINAL_EXPOSURE` 10、
+`FAIL_NON_POSITIVE_RESOLVED_BALANCE` 6、`FAIL_MARGIN_CLOSEOUT` 2。
+scoreboardはarchiveの `codex-worker-rerun-v1/runs/20260718T175451.057612Z-3f168d34/scoreboard.json`
+（SHA-256 `dbe2f5e4f441e6c723e44cee6d447955941d8d093e345e820b01f6dd949328fd`）。
+過去窓を使うため陰性診断であり、新しい前向き証拠ではない。
+
+既存の正値JSONやレポートは、後段で訂正文があるだけでは再利用事故を防げない。単調な無効化
+レジストリと証拠bytesを再検証する機械判定が実装されるまでは、本文の無効化一覧を人間向け正本、
+goal boardを安全側の診断器として扱う。無効な親から派生した採点・集計も無効である。
+
+現在のcontent-addressed goal boardは
+`research/registries/dojo_goal_board_20260719_b472c764437efeab54e8d0b4e21514a4d8a99008f66d9809aa18ffd842dfb97d.json`。
+判定は `HYPOTHESIS / 3X_NOT_REACHABLE`、外部検証済み独立clusterは0、
+`proof_admission.promotion_possible=false` である。同じ日付の非content-addressed旧出力は途中診断であり、
+現行判定として読まない。
+
+## 共通の昇段語彙
+
+- `INVALIDATED`: 未来参照、帰属、コスト、証拠鎖、または評価分割が壊れている。
+- `SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC`: 実行者自身の申告や公開checksumだけで、外部attestation、
+  単調registry、market-derived key、能力隔離を証明できない診断。正負どちらのedge証拠にも使わない。
+- `HYPOTHESIS`: 過去データで探索された候補。正のバックテストでもここを越えない。
+- `EDGE_PROVEN`: 事前固定された独立holdoutで、全コスト後の正エッジと不確実性を満たす。
+- `GOAL_COMPATIBLE`: `EDGE_PROVEN`に加え、破産・drawdown・証拠金制約込み分布が目標倍率と両立する。
+- `FORWARD_PROVEN`: 未開封の前向き期間で、固定候補・固定評価器の必要標本を満たす。
+- `LIVE_ELIGIBLE`: 別途レビューされた昇段契約を満たす。DOJOだけではこの状態を作れない。
+
+`TAIL_ONLY`（分布の右尾でだけ3倍）を `GOAL_COMPATIBLE` と呼んではならない。同じモデルlineageの
+複数応答、同一日、同一episode、同一通貨・同一因子は独立標本として水増ししない。
+
+## 戦略ワーカーの評価契約
+
+1. TRAINは仮説生成だけに使い、候補・パラメータ・実行vehicle・コスト・評価器を固定する。
+2. VAL、最終holdout、prospective forwardは時間非重複とする。見た窓を名前変更して再利用しない。
+3. replayは `epoch → intrabar phase → pair` の同期順とし、同時刻の別ペアの未来気配を見せない。
+4. OHLCとOLHCを同格で走らせる。良い経路だけを次段へ送らない。
+5. entry、TP、SL、手動close、margin closeoutの全fill pathで不利な執行を明示する。market/stop/SL/
+   manual/closeoutには固定stress slippageを課し、価格保護されたLIMIT/TPは改善を削っても指値を越えて
+   悪化約定させない。financingは強制決済まで含める。
+6. botは自分のstrategy/owner tagに一致する建玉だけを管理する。他botの同一ペア建玉を採用しない。
+7. 期間末の未決済建玉をmark-to-marketし、実現益だけのscoreboardを禁止する。
+8. zero trade、欠損換算気配、欠損shard、破壊されたtrial provenanceは不合格とする。
+9. 各sessionはcommit、bot/config/corpus SHA、期間、pairs、intrabar、granularity、cost、換算quote watermarkを封印する。
+10. trial成果物はappend-only/content-addressedとし、再試行で旧trialを削除しない。
+
+## AI裁量とプロンプト工学の評価契約
+
+1. 一試行は一日・一fresh context。packetにはcutoff以前の観測だけを入れ、日付を匿名化する。
+2. 答えkeyは応答を封印するまで物理的にmountしない。モデルはfilesystem、network、会話履歴を持たない。
+3. prompt、variant、model/version/lineage、capability、packet、response、scorerをSHA-256で相互束縛する。
+4. 出力schemaは `LONG|SHORT|FLAT`、pair、size、confidence、evidence refs、target、invalidation、反証、abstain理由に固定する。
+5. prompt variantは実行前に登録し、同一の固定cohortへ割り付ける。結果を見て文章を直したrunは新experimentとする。
+6. 評価者と生成者を分離し、採点器は封印済みanswer keyと実bid/ask・全コストだけを読む。
+7. 同一model lineageの反復は一つの独立clusterとして扱う。多数決の人数を独立性の証拠にしない。
+8. 汚染親、改変response、stale positive artifactを検出したら、答えkeyを開かず子孫まで無効化する。
+9. incomplete runは診断値だけを出し、陽性・陰性の最終証拠に昇格させない。
+10. prompt選定後は未開封のprospective cohortで一回だけ確認する。
+
+## 月次3倍ゴールの判定
+
+元本を30暦日で3倍にするには日次複利+3.7299%、22取引日なら+5.1205%が必要になる。判定は
+単一点の倍率でなく、全コスト後のlog-return分布、最大drawdown、loss month、margin peak、ruin、
+cluster依存性を同時に出す。
+
+旧W46〜W53の無効化済みworker ledgerをfeasibility診断として再計算すると、55日で約x1.0668、
+月換算約x1.0358、最大実現drawdown 11.21%、
+最悪日 -6.32%、証拠金peak 53.53%だった。平均利益+350.77円、平均損失-1,002.54円、
+profit factor約1.091で、約0.40 pipの追加コストが期待値を消す。92% marginまで単純拡大しても
+月約x1.063に留まり、3倍へ逆算した約31倍sizingは試算でruin約74.6%だったため棄却する。
+これは昇段証拠ではなく、目標と現状の桁差を測るためだけの診断である。
+
+月次3倍へ進む条件は、サイズ拡大ではなく、相関の異なる複数の `EDGE_PROVEN` lane、前向きに
+較正されたAIのabstain/selection edge、実執行コスト後のportfolio proofである。到達できないrunは
+失敗ではなく、`3X_NOT_REACHABLE` として次の最小反証可能な実験を返す。
+
+## 正本と保管
+
+- 研究実装worktree: `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval`
+- 研究branch: `codex/dojo-dual-eval`
+- 元DOJO worktree: `/private/tmp/QuantRabbit-episode-outcome`（未追跡証拠保全のためlock中）
+- 検証済みarchive: `/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719`
+  - code bundle: `dojo-code-dc3179af4.bundle`
+  - bundle SHA-256: `d873cc5db9774993f39fad0414bd828f0e50d9782d2792947b78688f7fde60f4`
+  - research data: 463 files / 4,690,853,483 bytes（元とarchiveの全file SHA一致）
+  - exact mirror manifest: `research-data-manifest-v1.json`
+  - canonical manifest SHA-256: `70955036e6e43b0469d1f53a0cd62a127ae2c97f2b9f4a9d4814d55a1686b944`
+  - manifest file-bytes SHA-256: `2ca175ed5399bfe18d72a196abaa777f5f16c8941a349df67c6504dbed4acf90`
+  - source/mirror relative-inventory SHA-256: `daf8ebfc654c9e06105d5b80e2e51c5bf9f03c05ecbd26975ceddbd200b7b7da`
+  - Fable AI handoff: 122 files（clean 40日packet、19応答、過去pilotを含む）
+  - repaired worker rerun: `codex-worker-rerun-v1`（1.9GB、24 trials、TRAIN survivor 0）
+- 仕組みの操作書: `docs/virtual_market_environment.md`
+- 発見・訂正の時系列: `docs/design_weakness_ledger_20260718.md`
+- Notion過去作業記録（履歴参照のみ。現行証拠/SSOTではない）:
+  `https://app.notion.com/p/39cf1c8e53a781569171cc4d1de7ac2b`
+
+元worktreeやarchiveを削除する条件は、追跡branchのpush、manifest検証、参照先の移行、owner確認が
+すべて終わった後である。main/live/orchestratorのdirty worktreeはDOJO整理の名目で触らない。
+
+## 次の実験順
+
+1. 修理済みDOJOで全ワーカー候補を両intrabar・全コスト・period-end MTM付きで再審判する。
+2. W54 clean 40日を一日一fresh contextで完遂し、欠測なしの診断値を確定する。
+3. 事前登録したprompt variantを同一cohortで比較し、一つを固定する。
+4. 固定worker/AIだけを未開封のphase-1前向き窓 `[2026-07-20, 2026-08-03)` へ出す。この14日窓は
+   smoke/pilotであり、3ヶ月・worker 60 active days・AI 90 active daysの証明閾値を満たさない。
+5. 同じ固定候補を事前宣言した継続窓で必要日数まで採取し、途中結果で候補や評価器を変えない。
+6. 独立laneが増えるまでportfolioは `3X_NOT_REACHABLE` を維持し、実弾昇段を行わない。

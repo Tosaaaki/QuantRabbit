@@ -1,62 +1,104 @@
 #!/usr/bin/env python3
-"""Per-pair geometry adaptation lab: give every pair its own suit, then
-execute the survivors' gates.
+"""Per-pair DOJO adaptation with immutable, disjoint evidence lanes.
 
-Phase 1  screen: default-geometry fade TRAIN (2024-07..2025-07) on the
-         newly fetched cross pairs.
-Phase 2  adaptation: candidates (phase-1 net > -20k JPY, plus the S5
-         screen positives) run a small declared per-pair grid
-         (fade_atr x eff_max x tp_atr = 8 configs) on TRAIN; the best
-         TRAIN-positive config is selected per pair.
-Phase 3  gates: each selected (pair, config) must pass untouched VAL
-         (2025-07..2026-07, M1) AND the hardened S5 window (55 days,
-         slippage 0.3p + financing 0.8p/day).  Only all-gates survivors
-         join the floor.
-
-Multiplicity is explicit: every run is recorded in the scoreboard with
-its phase, and phase-2 selection happens ONLY on TRAIN.
+The old S5-positive list is recorded only as contaminated history.  It no
+longer injects candidates into selection, and its 2026-05-10..2026-07-04
+screen interval is excluded from VAL and FINAL.  Every phase runs both OHLC
+and OLHC; the lower terminal-equity result is authoritative.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "src"))
+
+from quant_rabbit.dojo_lab_provenance import (  # noqa: E402
+    LEGACY_CONTAMINATION_BLOCKERS,
+    combine_intrabar_results,
+    create_run_root,
+    create_trial_dir,
+    reserve_window_plan,
+    score_session_ledger,
+    validate_window_plan,
+    write_new_json,
+)
+
+
 PY = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+START_BALANCE_JPY = 200_000.0
+HARDENED_SLIPPAGE_PIPS = 0.3
+HARDENED_FINANCING_PIPS_PER_DAY = 0.8
 M1_ROOT = "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"
 S5_ROOT = "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history"
 TRAIN = ("2024-07-01T00:00:00", "2025-07-01T00:00:00")
-VAL = ("2025-07-01T00:00:00", "2026-07-01T00:00:00")
-S5W = ("2026-05-10T00:00:00", "2026-07-04T00:00:00")
+VAL = ("2025-07-01T00:00:00", "2026-05-10T00:00:00")
+FINAL = ("2026-07-04T00:00:00", "2026-07-19T00:00:00")
+LEGACY_S5_SCREEN = ("2026-05-10T00:00:00", "2026-07-04T00:00:00")
+WINDOWS = {"TRAIN": TRAIN, "VAL": VAL, "FINAL": FINAL}
+SCREENED_WINDOWS = {"LEGACY_S5_SCREEN": LEGACY_S5_SCREEN}
+INTRABAR_PATHS = ("OHLC", "OLHC")
+BOT_MODULE_PATH = REPO / "bots/lab_bot.py"
 
-NEW_PAIRS = ["EUR_GBP", "EUR_AUD", "EUR_CAD", "EUR_CHF", "EUR_NZD",
-             "GBP_AUD", "GBP_CAD", "GBP_CHF", "GBP_NZD", "AUD_NZD",
-             "AUD_CAD", "AUD_CHF", "NZD_CAD", "NZD_CHF", "CAD_CHF",
-             "USD_CHF", "USD_CAD"]
-S5_SCREEN_POSITIVE = ["NZD_JPY", "CAD_JPY", "AUD_CHF", "NZD_CAD", "EUR_NZD"]
-
+NEW_PAIRS = [
+    "EUR_GBP",
+    "EUR_AUD",
+    "EUR_CAD",
+    "EUR_CHF",
+    "EUR_NZD",
+    "GBP_AUD",
+    "GBP_CAD",
+    "GBP_CHF",
+    "GBP_NZD",
+    "AUD_NZD",
+    "AUD_CAD",
+    "AUD_CHF",
+    "NZD_CAD",
+    "NZD_CHF",
+    "CAD_CHF",
+    "USD_CHF",
+    "USD_CAD",
+]
+LEGACY_S5_SCREEN_POSITIVE = [
+    "NZD_JPY",
+    "CAD_JPY",
+    "AUD_CHF",
+    "NZD_CAD",
+    "EUR_NZD",
+]
 GRID = [
-    {"fade_atr": fa, "eff_max": em, "tp_atr": tp}
-    for fa in (1.0, 1.5) for em in (0.15, 0.25) for tp in (2.0, 3.0)
+    {"fade_atr": fade_atr, "eff_max": eff_max, "tp_atr": tp_atr}
+    for fade_atr in (1.0, 1.5)
+    for eff_max in (0.15, 0.25)
+    for tp_atr in (2.0, 3.0)
 ]
 
 
-def base_cfg(pair: str, geo: dict) -> dict:
+def base_cfg(pair: str, geometry: dict[str, float]) -> dict[str, Any]:
     return {
-        "signal": "range_fade_limit", "pairs": [pair],
-        "tp_atr": geo["tp_atr"], "sl_pips": None, "ceiling_min": 480,
-        "max_concurrent": 1, "per_pos_lev": 4.3, "atr_floor_pips": 0.5,
-        "fade_atr": geo["fade_atr"], "eff_max": geo["eff_max"],
+        "signal": "range_fade_limit",
+        "pairs": [pair],
+        "tp_atr": geometry["tp_atr"],
+        "sl_pips": None,
+        "ceiling_min": 480,
+        "max_concurrent": 1,
+        "per_pos_lev": 4.3,
+        "atr_floor_pips": 0.5,
+        "fade_atr": geometry["fade_atr"],
+        "eff_max": geometry["eff_max"],
     }
 
 
 def feed_pairs(pair: str) -> str:
-    """Target pair plus the conversion-rate feed pairs the broker needs.
-    (W51 bug: without these, non-JPY/USD-quote pairs silently never size.)"""
+    """Include the quote-conversion feeds needed for JPY accounting."""
 
     quote = pair.split("_")[1]
     feeds = [pair]
@@ -67,115 +109,344 @@ def feed_pairs(pair: str) -> str:
     return ",".join(dict.fromkeys(feeds))
 
 
-def run(pair: str, cfg: dict, window: tuple[str, str], tag: str,
-        s5: bool = False, hardened: bool = False) -> dict:
-    out = Path(os.environ.get("LAB_OUT", "/tmp")) / f"pa_{tag}"
-    session = out
-    if session.exists():
-        subprocess.run(["rm", "-rf", str(session)], check=False)
-    (session / "inbox").mkdir(parents=True, exist_ok=True)
+def run(
+    pair: str,
+    cfg: dict[str, Any],
+    window_role: str,
+    window: tuple[str, str],
+    tag: str,
+    run_root: Path,
+    *,
+    intrabar: str,
+    reservation_evidence: dict[str, Any],
+    s5: bool = False,
+) -> dict[str, Any]:
+    trial_key = f"pa_{tag}_{intrabar.lower()}"
+    session = create_trial_dir(run_root, trial_key)
+    owned_cfg = dict(cfg)
+    owned_cfg["strategy_owner_id"] = f"pair:{window_role}:{tag}"
+    config_text = json.dumps(
+        owned_cfg, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    bot_module_sha256 = hashlib.sha256(BOT_MODULE_PATH.read_bytes()).hexdigest()
     env = dict(os.environ)
-    env["DOJO_BOT_CONFIG"] = json.dumps(cfg)
+    env.pop("DOJO_BOT_COMBO", None)
+    env["DOJO_BOT_CONFIG"] = config_text
     env["PYTHONPATH"] = str(REPO / "src")
-    cmd = [PY, str(REPO / "scripts/run-virtual-market-session.py"),
-           "--feed", "replay", "--session-dir", str(session),
-           "--pairs", feed_pairs(pair), "--from", window[0], "--to", window[1],
-           "--bars-per-second", "100000", "--state-every", "100000",
-           "--fast-ledger", "--bot-module", str(REPO / "bots/lab_bot.py") + ":Bot"]
+    command = [
+        PY,
+        str(REPO / "scripts/run-virtual-market-session.py"),
+        "--feed",
+        "replay",
+        "--session-dir",
+        str(session),
+        "--pairs",
+        feed_pairs(pair),
+        "--balance",
+        str(START_BALANCE_JPY),
+        "--from",
+        window[0],
+        "--to",
+        window[1],
+        "--bars-per-second",
+        "100000",
+        "--state-every",
+        "100000",
+        "--fast-ledger",
+        "--intrabar",
+        intrabar,
+        "--slippage-pips",
+        str(HARDENED_SLIPPAGE_PIPS),
+        "--financing-pips-day",
+        str(HARDENED_FINANCING_PIPS_PER_DAY),
+        "--bot-module",
+        str(BOT_MODULE_PATH) + ":Bot",
+    ]
     if s5:
-        cmd += ["--granularity", "S5", "--bot-bar", "M1", "--corpus-root", S5_ROOT]
+        command += [
+            "--granularity",
+            "S5",
+            "--bot-bar",
+            "M1",
+            "--corpus-root",
+            S5_ROOT,
+        ]
     else:
-        cmd += ["--corpus-root", M1_ROOT]
-    if hardened:
-        cmd += ["--slippage-pips", "0.3", "--financing-pips-day", "0.8"]
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=3600)
+        command += ["--corpus-root", M1_ROOT]
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=3600,
+    )
+    base = {
+        "tag": tag,
+        "pair": pair,
+        "window_role": window_role,
+        "intrabar": intrabar,
+        "trial_key": trial_key,
+        "trial_dir": str(session),
+        "granularity": "S5" if s5 else "M1",
+        "hardened_costs": {
+            "slippage_pips_per_fill": HARDENED_SLIPPAGE_PIPS,
+            "financing_pips_per_day": HARDENED_FINANCING_PIPS_PER_DAY,
+        },
+    }
     if proc.returncode != 0:
-        return {"tag": tag, "error": proc.stderr[-200:]}
-    pl = trades = wins = 0.0
-    daily: dict[str, float] = {}
-    for line in (session / "ledger.jsonl").open():
-        rec = json.loads(line)
-        pay = rec["payload"] if isinstance(rec["payload"], dict) else {}
-        p = pay.get("pl_jpy")
-        if p is not None and rec["event"].startswith(("EXIT", "CLOSE", "MARGIN")):
-            pl += p; trades += 1; wins += p > 0
-            d = (pay.get("quote") or {}).get("ts", "")[:10] or rec["ts_utc"][:10]
-            daily[d] = daily.get(d, 0.0) + p
-    eq, mult, worst = 200_000.0, 1.0, 0.0
-    for d in sorted(daily):
-        r = max(daily[d] / max(eq, 1e-9), -1.0)
-        eq = max(eq + daily[d], 0.0)
-        worst = min(worst, r)
-        mult = max(mult * (1 + r), 0.0)
-    months = max(len(daily) / 21.7, 1e-9)
-    return {"tag": tag, "net_jpy": round(pl), "trades": int(trades),
-            "win_rate": round(wins / max(trades, 1), 3),
-            "monthly_multiple": round(mult ** (1 / months), 4) if mult > 0 else 0.0,
-            "worst_day": round(worst, 4)}
+        return {
+            **base,
+            "status": "INVALID_RUNNER_FAILURE",
+            "economic_gate_passed": False,
+            "promotion_eligible": False,
+            "evidence_tier": "HYPOTHESIS_ONLY",
+            "promotion_blockers": ["RUNNER_FAILURE", *LEGACY_CONTAMINATION_BLOCKERS],
+            "error": proc.stderr[-500:],
+        }
+    try:
+        score = score_session_ledger(
+            session / "ledger.jsonl",
+            start_balance_jpy=START_BALANCE_JPY,
+            window_role=window_role,
+            window=window,
+            intrabar=intrabar,
+            legacy_contaminated=True,
+            expected_pairs=tuple(feed_pairs(pair).split(",")),
+            expected_granularity="S5" if s5 else "M1",
+            expected_bot_bar="M1" if s5 else "feed",
+            expected_slippage_pips=HARDENED_SLIPPAGE_PIPS,
+            expected_financing_pips_per_day=HARDENED_FINANCING_PIPS_PER_DAY,
+            expected_bot_module_path=BOT_MODULE_PATH,
+            expected_bot_module_sha256=bot_module_sha256,
+            expected_bot_config_sha256=hashlib.sha256(
+                config_text.encode("utf-8")
+            ).hexdigest(),
+            expected_bot_config_length=len(config_text),
+            reservation_evidence=reservation_evidence,
+        )
+    except ValueError as exc:
+        return {
+            **base,
+            "status": "INVALID_UNSCOREABLE_TRIAL",
+            "economic_gate_passed": False,
+            "promotion_eligible": False,
+            "evidence_tier": "HYPOTHESIS_ONLY",
+            "promotion_blockers": ["UNSCOREABLE_TRIAL", *LEGACY_CONTAMINATION_BLOCKERS],
+            "error": str(exc),
+        }
+    return {**base, **score}
+
+
+def run_gate(
+    pair: str,
+    cfg: dict[str, Any],
+    window_role: str,
+    window: tuple[str, str],
+    tag: str,
+    run_root: Path,
+    *,
+    reservation_evidence: dict[str, Any],
+    s5: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    rows = [
+        run(
+            pair,
+            cfg,
+            window_role,
+            window,
+            tag,
+            run_root,
+            intrabar=intrabar,
+            reservation_evidence=reservation_evidence,
+            s5=s5,
+        )
+        for intrabar in INTRABAR_PATHS
+    ]
+    try:
+        combined = combine_intrabar_results(rows)
+    except ValueError as exc:
+        combined = {
+            "status": "INVALID_INTRABAR_EVIDENCE",
+            "gate_passed": False,
+            "promotion_eligible": False,
+            "evidence_tier": "HYPOTHESIS_ONLY",
+            "promotion_blockers": [
+                "INCOMPLETE_OHLC_OLHC_GATE",
+                *LEGACY_CONTAMINATION_BLOCKERS,
+            ],
+            "error": str(exc),
+        }
+    return rows, {
+        "tag": tag,
+        "pair": pair,
+        "window_role": window_role,
+        "geometry": {
+            key: cfg[key] for key in ("fade_atr", "eff_max", "tp_atr")
+        },
+        **combined,
+    }
 
 
 def main() -> int:
-    out_root = Path(sys.argv[1])
-    out_root.mkdir(parents=True, exist_ok=True)
-    os.environ["LAB_OUT"] = str(out_root)
-    board: list[dict] = []
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "output_root",
+        type=Path,
+        help="append-only parent directory for this run",
+    )
+    parser.add_argument(
+        "--global-reservation-registry",
+        type=Path,
+        help="append-only global holdout reservation JSONL; absent means hypothesis-only",
+    )
+    args = parser.parse_args()
+    plan = validate_window_plan(WINDOWS, screened_windows=SCREENED_WINDOWS)
+    out_root = args.output_root
+    run_id, run_root = create_run_root(out_root)
+    reservation = reserve_window_plan(
+        args.global_reservation_registry,
+        run_id=run_id,
+        experiment_id="QR_PAIR_ADAPTATION_LAB_V3",
+        plan=plan,
+    )
+    write_new_json(run_root / "window_reservation.json", reservation)
+    board: list[dict[str, Any]] = []
+    gate_summaries: list[dict[str, Any]] = []
 
-    default_geo = {"fade_atr": 1.2, "eff_max": 0.2, "tp_atr": 3.0}
+    default_geometry = {"fade_atr": 1.2, "eff_max": 0.2, "tp_atr": 3.0}
     phase1_pass: list[str] = []
     for pair in NEW_PAIRS:
-        row = run(pair, base_cfg(pair, default_geo), TRAIN, f"p1_{pair}")
-        row.update({"phase": 1, "pair": pair})
-        board.append(row)
-        print(json.dumps(row, ensure_ascii=False), flush=True)
-        if row.get("trades") == 0:
-            row["warning"] = "ZERO_TRADES"
-        if (row.get("net_jpy") or -10**9) > -20_000 and (row.get("trades") or 0) > 0:
+        rows, gate = run_gate(
+            pair,
+            base_cfg(pair, default_geometry),
+            "TRAIN",
+            TRAIN,
+            f"p1_{pair}",
+            run_root,
+            reservation_evidence=reservation,
+        )
+        board.extend(rows)
+        gate.update({"phase": 1, "screen_threshold_jpy": -20_000})
+        gate_summaries.append(gate)
+        print(json.dumps(gate, ensure_ascii=False), flush=True)
+        entries = gate.get("intrabar_entries") or {}
+        closeouts = gate.get("intrabar_margin_closeouts") or {}
+        resolved = gate.get("intrabar_terminal_resolution") or {}
+        if (
+            all(int(entries.get(path, 0)) > 0 for path in INTRABAR_PATHS)
+            and all(int(closeouts.get(path, 0)) == 0 for path in INTRABAR_PATHS)
+            and all(bool(resolved.get(path)) for path in INTRABAR_PATHS)
+            and float(gate.get("pessimistic_terminal_net_jpy", -10**12)) > -20_000
+        ):
             phase1_pass.append(pair)
 
-    candidates = sorted(set(phase1_pass) | set(S5_SCREEN_POSITIVE))
-    print(f"phase2 candidates: {candidates}", flush=True)
-
-    selected: dict[str, dict] = {}
+    # The legacy S5-positive list came from the interval now quarantined as a
+    # screen.  It is recorded for audit but cannot inject a holdout candidate.
+    candidates = sorted(set(phase1_pass))
+    selected: dict[str, dict[str, float]] = {}
     for pair in candidates:
-        best = None
-        for i, geo in enumerate(GRID):
-            row = run(pair, base_cfg(pair, geo), TRAIN, f"p2_{pair}_{i}")
-            row.update({"phase": 2, "pair": pair, "geo": geo})
-            board.append(row)
-            print(json.dumps(row, ensure_ascii=False), flush=True)
-            if row.get("net_jpy") is not None and (
-                    best is None or row["net_jpy"] > best["net_jpy"]):
-                best = row
-        if best and best["net_jpy"] > 0:
-            selected[pair] = best["geo"]
-            print(f"SELECTED {pair}: {best['geo']} (TRAIN +{best['net_jpy']})", flush=True)
+        best: dict[str, Any] | None = None
+        for index, geometry in enumerate(GRID):
+            rows, gate = run_gate(
+                pair,
+                base_cfg(pair, geometry),
+                "TRAIN",
+                TRAIN,
+                f"p2_{pair}_{index}",
+                run_root,
+                reservation_evidence=reservation,
+            )
+            board.extend(rows)
+            gate.update({"phase": 2, "grid_index": index})
+            gate_summaries.append(gate)
+            print(json.dumps(gate, ensure_ascii=False), flush=True)
+            if gate.get("gate_passed") is True and (
+                best is None
+                or float(gate["pessimistic_terminal_net_jpy"])
+                > float(best["pessimistic_terminal_net_jpy"])
+            ):
+                best = gate
+        if best is not None:
+            selected[pair] = dict(best["geometry"])
 
-    survivors = []
-    for pair, geo in selected.items():
-        val = run(pair, base_cfg(pair, geo), VAL, f"p3v_{pair}")
-        val.update({"phase": 3, "gate": "VAL", "pair": pair, "geo": geo})
-        board.append(val)
-        print(json.dumps(val, ensure_ascii=False), flush=True)
-        if (val.get("net_jpy") or -1) <= 0:
-            continue
-        s5 = run(pair, base_cfg(pair, geo), S5W, f"p3s_{pair}", s5=True, hardened=True)
-        s5.update({"phase": 3, "gate": "S5_HARDENED", "pair": pair, "geo": geo})
-        board.append(s5)
-        print(json.dumps(s5, ensure_ascii=False), flush=True)
-        if (s5.get("net_jpy") or -1) > 0:
-            survivors.append({"pair": pair, "geo": geo,
-                              "val_net": val["net_jpy"], "s5_net": s5["net_jpy"]})
+    val_positive: dict[str, dict[str, float]] = {}
+    for pair, geometry in selected.items():
+        rows, gate = run_gate(
+            pair,
+            base_cfg(pair, geometry),
+            "VAL",
+            VAL,
+            f"p3v_{pair}",
+            run_root,
+            reservation_evidence=reservation,
+        )
+        board.extend(rows)
+        gate.update({"phase": 3, "gate": "VAL"})
+        gate_summaries.append(gate)
+        print(json.dumps(gate, ensure_ascii=False), flush=True)
+        if gate.get("gate_passed") is True:
+            val_positive[pair] = geometry
 
-    result = {"contract": "QR_PAIR_ADAPTATION_LAB_V1",
-              "grid_size_per_pair": len(GRID),
-              "phase1_screened": len(NEW_PAIRS),
-              "phase2_candidates": candidates,
-              "selected": {k: v for k, v in selected.items()},
-              "all_gates_survivors": survivors,
-              "board": board}
-    (out_root / "pair_adaptation_board.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    print(f"SURVIVORS: {json.dumps(survivors, ensure_ascii=False)}", flush=True)
+    final_hypotheses: list[dict[str, Any]] = []
+    for pair, geometry in val_positive.items():
+        rows, gate = run_gate(
+            pair,
+            base_cfg(pair, geometry),
+            "FINAL",
+            FINAL,
+            f"p3f_{pair}",
+            run_root,
+            reservation_evidence=reservation,
+            s5=True,
+        )
+        board.extend(rows)
+        gate.update({"phase": 3, "gate": "FINAL_S5_HARDENED"})
+        gate_summaries.append(gate)
+        print(json.dumps(gate, ensure_ascii=False), flush=True)
+        if gate.get("gate_passed") is True:
+            final_hypotheses.append(gate)
+
+    result = {
+        "contract": "QR_PAIR_ADAPTATION_LAB_V3",
+        "run_id": run_id,
+        "run_root": str(run_root),
+        "window_plan": plan,
+        "window_reservation": reservation,
+        "hardened_costs": {
+            "slippage_pips_per_fill": HARDENED_SLIPPAGE_PIPS,
+            "financing_pips_per_day": HARDENED_FINANCING_PIPS_PER_DAY,
+        },
+        "grid_size_per_pair": len(GRID),
+        "phase1_screened": len(NEW_PAIRS),
+        "phase2_candidates": candidates,
+        "selected": selected,
+        "legacy_s5_screen_positive_ignored": LEGACY_S5_SCREEN_POSITIVE,
+        "legacy_screen_reuse_allowed": False,
+        "intrabar_gate": "BOTH_REQUIRED_IDENTICAL_MANIFEST_PESSIMISTIC_RESOLVED_BALANCE",
+        "terminal_score_basis": "FULLY_RESOLVED_BALANCE_ZERO_OPEN_POSITIONS_AND_ORDERS",
+        "zero_trade_policy": "FAIL_CLOSED",
+        "legacy_results_promotion_eligible": False,
+        "promotion_blockers": list(
+            dict.fromkeys(
+                [
+                    *LEGACY_CONTAMINATION_BLOCKERS,
+                    *(
+                        [str(reservation["promotion_blocker"])]
+                        if reservation.get("promotion_blocker")
+                        else []
+                    ),
+                ]
+            )
+        ),
+        "hypothesis_survivors": final_hypotheses,
+        "promotion_survivors": [],
+        "gate_summaries": gate_summaries,
+        "board": board,
+    }
+    out = run_root / "pair_adaptation_board.json"
+    write_new_json(out, result)
+    print(f"SURVIVORS (hypothesis only): {json.dumps(final_hypotheses, ensure_ascii=False)}")
+    print(f"board -> {out}", flush=True)
     return 0
 
 

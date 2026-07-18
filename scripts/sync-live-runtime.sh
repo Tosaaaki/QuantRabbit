@@ -233,13 +233,88 @@ require_branch() {
   fi
 }
 
+# `git update-ref` does not update another worktree's index or files. Resolve a
+# checked-out target branch so promotion can either fast-forward inside that
+# worktree or fail closed before recreating the stale-index incident.
+checked_out_branch_worktree() {
+  local branch="$1"
+  local branch_ref="refs/heads/$branch"
+  local field current_root="" found_root=""
+
+  while IFS= read -r -d '' field; do
+    case "$field" in
+      worktree\ *)
+        current_root="${field#worktree }"
+        ;;
+      branch\ "$branch_ref")
+        if [[ -z "$current_root" ]]; then
+          echo "[sync-live-runtime] malformed worktree registry for checked-out branch: $branch" >&2
+          return 8
+        fi
+        if [[ -n "$found_root" && "$found_root" != "$current_root" ]]; then
+          echo "[sync-live-runtime] target branch is checked out in multiple worktrees: branch=$branch first=$found_root second=$current_root" >&2
+          return 8
+        fi
+        found_root="$current_root"
+        ;;
+    esac
+  done < <(git -C "$DEV_ROOT" worktree list --porcelain -z)
+
+  if [[ -n "$found_root" ]]; then
+    if [[ ! -d "$found_root" ]]; then
+      echo "[sync-live-runtime] checked-out target branch worktree is unavailable: branch=$branch worktree=$found_root" >&2
+      return 8
+    fi
+    (cd "$found_root" && pwd -P)
+  fi
+}
+
+assert_checked_out_target_worktree_aligned() {
+  local branch="$1"
+  local root="$2"
+  local expected_sha="$3"
+  local require_clean="$4"
+  local checked_out head_sha branch_sha line dirty=0
+
+  checked_out="$(git -C "$root" branch --show-current)"
+  head_sha="$(git -C "$root" rev-parse HEAD)"
+  branch_sha="$(git -C "$root" rev-parse "refs/heads/$branch")"
+  if [[ "$checked_out" != "$branch" || "$head_sha" != "$branch_sha" || "$branch_sha" != "$expected_sha" ]]; then
+    echo "[sync-live-runtime] checked-out target branch worktree is not safely aligned: branch=$branch worktree=$root checked_out=${checked_out:-<detached>} HEAD=$head_sha branch_head=$branch_sha expected=$expected_sha" >&2
+    exit 8
+  fi
+
+  if ! git -C "$root" diff --cached --quiet --ignore-submodules HEAD --; then
+    echo "[sync-live-runtime] checked-out target branch worktree is not safely aligned: branch=$branch worktree=$root reason=index-differs-from-HEAD" >&2
+    exit 8
+  fi
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local path
+    path="$(status_path "$line")"
+    if [[ "$require_clean" == "1" ]] || ! qr_is_runtime_drift_path "$path"; then
+      echo "[sync-live-runtime] checked-out target branch worktree dirty path: $line" >&2
+      dirty=1
+    fi
+  done < <(status_lines "$root")
+  if [[ "$dirty" -ne 0 ]]; then
+    echo "[sync-live-runtime] checked-out target branch worktree is not safely aligned: branch=$branch worktree=$root reason=dirty-worktree" >&2
+    exit 8
+  fi
+}
+
 fast_forward_ref() {
   local branch="$1"
   local target="$2"
-  local current target_sha
+  local current target_sha checkout_root observed_branch_sha merge_status
   current="$(git -C "$DEV_ROOT" rev-parse "$branch")"
   target_sha="$(git -C "$DEV_ROOT" rev-parse "$target")"
+  checkout_root="$(checked_out_branch_worktree "$branch")" || exit "$?"
   if [[ "$current" == "$target_sha" ]]; then
+    if [[ -n "$checkout_root" ]]; then
+      assert_checked_out_target_worktree_aligned "$branch" "$checkout_root" "$current" 0
+    fi
     echo "[sync-live-runtime] $branch already at $target_sha"
     return 0
   fi
@@ -247,6 +322,24 @@ fast_forward_ref() {
     echo "[sync-live-runtime] refusing non-fast-forward: $branch -> $target" >&2
     exit 4
   fi
+
+  if [[ -n "$checkout_root" ]]; then
+    assert_checked_out_target_worktree_aligned "$branch" "$checkout_root" "$current" 1
+    observed_branch_sha="$(git -C "$checkout_root" rev-parse "refs/heads/$branch")"
+    if [[ "$observed_branch_sha" != "$current" ]]; then
+      echo "[sync-live-runtime] checked-out target branch changed during preflight: branch=$branch expected=$current observed=$observed_branch_sha" >&2
+      exit 8
+    fi
+    git -C "$checkout_root" merge --ff-only "$target_sha" || {
+      merge_status="$?"
+      echo "[sync-live-runtime] failed to fast-forward checked-out target branch worktree: branch=$branch worktree=$checkout_root target=$target_sha" >&2
+      exit "$merge_status"
+    }
+    assert_checked_out_target_worktree_aligned "$branch" "$checkout_root" "$target_sha" 1
+    echo "[sync-live-runtime] fast-forwarded checked-out $branch worktree to $target_sha: $checkout_root"
+    return 0
+  fi
+
   git -C "$DEV_ROOT" update-ref "refs/heads/$branch" "$target_sha" "$current"
   echo "[sync-live-runtime] fast-forwarded $branch to $target_sha"
 }

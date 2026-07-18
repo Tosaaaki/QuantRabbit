@@ -22,6 +22,10 @@ import json
 import os
 from collections import deque
 
+from quant_rabbit.dojo_lab_provenance import (
+    OwnedBrokerView,
+    canonical_strategy_owner_id,
+)
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
 def _pip(pair: str) -> float:
@@ -51,8 +55,12 @@ class _PairState:
 
 class Bot:
     def __init__(self, broker: VirtualBroker, cfg: dict | None = None):
-        self.broker = broker
-        cfg = cfg or json.loads(os.environ["DOJO_BOT_CONFIG"])
+        cfg = dict(cfg or json.loads(os.environ["DOJO_BOT_CONFIG"]))
+        self.owner_id = str(
+            cfg.get("strategy_owner_id")
+            or canonical_strategy_owner_id(cfg, namespace="lab")
+        )
+        self.broker = OwnedBrokerView(broker, self.owner_id)
         self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
         self.tp_pips = float(cfg.get("tp_pips", 0) or 0)
@@ -68,7 +76,7 @@ class Bot:
         self.global_max = int(cfg.get("global_max_concurrent",
                                       self.max_concurrent * len(self.pairs)))
         self.state: dict[str, _PairState] = {p: _PairState() for p in self.pairs}
-        self._owner: dict[str, str] = {}  # trade_id -> pair
+        self._owner: dict[str, str] = {}  # owned trade_id -> pair (local cache)
 
     # ---- incremental indicators -----------------------------------------
     def _update(self, st: "_PairState", bar: dict) -> None:
@@ -122,13 +130,14 @@ class Bot:
         prior_l3 = min(st.lows3) if len(st.lows3) == 3 else None
         self._update(st, bar)
 
-        # adopt limit fills into this pair's book; ceiling exits
-        for trade_id, pos in list(self.broker.positions.items()):
-            if trade_id not in self._owner and pos.pair == pair:
+        # Promote only fills descended from this hand's owned orders.  An
+        # external or sibling-hand position is NO_TOUCH even on the same pair.
+        for trade_id in self.broker.active_trade_ids(pair=pair):
+            if trade_id not in self._owner:
                 self._owner[trade_id] = pair
                 st.my_trades[trade_id] = epoch
         for trade_id in list(st.my_trades):
-            if trade_id not in self.broker.positions:
+            if trade_id not in self.broker.active_trade_ids(pair=pair):
                 del st.my_trades[trade_id]
                 self._owner.pop(trade_id, None)
             elif epoch - st.my_trades[trade_id] >= self.ceiling_s:
@@ -155,7 +164,7 @@ class Bot:
         def units_for(price: float) -> float:
             try:
                 equity = self.broker.account()["equity_jpy"]
-                jpy_per_unit = price * self.broker._jpy_per_quote_unit(pair)
+                jpy_per_unit = price * self.broker.jpy_per_quote_unit(pair)
             except VirtualBrokerError:
                 return 0.0
             if jpy_per_unit <= 0:
@@ -351,7 +360,7 @@ class Bot:
             # entry = burst; exit = chandelier trail (2x fade_atr ATR from peak),
             # NO fixed TP — the let-winners-run family.
             for tid in list(st.my_trades):
-                pos = self.broker.positions.get(tid)
+                pos = self.broker.position(tid)
                 if pos is None: continue
                 if pos.side == "LONG":
                     st.peak = max(st.peak or mid_c, mid_c)

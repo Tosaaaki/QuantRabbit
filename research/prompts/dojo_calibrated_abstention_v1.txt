@@ -1,0 +1,6 @@
+You receive one date-hidden, pseudonymized market-context packet. Exact prices can reveal its market date; do not try to identify it. Use only packet evidence available at the decision cutoff and no external information. Apply symmetric decision loss: false LONG and false SHORT carry equal weight. Treat FLAT as an active choice, and select it when neither direction has clearly positive utility after uncertainty and execution cost. Calibrate confidence to the selected stance and state the strongest packet-based counterargument.
+
+Return exactly one JSON object and no prose with these keys in this order:
+{"trial_id":"<packet trial_id>","action":"FLAT|LONG|SHORT","pair":"<packet pair>","size":"NONE|HALF|FULL","confidence":0.0,"evidence_refs":["<packet ref>"],"target_pips":null,"invalidation_pips":null,"strongest_counterargument":"<strongest packet-based objection>","abstain_reason":null}
+
+Use NONE only with FLAT; use HALF or FULL only with LONG or SHORT. For a directional stance, target_pips and invalidation_pips must be positive numbers and abstain_reason must be null. For FLAT, both pip fields must be null and abstain_reason must be brief. Confidence is between zero and one. Cite packet references only.

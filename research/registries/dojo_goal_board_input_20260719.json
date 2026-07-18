@@ -1,0 +1,213 @@
+{
+  "contract": "QR_DOJO_GOAL_BOARD_INPUT_V1",
+  "lanes": [
+    {
+      "lane_id": "usd_jpy_mean_reversion_strategy_ideas_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": null,
+        "evidence_contract": null
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_RETEST_REQUIRED"
+      },
+      "distribution_30d": {
+        "method": null,
+        "sample_months": null,
+        "active_days": null,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_w46_w53_legacy_performance_invalid",
+      "lane_type": "WORKER",
+      "status": "INVALID",
+      "parent_lane_ids": [],
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": false,
+        "content_sha256": "ad730d4d872de42febe77ca13d4dd35cb14ef181ce853cfa5908d8ad8388f55f",
+        "invalid_reasons": [
+          "LEGACY_PERFORMANCE_PROVENANCE_INVALIDATED",
+          "POSITION_OWNERSHIP_MIXED",
+          "EXIT_COSTS_INCOMPLETE",
+          "HOLDOUT_REUSED",
+          "PERIOD_END_MTM_MISSING"
+        ],
+        "parent_digests": {},
+        "evidence_path": null,
+        "evidence_contract": null
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_LEGACY_W46_W53_INVALID"
+      },
+      "distribution_30d": {
+        "method": null,
+        "sample_months": null,
+        "active_days": null,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_dayread_w54_leaked",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": false,
+        "content_sha256": "5b10122772585e94ab6e42213ecb2b923cc14bba8952b2cf65c351486b240a8c",
+        "invalid_reasons": [
+          "PACKET_LOOKAHEAD_LEAK"
+        ],
+        "parent_digests": {
+          "usd_jpy_mean_reversion_strategy_ideas_v1": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c"
+        },
+        "evidence_path": null,
+        "evidence_contract": null
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_RETEST_REQUIRED"
+      },
+      "distribution_30d": {
+        "method": null,
+        "sample_months": null,
+        "active_days": null,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_dayread_w54_clean_legacy_contract_invalid",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "eff7e8545a7fa4b961950f201fdb2aad4a7016a7142cd9da0333bd3b3ada1e66",
+        "invalid_reasons": [
+          "LEGACY_SELF_ATTESTED_CONTRACT_UNVERIFIED",
+          "PARTIAL_RESPONSES_19_OF_40",
+          "PROMPT_MODEL_SCORER_RECEIPT_MISSING"
+        ],
+        "parent_digests": {
+          "usd_jpy_mean_reversion_strategy_ideas_v1": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c"
+        },
+        "evidence_path": null,
+        "evidence_contract": null
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_RETEST_REQUIRED"
+      },
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": null,
+        "active_days": 19,
+        "stressed_median_multiple": 0.971832,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    }
+  ]
+}

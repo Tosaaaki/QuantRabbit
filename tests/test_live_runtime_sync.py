@@ -93,6 +93,147 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
             self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
 
+    def test_promotes_through_clean_checked_out_main_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+            live = root / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", str(main_worktree), "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+
+            result = _sync(repo, live, source_branch="feature")
+
+            feature_head = _git(repo, "rev-parse", "feature")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
+            self.assertEqual(_git(main_worktree, "rev-parse", "HEAD"), feature_head)
+            self.assertEqual(_git(main_worktree, "status", "--short"), "")
+            self.assertEqual(
+                (main_worktree / "src" / "app.py").read_text(),
+                "print('v2')\n",
+            )
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
+
+    def test_blocks_dirty_checked_out_main_before_ref_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+            live = root / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            main_before = _git(repo, "rev-parse", "main")
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", str(main_worktree), "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (main_worktree / "src" / "app.py").write_text("print('main dirty')\n")
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 8)
+            self.assertIn("checked-out target branch worktree is not safely aligned", result.stderr)
+            self.assertIn(str(main_worktree), result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), main_before)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), main_before)
+            self.assertEqual(
+                (main_worktree / "src" / "app.py").read_text(),
+                "print('main dirty')\n",
+            )
+
+    def test_blocks_preexisting_stale_checked_out_main_before_next_ref_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+            live = root / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            main_v1 = _git(repo, "rev-parse", "main")
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature v2")
+            main_v2 = _git(repo, "rev-parse", "feature")
+            _run(["git", "worktree", "add", str(main_worktree), "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            _run(["git", "update-ref", "refs/heads/main", main_v2, main_v1], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v3')\n", "feature v3")
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 8)
+            self.assertIn("checked-out target branch worktree is not safely aligned", result.stderr)
+            self.assertIn(str(main_worktree), result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), main_v2)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), main_v1)
+            self.assertNotEqual(_git(main_worktree, "status", "--short"), "")
+            self.assertEqual(
+                (main_worktree / "src" / "app.py").read_text(),
+                "print('v1')\n",
+            )
+
+    def test_blocks_preexisting_stale_checked_out_main_even_when_ref_reached_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+            live = root / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            main_v1 = _git(repo, "rev-parse", "main")
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature v2")
+            feature_head = _git(repo, "rev-parse", "feature")
+            _run(["git", "worktree", "add", str(main_worktree), "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            _run(
+                ["git", "update-ref", "refs/heads/main", feature_head, main_v1],
+                cwd=repo,
+            )
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 8)
+            self.assertIn("checked-out target branch worktree is not safely aligned", result.stderr)
+            self.assertIn("index-differs-from-HEAD", result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), main_v1)
+            self.assertEqual(
+                (main_worktree / "src" / "app.py").read_text(),
+                "print('v1')\n",
+            )
+
+    def test_same_checked_out_main_allows_unstaged_report_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _commit_file(repo, "docs/cycle_report.md", "tracked report\n", "track report")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (repo / "docs" / "cycle_report.md").write_text("development report drift\n")
+
+            result = _sync(repo, live, source_branch="main")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (repo / "docs" / "cycle_report.md").read_text(),
+                "development report drift\n",
+            )
+            self.assertEqual(
+                _git(repo, "status", "--short"),
+                "M docs/cycle_report.md",
+            )
+
     def test_rejects_unrelated_development_clone_before_promotion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

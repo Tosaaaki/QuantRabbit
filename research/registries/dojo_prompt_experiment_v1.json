@@ -1,0 +1,151 @@
+{
+  "contract": "DOJO_PROMPT_EXPERIMENT_PREREGISTRATION",
+  "schema_version": 1,
+  "experiment_id": "dojo-prompt-experiment-v1",
+  "locked_at_utc": "2026-07-18T18:02:04Z",
+  "lock_status": "SELF_ATTESTED_PRELOCK",
+  "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+  "purpose": "Compare three fixed AI-discretion prompt contracts without tuning on scored responses.",
+  "variants": [
+    {
+      "variant_id": "A_FABLE_MINIMAL",
+      "role": "FAITHFUL_MINIMAL_FABLE_BASELINE_DATE_HIDDEN_FIXED_SCHEMA",
+      "prompt_path": "research/prompts/dojo_fable_minimal_v1.txt",
+      "prompt_sha256": "b20c37aff8be4282110a05457c5434e6dc690fd70aa533e06c69e2c50a30cccf"
+    },
+    {
+      "variant_id": "B_CALIBRATED_ABSTENTION",
+      "role": "SYMMETRIC_DECISION_LOSS_CALIBRATED_ABSTENTION_COUNTERARGUMENT",
+      "prompt_path": "research/prompts/dojo_calibrated_abstention_v1.txt",
+      "prompt_sha256": "97b413e5d5ad978a7825d08e0cb390e8d23bbb72d88f9023a6e67abfc219c2c2"
+    },
+    {
+      "variant_id": "C_STRUCTURAL_REGIME",
+      "role": "STRUCTURAL_REGIME_SUPPLY_DEMAND_NO_RESULT_CUES",
+      "prompt_path": "research/prompts/dojo_structural_regime_v1.txt",
+      "prompt_sha256": "02a204ade67002fae04a556b5a7f466a07cef28001620d1b7e6024c07bbb4fd5"
+    }
+  ],
+  "response_schema": {
+    "exact_keys_in_order": [
+      "trial_id",
+      "action",
+      "pair",
+      "size",
+      "confidence",
+      "evidence_refs",
+      "target_pips",
+      "invalidation_pips",
+      "strongest_counterargument",
+      "abstain_reason"
+    ],
+    "action_enum": [
+      "FLAT",
+      "LONG",
+      "SHORT"
+    ],
+    "size_enum": [
+      "NONE",
+      "HALF",
+      "FULL"
+    ],
+    "additional_properties": false
+  },
+  "allocation": {
+    "eligible_day_order": "STRICT_CHRONOLOGICAL_ORDER_AFTER_LOCK_WITH_PACKET_AND_SEALED_KEY_AVAILABLE",
+    "phase_1_diagnostic": {
+      "blind_day_ranks_in_eligible_order": "1-30",
+      "unique_blind_days": 30,
+      "cells_per_variant": 30,
+      "total_allocated_cells": 90,
+      "use": "DIAGNOSTIC_ONLY_NO_SELECTION_NO_PROMPT_OR_SCORER_EDIT"
+    },
+    "future_confirmation": {
+      "blind_day_ranks_in_eligible_order": "31-60",
+      "unique_blind_days": 30,
+      "cells_per_variant": 30,
+      "total_allocated_cells": 90,
+      "use": "UNTOUCHED_CONFIRMATION_ALL_THREE_LOCKED_VARIANTS"
+    },
+    "per_day_variant_allocation": {
+      "A_FABLE_MINIMAL": 1,
+      "B_CALIBRATED_ABSTENTION": 1,
+      "C_STRUCTURAL_REGIME": 1
+    },
+    "fresh_context_policy": "ONE_NEW_STATELESS_MODEL_CONTEXT_PER_BLIND_DAY_PER_VARIANT",
+    "shared_packet_policy": "SAME_DATE_HIDDEN_PACKET_ACROSS_VARIANTS_WITHIN_BLIND_DAY",
+    "context_reuse_allowed": false,
+    "cross_variant_message_history_allowed": false,
+    "total_unique_blind_days": 60,
+    "total_allocated_cells": 180
+  },
+  "lock_rules": {
+    "prompt_edits_after_lock_allowed": false,
+    "scorer_edits_after_lock_allowed": false,
+    "allocation_edits_after_lock_allowed": false,
+    "phase_1_can_select_or_drop_variants": false,
+    "hash_drift_policy": "INVALIDATE_EXPERIMENT_RELOCK_AS_NEW_VERSION",
+    "response_visibility_before_all_phase_cells_sealed": false,
+    "answer_key_visibility_before_response_seal": false
+  },
+  "score_policy": {
+    "policy_id": "DOJO_PROMPT_FIXED_SCORER_V1",
+    "primary_metric": "NET_LOG_GROWTH_ALL_ALLOCATED_CELLS",
+    "answer_key_return_keys": [
+      "FLAT",
+      "LONG_HALF",
+      "LONG_FULL",
+      "SHORT_HALF",
+      "SHORT_FULL"
+    ],
+    "flat_return": 0.0,
+    "per_cell_transform": "LOG1P_SELECTED_NET_RETURN",
+    "variant_aggregate": "SUM_PER_CELL_LOG_GROWTH",
+    "primary_contrasts": [
+      "B_CALIBRATED_ABSTENTION_MINUS_A_FABLE_MINIMAL",
+      "C_STRUCTURAL_REGIME_MINUS_A_FABLE_MINIMAL"
+    ],
+    "contrast_method": "WITHIN_BLIND_DAY_PAIRED_LOG_GROWTH_DELTA",
+    "missing_or_schema_invalid_response": "SYNTHETIC_FLAT_AND_RESPONSE_FAILURE_REMAINS_IN_DENOMINATOR",
+    "missing_response_action": "FLAT",
+    "missing_response_is_failure": true,
+    "invalid_parent_policy": "TRANSITIVE_INVALIDATION",
+    "same_model_lineage_handling": "CLUSTER_TOGETHER_NO_IID_AGENT_CLAIM",
+    "lineage_cluster_key": "EXTERNALLY_ATTESTED_MODEL_LINEAGE",
+    "day_pairing_key": "BLIND_DAY_ID",
+    "independent_model_n": "COUNT_EXTERNALLY_ATTESTED_DISTINCT_LINEAGES_OTHERWISE_ONE",
+    "phase_1_inference": "DESCRIPTIVE_DIAGNOSTIC_ONLY",
+    "future_confirmation_inference": "PREDECLARED_PAIRED_CONTRASTS_ONLY",
+    "secondary_diagnostics": [
+      "RESPONSE_FAILURE_RATE",
+      "FLAT_RATE",
+      "DIRECTIONAL_RATE",
+      "MEAN_SELECTED_CONFIDENCE",
+      "COUNTERARGUMENT_PRESENCE_RATE"
+    ],
+    "positive_result_grants_live_permission": false
+  },
+  "scorer_policy_sha256": "76eff0705971fdd149bdf4364b240e9c60d61ac8fb61542e80345472008b8496",
+  "execution_guards": {
+    "model_calls_performed_by_registration": false,
+    "guarantee_monthly_3x": false,
+    "guarantee_any_return": false,
+    "live_trading_authorized": false,
+    "ai_order_authority": "NONE",
+    "broker_mutation_allowed": false,
+    "read_only_diagnostic": true
+  },
+  "attestations": {
+    "external_capability_attestation_present": false,
+    "provider_model_identity_and_lineage_attestation_present": false,
+    "external_answer_key_absence_and_open_chronology_attestation_present": false,
+    "external_registry_monotonicity_attestation_present": false,
+    "required_before_evidence_tier_upgrade": [
+      "FRESH_CONTEXT_CAPABILITY_ATTESTATION",
+      "PROVIDER_MODEL_IDENTITY_AND_LINEAGE_ATTESTATION",
+      "ANSWER_KEY_ABSENCE_AND_OPEN_CHRONOLOGY_ATTESTATION",
+      "EXTERNALLY_MONOTONIC_REGISTRY_ATTESTATION"
+    ],
+    "tier_upgrade_allowed_now": false
+  }
+}
