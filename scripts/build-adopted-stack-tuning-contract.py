@@ -149,6 +149,24 @@ def main() -> int:
             {"technique": "static_side_bias_rules", "death_code": "REGIME_MISMATCH", "note": "side dominance reversed between windows; operator no-direction-bias rule proven"},
             {"technique": "constant_95pct_single_position", "death_code": "EXECUTION_INFEASIBLE", "note": "~26 pips to margin closeout"},
         ],
+        "throttle_release_rules": {
+            "intraday_stop_50p": {
+                "trigger": "known realized day loss <= -50 portfolio pips",
+                "adopted_release": "UTC_DAY_BOUNDARY_AUTO_RESET",
+                "note": "measured opportunity cost of the block was negative (skip was right)",
+            },
+            "daily_nav_stop_3pct": {
+                "trigger": "mark-to-market day NAV return <= -3% (unrealized included)",
+                "adopted_release": "UTC_DAY_BOUNDARY_AUTO_RESET",
+                "role": "open-position runaway guard; 50p realized stop binds first",
+            },
+            "declared_release_variants_for_m5_testing": [
+                "FX_DAY_ROLL_RELEASE_2100_UTC",
+                "COOLDOWN_4H_HALF_SIZE_THEN_FULL",
+                "REGIME_FLIP_RELEASE_VIA_BOARD_READING",
+            ],
+            "operator_rationale": "a stop without a declared release is an opportunity-loss machine",
+        },
         "accounting_standard": {
             "standard_nav_jpy": 200_000,
             "unit": "JPY",
