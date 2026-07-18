@@ -85,6 +85,7 @@ class VBOrder:
 class VirtualBroker:
     ledger_path: Path
     balance_jpy: float = 200_000.0
+    fast_ledger: bool = False  # flush without fsync (lab runs)
     leverage: float = LEVERAGE_DEFAULT
     positions: dict[str, VBPosition] = field(default_factory=dict)
     orders: dict[str, VBOrder] = field(default_factory=dict)
@@ -110,7 +111,8 @@ class VirtualBroker:
         record = {**body, "sha": _sha(body)}
         self._handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         self._handle.flush()
-        os.fsync(self._handle.fileno())
+        if not self.fast_ledger:
+            os.fsync(self._handle.fileno())
         self._prev_sha = record["sha"]
 
     def _next_id(self, prefix: str) -> str:

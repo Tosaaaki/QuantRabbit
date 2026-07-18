@@ -311,6 +311,8 @@ def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None
     pairs = args.pairs.split(",")
     root = Path(args.corpus_root)
     bar_sleep = 1.0 / max(args.bars_per_second, 0.01)
+    no_sleep = args.bars_per_second >= 10000
+    bar_count = 0
     step_file = session_dir / "inbox" / "STEP"
     current_epoch = None
     pending_bars: dict[str, dict] = {}
@@ -336,18 +338,20 @@ def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None
         if epoch != current_epoch:
             # bar boundary: let the agent act, pace the clock
             if current_epoch is not None:
-                _process_inbox(session_dir, broker)
-                _write_state(
-                    session_dir, broker,
-                    datetime.fromtimestamp(current_epoch + 60, tz=UTC).isoformat(),
-                    "replay")
+                bar_count += 1
+                if bar_count % args.state_every == 0:
+                    _process_inbox(session_dir, broker)
+                    _write_state(
+                        session_dir, broker,
+                        datetime.fromtimestamp(current_epoch + 60, tz=UTC).isoformat(),
+                        "replay")
                 if args.step:
                     while not step_file.exists():
                         time_mod.sleep(0.2)
                         _process_inbox(session_dir, broker)
                     os.replace(step_file, session_dir / "inbox" / "processed" /
                                f"{int(time_mod.time()*1000)}_STEP")
-                else:
+                elif not no_sleep:
                     time_mod.sleep(bar_sleep)
             current_epoch = epoch
         broker.on_quote(pair, bid, ask, datetime.fromtimestamp(
@@ -375,6 +379,10 @@ def main() -> int:
     parser.add_argument("--bot-module", default=None,
                         help="path to ANY bot file: <file.py>[:ClassName]; the class "
                              "takes (broker) and implements on_bar_closed(pair, bar, epoch)")
+    parser.add_argument("--state-every", type=int, default=1,
+                        help="replay: write state/process inbox every N bars (lab speed)")
+    parser.add_argument("--fast-ledger", action="store_true",
+                        help="ledger flush without fsync (lab runs)")
     parser.add_argument("--intrabar", choices=["OHLC", "OLHC"], default="OHLC",
                         help="declared synthetic intrabar path; run both to bracket "
                              "both-touch ambiguity")
@@ -383,7 +391,8 @@ def main() -> int:
     session_dir = args.session_dir
     (session_dir / "inbox" / "processed").mkdir(parents=True, exist_ok=True)
     broker = VirtualBroker(
-        ledger_path=session_dir / "ledger.jsonl", balance_jpy=args.balance)
+        ledger_path=session_dir / "ledger.jsonl", balance_jpy=args.balance,
+        fast_ledger=args.fast_ledger)
     snap_path = session_dir / "broker_snapshot.json"
     if snap_path.exists():
         broker.restore(json.loads(snap_path.read_text()))
