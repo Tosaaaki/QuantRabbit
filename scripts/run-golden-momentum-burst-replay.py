@@ -204,7 +204,8 @@ def main() -> int:
     signals_gate_on = build_signals(gate_off=False)
     signals = build_signals(gate_off=True)  # arms below use as-lived mode
 
-    def run_arm(protected: bool, exec_prices=None) -> dict[str, Any]:
+    def run_arm(protected: bool, exec_prices=None, resolution: str = "SL_FIRST",
+                replay_from: str = REPLAY_FROM, nav_start: float = NAV_START) -> dict[str, Any]:
         # exec_prices: optional (BID_O,BID_H,BID_L,BID_C,ASK_O,ASK_H,ASK_L,ASK_C)
         # override for cost-sensitivity runs; defaults to the corpus BA arrays.
         if exec_prices is None:
@@ -213,11 +214,12 @@ def main() -> int:
         else:
             (E_BID_O, E_BID_H, E_BID_L, E_BID_C,
              E_ASK_O, E_ASK_H, E_ASK_L, E_ASK_C) = exec_prices
-        balance = NAV_START
+        balance = nav_start
         open_pos: list[dict[str, Any]] = []
         daily: dict[str, float] = {}
         trades = wins = 0
         closeouts = 0
+        ambiguous = [0]
         dead_day = None
         golden_trades: list[dict[str, Any]] = []
 
@@ -238,11 +240,11 @@ def main() -> int:
                 golden_trades.append({"pl_jpy": round(pl), "reason": reason})
 
         replay_from_epoch = int(datetime.fromisoformat(
-            REPLAY_FROM + "T00:00:00+00:00").timestamp())
+            replay_from + "T00:00:00+00:00").timestamp())
         for i in range(n):
             if epochs[i] < replay_from_epoch:
                 continue
-            if balance <= NAV_START * 0.02:
+            if balance <= nav_start * 0.02:
                 dead_day = dead_day or day_of(i)
                 break
             # resolve exits (positions entered before this bar)
@@ -254,9 +256,15 @@ def main() -> int:
                 side = pos["side"]
                 sl_hit = (E_BID_L[i] <= pos["sl"]) if side == "LONG" else (E_ASK_H[i] >= pos["sl"])
                 tp_hit = (E_BID_H[i] >= pos["tp"]) if side == "LONG" else (E_ASK_L[i] <= pos["tp"])
-                if sl_hit:  # pessimistic SL-first
+                if sl_hit and tp_hit:
+                    ambiguous[0] += 1
+                    if resolution == "SL_FIRST":
+                        close_position(pos, pos["sl"], i, "SL")
+                    else:
+                        close_position(pos, pos["tp"], i, "TP")
+                elif sl_hit:
                     close_position(pos, pos["sl"], i, "SL")
-                elif tp_hit and i > pos["bar"] + 1:
+                elif tp_hit:
                     close_position(pos, pos["tp"], i, "TP")
                 elif protected and epochs[i] - pos["entry_epoch"] >= HARD_CEILING_S:
                     px = E_BID_O[i] if side == "LONG" else E_ASK_O[i]
@@ -323,6 +331,8 @@ def main() -> int:
 
         golden_wins = sum(1 for t in golden_trades if t["pl_jpy"] > 0)
         return {
+            "resolution": resolution,
+            "ambiguous_both_touch_bars": ambiguous[0],
             "trades": trades,
             "win_rate": round(wins / trades, 4) if trades else None,
             "margin_closeouts": closeouts,
@@ -353,6 +363,16 @@ def main() -> int:
     )
     effective_cost_as_lived = run_arm(protected=False, exec_prices=eff_prices)
     effective_cost_protected = run_arm(protected=True, exec_prices=eff_prices)
+    # Corrected-rule bracket (TP active from bar i+1, ambiguity counted):
+    bracket_pessimistic = run_arm(protected=True, exec_prices=eff_prices,
+                                  resolution="SL_FIRST")
+    bracket_optimistic = run_arm(protected=True, exec_prices=eff_prices,
+                                 resolution="TP_FIRST")
+    # Golden-day fidelity standalone (December 2025 only, live NAV, no
+    # prior-history bankroll path so the day is actually reached):
+    fidelity_dec = run_arm(protected=False, exec_prices=eff_prices,
+                           resolution="SL_FIRST", replay_from="2025-12-01",
+                           nav_start=543_000.0)
 
     body: dict[str, Any] = {
         "contract": "QR_GOLDEN_MOMENTUM_BURST_REPLAY_V1",
@@ -382,6 +402,14 @@ def main() -> int:
         "effective_cost_as_lived": effective_cost_as_lived,
         "effective_cost_protected": effective_cost_protected,
         "effective_cost_model": "mid +/- 0.5 pip (median effective spread of the 53 live golden-day fills vs corpus mid = ~1.0p)",
+        "corrected_rule_note": (
+            "audit fix: earlier runs armed SL from bar+1 but TP only from "
+            "bar+2 (an unfair 1-bar TP handicap); corrected runs arm both "
+            "from bar+1 and bracket both-touch ambiguity SL_FIRST/TP_FIRST"
+        ),
+        "bracket_pessimistic": bracket_pessimistic,
+        "bracket_optimistic": bracket_optimistic,
+        "fidelity_december_2025": fidelity_dec,
         "single_declared_config_no_search": True,
         "shadow_only": True,
         "order_authority": "NONE",
