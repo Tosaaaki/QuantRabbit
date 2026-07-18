@@ -149,6 +149,14 @@ def main() -> int:
             {"technique": "static_side_bias_rules", "death_code": "REGIME_MISMATCH", "note": "side dominance reversed between windows; operator no-direction-bias rule proven"},
             {"technique": "constant_95pct_single_position", "death_code": "EXECUTION_INFEASIBLE", "note": "~26 pips to margin closeout"},
         ],
+        "accounting_standard": {
+            "standard_nav_jpy": 200_000,
+            "unit": "JPY",
+            "rule": "ALL_MONEY_ACCOUNTED_RESULTS_REPORT_YEN_FROM_STANDARD_NAV",
+            "per_slot_exposure_jpy_at_executable_leverage": round(200_000 * 21.4 / 12),
+            "daily_stop_yen": round(200_000 * 0.03),
+            "declared_by_operator": "2026-07-18",
+        },
         "codex_wiring_order": [
             "merge branch codex/episode-s5-outcome",
             "wire entry gates + ladder into trader cycle (runbook Phase 1)",
