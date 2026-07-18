@@ -30,6 +30,13 @@ def _pip(pair: str) -> float:
 
 class _PairState:
     def __init__(self):
+        self.day: str | None = None
+        self.prev_day_high: float | None = None
+        self.prev_day_low: float | None = None
+        self.today_high: float | None = None
+        self.today_low: float | None = None
+        self.peak: float | None = None   # trailing anchor
+        self.trough: float | None = None
         self.closes20: deque[float] = deque(maxlen=20)
         self.width_hist: deque[float] = deque(maxlen=720)  # 12h of 20-bar widths
         self.closes: deque[float] = deque(maxlen=1441)
@@ -75,6 +82,15 @@ class Bot:
             st.diffs_6h.append(abs(mid_c - st.prev_close))
         st.prev_close = mid_c
         st.closes.append(mid_c)
+        import datetime as _dt
+        day = _dt.datetime.fromtimestamp(bar["epoch"], _dt.timezone.utc).date().isoformat()
+        if st.day != day:
+            st.prev_day_high, st.prev_day_low = st.today_high, st.today_low
+            st.today_high, st.today_low = mid_h, mid_l
+            st.day = day
+        else:
+            st.today_high = max(st.today_high or mid_h, mid_h)
+            st.today_low = min(st.today_low or mid_l, mid_l)
         st.closes20.append(mid_c)
         if len(st.closes20) == 20:
             st.width_hist.append(max(st.closes20) - min(st.closes20))
@@ -249,6 +265,138 @@ class Bot:
                 st.my_orders = [oid]
             except VirtualBrokerError:
                 pass
+
+        elif self.signal == "prev_day_extreme_fade":
+            for oid in st.my_orders:
+                try: self.broker.cancel_order(oid)
+                except VirtualBrokerError: pass
+            st.my_orders = []
+            if open_n >= self.max_concurrent or st.prev_day_high is None:
+                return
+            units = units_for(mid_c)
+            if units <= 0: return
+            for side, level in (("SHORT", st.prev_day_high), ("LONG", st.prev_day_low)):
+                if abs(level - mid_c) > 40 * pip:  # only near levels
+                    continue
+                try:
+                    oid = self.broker.limit_order(pair, side, units,
+                        price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_orders.append(oid)
+                except VirtualBrokerError: pass
+
+        elif self.signal == "round_number_fade":
+            for oid in st.my_orders:
+                try: self.broker.cancel_order(oid)
+                except VirtualBrokerError: pass
+            st.my_orders = []
+            if open_n >= self.max_concurrent: return
+            step = 0.50 if pair.endswith("JPY") else 0.0050
+            above = (int(mid_c / step) + 1) * step
+            below = int(mid_c / step) * step
+            units = units_for(mid_c)
+            if units <= 0: return
+            for side, level in (("SHORT", above), ("LONG", below)):
+                if abs(level - mid_c) > 25 * pip or abs(level - mid_c) < 3 * pip:
+                    continue
+                try:
+                    oid = self.broker.limit_order(pair, side, units,
+                        price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_orders.append(oid)
+                except VirtualBrokerError: pass
+
+        elif self.signal == "daily_break_pullback":
+            for oid in st.my_orders:
+                try: self.broker.cancel_order(oid)
+                except VirtualBrokerError: pass
+            st.my_orders = []
+            if open_n >= self.max_concurrent or st.prev_day_high is None:
+                return
+            units = units_for(mid_c)
+            if units <= 0: return
+            broke_up = (st.today_high or mid_c) > st.prev_day_high and mid_c > st.prev_day_high
+            broke_dn = (st.today_low or mid_c) < st.prev_day_low and mid_c < st.prev_day_low
+            if broke_up:
+                try:
+                    oid = self.broker.limit_order(pair, "LONG", units,
+                        price=round(st.prev_day_high, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_orders = [oid]
+                except VirtualBrokerError: pass
+            elif broke_dn:
+                try:
+                    oid = self.broker.limit_order(pair, "SHORT", units,
+                        price=round(st.prev_day_low, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_orders = [oid]
+                except VirtualBrokerError: pass
+
+        elif self.signal == "mean_revert_24h":
+            if open_n >= self.max_concurrent or len(st.closes) < 1441:
+                return
+            mean = sum(st.closes) / len(st.closes)
+            dev = mid_c - mean
+            k = self.fade_atr * 8 * st.atr  # deep deviation in M1-ATR units
+            units = units_for(mid_c)
+            if units <= 0: return
+            try:
+                if dev <= -k:
+                    tid = self.broker.market_order(pair, "LONG", units,
+                        tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_trades[tid] = epoch; self._owner[tid] = pair
+                elif dev >= k:
+                    tid = self.broker.market_order(pair, "SHORT", units,
+                        tp_pips=tp_pips, sl_pips=self.sl_pips)
+                    st.my_trades[tid] = epoch; self._owner[tid] = pair
+            except VirtualBrokerError: pass
+
+        elif self.signal == "trailing_burst":
+            # entry = burst; exit = chandelier trail (2x fade_atr ATR from peak),
+            # NO fixed TP — the let-winners-run family.
+            for tid in list(st.my_trades):
+                pos = self.broker.positions.get(tid)
+                if pos is None: continue
+                if pos.side == "LONG":
+                    st.peak = max(st.peak or mid_c, mid_c)
+                    if mid_c <= st.peak - 2 * self.fade_atr * st.atr:
+                        try: self.broker.close_trade(tid)
+                        except VirtualBrokerError: pass
+                else:
+                    st.trough = min(st.trough or mid_c, mid_c)
+                    if mid_c >= st.trough + 2 * self.fade_atr * st.atr:
+                        try: self.broker.close_trade(tid)
+                        except VirtualBrokerError: pass
+            if open_n >= self.max_concurrent or prior_h3 is None:
+                return
+            triggered_l = trend == "LONG" and mid_c > prior_h3
+            triggered_s = trend == "SHORT" and mid_c < prior_l3
+            if not (triggered_l or triggered_s): return
+            units = units_for(mid_c)
+            if units <= 0: return
+            try:
+                side = "LONG" if triggered_l else "SHORT"
+                tid = self.broker.market_order(pair, side, units,
+                    tp_pips=None, sl_pips=self.sl_pips)
+                st.my_trades[tid] = epoch; self._owner[tid] = pair
+                st.peak = mid_c; st.trough = mid_c
+            except VirtualBrokerError: pass
+
+        elif self.signal == "fade_ladder":
+            # range fade + ONE bounded add-on one extra band further (nanpin-lite)
+            for oid in st.my_orders:
+                try: self.broker.cancel_order(oid)
+                except VirtualBrokerError: pass
+            st.my_orders = []
+            eff = self._efficiency_6h(st)
+            if eff is None or eff > self.eff_max: return
+            dist = self.fade_atr * st.atr
+            units = units_for(mid_c)
+            if units <= 0: return
+            layers = [1.0] if open_n == 0 else ([2.2] if open_n == 1 else [])
+            for mult in layers:
+                for side, price in (("LONG", mid_c - dist * mult), ("SHORT", mid_c + dist * mult)):
+                    try:
+                        oid = self.broker.limit_order(pair, side, units,
+                            price=round(price, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
+                        st.my_orders.append(oid)
+                    except VirtualBrokerError: pass
 
         elif self.signal == "range_fade_limit":
             for oid in st.my_orders:
