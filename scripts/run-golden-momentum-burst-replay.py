@@ -204,7 +204,15 @@ def main() -> int:
     signals_gate_on = build_signals(gate_off=False)
     signals = build_signals(gate_off=True)  # arms below use as-lived mode
 
-    def run_arm(protected: bool) -> dict[str, Any]:
+    def run_arm(protected: bool, exec_prices=None) -> dict[str, Any]:
+        # exec_prices: optional (BID_O,BID_H,BID_L,BID_C,ASK_O,ASK_H,ASK_L,ASK_C)
+        # override for cost-sensitivity runs; defaults to the corpus BA arrays.
+        if exec_prices is None:
+            E_BID_O, E_BID_H, E_BID_L, E_BID_C = bid_o, bid_h, bid_l, bid_c
+            E_ASK_O, E_ASK_H, E_ASK_L, E_ASK_C = ask_o, ask_h, ask_l, ask_c
+        else:
+            (E_BID_O, E_BID_H, E_BID_L, E_BID_C,
+             E_ASK_O, E_ASK_H, E_ASK_L, E_ASK_C) = exec_prices
         balance = NAV_START
         open_pos: list[dict[str, Any]] = []
         daily: dict[str, float] = {}
@@ -244,14 +252,14 @@ def main() -> int:
                     still.append(pos)
                     continue
                 side = pos["side"]
-                sl_hit = (bid_l[i] <= pos["sl"]) if side == "LONG" else (ask_h[i] >= pos["sl"])
-                tp_hit = (bid_h[i] >= pos["tp"]) if side == "LONG" else (ask_l[i] <= pos["tp"])
+                sl_hit = (E_BID_L[i] <= pos["sl"]) if side == "LONG" else (E_ASK_H[i] >= pos["sl"])
+                tp_hit = (E_BID_H[i] >= pos["tp"]) if side == "LONG" else (E_ASK_L[i] <= pos["tp"])
                 if sl_hit:  # pessimistic SL-first
                     close_position(pos, pos["sl"], i, "SL")
                 elif tp_hit and i > pos["bar"] + 1:
                     close_position(pos, pos["tp"], i, "TP")
                 elif protected and epochs[i] - pos["entry_epoch"] >= HARD_CEILING_S:
-                    px = bid_o[i] if side == "LONG" else ask_o[i]
+                    px = E_BID_O[i] if side == "LONG" else E_ASK_O[i]
                     close_position(pos, px, i, "HARD_CEILING")
                 else:
                     still.append(pos)
@@ -267,7 +275,7 @@ def main() -> int:
             margin = sum(p["units"] for p in open_pos) * mid / LEVERAGE
             if equity <= 0 or (margin > 0 and margin / max(equity, 1e-9) >= 1.0):
                 for p in open_pos:
-                    px = bid_c[i] if p["side"] == "LONG" else ask_c[i]
+                    px = E_BID_C[i] if p["side"] == "LONG" else E_ASK_C[i]
                     close_position(p, px, i, "MARGIN_CLOSEOUT")
                 open_pos = []
                 closeouts += 1
@@ -282,7 +290,7 @@ def main() -> int:
             if margin / max(equity, 1e-9) >= USAGE_CAP:
                 continue
             side = "LONG" if sig["action"] == "OPEN_LONG" else "SHORT"
-            entry = float(ask_o[i]) if side == "LONG" else float(bid_o[i])
+            entry = float(E_ASK_O[i]) if side == "LONG" else float(E_BID_O[i])
             sl_pips = float(sig["sl_pips"]); tp_pips = float(sig["tp_pips"])
             units = max(equity, 0.0) * PER_POSITION_LEVERAGE / entry
             open_pos.append({
@@ -335,6 +343,16 @@ def main() -> int:
     signals = signals_gate_on
     gate_on_protected = run_arm(protected=True)
     signals = signals_backup
+    # Cost sensitivity: measured effective spread from the 53 live golden-day
+    # fills vs corpus mid (median effective spread ~1.0p => 0.5p per side),
+    # vs the corpus BA quoted 1.5-1.9p.
+    HALF_EFF = 0.005
+    eff_prices = (
+        mid_o - HALF_EFF, mid_h - HALF_EFF, mid_l - HALF_EFF, mid_c - HALF_EFF,
+        mid_o + HALF_EFF, mid_h + HALF_EFF, mid_l + HALF_EFF, mid_c + HALF_EFF,
+    )
+    effective_cost_as_lived = run_arm(protected=False, exec_prices=eff_prices)
+    effective_cost_protected = run_arm(protected=True, exec_prices=eff_prices)
 
     body: dict[str, Any] = {
         "contract": "QR_GOLDEN_MOMENTUM_BURST_REPLAY_V1",
@@ -361,6 +379,9 @@ def main() -> int:
         "as_lived": as_lived,
         "protected": protected,
         "gate_on_protected": gate_on_protected,
+        "effective_cost_as_lived": effective_cost_as_lived,
+        "effective_cost_protected": effective_cost_protected,
+        "effective_cost_model": "mid +/- 0.5 pip (median effective spread of the 53 live golden-day fills vs corpus mid = ~1.0p)",
         "single_declared_config_no_search": True,
         "shadow_only": True,
         "order_authority": "NONE",
@@ -384,6 +405,8 @@ def main() -> int:
         "as_lived_splits": as_lived["splits"],
         "protected_splits": protected["splits"],
         "gate_on_protected_splits": gate_on_protected["splits"],
+        "effective_cost_protected_splits": effective_cost_protected["splits"],
+        "effective_cost_as_lived_splits": effective_cost_as_lived["splits"],
     }, sort_keys=True))
     return 0
 
