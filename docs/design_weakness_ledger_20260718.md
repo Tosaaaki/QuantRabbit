@@ -647,3 +647,17 @@ NZD_CHF 2026) + NZD_CAD再審判:
 **全関門生存者ゼロ。fadeの生息地はUSD_JPYのみ — 有効試行・専用幾何・完全データで確定**。
 床の最終形は不変: USD_JPY 2手併走 月+3.6% (強化関門後)。乗数=層C。
 機械的拡張アークはここで正当に完結 (総ラン数: DOJO 300超、うちペア審判~200)。
+
+## W53 戦略拡張第2波 — 11族審判、生存4手に (2026-07-19)
+
+新6族のTRAIN: prev_day_fade -99k死 / mean_revert_24h -189k死 / trailing_burst -200k死
+(伸ばす型はM1ノイズに刈られる — 機械で伸ばすの反証がまた1つ) / round_number_fade +106k /
+daily_break_pullback +204k / fade_ladder +92k。
+陽性3族の処刑: **round_number_fade 全関門通過** (VAL+33.7k / 強化S5+965 — 辛勝) /
+daily_break_pullback **VAL -41k 不合格** (TRAIN+204k→VAL負 = 過学習の教科書、関門が機能) /
+**fade_ladder (有限1段ナンピン) 全関門通過** (VAL+40k / 強化S5+7.5k)。
+**生存手 4本: W_FADE / W_SPIKE_FADE / W_ROUND / W_LADDER — 全てUSD_JPY・SL-free・檻付き・
+平均回帰型収穫**。W_LADDERはW_FADEと相関 (代替か加算かは同居測定待ち)。
+直視事項の維持: VAL窓は摩耗済み、実効多重性はセッション累計300+ラン — **全手は仮説級であり、
+昇格判定は前向き運転のみ**。11族中、追いかける型・伸ばす型は全滅、受けて素早く取る型だけが生き残る
+— USD_JPYの微細構造の一貫した性格。
