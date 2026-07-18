@@ -39,6 +39,19 @@ from quant_rabbit.dojo_ai_forward import (  # noqa: E402
     validate_start_receipt,
     validate_source_capture,
     validate_source_request,
+    verify_source_bindings_against_repo,
+)
+from quant_rabbit.dojo_ai_truth import (  # noqa: E402
+    build_day_score as build_truth_day_score,
+    build_phase_score,
+    build_truth_bundle,
+    build_truth_capture,
+    build_truth_request,
+    validate_day_score as validate_truth_day_score,
+    validate_phase_score,
+    validate_truth_bundle_with_capture,
+    validate_truth_capture,
+    validate_truth_request,
 )
 from quant_rabbit.dojo_prompt_phase import assert_locked_preregistration  # noqa: E402
 
@@ -61,6 +74,7 @@ def _parse_utc_text(value: Any) -> datetime:
 
 def _load_parents(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     precommit = validate_precommit(_strict_json(run_dir / "precommit.json"))
+    verify_source_bindings_against_repo(precommit["source_bindings"], REPO)
     start = validate_start_receipt(_strict_json(run_dir / "start.json"), precommit)
     return precommit, start
 
@@ -86,6 +100,7 @@ def _precommit(args: argparse.Namespace) -> dict[str, Any]:
             _strict_json(args.spec),
             now_utc=_now(),
         )
+        verify_source_bindings_against_repo(artifact["source_bindings"], REPO)
         _write_json_new_or_same(
             args.run_dir / "precommit.json", artifact, root=args.run_dir
         )
@@ -459,6 +474,228 @@ def _seal_phase_index(args: argparse.Namespace) -> dict[str, Any]:
         return index
 
 
+def _terminals_for_day(
+    terminals: list[dict[str, Any]], day: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    expected = {cell["cell_id"] for cell in day["schedule"]["cells"]}
+    selected = [row for row in terminals if row["cell_id"] in expected]
+    if day["state"] == "REQUESTS_SEALED" and {
+        row["cell_id"] for row in selected
+    } != expected:
+        raise RuntimeError("AI truth requires all three immutable cell terminals")
+    return sorted(selected, key=lambda row: row["variant_id"])
+
+
+def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
+    with _run_lock(args.run_dir):
+        registry = assert_locked_preregistration(_strict_json(args.registry))
+        precommit, start = _load_parents(args.run_dir)
+        days = _validated_days(args.run_dir, registry, precommit, start)
+        if args.ordinal < 1 or args.ordinal > len(days):
+            raise RuntimeError("AI truth ordinal is not a sealed day")
+        day = days[args.ordinal - 1]
+        if day["state"] != "REQUESTS_SEALED":
+            raise RuntimeError("missing-source day has no market truth score")
+        all_terminals = _validated_terminals(
+            args.run_dir, registry, precommit, start, days
+        )
+        terminals = _terminals_for_day(all_terminals, day)
+        truth_dir = args.run_dir / "truth" / f"day-{args.ordinal:03d}"
+        request_path = truth_dir / "request.json"
+        capture_path = truth_dir / "capture.json"
+        bundle_path = truth_dir / "bundle.json"
+        score_path = truth_dir / "score.json"
+        if score_path.is_file():
+            capture = validate_truth_capture(
+                _strict_json(capture_path),
+                validate_truth_request(
+                    _strict_json(request_path), precommit, day, terminals
+                ),
+            )
+            bundle = validate_truth_bundle_with_capture(
+                _strict_json(bundle_path), precommit, day, terminals, capture
+            )
+            return validate_truth_day_score(
+                _strict_json(score_path),
+                precommit,
+                day,
+                terminals,
+                capture,
+                bundle,
+            )
+        if request_path.is_file():
+            request = validate_truth_request(
+                _strict_json(request_path), precommit, day, terminals
+            )
+        else:
+            request = build_truth_request(
+                precommit, day, terminals, now_utc=_now()
+            )
+            _write_json_new_or_same(request_path, request, root=args.run_dir)
+        if capture_path.is_file():
+            capture = validate_truth_capture(_strict_json(capture_path), request)
+        else:
+            if _now() > _parse_utc_text(request["truth_seal_deadline_utc"]):
+                raise RuntimeError("AI truth request expired before transport")
+            client = OandaReadOnlyClient()
+            if client.base_url != OFFICIAL_OANDA_BASE_URL:
+                raise RuntimeError(
+                    "AI truth requires the official OANDA production HTTPS host"
+                )
+            response = _get_with_retry(
+                client,
+                request["path"],
+                request["query"],
+                attempts=args.attempts,
+            )
+            capture = build_truth_capture(
+                request, response, acquired_at_utc=_now()
+            )
+            _write_json_new_or_same(capture_path, capture, root=args.run_dir)
+        if bundle_path.is_file():
+            bundle = validate_truth_bundle_with_capture(
+                _strict_json(bundle_path), precommit, day, terminals, capture
+            )
+        else:
+            bundle = build_truth_bundle(
+                precommit,
+                day,
+                terminals,
+                capture,
+                sealed_at_utc=_now(),
+            )
+            _write_json_new_or_same(bundle_path, bundle, root=args.run_dir)
+        score = build_truth_day_score(
+            precommit,
+            day,
+            terminals,
+            capture,
+            bundle,
+            scored_at_utc=_now(),
+        )
+        _write_json_new_or_same(score_path, score, root=args.run_dir)
+        return score
+
+
+def _seal_phase_score(args: argparse.Namespace) -> dict[str, Any]:
+    with _run_lock(args.run_dir):
+        registry = assert_locked_preregistration(_strict_json(args.registry))
+        precommit, start = _load_parents(args.run_dir)
+        days = _validated_days(args.run_dir, registry, precommit, start)
+        terminals = _validated_terminals(
+            args.run_dir, registry, precommit, start, days
+        )
+        index = validate_phase_index(
+            _strict_json(args.run_dir / "phase-index.json"),
+            registry,
+            precommit,
+            start,
+            days,
+            terminals,
+        )
+        day_scores = _validated_truth_scores(
+            args.run_dir,
+            precommit,
+            days,
+            terminals,
+            require_all=True,
+        )
+        score_path = args.run_dir / "phase-score.json"
+        if score_path.is_file() or score_path.is_symlink():
+            return validate_phase_score(
+                _strict_json(score_path), precommit, index, days, day_scores
+            )
+        phase_score = build_phase_score(
+            precommit, index, days, day_scores, sealed_at_utc=_now()
+        )
+        _write_json_new_or_same(
+            args.run_dir / "phase-score.json", phase_score, root=args.run_dir
+        )
+        return phase_score
+
+
+def _validated_truth_scores(
+    run_dir: Path,
+    precommit: Mapping[str, Any],
+    days: list[dict[str, Any]],
+    terminals: list[dict[str, Any]],
+    *,
+    require_all: bool,
+) -> list[dict[str, Any]]:
+    expected = {
+        day["ordinal"]: day for day in days if day["state"] == "REQUESTS_SEALED"
+    }
+    truth_root = run_dir / "truth"
+    if truth_root.is_symlink():
+        raise RuntimeError("AI truth directory cannot be a symlink")
+    if truth_root.exists() and not truth_root.is_dir():
+        raise RuntimeError("AI truth path is not a directory")
+    actual_dirs: dict[int, Path] = {}
+    if truth_root.is_dir():
+        for candidate in truth_root.iterdir():
+            if candidate.is_symlink() or not candidate.is_dir():
+                raise RuntimeError("AI truth directory contains an unsafe entry")
+            name = candidate.name
+            if not name.startswith("day-") or len(name) != 7 or not name[4:].isdigit():
+                raise RuntimeError("AI truth directory contains an unknown day")
+            ordinal = int(name[4:])
+            if ordinal not in expected or ordinal in actual_dirs:
+                raise RuntimeError("AI truth directory is not bound to a sealed source day")
+            actual_dirs[ordinal] = candidate
+
+    scores: list[dict[str, Any]] = []
+    allowed_names = {"request.json", "capture.json", "bundle.json", "score.json"}
+    for ordinal, truth_dir in sorted(actual_dirs.items()):
+        entries = {candidate.name: candidate for candidate in truth_dir.iterdir()}
+        if set(entries) - allowed_names:
+            raise RuntimeError("AI truth day contains an unknown artifact")
+        present = set(entries)
+        stages = ["request.json", "capture.json", "bundle.json", "score.json"]
+        for position, name in enumerate(stages):
+            if name in present and not set(stages[:position]).issubset(present):
+                raise RuntimeError("AI truth artifacts are not a contiguous evidence chain")
+        if "request.json" not in present:
+            if present:
+                raise RuntimeError("AI truth request is absent")
+            continue
+        day = expected[ordinal]
+        selected = _terminals_for_day(terminals, day)
+        request = validate_truth_request(
+            _strict_json(entries["request.json"]), precommit, day, selected
+        )
+        if "capture.json" not in present:
+            continue
+        capture = validate_truth_capture(
+            _strict_json(entries["capture.json"]), request
+        )
+        if "bundle.json" not in present:
+            continue
+        bundle = validate_truth_bundle_with_capture(
+            _strict_json(entries["bundle.json"]),
+            precommit,
+            day,
+            selected,
+            capture,
+        )
+        if "score.json" not in present:
+            continue
+        scores.append(
+            validate_truth_day_score(
+                _strict_json(entries["score.json"]),
+                precommit,
+                day,
+                selected,
+                capture,
+                bundle,
+            )
+        )
+    if require_all and set(actual_dirs) != set(expected):
+        raise RuntimeError("AI phase score requires every eligible truth day")
+    if require_all and len(scores) != len(expected):
+        raise RuntimeError("AI phase score requires every eligible day score")
+    return scores
+
+
 def _status(args: argparse.Namespace) -> dict[str, Any]:
     registry = assert_locked_preregistration(_strict_json(args.registry))
     precommit, start = _load_parents(args.run_dir)
@@ -466,6 +703,27 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
     terminals = _validated_terminals(
         args.run_dir, registry, precommit, start, valid
     )
+    day_scores = _validated_truth_scores(
+        args.run_dir,
+        precommit,
+        valid,
+        terminals,
+        require_all=False,
+    )
+    phase_score_path = args.run_dir / "phase-score.json"
+    phase_score = None
+    if phase_score_path.is_file() or phase_score_path.is_symlink():
+        index = validate_phase_index(
+            _strict_json(args.run_dir / "phase-index.json"),
+            registry,
+            precommit,
+            start,
+            valid,
+            terminals,
+        )
+        phase_score = validate_phase_score(
+            _strict_json(phase_score_path), precommit, index, valid, day_scores
+        )
     next_ordinal = len(valid) + 1
     response_count = sum(row["state"] == "RESPONSE_SEALED" for row in terminals)
     missing_response_count = sum(
@@ -475,7 +733,9 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
         row["state"] == "MISSING_SOURCE_DEADLINE" for row in valid
     )
     fixed_cells = response_count + missing_response_count + missing_source_cells
-    if next_ordinal <= 30:
+    if phase_score is not None:
+        state = "PHASE_SCORED_DIAGNOSTIC"
+    elif next_ordinal <= 30:
         state = "COLLECTING_SOURCE"
     elif fixed_cells < 90:
         state = "COLLECTING_RESPONSES"
@@ -499,6 +759,8 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
         "promotion_eligible": False,
         "live_permission": False,
         "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+        "truth_day_score_count": len(day_scores),
+        "phase_score_present": phase_score is not None,
     }
     if next_ordinal <= 30:
         result["next_schedule"] = precommit["schedule"][next_ordinal - 1]
@@ -699,6 +961,18 @@ def main() -> int:
     index.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     index.add_argument("--run-dir", type=Path, required=True)
     index.set_defaults(handler=_seal_phase_index)
+
+    truth = subparsers.add_parser("collect-truth-day")
+    truth.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    truth.add_argument("--run-dir", type=Path, required=True)
+    truth.add_argument("--ordinal", type=int, required=True)
+    truth.add_argument("--attempts", type=int, default=3, choices=range(1, 6))
+    truth.set_defaults(handler=_collect_truth)
+
+    phase_score = subparsers.add_parser("seal-phase-score")
+    phase_score.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    phase_score.add_argument("--run-dir", type=Path, required=True)
+    phase_score.set_defaults(handler=_seal_phase_score)
 
     status = subparsers.add_parser("status")
     status.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)

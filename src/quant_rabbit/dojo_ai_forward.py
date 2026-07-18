@@ -16,9 +16,11 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from quant_rabbit.dojo_ai_discretion import (
@@ -68,6 +70,10 @@ SOURCE_SEAL_DEADLINE_DELAY = timedelta(minutes=30)
 RESPONSE_DEADLINE_DELAY = timedelta(hours=6)
 TRUTH_HORIZON = timedelta(hours=24)
 TRUTH_MATURITY_DELAY = timedelta(minutes=2)
+TRUTH_SEAL_DEADLINE_DELAY = timedelta(hours=6)
+TRUTH_SLIPPAGE_PIPS_PER_FILL = Decimal("0.3")
+TRUTH_FINANCING_PIPS_PER_DAY = Decimal("0.8")
+TRUTH_NOTIONAL_MULTIPLE = Decimal("1.0")
 ELIGIBLE_WEEKDAYS = (0, 1, 2, 3)  # Monday through Thursday.
 DECISION_TIME_UTC = time(15, 0)
 EXPECTED_DAY_COUNT = 30
@@ -81,7 +87,7 @@ _LIMITATIONS = [
     "EXTERNAL_MONOTONIC_WITNESS_ABSENT",
     "PROVIDER_MODEL_IDENTITY_ATTESTATION_ABSENT",
     "MODEL_EXECUTOR_NOT_IMPLEMENTED_BY_THIS_CONTRACT",
-    "MARKET_DERIVED_ANSWER_KEY_PRODUCER_NOT_IMPLEMENTED_BY_THIS_CONTRACT",
+    "MARKET_TRUTH_AND_SCORING_SELF_ATTESTED_WITHOUT_EXTERNAL_WITNESS",
     "UPSTREAM_HTTP_STATUS_AND_HEADER_ATTESTATION_ABSENT",
     "SOURCE_COMPLETENESS_SELF_ATTESTED_FIXED_COVERAGE_GATE",
     "DOJO_HAS_NO_LIVE_AUTHORITY",
@@ -92,6 +98,17 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}")
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]+")
 _OANDA_TIME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(0+))?Z")
 _VARIANTS = tuple(LOCKED_VARIANT_PROMPT_SHA256)
+REQUIRED_SOURCE_BINDING_FILES = frozenset(
+    {
+        "src/quant_rabbit/dojo_ai_forward.py",
+        "src/quant_rabbit/dojo_ai_discretion.py",
+        "src/quant_rabbit/dojo_prompt_phase.py",
+        "src/quant_rabbit/dojo_market_calendar.py",
+        "src/quant_rabbit/dojo_ai_truth.py",
+        "src/quant_rabbit/broker/oanda.py",
+        "scripts/run-dojo-ai-forward.py",
+    }
+)
 
 
 class DojoAIForwardError(ValueError):
@@ -171,6 +188,13 @@ def build_precommit(
             ),
             "truth_horizon_seconds": int(TRUTH_HORIZON.total_seconds()),
             "truth_maturity_delay_seconds": int(TRUTH_MATURITY_DELAY.total_seconds()),
+            "truth_seal_deadline_delay_seconds": int(
+                TRUTH_SEAL_DEADLINE_DELAY.total_seconds()
+            ),
+            "truth_semantics": "FIXED_24H_DIRECTION_AND_SIZE_ONLY",
+            "truth_slippage_pips_per_fill": float(TRUTH_SLIPPAGE_PIPS_PER_FILL),
+            "truth_financing_pips_per_day": float(TRUTH_FINANCING_PIPS_PER_DAY),
+            "truth_notional_multiple": float(TRUTH_NOTIONAL_MULTIPLE),
             "source_coverage_policy": M5_COVERAGE_POLICY,
             "minimum_coverage_numerator": M5_MINIMUM_COVERAGE[0],
             "minimum_coverage_denominator": M5_MINIMUM_COVERAGE[1],
@@ -263,6 +287,13 @@ def validate_precommit(value: Mapping[str, Any]) -> dict[str, Any]:
         "response_deadline_delay_seconds": int(RESPONSE_DEADLINE_DELAY.total_seconds()),
         "truth_horizon_seconds": int(TRUTH_HORIZON.total_seconds()),
         "truth_maturity_delay_seconds": int(TRUTH_MATURITY_DELAY.total_seconds()),
+        "truth_seal_deadline_delay_seconds": int(
+            TRUTH_SEAL_DEADLINE_DELAY.total_seconds()
+        ),
+        "truth_semantics": "FIXED_24H_DIRECTION_AND_SIZE_ONLY",
+        "truth_slippage_pips_per_fill": float(TRUTH_SLIPPAGE_PIPS_PER_FILL),
+        "truth_financing_pips_per_day": float(TRUTH_FINANCING_PIPS_PER_DAY),
+        "truth_notional_multiple": float(TRUTH_NOTIONAL_MULTIPLE),
         "source_coverage_policy": M5_COVERAGE_POLICY,
         "minimum_coverage_numerator": M5_MINIMUM_COVERAGE[0],
         "minimum_coverage_denominator": M5_MINIMUM_COVERAGE[1],
@@ -1711,6 +1742,46 @@ def _validate_source_bindings(value: Any) -> dict[str, Any]:
             raise DojoAIForwardError("source binding path is unsafe")
         normalized[path] = _sha(digest, f"source binding {path}")
     return {"git_commit": commit, "files": dict(sorted(normalized.items()))}
+
+
+def verify_source_bindings_against_repo(
+    value: Mapping[str, Any], repo_root: Path
+) -> dict[str, Any]:
+    """Verify declared bytes both in the pinned commit and current checkout."""
+
+    bindings = _validate_source_bindings(value)
+    files = bindings["files"]
+    missing = REQUIRED_SOURCE_BINDING_FILES - set(files)
+    if missing:
+        raise DojoAIForwardError(
+            "AI operational source binding closure is incomplete: "
+            + ",".join(sorted(missing))
+        )
+    root = repo_root.resolve()
+    if not repo_root.is_dir() or repo_root.is_symlink():
+        raise DojoAIForwardError("AI source binding repo root is unsafe")
+    for relative, expected in files.items():
+        path = root / relative
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or root not in path.resolve().parents
+            or hashlib.sha256(path.read_bytes()).hexdigest() != expected
+        ):
+            raise DojoAIForwardError(f"AI current source binding drifted: {relative}")
+        completed = subprocess.run(
+            ["git", "show", f"{bindings['git_commit']}:{relative}"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if (
+            completed.returncode != 0
+            or hashlib.sha256(completed.stdout).hexdigest() != expected
+        ):
+            raise DojoAIForwardError(f"AI commit source binding drifted: {relative}")
+    return bindings
 
 
 def _seal(value: Mapping[str, Any], field: str) -> dict[str, Any]:

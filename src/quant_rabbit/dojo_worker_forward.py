@@ -779,6 +779,10 @@ def _validate_mechanics(value: Any) -> dict[str, Any]:
         ),
         "leverage": _number(source["leverage"], "leverage", positive=True),
     }
+    if not math.isclose(numeric["leverage"], 25.0, rel_tol=0, abs_tol=1e-12):
+        raise DojoWorkerForwardError(
+            "worker replay requires the VirtualBroker fixed 25x leverage"
+        )
     return {
         "pairs": normalized_pairs,
         "granularity": source["granularity"],
@@ -792,18 +796,21 @@ def _validate_mechanics(value: Any) -> dict[str, Any]:
 
 def _validate_source_bindings(value: Any) -> dict[str, Any]:
     source = _mapping(value, "source_bindings")
-    _exact_keys(
-        source,
-        {
-            "git_commit",
-            "runner_sha256",
-            "bot_module_sha256",
-            "bot_dependency_sha256",
-            "scorer_sha256",
-            "precommit_builder_sha256",
-        },
-        "source_bindings",
-    )
+    base_keys = {
+        "git_commit",
+        "runner_sha256",
+        "bot_module_sha256",
+        "bot_dependency_sha256",
+        "scorer_sha256",
+        "precommit_builder_sha256",
+    }
+    runtime_keys = {
+        "python_executable_path",
+        "python_executable_sha256",
+        "python_version",
+    }
+    if set(source) not in (base_keys, base_keys | runtime_keys):
+        raise DojoWorkerForwardError("source_bindings schema is not exact")
     git_commit = _git_oid_value(source["git_commit"], "git_commit")
     dependencies = _mapping(source["bot_dependency_sha256"], "bot dependencies")
     normalized_dependencies: dict[str, str] = {}
@@ -818,7 +825,7 @@ def _validate_source_bindings(value: Any) -> dict[str, Any]:
         normalized_dependencies[path] = _sha(digest, f"bot dependency {path}")
     if not normalized_dependencies:
         raise DojoWorkerForwardError("bot dependency closure cannot be empty")
-    return {
+    result = {
         "git_commit": git_commit,
         "runner_sha256": _sha(source["runner_sha256"], "runner_sha256"),
         "bot_module_sha256": _sha(source["bot_module_sha256"], "bot_module_sha256"),
@@ -828,6 +835,28 @@ def _validate_source_bindings(value: Any) -> dict[str, Any]:
             source["precommit_builder_sha256"], "precommit_builder_sha256"
         ),
     }
+    if runtime_keys.issubset(source):
+        executable = source["python_executable_path"]
+        version = source["python_version"]
+        if (
+            not isinstance(executable, str)
+            or not Path(executable).is_absolute()
+            or not executable
+            or not isinstance(version, str)
+            or not version
+        ):
+            raise DojoWorkerForwardError("Python runtime binding is invalid")
+        result.update(
+            {
+                "python_executable_path": executable,
+                "python_executable_sha256": _sha(
+                    source["python_executable_sha256"],
+                    "python_executable_sha256",
+                ),
+                "python_version": version,
+            }
+        )
+    return result
 
 
 def _validate_thresholds(value: Any) -> dict[str, Any]:

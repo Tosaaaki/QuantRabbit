@@ -1303,6 +1303,9 @@ class StrategyOwnershipRegistry:
         return value if isinstance(value, str) and value else None
 
     def _owner_for_event(self, event: str, payload: Mapping[str, Any]) -> str | None:
+        if event == "BOT_LOADED":
+            declared = self._identity(payload, "strategy_owner_id")
+            return declared if declared in self._owners else None
         if event == "PERIOD_END_SETTLEMENT":
             declared = self._identity(payload, "strategy_owner_id")
             return declared if declared in self._owners else None

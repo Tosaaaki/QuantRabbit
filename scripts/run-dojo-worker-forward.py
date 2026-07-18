@@ -17,13 +17,16 @@ sys.path.insert(0, str(REPO / "src"))
 from quant_rabbit.dojo_worker_forward import (  # noqa: E402
     audit_lifecycle,
     build_day_seal,
-    build_final_receipt,
     build_precommit,
     build_start_receipt,
     validate_precommit,
-    validate_result_manifest,
     validate_start_receipt,
     write_new_json,
+)
+from quant_rabbit.dojo_worker_execution import (  # noqa: E402
+    evaluate_derived_run,
+    verify_derived_run,
+    verify_source_bindings,
 )
 
 
@@ -60,6 +63,7 @@ def _load_parents(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def _precommit(args: argparse.Namespace) -> dict[str, Any]:
     artifact = build_precommit(_strict_json(args.spec), now_utc=_now())
+    verify_source_bindings(artifact, REPO)
     write_new_json(args.run_dir / "precommit.json", artifact)
     return artifact
 
@@ -90,25 +94,30 @@ def _seal_day(args: argparse.Namespace) -> dict[str, Any]:
     return receipt
 
 
-def _finalize(args: argparse.Namespace) -> dict[str, Any]:
-    precommit, start = _load_parents(args.run_dir)
-    days = [
-        _strict_json(path)
-        for path in sorted((args.run_dir / "days").glob("day-*.json"))
-    ]
-    normalized_results = validate_result_manifest(
-        _strict_json(args.result_manifest), precommit
-    )
-    receipt = build_final_receipt(
-        precommit,
-        start,
-        days,
-        normalized_results,
-        now_utc=_now(),
-    )
-    write_new_json(args.run_dir / "result-manifest.json", normalized_results)
-    write_new_json(args.run_dir / "final.json", receipt)
-    return receipt
+def _evaluate_derived(args: argparse.Namespace) -> dict[str, Any]:
+    return evaluate_derived_run(args.run_dir, repo_root=REPO, now_utc=_now())
+
+
+def _verify_derived(args: argparse.Namespace) -> dict[str, Any]:
+    return verify_derived_run(args.run_dir, repo_root=REPO)
+
+
+def _status(args: argparse.Namespace) -> dict[str, Any]:
+    status = audit_lifecycle(args.run_dir, now_utc=_now())
+    if (args.run_dir / "final.json").is_file():
+        try:
+            derived = verify_derived_run(args.run_dir, repo_root=REPO)
+        except (OSError, ValueError) as exc:
+            return {
+                **status,
+                "state": "INVALIDATED",
+                "blockers": [f"DERIVED_EVIDENCE_INVALID:{exc}"],
+                "proof_eligible": False,
+                "promotion_eligible": False,
+                "live_permission": False,
+            }
+        return {**status, "derived_verification": derived}
+    return status
 
 
 def main() -> int:
@@ -134,18 +143,23 @@ def main() -> int:
     seal_day.add_argument("--source-manifest", type=Path, required=True)
     seal_day.set_defaults(handler=_seal_day)
 
-    finalize = subparsers.add_parser(
-        "finalize", help="score all fixed candidates after the window matures"
+    evaluate = subparsers.add_parser(
+        "evaluate-derived",
+        help="run exact VirtualBroker cells and derive results from their ledgers",
     )
-    finalize.add_argument("--run-dir", type=Path, required=True)
-    finalize.add_argument("--result-manifest", type=Path, required=True)
-    finalize.set_defaults(handler=_finalize)
+    evaluate.add_argument("--run-dir", type=Path, required=True)
+    evaluate.set_defaults(handler=_evaluate_derived)
+
+    verify = subparsers.add_parser(
+        "verify-derived",
+        help="recompute every persisted source, ledger, score, and final receipt",
+    )
+    verify.add_argument("--run-dir", type=Path, required=True)
+    verify.set_defaults(handler=_verify_derived)
 
     status = subparsers.add_parser("status", help="audit without mutating evidence")
     status.add_argument("--run-dir", type=Path, required=True)
-    status.set_defaults(
-        handler=lambda args: audit_lifecycle(args.run_dir, now_utc=_now())
-    )
+    status.set_defaults(handler=_status)
 
     args = parser.parse_args()
     result = args.handler(args)

@@ -167,9 +167,16 @@ def _fetch_report(client: OandaReadOnlyClient) -> dict[str, Any]:
         for path in (
             "src/quant_rabbit/dojo_market_calendar.py",
             "src/quant_rabbit/dojo_worker_source.py",
+            "src/quant_rabbit/dojo_worker_execution.py",
+            "src/quant_rabbit/dojo_lab_provenance.py",
             "src/quant_rabbit/dojo_ai_forward.py",
             "src/quant_rabbit/dojo_ai_discretion.py",
+            "src/quant_rabbit/dojo_ai_truth.py",
             "src/quant_rabbit/broker/oanda.py",
+            "bots/lab_bot.py",
+            "scripts/run-virtual-market-session.py",
+            "scripts/run-dojo-worker-forward.py",
+            "scripts/run-dojo-ai-forward.py",
             "scripts/preflight-dojo-oanda-coverage.py",
         )
     }

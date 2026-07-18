@@ -53,6 +53,10 @@ PARTIAL_DAY_MINIMUM_COVERAGE = (80, 100)
 MAX_CONTIGUOUS_GAP = timedelta(minutes=15)
 BOUNDARY_TOLERANCE = timedelta(minutes=15)
 COVERAGE_POLICY = "OANDA_M1_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1"
+BASE_RECEIPT_LIMITATIONS = (
+    "UPSTREAM_HTTP_DATE_AND_EXTERNAL_WITNESS_ABSENT",
+    "DOJO_HAS_NO_LIVE_AUTHORITY",
+)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]+")
 _TIME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(0+))?Z")
@@ -459,13 +463,9 @@ def _collect_under_lock(
                 raise DojoWorkerSourceError(
                     "source response arrived after acquisition deadline"
                 )
-            # Validate before first-write capture so malformed transport output
-            # cannot poison the day's immutable namespace.
-            normalize_oanda_payload(
-                payload,
-                day_start=day_start,
-                day_end=day_end,
-            )
+            # The first finite JSON response is terminal for this ordinal.
+            # Capture it before semantic validation so a malformed/sparse
+            # response cannot be discarded and replaced by a later response.
             response_value = _snapshot(payload)
             capture_body = {
                 "contract": CAPTURE_CONTRACT,
@@ -559,11 +559,7 @@ def _collect_under_lock(
             "source_manifest_sha256": canonical_sha256(manifest),
             "source_manifest_relpath": _relative_text(manifest_path, run_dir),
             "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
-            "limitations": [
-                "SOURCE_PRODUCER_NOT_PRESENT_IN_ORIGINAL_PRECOMMIT",
-                "UPSTREAM_HTTP_DATE_AND_EXTERNAL_WITNESS_ABSENT",
-                "DOJO_HAS_NO_LIVE_AUTHORITY",
-            ],
+            "limitations": _receipt_limitations(precommit),
             "authority": _authority(),
         }
         receipt = {
@@ -730,6 +726,25 @@ def _coverage_policy() -> dict[str, Any]:
     }
 
 
+def _receipt_limitations(precommit: Mapping[str, Any]) -> list[str]:
+    dependencies = precommit["source_bindings"]["bot_dependency_sha256"]
+    producer_bound = all(
+        path in dependencies
+        for path in (
+            "src/quant_rabbit/broker/oanda.py",
+            "src/quant_rabbit/dojo_market_calendar.py",
+            "src/quant_rabbit/dojo_worker_forward.py",
+            "src/quant_rabbit/dojo_worker_source.py",
+            "scripts/collect-dojo-worker-day.py",
+            "scripts/oanda_history_fetch.py",
+        )
+    )
+    limitations = list(BASE_RECEIPT_LIMITATIONS)
+    if not producer_bound:
+        limitations.insert(0, "SOURCE_PRODUCER_NOT_PRESENT_IN_ORIGINAL_PRECOMMIT")
+    return limitations
+
+
 def _validate_capture(
     value: Mapping[str, Any],
     *,
@@ -843,6 +858,7 @@ def _validate_receipt_and_files(
         != f"source-evidence/day-{ordinal:03d}/source-manifest.json"
         or receipt["source_manifest_sha256"] != canonical_sha256(manifest)
         or receipt["evidence_tier"] != "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC"
+        or receipt["limitations"] != _receipt_limitations(precommit)
         or receipt["authority"] != _authority()
         or recorded < day_end + MINIMUM_MATURITY_DELAY
         or recorded > day_end + grace

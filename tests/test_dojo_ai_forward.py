@@ -30,6 +30,19 @@ from quant_rabbit.dojo_ai_forward import (
     validate_source_request,
 )
 from quant_rabbit.dojo_market_calendar import expected_oanda_fx_slots
+from quant_rabbit.dojo_ai_truth import (
+    DojoAITruthError,
+    build_phase_score as build_truth_phase_score,
+    build_day_score as build_truth_day_score,
+    build_truth_bundle,
+    build_truth_capture,
+    build_truth_request,
+    validate_day_score as validate_truth_day_score,
+    validate_phase_score as validate_truth_phase_score,
+    validate_truth_bundle_with_capture,
+    validate_truth_capture,
+    validate_truth_request,
+)
 from quant_rabbit.dojo_prompt_phase import LOCKED_VARIANT_PROMPT_SHA256
 
 
@@ -136,6 +149,34 @@ def decision(day: dict, cell_index: int = 0) -> dict:
         "strongest_counterargument": "A directional move may begin after cutoff.",
         "abstain_reason": "The sealed evidence is not decisive.",
     }
+
+
+def truth_response(precommit: dict, ordinal: int = 1) -> dict:
+    schedule = precommit["schedule"][ordinal - 1]
+    start = utc(schedule["decision_cutoff_utc"])
+    end = utc(schedule["truth_not_before_utc"]) - timedelta(minutes=2)
+    candles = []
+    for cursor in expected_oanda_fx_slots(start, end, step=timedelta(minutes=5)):
+        candles.append(
+            {
+                "complete": True,
+                "volume": 8,
+                "time": cursor.isoformat().replace("+00:00", "Z"),
+                "bid": {
+                    "o": "150.000",
+                    "h": "150.110",
+                    "l": "149.990",
+                    "c": "150.100",
+                },
+                "ask": {
+                    "o": "150.002",
+                    "h": "150.112",
+                    "l": "149.992",
+                    "c": "150.102",
+                },
+            }
+        )
+    return {"instrument": "USD_JPY", "granularity": "M5", "candles": candles}
 
 
 def test_precommit_freezes_exact_30_day_90_cell_schedule() -> None:
@@ -697,3 +738,191 @@ def test_phase_index_derives_exact_90_cell_denominator_after_truth_maturity() ->
     assert index["answer_keys_opened"] is False
     assert index["truth_scoring_present"] is False
     assert index["promotion_eligible"] is False
+
+
+def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> None:
+    precommit, start = lifecycle()
+    schedule = precommit["schedule"][0]
+    day = build_day_requests(
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        oanda_response(precommit),
+        ordinal=1,
+        now_utc=utc(schedule["source_not_before_utc"]),
+    )
+    terminals = [
+        build_cell_response_seal(
+            REGISTRY,
+            precommit,
+            start,
+            None,
+            day,
+            decision(day, index),
+            cell_id=cell["assignment"]["cell_id"],
+            now_utc=utc(schedule["source_not_before_utc"]),
+        )
+        for index, cell in enumerate(day["cells"])
+    ]
+    truth_time = utc(schedule["truth_not_before_utc"])
+    with pytest.raises(DojoAITruthError, match="all three"):
+        build_truth_request(precommit, day, terminals[:2], now_utc=truth_time)
+    request = build_truth_request(precommit, day, terminals, now_utc=truth_time)
+    assert validate_truth_request(request, precommit, day, terminals) == request
+    capture = build_truth_capture(
+        request, truth_response(precommit), acquired_at_utc=truth_time
+    )
+    assert validate_truth_capture(capture, request) == capture
+    bundle = build_truth_bundle(
+        precommit, day, terminals, capture, sealed_at_utc=truth_time
+    )
+    assert (
+        validate_truth_bundle_with_capture(
+            bundle, precommit, day, terminals, capture
+        )
+        == bundle
+    )
+    assert bundle["truth_semantics"] == "FIXED_24H_DIRECTION_AND_SIZE_ONLY"
+    assert bundle["coverage"]["exact_entry_boundary_present"] is True
+    assert bundle["coverage"]["exact_exit_boundary_present"] is True
+    assert bundle["returns"]["FLAT"] == 0.0
+    assert bundle["returns"]["LONG_FULL"] > 0.0
+    assert bundle["returns"]["SHORT_FULL"] < 0.0
+    assert len(bundle["answer_keys"]) == 3
+    day_score = build_truth_day_score(
+        precommit,
+        day,
+        terminals,
+        capture,
+        bundle,
+        scored_at_utc=truth_time,
+    )
+    assert (
+        validate_truth_day_score(
+            day_score, precommit, day, terminals, capture, bundle
+        )
+        == day_score
+    )
+    assert {row["return_key"] for row in day_score["cell_results"]} == {"FLAT"}
+    assert all(row["net_return"] == 0.0 for row in day_score["cell_results"])
+
+
+def test_truth_first_capture_is_terminal_and_exact_boundaries_fail_closed() -> None:
+    precommit, start = lifecycle()
+    schedule = precommit["schedule"][0]
+    day = build_day_requests(
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        oanda_response(precommit),
+        ordinal=1,
+        now_utc=utc(schedule["source_not_before_utc"]),
+    )
+    terminals = [
+        build_cell_response_seal(
+            REGISTRY,
+            precommit,
+            start,
+            None,
+            day,
+            decision(day, index),
+            cell_id=cell["assignment"]["cell_id"],
+            now_utc=utc(schedule["source_not_before_utc"]),
+        )
+        for index, cell in enumerate(day["cells"])
+    ]
+    truth_time = utc(schedule["truth_not_before_utc"])
+    request = build_truth_request(precommit, day, terminals, now_utc=truth_time)
+    sparse = truth_response(precommit)
+    sparse["candles"] = sparse["candles"][1:]
+    capture = build_truth_capture(request, sparse, acquired_at_utc=truth_time)
+    assert capture["response"] == sparse
+    with pytest.raises(DojoAITruthError, match="exact entry or exit boundary"):
+        build_truth_bundle(
+            precommit, day, terminals, capture, sealed_at_utc=truth_time
+        )
+
+
+def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
+    precommit, start = lifecycle()
+    first_schedule = precommit["schedule"][0]
+    first_day = build_day_requests(
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        oanda_response(precommit),
+        ordinal=1,
+        now_utc=utc(first_schedule["source_not_before_utc"]),
+    )
+    terminals = [
+        build_cell_response_seal(
+            REGISTRY,
+            precommit,
+            start,
+            None,
+            first_day,
+            decision(first_day, index),
+            cell_id=cell["assignment"]["cell_id"],
+            now_utc=utc(first_schedule["source_not_before_utc"]),
+        )
+        for index, cell in enumerate(first_day["cells"])
+    ]
+    truth_time = utc(first_schedule["truth_not_before_utc"])
+    request = build_truth_request(precommit, first_day, terminals, now_utc=truth_time)
+    capture = build_truth_capture(
+        request, truth_response(precommit), acquired_at_utc=truth_time
+    )
+    bundle = build_truth_bundle(
+        precommit, first_day, terminals, capture, sealed_at_utc=truth_time
+    )
+    day_score = build_truth_day_score(
+        precommit,
+        first_day,
+        terminals,
+        capture,
+        bundle,
+        scored_at_utc=truth_time,
+    )
+    days = [first_day]
+    previous = first_day
+    for ordinal in range(2, 31):
+        schedule = precommit["schedule"][ordinal - 1]
+        previous = build_missing_day_seal(
+            precommit,
+            start,
+            previous,
+            ordinal=ordinal,
+            now_utc=utc(schedule["source_seal_deadline_utc"])
+            + timedelta(seconds=1),
+        )
+        days.append(previous)
+    phase_time = utc(precommit["schedule"][-1]["truth_not_before_utc"])
+    index = build_phase_index(
+        REGISTRY,
+        precommit,
+        start,
+        days,
+        terminals,
+        now_utc=phase_time,
+    )
+    phase = build_truth_phase_score(
+        precommit, index, days, [day_score], sealed_at_utc=phase_time
+    )
+    assert phase["allocated_cell_count"] == 90
+    assert phase["valid_response_cell_count"] == 3
+    assert phase["response_failure_cell_count"] == 87
+    assert len(phase["cell_results"]) == 90
+    assert phase["goal_status"] == "3X_NOT_REACHABLE"
+    assert phase["prompt_selection_allowed"] is False
+    assert phase["effective_independent_n"] == 0
+    assert (
+        validate_truth_phase_score(phase, precommit, index, days, [day_score])
+        == phase
+    )
+    forged = copy.deepcopy(phase)
+    forged["best_calendar_30d_multiple"] = 3.0
+    with pytest.raises(DojoAITruthError, match="digest"):
+        validate_truth_phase_score(forged, precommit, index, days, [day_score])

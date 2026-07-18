@@ -22,6 +22,25 @@ REPO = Path(__file__).resolve().parents[1]
 FORWARD_RUN = REPO / "research/forward/dojo-worker-forward-smoke-v1"
 
 
+@pytest.fixture(autouse=True)
+def isolate_legacy_precommit_from_worktree_bytes(monkeypatch) -> None:
+    """Exercise collector semantics without reviving the superseded V1 pin."""
+
+    digest = "a" * 64
+    monkeypatch.setattr(
+        worker_source,
+        "_pinned_source_checks",
+        lambda *args: [
+            {
+                "path": "legacy-test-binding",
+                "current_sha256": digest,
+                "precommit_commit_sha256": digest,
+                "matches_precommit_commit": True,
+            }
+        ],
+    )
+
+
 def utc(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
 
@@ -201,6 +220,40 @@ def test_response_crossing_deadline_is_not_backdated(tmp_path: Path) -> None:
             client=client,
             repo_root=REPO,
             clock=lambda: next(clocks),
+        )
+    assert len(client.calls) == 1
+
+
+def test_first_invalid_response_is_captured_and_cannot_be_refetched(
+    tmp_path: Path,
+) -> None:
+    run_dir = make_run(tmp_path)
+    invalid = payload(candle("2026-07-20T00:00:00Z"))
+    client = FakeClient(invalid)
+    with pytest.raises(DojoWorkerSourceError, match="coverage floor"):
+        collect_and_seal_day(
+            run_dir,
+            ordinal=1,
+            client=client,
+            now_utc=utc("2026-07-21T00:02:00Z"),
+            repo_root=REPO,
+        )
+    assert len(client.calls) == 1
+    capture = json.loads(
+        (run_dir / "source-evidence/day-001/capture.json").read_text()
+    )
+    assert capture["response"] == invalid
+
+    client.response = complete_payload(
+        "2026-07-20T00:00:00Z", "2026-07-21T00:00:00Z"
+    )
+    with pytest.raises(DojoWorkerSourceError, match="coverage floor"):
+        collect_and_seal_day(
+            run_dir,
+            ordinal=1,
+            client=client,
+            now_utc=utc("2026-07-21T00:03:00Z"),
+            repo_root=REPO,
         )
     assert len(client.calls) == 1
 
