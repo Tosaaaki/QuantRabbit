@@ -46,7 +46,8 @@ class Bot:
         cfg = json.loads(os.environ["DOJO_BOT_CONFIG"])
         self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
-        self.tp_pips = float(cfg["tp_pips"])
+        self.tp_pips = float(cfg.get("tp_pips", 0) or 0)
+        self.tp_atr = cfg.get("tp_atr")  # scale-free take: TP = tp_atr x ATR
         self.sl_pips = cfg.get("sl_pips")
         self.ceiling_s = int(cfg["ceiling_min"]) * 60
         self.max_concurrent = int(cfg.get("max_concurrent", 3))
@@ -141,6 +142,10 @@ class Bot:
             return max(equity, 0.0) * self.per_pos_lev / jpy_per_unit
 
         digits = 3 if pair.endswith("JPY") else 5
+        tp_pips = (float(self.tp_atr) * atr_pips) if self.tp_atr else self.tp_pips
+        spread_pips = (bar["ask_c"] - bar["bid_c"]) / pip
+        if tp_pips <= 0 or spread_pips > tp_pips * 0.35:
+            return  # habitat gate: cost must stay well under the take
 
         if self.signal == "burst":
             if open_n >= self.max_concurrent or prior_h3 is None:
@@ -154,7 +159,7 @@ class Bot:
                 return
             try:
                 tid = self.broker.market_order(
-                    pair, trend, units, tp_pips=self.tp_pips, sl_pips=self.sl_pips)
+                    pair, trend, units, tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_trades[tid] = epoch
                 self._owner[tid] = pair
             except VirtualBrokerError:
@@ -177,7 +182,7 @@ class Bot:
             try:
                 oid = self.broker.limit_order(
                     pair, trend, units, price=round(price, digits),
-                    tp_pips=self.tp_pips, sl_pips=self.sl_pips)
+                    tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_orders = [oid]
             except VirtualBrokerError:
                 pass
@@ -200,7 +205,7 @@ class Bot:
                 try:
                     oid = self.broker.limit_order(
                         pair, side, units, price=round(price, digits),
-                        tp_pips=self.tp_pips, sl_pips=self.sl_pips)
+                        tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders.append(oid)
                 except VirtualBrokerError:
                     pass

@@ -121,16 +121,27 @@ class VirtualBroker:
 
     # ---- conversion / accounting ----------------------------------------
     def _jpy_per_quote_unit(self, pair: str) -> float:
-        """JPY value of one quote-currency unit."""
+        """JPY value of one quote-currency unit, derived only from quotes
+        the broker has actually seen (no synthetic rates)."""
 
-        if pair.endswith("JPY"):
+        quote_ccy = pair.split("_")[1]
+        if quote_ccy == "JPY":
             return 1.0
         usdjpy = self.last_quotes.get("USD_JPY")
         if usdjpy is None:
             raise VirtualBrokerError("USD_JPY quote required for JPY conversion")
-        if pair.endswith("USD"):
-            return (usdjpy[0] + usdjpy[1]) / 2.0
-        raise VirtualBrokerError(f"unsupported quote currency: {pair}")
+        usdjpy_mid = (usdjpy[0] + usdjpy[1]) / 2.0
+        if quote_ccy == "USD":
+            return usdjpy_mid
+        direct = self.last_quotes.get(f"{quote_ccy}_JPY")
+        if direct is not None:
+            return (direct[0] + direct[1]) / 2.0
+        via_usd = self.last_quotes.get(f"USD_{quote_ccy}")
+        if via_usd is not None:
+            mid = (via_usd[0] + via_usd[1]) / 2.0
+            if mid > 0:
+                return usdjpy_mid / mid
+        raise VirtualBrokerError(f"no conversion path for quote currency {quote_ccy}")
 
     def _position_pl_jpy(self, pos: VBPosition, bid: float, ask: float) -> float:
         mark = bid if pos.side == "LONG" else ask
@@ -324,6 +335,7 @@ class VirtualBroker:
             del self.orders[order_id]
             event = {
                 "event": "FILL_LIMIT", "order_id": order_id, "trade_id": trade_id,
+                "pair": pair, "side": order.side, "units": order.units,
                 "price": filled_price, "quote": {"bid": bid, "ask": ask, "ts": ts},
             }
             self._log("FILL_LIMIT", event)
