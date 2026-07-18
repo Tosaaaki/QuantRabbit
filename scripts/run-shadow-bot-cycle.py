@@ -31,6 +31,7 @@ from typing import Any
 from quant_rabbit.market_conditions_reader import read_market_conditions
 from quant_rabbit.regime_classifier_shadow import classify_regime
 from quant_rabbit.regime_family_router import build_family_catalog
+from quant_rabbit.worker_arsenal import WorkerArsenal, WorkerSpec
 from quant_rabbit.shadow_trading_brain import (
     LAYER2_SHADOW_SOURCE,
     run_shadow_brain_cycle,
@@ -79,8 +80,11 @@ def _demo_inputs(now: datetime) -> dict[str, Any]:
         drift = 0.0004 * (1 if index % 2 == 0 else -1)
         base = 1.10 + index * 0.2
         closes = [base + i * drift * (1.4 if i % 2 else 1.0) for i in range(140)]
+        pip = 0.01 if pair.endswith("JPY") else 0.0001
+        half_spread = 0.6 * pip
         panel[pair] = [
-            {"time": start + timedelta(minutes=i), "close": c}
+            {"time": start + timedelta(minutes=i), "close": c,
+             "bid_close": c - half_spread, "ask_close": c + half_spread}
             for i, c in enumerate(closes)
         ]
     sha = "a" * 64
@@ -168,6 +172,63 @@ def main() -> int:
                 inputs["panel"][pair], as_of_utc=now
             )
 
+    # ---- worker arsenal arming (W40) ----------------------------------
+    arsenal_path = Path("research/data/worker_arsenal_contract_v1.json")
+    arm_decisions_out: list[dict[str, Any]] = []
+    arsenal_contract_sha = None
+    if arsenal_path.exists():
+        arsenal_doc = json.loads(arsenal_path.read_text(encoding="utf-8"))
+        check = {k: v for k, v in arsenal_doc.items() if k != "contract_sha256"}
+        if _canonical_sha(check) != arsenal_doc.get("contract_sha256"):
+            raise ValueError("worker arsenal contract digest invalid")
+        arsenal_contract_sha = arsenal_doc["contract_sha256"]
+        # Declared runtime protections per entry style (documented mapping;
+        # numeric protections move into contract v2).
+        style_defaults = {
+            "MARKET": {"max_concurrent": 3, "time_stop_minutes": 60, "per_position_leverage": 4.3},
+            "LIMIT_PASSIVE": {"max_concurrent": 5, "time_stop_minutes": 240, "per_position_leverage": 0.9},
+        }
+        arsenal = WorkerArsenal()
+        for w in arsenal_doc["workers"]:
+            d = style_defaults[w["entry_style"]]
+            arsenal.register(WorkerSpec(
+                worker_id=w["worker_id"], cell=w["cell"],
+                pairs=tuple(w["pairs"]), max_spread_pips=float(w["max_spread_pips"]),
+                entry_style=w["entry_style"], kill_switch="per contract",
+                **d,
+            ))
+        arsenal.ai_heartbeat(now)
+        # spreads measured from the panel's last candle (ask - bid at close)
+        spreads: dict[str, float] = {}
+        for pair, candles in inputs["panel"].items():
+            last = candles[-1]
+            bid = last.get("bid_close")
+            ask = last.get("ask_close")
+            if bid is not None and ask is not None:
+                pip = 0.01 if pair.endswith("JPY") else 0.0001
+                spreads[pair] = round((float(ask) - float(bid)) / pip, 2)
+        # Measure every panel pair (worker habitats are wider than the
+        # candidate list) and arm each worker-pair on ITS pair's cell.
+        measured_all: dict[str, Any] = dict(measured_by_pair)
+        for pair, candles in inputs["panel"].items():
+            if pair not in measured_all:
+                try:
+                    measured_all[pair] = classify_regime(candles, as_of_utc=now)
+                except Exception:
+                    continue  # unmeasured pair stays unmeasured -> disarmed
+        for pair, measured in measured_all.items():
+            cell = f"{measured['regime']}_{measured['vol_state']}"
+            if measured["regime"] in ("UNCLEAR", "EVENT"):
+                cell = measured["regime"]
+            for d in arsenal.arm_cycle(now=now, measured_cell=cell,
+                                       spreads_pips=spreads):
+                if d.pair == pair:
+                    arm_decisions_out.append({
+                        "worker_id": d.worker_id, "pair": d.pair,
+                        "measured_cell": cell, "armed": d.armed,
+                        "reason": d.reason,
+                    })
+
     first_pair = str(inputs["candidates"][0]["pair"]).upper() if inputs["candidates"] else None
     cycle = run_shadow_brain_cycle(
         cycle_id=inputs["cycle_id"],
@@ -200,6 +261,10 @@ def main() -> int:
             "snapshot_sha256": conditions["snapshot_sha256"],
         },
         "brain_cycle": cycle,
+        "worker_arsenal": {
+            "contract_sha256": arsenal_contract_sha,
+            "arm_decisions": arm_decisions_out,
+        },
         "mode": "DEMO" if args.demo else "INPUTS",
         "live_wiring_owner": "CODEX",
         "shadow_only": True,
@@ -223,6 +288,7 @@ def main() -> int:
                 "board_reading": conditions["board_reading"],
                 "dominant_theme": conditions["dominant_theme"],
                 "admitted": cycle["admitted_candidate_count"],
+                "armed_workers": sorted({d["worker_id"] for d in arm_decisions_out if d["armed"]}),
                 "candidates": [
                     {"pair": r["pair"], "admitted": r["admitted"], "reasons": r["refusal_reasons"], "risk": r["shadow_risk_fraction"]}
                     for r in cycle["candidate_rows"]
