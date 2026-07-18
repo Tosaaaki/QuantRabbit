@@ -180,7 +180,13 @@ def _process_inbox(session_dir: Path, broker: VirtualBroker) -> int:
     done = inbox / "processed"
     done.mkdir(parents=True, exist_ok=True)
     handled = 0
+    now = time_mod.time()
     for path in sorted(inbox.glob("*.json")):
+        try:
+            if now - path.stat().st_mtime < 0.5:
+                continue  # writer may still be mid-write; pick up next tick
+        except OSError:
+            continue
         try:
             action = json.loads(path.read_text())
             kind = action.get("action")
@@ -216,12 +222,13 @@ def _process_inbox(session_dir: Path, broker: VirtualBroker) -> int:
     return handled
 
 
-def run_live(args, broker: VirtualBroker, session_dir: Path) -> None:
+def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
     client = OandaReadOnlyClient()
     pairs = args.pairs.split(",")
     deadline = time_mod.time() + args.minutes * 60.0
+    live_bars: dict[str, dict] = {}
     while time_mod.time() < deadline:
         now = datetime.now(UTC)
         if not compute_market_status(now).is_fx_open:
@@ -246,34 +253,58 @@ def run_live(args, broker: VirtualBroker, session_dir: Path) -> None:
             continue
         for pair, q in quotes.items():
             broker.on_quote(pair, q.bid, q.ask, q.timestamp_utc.isoformat())
+            minute = int(now.timestamp() // 60) * 60
+            bar = live_bars.get(pair)
+            if bar is not None and bar["epoch"] != minute:
+                if bot is not None:
+                    bot.on_bar_closed(pair, bar, bar["epoch"])
+                bar = None
+            if bar is None:
+                live_bars[pair] = {"epoch": minute,
+                                   "bid_o": q.bid, "bid_h": q.bid, "bid_l": q.bid, "bid_c": q.bid,
+                                   "ask_o": q.ask, "ask_h": q.ask, "ask_l": q.ask, "ask_c": q.ask}
+            else:
+                bar["bid_h"] = max(bar["bid_h"], q.bid); bar["bid_l"] = min(bar["bid_l"], q.bid)
+                bar["ask_h"] = max(bar["ask_h"], q.ask); bar["ask_l"] = min(bar["ask_l"], q.ask)
+                bar["bid_c"] = q.bid; bar["ask_c"] = q.ask
         _process_inbox(session_dir, broker)
         _write_state(session_dir, broker, now.isoformat(), "live")
         time_mod.sleep(POLL_SECONDS)
 
 
-def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str, time_to: str):
-    """Merge pairs' M1 bars in time order; yield (epoch, pair, bid, ask, phase)."""
+def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
+                        time_to: str, intrabar: str = "OHLC"):
+    """Merge pairs' M1 bars in time order; yield (epoch, pair, bid, ask, phase).
 
-    rows = []
-    for pair in pairs:
-        for shard in sorted(root.glob(f"*/{pair}/{pair}_M1_BA_*.jsonl.gz")):
-            with gzip.open(shard, "rt", encoding="utf-8") as handle:
-                for line in handle:
-                    row = json.loads(line)
-                    stamp = row["time"][:19]
-                    if not (time_from <= stamp < time_to):
-                        continue
-                    epoch = int(datetime.fromisoformat(stamp + "+00:00").timestamp())
-                    rows.append((epoch, pair, row))
-    rows.sort(key=lambda r: (r[0], r[1]))
-    seen = set()
-    for epoch, pair, row in rows:
-        if (epoch, pair) in seen:
-            continue
-        seen.add((epoch, pair))
-        b, a = row["bid"], row["ask"]
-        for phase, key in (("O", "o"), ("H", "h"), ("L", "l"), ("C", "c")):
-            yield epoch, pair, float(b[key]), float(a[key]), phase
+    Streams year by year so full-history sessions stay in bounded memory.
+    ``intrabar`` declares the synthetic intrabar path (the true tick path
+    is unknown): OHLC favors longs' TP on both-touch bars, OLHC favors
+    shorts'/SL — run both to bracket ambiguous outcomes.
+    """
+
+    phase_keys = {"OHLC": (("O", "o"), ("H", "h"), ("L", "l"), ("C", "c")),
+                  "OLHC": (("O", "o"), ("L", "l"), ("H", "h"), ("C", "c"))}[intrabar]
+    for year in range(int(time_from[:4]), int(time_to[:4]) + 1):
+        rows = []
+        for pair in pairs:
+            for shard in sorted(root.glob(f"*/{pair}/{pair}_M1_BA_{year}*.jsonl.gz")):
+                with gzip.open(shard, "rt", encoding="utf-8") as handle:
+                    for line in handle:
+                        row = json.loads(line)
+                        stamp = row["time"][:19]
+                        if not (time_from <= stamp < time_to):
+                            continue
+                        epoch = int(datetime.fromisoformat(stamp + "+00:00").timestamp())
+                        rows.append((epoch, pair, row))
+        rows.sort(key=lambda r: (r[0], r[1]))
+        seen = set()
+        for epoch, pair, row in rows:
+            if (epoch, pair) in seen:
+                continue
+            seen.add((epoch, pair))
+            b, a = row["bid"], row["ask"]
+            for phase, key in phase_keys:
+                yield epoch, pair, float(b[key]), float(a[key]), phase
 
 
 def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
@@ -284,7 +315,7 @@ def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None
     current_epoch = None
     pending_bars: dict[str, dict] = {}
     for epoch, pair, bid, ask, phase in _iter_replay_quotes(
-            root, pairs, args.time_from, args.time_to):
+            root, pairs, args.time_from, args.time_to, args.intrabar):
         boundary = epoch != current_epoch
         if boundary and current_epoch is not None and bot is not None:
             # previous bar(s) are complete NOW, before the new bar's O
@@ -340,7 +371,13 @@ def main() -> int:
     parser.add_argument("--step", action="store_true",
                         help="replay: advance one bar per inbox/STEP file")
     parser.add_argument("--bot", choices=["golden_burst", "golden_burst_blindspread"], default=None,
-                        help="run a worker bot inside the session (same broker/ledger)")
+                        help="built-in worker bot (same broker/ledger)")
+    parser.add_argument("--bot-module", default=None,
+                        help="path to ANY bot file: <file.py>[:ClassName]; the class "
+                             "takes (broker) and implements on_bar_closed(pair, bar, epoch)")
+    parser.add_argument("--intrabar", choices=["OHLC", "OLHC"], default="OHLC",
+                        help="declared synthetic intrabar path; run both to bracket "
+                             "both-touch ambiguity")
     args = parser.parse_args()
 
     session_dir = args.session_dir
@@ -362,9 +399,20 @@ def main() -> int:
         # live-faithful configuration: the 2025-12 live worker's spread
         # monitor supplied nothing, so its gate never saw the spread
         bot = GoldenBurstBot(broker, blind_spread=True)
+    elif args.bot_module:
+        import importlib.util as _ilu
+        spec_str = args.bot_module
+        module_path, _, class_name = spec_str.partition(":")
+        _spec = _ilu.spec_from_file_location("dojo_custom_bot", module_path)
+        _mod = _ilu.module_from_spec(_spec)
+        sys.modules["dojo_custom_bot"] = _mod
+        _spec.loader.exec_module(_mod)
+        bot_cls = getattr(_mod, class_name or "Bot")
+        bot = bot_cls(broker)
+        broker._log("BOT_LOADED", {"module": module_path, "class": class_name or "Bot"})
     try:
         if args.feed == "live":
-            run_live(args, broker, session_dir)
+            run_live(args, broker, session_dir, bot=bot)
         else:
             run_replay(args, broker, session_dir, bot=bot)
     finally:
