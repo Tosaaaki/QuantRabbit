@@ -43,9 +43,9 @@ class _PairState:
 
 
 class Bot:
-    def __init__(self, broker: VirtualBroker):
+    def __init__(self, broker: VirtualBroker, cfg: dict | None = None):
         self.broker = broker
-        cfg = json.loads(os.environ["DOJO_BOT_CONFIG"])
+        cfg = cfg or json.loads(os.environ["DOJO_BOT_CONFIG"])
         self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
         self.tp_pips = float(cfg.get("tp_pips", 0) or 0)
