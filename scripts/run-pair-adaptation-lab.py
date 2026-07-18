@@ -54,6 +54,19 @@ def base_cfg(pair: str, geo: dict) -> dict:
     }
 
 
+def feed_pairs(pair: str) -> str:
+    """Target pair plus the conversion-rate feed pairs the broker needs.
+    (W51 bug: without these, non-JPY/USD-quote pairs silently never size.)"""
+
+    quote = pair.split("_")[1]
+    feeds = [pair]
+    if quote != "JPY":
+        feeds.append("USD_JPY")
+        if quote != "USD" and f"{quote}_JPY" != pair:
+            feeds.append(f"{quote}_JPY")
+    return ",".join(dict.fromkeys(feeds))
+
+
 def run(pair: str, cfg: dict, window: tuple[str, str], tag: str,
         s5: bool = False, hardened: bool = False) -> dict:
     out = Path(os.environ.get("LAB_OUT", "/tmp")) / f"pa_{tag}"
@@ -66,7 +79,7 @@ def run(pair: str, cfg: dict, window: tuple[str, str], tag: str,
     env["PYTHONPATH"] = str(REPO / "src")
     cmd = [PY, str(REPO / "scripts/run-virtual-market-session.py"),
            "--feed", "replay", "--session-dir", str(session),
-           "--pairs", pair, "--from", window[0], "--to", window[1],
+           "--pairs", feed_pairs(pair), "--from", window[0], "--to", window[1],
            "--bars-per-second", "100000", "--state-every", "100000",
            "--fast-ledger", "--bot-module", str(REPO / "bots/lab_bot.py") + ":Bot"]
     if s5:
@@ -114,7 +127,9 @@ def main() -> int:
         row.update({"phase": 1, "pair": pair})
         board.append(row)
         print(json.dumps(row, ensure_ascii=False), flush=True)
-        if (row.get("net_jpy") or -10**9) > -20_000:
+        if row.get("trades") == 0:
+            row["warning"] = "ZERO_TRADES"
+        if (row.get("net_jpy") or -10**9) > -20_000 and (row.get("trades") or 0) > 0:
             phase1_pass.append(pair)
 
     candidates = sorted(set(phase1_pass) | set(S5_SCREEN_POSITIVE))
