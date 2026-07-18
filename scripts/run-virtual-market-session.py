@@ -52,6 +52,104 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from quant_rabbit.analysis.market_status import compute_market_status
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
+
+class GoldenBurstBot:
+    """Worker bot living INSIDE the virtual session: same broker, same
+    fill engine, same ledger as the duty agent.  Runs the vendored
+    golden-day MomentumBurst with arsenal protections (max 3 concurrent,
+    4h hard ceiling).  Sizing: NAV-proportional 4.3x per position."""
+
+    WARMUP = 40
+    MAX_CONCURRENT = 3
+    CEILING_S = 4 * 3600
+    PAIR = "USD_JPY"
+
+    def __init__(self, broker: VirtualBroker, blind_spread: bool = False):
+        import importlib.util
+        from types import ModuleType
+        vendor = REPO_ROOT / "vendored" / "golden_20251209"
+
+        def load(name, path):
+            spec = importlib.util.spec_from_file_location(name, path)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+
+        pkg = ModuleType("analysis"); pkg.__path__ = []
+        sys.modules["analysis"] = pkg
+        pkg.ma_projection = load("analysis.ma_projection", vendor / "analysis_ma_projection.py")
+        self.calc_core = load("golden_calc_core", vendor / "indicators_calc_core.py")
+        self.strategy = load("golden_momentum_burst", vendor / "strategies_micro_momentum_burst.py").MomentumBurstMicro
+        self.broker = broker
+        self.blind_spread = blind_spread
+        self.bars: list[dict] = []
+        self.my_trades: dict[str, float] = {}  # trade_id -> entry_epoch
+
+    def on_bar_closed(self, pair: str, bar: dict, bar_epoch: int) -> None:
+        if pair != self.PAIR:
+            return
+        self.bars.append(bar)
+        if len(self.bars) > 2000:
+            self.bars.pop(0)
+        # ceiling exits for my open trades
+        for trade_id in list(self.my_trades):
+            if trade_id not in self.broker.positions:
+                del self.my_trades[trade_id]
+                continue
+            if bar_epoch - self.my_trades[trade_id] >= self.CEILING_S:
+                try:
+                    self.broker.close_trade(trade_id)
+                except VirtualBrokerError:
+                    pass
+                del self.my_trades[trade_id]
+        if len(self.bars) < self.WARMUP:
+            return
+        live_mine = [t for t in self.my_trades if t in self.broker.positions]
+        if len(live_mine) >= self.MAX_CONCURRENT:
+            return
+        import pandas as pd
+        mid_c = pd.Series([(b["bid_c"] + b["ask_c"]) / 2 for b in self.bars])
+        mid_h = pd.Series([(b["bid_h"] + b["ask_h"]) / 2 for b in self.bars])
+        mid_l = pd.Series([(b["bid_l"] + b["ask_l"]) / 2 for b in self.bars])
+        ma10 = mid_c.rolling(10, min_periods=10).mean().iloc[-1]
+        ma20 = mid_c.rolling(20, min_periods=20).mean().iloc[-1]
+        ema20 = mid_c.ewm(span=20, adjust=False, min_periods=20).mean().iloc[-1]
+        vol_5m = (mid_c.diff().abs().rolling(5, min_periods=5).mean() / 0.01).iloc[-1]
+        rsi = self.calc_core._rsi(mid_c, 14).iloc[-1]
+        atr = self.calc_core._atr(mid_h, mid_l, mid_c, 14).iloc[-1]
+        adx = self.calc_core._adx(mid_h, mid_l, mid_c, 14).iloc[-1]
+        if any(pd.isna(v) for v in (ma10, ma20, ema20, vol_5m, rsi, atr, adx)):
+            return
+        last = self.bars[-1]
+        fac = {
+            "close": float(mid_c.iloc[-1]),
+            "ma10": float(ma10), "ma20": float(ma20), "ema20": float(ema20),
+            "rsi": float(rsi), "atr": float(atr), "adx": float(adx),
+            "vol_5m": float(vol_5m),
+            "spread_pips": 0.0 if self.blind_spread else (last["ask_c"] - last["bid_c"]) / 0.01,
+            "candles": [
+                {"high": (b["bid_h"] + b["ask_h"]) / 2, "low": (b["bid_l"] + b["ask_l"]) / 2,
+                 "open": (b["bid_o"] + b["ask_o"]) / 2, "close": (b["bid_c"] + b["ask_c"]) / 2}
+                for b in self.bars[-4:]
+            ],
+        }
+        signal = self.strategy.check(fac)
+        if not signal or signal.get("action") not in {"OPEN_LONG", "OPEN_SHORT"}:
+            return
+        side = "LONG" if signal["action"] == "OPEN_LONG" else "SHORT"
+        try:
+            acct = self.broker.account()
+            units = max(acct["equity_jpy"], 0.0) * 4.3 / fac["close"]
+            if units <= 0:
+                return
+            trade_id = self.broker.market_order(
+                self.PAIR, side, units,
+                tp_pips=float(signal["tp_pips"]), sl_pips=float(signal["sl_pips"]))
+            self.my_trades[trade_id] = bar_epoch
+        except VirtualBrokerError:
+            return
+
 UTC = timezone.utc
 POLL_SECONDS = 5.0
 STALE_QUOTE_MAX_S = 90.0
@@ -178,14 +276,32 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str, time_to: s
             yield epoch, pair, float(b[key]), float(a[key]), phase
 
 
-def run_replay(args, broker: VirtualBroker, session_dir: Path) -> None:
+def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     pairs = args.pairs.split(",")
     root = Path(args.corpus_root)
     bar_sleep = 1.0 / max(args.bars_per_second, 0.01)
     step_file = session_dir / "inbox" / "STEP"
     current_epoch = None
+    pending_bars: dict[str, dict] = {}
     for epoch, pair, bid, ask, phase in _iter_replay_quotes(
             root, pairs, args.time_from, args.time_to):
+        boundary = epoch != current_epoch
+        if boundary and current_epoch is not None and bot is not None:
+            # previous bar(s) are complete NOW, before the new bar's O
+            # quote overwrites pending_bars
+            for bpair, bbar in list(pending_bars.items()):
+                if bbar["epoch"] == current_epoch:
+                    bot.on_bar_closed(bpair, bbar, current_epoch)
+        if phase == "O":
+            pending_bars[pair] = {"bid_o": bid, "ask_o": ask, "bid_h": bid, "bid_l": bid,
+                                  "ask_h": ask, "ask_l": ask, "bid_c": bid, "ask_c": ask,
+                                  "epoch": epoch}
+        else:
+            pb = pending_bars.get(pair)
+            if pb is not None:
+                pb["bid_h"] = max(pb["bid_h"], bid); pb["bid_l"] = min(pb["bid_l"], bid)
+                pb["ask_h"] = max(pb["ask_h"], ask); pb["ask_l"] = min(pb["ask_l"], ask)
+                pb["bid_c"] = bid; pb["ask_c"] = ask
         if epoch != current_epoch:
             # bar boundary: let the agent act, pace the clock
             if current_epoch is not None:
@@ -223,6 +339,8 @@ def main() -> int:
     parser.add_argument("--bars-per-second", type=float, default=20.0)
     parser.add_argument("--step", action="store_true",
                         help="replay: advance one bar per inbox/STEP file")
+    parser.add_argument("--bot", choices=["golden_burst", "golden_burst_blindspread"], default=None,
+                        help="run a worker bot inside the session (same broker/ledger)")
     args = parser.parse_args()
 
     session_dir = args.session_dir
@@ -237,11 +355,18 @@ def main() -> int:
         "feed": args.feed, "pairs": args.pairs, "balance": broker.balance_jpy,
         "order_authority": "NONE",
     })
+    bot = None
+    if args.bot == "golden_burst":
+        bot = GoldenBurstBot(broker)
+    elif args.bot == "golden_burst_blindspread":
+        # live-faithful configuration: the 2025-12 live worker's spread
+        # monitor supplied nothing, so its gate never saw the spread
+        bot = GoldenBurstBot(broker, blind_spread=True)
     try:
         if args.feed == "live":
             run_live(args, broker, session_dir)
         else:
-            run_replay(args, broker, session_dir)
+            run_replay(args, broker, session_dir, bot=bot)
     finally:
         tmp = session_dir / ".broker_snapshot.json.tmp"
         tmp.write_text(json.dumps(broker.snapshot(), ensure_ascii=False, sort_keys=True))
