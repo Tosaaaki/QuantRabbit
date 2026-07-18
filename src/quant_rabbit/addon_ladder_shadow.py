@@ -54,6 +54,7 @@ def resolve_addon_ladder(
     exit_price = outcome.exit_bid if side == "LONG" else outcome.exit_ask
 
     unit_entries = [base_entry]
+    add_fill_epochs: list[int] = []
     start = bisect.bisect_right(series.s5_epochs, entry_epoch)
     position = start
     while position < len(series.s5_epochs) and len(unit_entries) <= max_adds:
@@ -83,6 +84,7 @@ def resolve_addon_ladder(
             )
         if crossed:
             unit_entries.append(executable)
+            add_fill_epochs.append(epoch)
         position += 1
 
     per_unit = [
@@ -95,6 +97,7 @@ def resolve_addon_ladder(
         "step_pips": float(step_pips),
         "max_adds": max_adds,
         "units_filled": len(unit_entries),
+        "add_fill_epochs": list(add_fill_epochs),
         "peak_exposure_multiple": len(unit_entries),
         "base_realized_pips": round(outcome.realized_pips, 9),
         "blended_total_pips": round(sum(per_unit), 9),
