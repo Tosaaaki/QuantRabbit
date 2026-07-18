@@ -94,6 +94,18 @@ def _m5_metrics(response: Mapping[str, Any], start: datetime, end: datetime) -> 
         ((right - left).total_seconds() for left, right in zip(actual, actual[1:])),
         default=0.0,
     )
+    required = (len(expected) * 98 + 99) // 100
+    first_lag = (actual[0] - expected[0]).total_seconds() if actual else None
+    last_lead = (expected[-1] - actual[-1]).total_seconds() if actual else None
+    passed = (
+        len(actual) >= required
+        and not extras
+        and first_lag is not None
+        and last_lead is not None
+        and first_lag <= 900
+        and last_lead <= 900
+        and max_gap <= 900
+    )
     return {
         "expected_slot_count": len(expected),
         "returned_slot_count": len(actual),
@@ -102,9 +114,14 @@ def _m5_metrics(response: Mapping[str, Any], start: datetime, end: datetime) -> 
         "missing_slots_sha256": canonical_sha256(missing),
         "extra_slot_count": len(extras),
         "extra_slots_sha256": canonical_sha256(extras),
+        "required_returned_slot_count": required,
         "first_event_utc": _iso(actual[0]) if actual else None,
         "last_event_utc": _iso(actual[-1]) if actual else None,
         "max_observed_gap_seconds": int(max_gap),
+        "first_boundary_lag_seconds": int(first_lag) if first_lag is not None else None,
+        "last_boundary_lead_seconds": int(last_lead) if last_lead is not None else None,
+        "calendar_matches_observed": not extras,
+        "coverage_passed": passed,
     }
 
 
@@ -143,12 +160,16 @@ def _fetch_report(client: OandaReadOnlyClient) -> dict[str, Any]:
                 "coverage": _m5_metrics(response, start, cutoff),
             }
         )
+    if not all(row["coverage"]["coverage_passed"] for row in m5_rows):
+        raise RuntimeError("M5 calibration does not satisfy the frozen source policy")
     files = {
         path: hashlib.sha256((REPO / path).read_bytes()).hexdigest()
         for path in (
             "src/quant_rabbit/dojo_market_calendar.py",
             "src/quant_rabbit/dojo_worker_source.py",
             "src/quant_rabbit/dojo_ai_forward.py",
+            "src/quant_rabbit/dojo_ai_discretion.py",
+            "src/quant_rabbit/broker/oanda.py",
             "scripts/preflight-dojo-oanda-coverage.py",
         )
     }

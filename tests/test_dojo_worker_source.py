@@ -491,5 +491,6 @@ def test_day_two_cannot_change_day_one_collector_or_coverage_policy(
             now_utc=utc("2026-07-22T00:02:00Z"),
             repo_root=REPO,
         )
+    assert not (run_dir / "source-evidence/day-002/request.json").exists()
     capture = json.loads((run_dir / "source-evidence/day-001/capture.json").read_text())
     assert capture["response"]["candles"][0]["bid"]["o"] == "150.000"

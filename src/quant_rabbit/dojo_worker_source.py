@@ -407,7 +407,8 @@ def _collect_under_lock(
         "authority": _authority(),
     }
     request = {**request_body, "request_sha256": canonical_sha256(request_body)}
-    if request_path.exists():
+    request_existed = request_path.exists()
+    if request_existed:
         request = _strict_json(request_path)
         _validate_request(
             request,
@@ -424,9 +425,9 @@ def _collect_under_lock(
             raise DojoWorkerSourceError(
                 "persisted request source bindings differ from current collector"
             )
-    else:
-        _write_pretty_json_new_or_same(request_path, request)
     _validate_day_one_policy_lock(run_dir, request, precommit, start, ordinal)
+    if not request_existed:
+        _write_pretty_json_new_or_same(request_path, request)
 
     receipt_path = evidence_dir / "acquisition-receipt.json"
     if receipt_path.exists():
