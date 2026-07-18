@@ -645,6 +645,80 @@ def test_strategy_idea_and_invalid_legacy_performance_are_separate() -> None:
     assert _evaluation(board, "w46_w53_legacy_performance")["edge_status"] == "INVALID"
 
 
+def test_supersession_is_reciprocal_and_cannot_reactivate_old_evidence() -> None:
+    prior = _lane("worker_forward_v1", status="EDGE_PROVEN")
+    current = _lane("worker_forward_v2", status="HYPOTHESIS", digest_char="b")
+    prior["lifecycle"] = {
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "worker_forward_v2",
+        "supersedes_lane_ids": [],
+    }
+    current["lifecycle"] = {
+        "state": "CURRENT",
+        "superseded_by_lane_id": None,
+        "supersedes_lane_ids": ["worker_forward_v1"],
+    }
+
+    board = build_goal_board(_input(prior, current))
+    prior_evaluation = _evaluation(board, "worker_forward_v1")
+
+    assert prior_evaluation["edge_status"] == "HYPOTHESIS"
+    assert prior_evaluation["goal_status"] == "3X_NOT_REACHABLE"
+    assert prior_evaluation["lifecycle"]["state"] == "SUPERSEDED"
+    assert (
+        "LIFECYCLE_SUPERSEDED_BY:worker_forward_v2"
+        in prior_evaluation["edge_blockers"]
+    )
+
+    current["lifecycle"]["supersedes_lane_ids"] = []
+    with pytest.raises(DojoGoalBoardError, match="not reciprocal"):
+        build_goal_board(_input(prior, current))
+
+
+def test_implementation_only_lane_cannot_claim_run_results() -> None:
+    lane = _lane("ai_v3_implementation", lane_type="AI", status="HYPOTHESIS")
+    lane["parent_lane_ids"] = ["worker_parent"]
+    lane["provenance"]["parent_digests"] = {"worker_parent": "b" * 64}
+    lane["provenance"]["prospective"] = False
+    lane["lifecycle"] = {
+        "state": "IMPLEMENTATION_ONLY",
+        "superseded_by_lane_id": None,
+        "supersedes_lane_ids": [],
+    }
+    lane["distribution_30d"].update(
+        {
+            "method": "UNAVAILABLE",
+            "sample_months": 0,
+            "active_days": 0,
+            "stressed_median_multiple": None,
+            "post_cost_edge_lcb": None,
+            "probability_3x_lcb": None,
+            "probability_losing_month": None,
+            "probability_drawdown_20pct": None,
+            "probability_ruin_12m": None,
+        }
+    )
+    lane["risk"].update(
+        {
+            "normal_mtm_max_drawdown_fraction": None,
+            "stressed_mtm_max_drawdown_fraction": None,
+        }
+    )
+    lane["margin"]["peak_usage_fraction"] = None
+    lane["sizing"]["observed_at_declared_size"] = False
+    parent = _lane("worker_parent", status="HYPOTHESIS", digest_char="b")
+
+    board = build_goal_board(_input(parent, lane))
+    evaluation = _evaluation(board, "ai_v3_implementation")
+    assert evaluation["edge_status"] == "HYPOTHESIS"
+    assert evaluation["goal_status"] == "3X_NOT_REACHABLE"
+    assert "IMPLEMENTATION_ONLY_NO_RUN_ARTIFACT" in evaluation["edge_blockers"]
+
+    lane["distribution_30d"]["stressed_median_multiple"] = 3.1
+    with pytest.raises(DojoGoalBoardError, match="cannot claim measured results"):
+        build_goal_board(_input(parent, lane))
+
+
 def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -> None:
     source = load_goal_board_input(
         ROOT / "research/registries/dojo_goal_board_input_20260719.json"
@@ -652,17 +726,30 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     lanes = {lane["lane_id"]: lane for lane in source["lanes"]}
 
     idea = lanes["usd_jpy_mean_reversion_strategy_ideas_v1"]
-    forward_smoke = lanes["worker_forward_smoke_v1_started"]
+    forward_v1 = lanes["worker_forward_smoke_v1_started"]
+    forward_v2 = lanes["worker_forward_smoke_v2_started"]
     worker_legacy = lanes["worker_w46_w53_legacy_performance_invalid"]
-    ai_phase = lanes["ai_prompt_phase_v1_registered_zero_cells"]
+    ai_v1 = lanes["ai_prompt_phase_v1_registered_zero_cells"]
+    ai_v2 = lanes["ai_prompt_phase_v2_started_superseded"]
+    ai_v3 = lanes["ai_prompt_phase_v3_implementation_no_run"]
     clean_legacy = lanes["ai_dayread_w54_clean_legacy_contract_invalid"]
     assert idea["status"] == "HYPOTHESIS"
     assert idea["distribution_30d"]["stressed_median_multiple"] is None
-    assert forward_smoke["status"] == "HYPOTHESIS"
-    assert forward_smoke["provenance"]["prospective"] is True
-    assert forward_smoke["distribution_30d"]["active_days"] == 0
-    assert ai_phase["status"] == "HYPOTHESIS"
-    assert ai_phase["distribution_30d"]["active_days"] == 0
+    assert forward_v1["lifecycle"]["state"] == "SUPERSEDED"
+    assert forward_v2["status"] == "HYPOTHESIS"
+    assert forward_v2["lifecycle"]["state"] == "CURRENT"
+    assert forward_v2["provenance"]["prospective"] is True
+    assert forward_v2["provenance"]["evidence_path"].endswith(
+        "dojo-worker-forward-smoke-v2/precommit.json"
+    )
+    assert forward_v2["distribution_30d"]["active_days"] == 0
+    assert ai_v1["lifecycle"]["state"] == "SUPERSEDED"
+    assert ai_v2["lifecycle"]["state"] == "SUPERSEDED"
+    assert ai_v3["status"] == "HYPOTHESIS"
+    assert ai_v3["lifecycle"]["state"] == "IMPLEMENTATION_ONLY"
+    assert ai_v3["provenance"]["prospective"] is False
+    assert ai_v3["provenance"]["evidence_path"] is None
+    assert ai_v3["distribution_30d"]["active_days"] == 0
     assert worker_legacy["status"] == "INVALID"
     assert (
         "LEGACY_PERFORMANCE_PROVENANCE_INVALIDATED"
@@ -676,14 +763,21 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     assert board["edge_status"] == "HYPOTHESIS"
     assert board["goal_status"] == "3X_NOT_REACHABLE"
     assert board["proof_admission"]["promotion_possible"] is False
+    assert board["effective_independent_n"] == 0
     assert board["portfolio"]["independent_correlation_cluster_count"] == 0
     assert board["portfolio"]["included_lane_ids"] == []
-    assert _evaluation(board, "worker_forward_smoke_v1_started")["edge_status"] == (
+    assert board["guarantee"] is False
+    assert board["live_permission"] is False
+    assert board["order_authority"] == "NONE"
+    assert board["broker_mutation_allowed"] is False
+    assert _evaluation(board, "worker_forward_smoke_v2_started")["edge_status"] == (
         "HYPOTHESIS"
     )
-    assert _evaluation(
-        board, "ai_prompt_phase_v1_registered_zero_cells"
-    )["edge_status"] == "HYPOTHESIS"
+    ai_v3_evaluation = _evaluation(
+        board, "ai_prompt_phase_v3_implementation_no_run"
+    )
+    assert ai_v3_evaluation["edge_status"] == "HYPOTHESIS"
+    assert "IMPLEMENTATION_ONLY_NO_RUN_ARTIFACT" in ai_v3_evaluation["edge_blockers"]
 
 
 def test_current_content_addressed_board_exactly_matches_registry_input() -> None:

@@ -19,8 +19,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.dojo_legacy_admission import (
+    LegacyAdmissionError,
+    load_current_goal_board,
+)
+
 MODULES: list[dict[str, str]] = [
-    {"path": "src/quant_rabbit/adaptive_exact_s5_profit_engine.py", "layer": "research", "role": "exact-S5 cross-sectional research engine (TRAIN/lock/validate/final-test)", "wiring": "COMPLETE", "codex": "run final-test after 2026-08-03"},
+    {"path": "src/quant_rabbit/adaptive_exact_s5_profit_engine.py", "layer": "research", "role": "legacy exact-S5 cross-sectional research engine", "wiring": "LEGACY_DIAGNOSTIC", "codex": "do not treat old lock/validation as positive; register new proof through current DOJO"},
     {"path": "src/quant_rabbit/exact28_m5_history_manifest.py", "layer": "data", "role": "long-horizon M5 manifest validator (acquisition gate)", "wiring": "COMPLETE", "codex": "P0-2 repairs then acquire 2020-2026 M5"},
     {"path": "src/quant_rabbit/fast_bot_shadow_orchestrator.py", "layer": "bot-shadow", "role": "5096-cell shadow orchestrator + admission binding for future GO", "wiring": "SHADOW_WIRED", "codex": "consume admission binding in live GO contract"},
     {"path": "src/quant_rabbit/fast_bot_technical_grid_backtest.py", "layer": "bot-shadow", "role": "sealed 182-candidate grid backtest (audited, ambiguity=full-SL)", "wiring": "COMPLETE", "codex": "none"},
@@ -57,11 +62,16 @@ KEY_SCRIPTS = [
 ]
 KEY_DOCS = [
     "docs/design_weakness_ledger_20260718.md",
+    "docs/DOJO_PROGRAM.md",
+    "docs/DOJO_WORKTREE_INVENTORY_20260719.md",
+    "docs/virtual_market_environment.md",
+]
+LEGACY_RESEARCH_DOCS = [
     "docs/design_profit_path_4x_20260718.md",
     "docs/design_profit_structure_repair_20260718.md",
     "docs/runbook_monday_go_live_20260720.md",
 ]
-KEY_ARTIFACTS = [
+LEGACY_POSITIVE_ARTIFACTS = [
     "research/data/adopted_stack_tuning_contract_v1.json",
     "research/data/adaptive_exact_s5_train_lock_v1.json",
     "research/data/adaptive_exact_s5_prospective_final_lock_v1.json",
@@ -83,9 +93,23 @@ def main() -> int:
     args = parser.parse_args()
     root = args.repo_root
 
+    try:
+        board_path, board = load_current_goal_board(root / "research/registries")
+    except LegacyAdmissionError as exc:
+        raise ValueError(f"current DOJO goal board is invalid: {exc}") from exc
+    try:
+        board_relative = board_path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError("current DOJO goal board must be inside repo root") from exc
+    key_artifacts = [board_relative]
+
     missing = [
         m["path"] for m in MODULES if not (root / m["path"]).is_file()
-    ] + [p for p in KEY_SCRIPTS + KEY_DOCS + KEY_ARTIFACTS if not (root / p).is_file()]
+    ] + [
+        p
+        for p in KEY_SCRIPTS + KEY_DOCS + LEGACY_RESEARCH_DOCS + key_artifacts
+        if not (root / p).is_file()
+    ]
     if missing:
         raise ValueError(f"system map lists missing paths: {missing}")
 
@@ -95,8 +119,8 @@ def main() -> int:
     ).stdout.strip()
 
     body: dict[str, Any] = {
-        "contract": "QR_SYSTEM_MAP_V1",
-        "schema_version": 1,
+        "contract": "QR_SYSTEM_MAP_V2",
+        "schema_version": 2,
         "branch_head": head,
         "brain_layers": {
             "1_perception": "evidence packet + regime_classifier_shadow (+W23 indicators after M5)",
@@ -107,14 +131,34 @@ def main() -> int:
         "modules": MODULES,
         "key_scripts": KEY_SCRIPTS,
         "key_docs": KEY_DOCS,
-        "key_artifacts": KEY_ARTIFACTS,
-        "single_entry_point_for_codex": "research/data/adopted_stack_tuning_contract_v1.json",
+        "key_artifacts": key_artifacts,
+        "single_entry_point_for_codex": board_relative,
+        "current_dojo_validity": {
+            "goal_board_path": board_relative,
+            "goal_board_sha256": board["board_sha256"],
+            "edge_status": board.get("edge_status"),
+            "goal_status": board.get("goal_status"),
+            "promotion_possible": board["proof_admission"]["promotion_possible"],
+        },
+        "legacy_positive_artifacts": {
+            "paths": LEGACY_POSITIVE_ARTIFACTS,
+            "status": "NOT_AN_ENTRY_POINT_REQUIRES_CURRENT_DOJO_ADMISSION",
+            "builder": "scripts/build-adopted-stack-tuning-contract.py",
+        },
+        "legacy_research_docs": {
+            "paths": LEGACY_RESEARCH_DOCS,
+            "status": "DIAGNOSTIC_HISTORY_NOT_AN_ADMISSION_SURFACE",
+        },
         "wiring_status_legend": {
             "COMPLETE": "done and tested on this branch",
             "SHADOW_WIRED": "wired into the shadow orchestrator",
             "MODULE_ONLY": "tested module awaiting live-cycle wiring by Codex",
             "LAB": "research evaluator, not a runtime component",
             "IN_USE": "already used by tonight's research pipeline",
+            "LEGACY_DIAGNOSTIC": (
+                "historical research code; current DOJO registration is mandatory "
+                "before any positive reuse"
+            ),
         },
         "shadow_only": True,
         "order_authority": "NONE",

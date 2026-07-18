@@ -17,6 +17,7 @@ secrets/
 # Ephemeral coordination locks for append-only DOJO forward runs. Evidence
 # receipts and ledgers remain tracked; these zero-byte local mutexes do not.
 research/forward/**/.ai-forward.lock
+research/forward/**/.ai-model-executor.lock
 research/forward/**/.source-collector.lock
 research/forward/**/.worker-execution.lock
 

@@ -53,6 +53,7 @@ THRESHOLDS: dict[str, float | int] = {
 
 LANE_TYPES = {"WORKER", "AI"}
 DECLARED_STATUSES = {"HYPOTHESIS", "EDGE_PROVEN", "INVALID"}
+LIFECYCLE_STATES = {"CURRENT", "SUPERSEDED", "IMPLEMENTATION_ONLY"}
 DISTRIBUTION_METHODS = {
     "PROSPECTIVE_FORWARD",
     "WALK_FORWARD",
@@ -258,7 +259,7 @@ def _validate_lane(value: Any, *, index: int) -> dict[str, Any]:
             "distribution_30d",
             "sizing",
         },
-        {"dependence"},
+        {"dependence", "lifecycle"},
         path=path,
     )
     lane_id = _text(lane["lane_id"], path=f"{path}.lane_id", pattern=_IDENTIFIER_RE)
@@ -280,6 +281,55 @@ def _validate_lane(value: Any, *, index: int) -> dict[str, Any]:
             raise DojoGoalBoardError(f"{path} cannot parent itself")
     if lane_type == "WORKER" and parent_lane_ids:
         raise DojoGoalBoardError(f"{path} WORKER must not declare parents")
+
+    lifecycle_raw = lane.get(
+        "lifecycle",
+        {
+            "state": "CURRENT",
+            "superseded_by_lane_id": None,
+            "supersedes_lane_ids": [],
+        },
+    )
+    lifecycle = _object(lifecycle_raw, path=f"{path}.lifecycle")
+    _exact_keys(
+        lifecycle,
+        {"state", "superseded_by_lane_id", "supersedes_lane_ids"},
+        path=f"{path}.lifecycle",
+    )
+    lifecycle_state = _text(
+        lifecycle["state"], path=f"{path}.lifecycle.state"
+    )
+    if lifecycle_state not in LIFECYCLE_STATES:
+        raise DojoGoalBoardError(f"{path}.lifecycle.state is unsupported")
+    superseded_by_raw = lifecycle["superseded_by_lane_id"]
+    superseded_by_lane_id = (
+        None
+        if superseded_by_raw is None
+        else _text(
+            superseded_by_raw,
+            path=f"{path}.lifecycle.superseded_by_lane_id",
+            pattern=_IDENTIFIER_RE,
+        )
+    )
+    supersedes_lane_ids = _string_list(
+        lifecycle["supersedes_lane_ids"],
+        path=f"{path}.lifecycle.supersedes_lane_ids",
+    )
+    if any(_IDENTIFIER_RE.fullmatch(item) is None for item in supersedes_lane_ids):
+        raise DojoGoalBoardError(
+            f"{path}.lifecycle.supersedes_lane_ids is non-canonical"
+        )
+    for related_id in [*supersedes_lane_ids, superseded_by_lane_id]:
+        if related_id == lane_id:
+            raise DojoGoalBoardError(f"{path}.lifecycle cannot reference itself")
+    if lifecycle_state == "SUPERSEDED" and superseded_by_lane_id is None:
+        raise DojoGoalBoardError(
+            f"{path}.lifecycle SUPERSEDED requires superseded_by_lane_id"
+        )
+    if lifecycle_state != "SUPERSEDED" and superseded_by_lane_id is not None:
+        raise DojoGoalBoardError(
+            f"{path}.lifecycle superseded_by_lane_id requires SUPERSEDED state"
+        )
 
     provenance = _object(lane["provenance"], path=f"{path}.provenance")
     _required_optional_keys(
@@ -560,11 +610,42 @@ def _validate_lane(value: Any, *, index: int) -> dict[str, Any]:
         path=f"{path}.sizing.reverse_engineered_from_goal",
     )
 
+    if lifecycle_state == "IMPLEMENTATION_ONLY":
+        if status != "HYPOTHESIS" or evidence_path is not None or prospective:
+            raise DojoGoalBoardError(
+                f"{path}.lifecycle IMPLEMENTATION_ONLY must be a non-prospective "
+                "hypothesis without an evidence artifact"
+            )
+        if method != "UNAVAILABLE" or sample_months != 0 or active_days != 0:
+            raise DojoGoalBoardError(
+                f"{path}.lifecycle IMPLEMENTATION_ONLY requires unavailable "
+                "zero-sample distribution"
+            )
+        if any(
+            value is not None
+            for value in (
+                stressed_median,
+                post_cost_edge_lcb,
+                *probabilities.values(),
+                normal_drawdown,
+                stressed_drawdown,
+                peak_usage,
+            )
+        ) or observed_at_declared_size:
+            raise DojoGoalBoardError(
+                f"{path}.lifecycle IMPLEMENTATION_ONLY cannot claim measured results"
+            )
+
     return {
         "lane_id": lane_id,
         "lane_type": lane_type,
         "status": status,
         "parent_lane_ids": parent_lane_ids,
+        "lifecycle": {
+            "state": lifecycle_state,
+            "superseded_by_lane_id": superseded_by_lane_id,
+            "supersedes_lane_ids": supersedes_lane_ids,
+        },
         "provenance": {
             "valid": valid,
             "prospective": prospective,
@@ -602,6 +683,54 @@ def _validate_lane(value: Any, *, index: int) -> dict[str, Any]:
     }
 
 
+def _validate_lifecycle_graph(lanes: list[Mapping[str, Any]]) -> None:
+    """Require complete, same-type, acyclic supersession relationships."""
+
+    lanes_by_id = {lane["lane_id"]: lane for lane in lanes}
+    for lane in lanes:
+        lane_id = lane["lane_id"]
+        lifecycle = lane["lifecycle"]
+        related_ids = [*lifecycle["supersedes_lane_ids"]]
+        if lifecycle["superseded_by_lane_id"] is not None:
+            related_ids.append(lifecycle["superseded_by_lane_id"])
+        for related_id in related_ids:
+            related = lanes_by_id.get(related_id)
+            if related is None:
+                raise DojoGoalBoardError(
+                    f"lane {lane_id} lifecycle references unknown lane {related_id}"
+                )
+            if related["lane_type"] != lane["lane_type"]:
+                raise DojoGoalBoardError(
+                    f"lane {lane_id} lifecycle crosses worker/AI types"
+                )
+
+        superseded_by = lifecycle["superseded_by_lane_id"]
+        if superseded_by is not None:
+            successor = lanes_by_id[superseded_by]
+            if lane_id not in successor["lifecycle"]["supersedes_lane_ids"]:
+                raise DojoGoalBoardError(
+                    f"lane {lane_id} supersession relationship is not reciprocal"
+                )
+        for prior_id in lifecycle["supersedes_lane_ids"]:
+            prior = lanes_by_id[prior_id]
+            if (
+                prior["lifecycle"]["state"] != "SUPERSEDED"
+                or prior["lifecycle"]["superseded_by_lane_id"] != lane_id
+            ):
+                raise DojoGoalBoardError(
+                    f"lane {lane_id} supersedes a lane without reciprocal SUPERSEDED state"
+                )
+
+    for start_id in lanes_by_id:
+        seen: set[str] = set()
+        cursor: str | None = start_id
+        while cursor is not None:
+            if cursor in seen:
+                raise DojoGoalBoardError("lane lifecycle supersession graph contains a cycle")
+            seen.add(cursor)
+            cursor = lanes_by_id[cursor]["lifecycle"]["superseded_by_lane_id"]
+
+
 def validate_goal_board_input(value: Any) -> dict[str, Any]:
     """Validate and normalize the complete input contract."""
 
@@ -618,6 +747,7 @@ def validate_goal_board_input(value: Any) -> dict[str, Any]:
     lane_ids = [lane["lane_id"] for lane in lanes]
     if len(set(lane_ids)) != len(lane_ids):
         raise DojoGoalBoardError("input.lanes must have unique lane_id values")
+    _validate_lifecycle_graph(lanes)
     return {"contract": INPUT_CONTRACT, "lanes": lanes}
 
 
@@ -837,6 +967,7 @@ def _base_lane_evaluation(
     risk = lane["risk"]
     margin = lane["margin"]
     sizing = lane["sizing"]
+    lifecycle = lane["lifecycle"]
 
     if lane["status"] == "INVALID" or not provenance["valid"]:
         edge_status = "INVALID"
@@ -902,6 +1033,16 @@ def _base_lane_evaluation(
             if lane["status"] == "EDGE_PROVEN" and not edge_blockers
             else "HYPOTHESIS"
         )
+    if lifecycle["state"] == "SUPERSEDED":
+        edge_blockers.append(
+            f"LIFECYCLE_SUPERSEDED_BY:{lifecycle['superseded_by_lane_id']}"
+        )
+        if edge_status != "INVALID":
+            edge_status = "HYPOTHESIS"
+    elif lifecycle["state"] == "IMPLEMENTATION_ONLY":
+        edge_blockers.append("IMPLEMENTATION_ONLY_NO_RUN_ARTIFACT")
+        if edge_status != "INVALID":
+            edge_status = "HYPOTHESIS"
 
     return {
         "lane_id": lane["lane_id"],
@@ -913,6 +1054,7 @@ def _base_lane_evaluation(
         "declared_correlation_cluster": lane["declared_correlation_cluster"],
         "dependence": lane["dependence"],
         "parent_lane_ids": list(lane["parent_lane_ids"]),
+        "lifecycle": dict(lifecycle),
         "edge_blockers": _dedupe(edge_blockers),
         "goal_blockers": [],
         "distribution_30d": dict(distribution),
@@ -1025,6 +1167,7 @@ def _apply_goal_gate(lane: Mapping[str, Any], evaluation: dict[str, Any]) -> Non
 def _representative(group: list[dict[str, Any]]) -> dict[str, Any]:
     edge_rank = {"INVALID": 0, "HYPOTHESIS": 1, "EDGE_PROVEN": 2}
     goal_rank = {"3X_NOT_REACHABLE": 0, "TAIL_ONLY": 1, "GOAL_COMPATIBLE": 2}
+    lifecycle_rank = {"SUPERSEDED": 0, "IMPLEMENTATION_ONLY": 1, "CURRENT": 2}
 
     def high_value(value: float | None) -> float:
         return float("-inf") if value is None else value
@@ -1037,6 +1180,7 @@ def _representative(group: list[dict[str, Any]]) -> dict[str, Any]:
         key=lambda row: (
             -edge_rank[row["edge_status"]],
             -goal_rank[row["goal_status"]],
+            -lifecycle_rank[row["lifecycle"]["state"]],
             -high_value(row["distribution_30d"]["stressed_median_multiple"]),
             -high_value(row["distribution_30d"]["probability_3x_lcb"]),
             low_value(row["distribution_30d"]["probability_losing_month"]),
@@ -1176,6 +1320,7 @@ def build_goal_board(value: Any, *, project_root: Path | None = None) -> dict[st
             "independent_correlation_cluster_count": len(trusted_cluster_ids),
             "distribution_summed": False,
         },
+        "effective_independent_n": len(trusted_cluster_ids),
         "guarantee": False,
         "live_permission": False,
         "order_authority": "NONE",

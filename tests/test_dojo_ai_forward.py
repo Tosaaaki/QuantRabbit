@@ -8,12 +8,15 @@ from pathlib import Path
 
 import pytest
 
+from quant_rabbit.dojo_ai_discretion import canonical_sha256
+
 from quant_rabbit.dojo_ai_forward import (
     DojoAIForwardError,
     build_cell_response_failure,
     build_cell_response_seal,
     build_day_requests,
     build_day_requests_from_capture,
+    build_executed_cell_terminal,
     build_missing_day_seal,
     build_phase_index,
     build_precommit,
@@ -29,6 +32,11 @@ from quant_rabbit.dojo_ai_forward import (
     validate_source_capture,
     validate_source_request,
 )
+from quant_rabbit.dojo_ai_execution import (
+    build_execution_receipt,
+    build_execution_request,
+    validate_execution_receipt,
+)
 from quant_rabbit.dojo_market_calendar import expected_oanda_fx_slots
 from quant_rabbit.dojo_ai_truth import (
     DojoAITruthError,
@@ -37,11 +45,17 @@ from quant_rabbit.dojo_ai_truth import (
     build_truth_bundle,
     build_truth_capture,
     build_truth_request,
+    issue_day_truth_capability,
+    issue_phase_truth_capability,
     validate_day_score as validate_truth_day_score,
     validate_phase_score as validate_truth_phase_score,
     validate_truth_bundle_with_capture,
     validate_truth_capture,
     validate_truth_request,
+)
+from quant_rabbit.dojo_ai_validity import (
+    append_artifact_commit,
+    initialize_registry,
 )
 from quant_rabbit.dojo_prompt_phase import LOCKED_VARIANT_PROMPT_SHA256
 
@@ -576,9 +590,291 @@ def test_response_is_sealed_before_deadline_without_answer_key_or_authority() ->
         == terminal
     )
     assert terminal["answer_key_opened"] is False
+    assert terminal["state"] == "DIAGNOSTIC_IMPORTED_RESPONSE"
+    assert terminal["prompt_evaluation_eligible"] is False
     assert terminal["response_selection_allowed"] is False
     assert terminal["authority"]["ai_order_authority"] == "NONE"
     assert terminal["authority"]["live_permission"] is False
+
+
+def _execution_request_and_day() -> tuple[dict, dict, dict, dict]:
+    precommit, start = lifecycle()
+    schedule = precommit["schedule"][0]
+    day = build_day_requests(
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        oanda_response(precommit),
+        ordinal=1,
+        now_utc=utc(schedule["source_not_before_utc"]),
+    )
+    cell = dict(day["cells"][0])
+    cell["prompt_lock"] = precommit["prompt_locks"][cell["variant_id"]]
+    request = build_execution_request(
+        precommit_sha256=precommit["precommit_sha256"],
+        day_seal_sha256=day["day_seal_sha256"],
+        cell=cell,
+        cli_binary_path="/Applications/ChatGPT.app/Contents/Resources/codex",
+        cli_binary_sha256=digest("codex-binary"),
+        cli_version="codex-cli test",
+        auth_mode_probe_sha256=digest("Logged in using ChatGPT"),
+        runtime_root_identity_sha256=digest("fresh-runtime-root"),
+        created_at_utc=utc(day["sealed_at_utc"]) + timedelta(seconds=1),
+    )
+    return precommit, start, day, request
+
+
+def executed_terminal(precommit: dict, start: dict, day: dict, index: int) -> dict:
+    cell = dict(day["cells"][index])
+    cell["prompt_lock"] = precommit["prompt_locks"][cell["variant_id"]]
+    created = utc(day["sealed_at_utc"]) + timedelta(seconds=index + 1)
+    request = build_execution_request(
+        precommit_sha256=precommit["precommit_sha256"],
+        day_seal_sha256=day["day_seal_sha256"],
+        cell=cell,
+        cli_binary_path="/Applications/ChatGPT.app/Contents/Resources/codex",
+        cli_binary_sha256=digest("codex-binary"),
+        cli_version="codex-cli test",
+        auth_mode_probe_sha256=digest("Logged in using ChatGPT"),
+        runtime_root_identity_sha256=digest(f"fresh-runtime-root-{index}"),
+        created_at_utc=created,
+    )
+    response_text = json.dumps(
+        decision(day, index), sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    stdout = "\n".join(
+        json.dumps(row, separators=(",", ":"))
+        for row in (
+            {"type": "thread.started", "thread_id": f"thread-fresh-{index}"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": response_text},
+            },
+            {"type": "turn.completed"},
+        )
+    ).encode()
+    receipt = build_execution_receipt(
+        request,
+        raw_stdout_jsonl=stdout,
+        raw_stderr=b"",
+        output_last_message=response_text.encode(),
+        returncode=0,
+        timed_out=False,
+        started_at_utc=created,
+        completed_at_utc=created + timedelta(seconds=1),
+    )
+    return build_executed_cell_terminal(
+        REGISTRY, precommit, start, None, day, receipt
+    )
+
+
+def write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+
+def truth_run(
+    tmp_path: Path,
+    precommit: dict,
+    start: dict,
+    day: dict,
+    terminals: list[dict],
+) -> tuple[Path, object]:
+    run = tmp_path / "truth-run"
+    run.mkdir()
+    write_json(run / "precommit.json", precommit)
+    write_json(run / "start.json", start)
+    initialize_registry(
+        run,
+        precommit_path=run / "precommit.json",
+        start_path=run / "start.json",
+        created_at_utc=utc(start["started_at_utc"]),
+    )
+    capture = day["source_provenance"]["source_capture"]
+    write_json(run / "source-requests/day-001.json", capture["request"])
+    append_artifact_commit(
+        run,
+        logical_id="day/001/source-request",
+        artifact_path=run / "source-requests/day-001.json",
+        parent_logical_ids=("precommit", "start"),
+        committed_at_utc=utc(day["sealed_at_utc"]),
+    )
+    write_json(run / "source-captures/day-001.json", capture)
+    append_artifact_commit(
+        run,
+        logical_id="day/001/source-capture",
+        artifact_path=run / "source-captures/day-001.json",
+        parent_logical_ids=("day/001/source-request",),
+        committed_at_utc=utc(day["sealed_at_utc"]),
+    )
+    write_json(run / "days/day-001.json", day)
+    append_artifact_commit(
+        run,
+        logical_id="day/001/seal",
+        artifact_path=run / "days/day-001.json",
+        parent_logical_ids=(
+            "precommit",
+            "start",
+            "day/001/source-capture",
+        ),
+        committed_at_utc=utc(day["sealed_at_utc"]),
+    )
+    for terminal in terminals:
+        cell_id = terminal["cell_id"]
+        execution_root = run / "model-executions/day-001" / cell_id
+        execution_request = terminal["execution_receipt"]["execution_request"]
+        execution_receipt = terminal["execution_receipt"]
+        write_json(execution_root / "invocation-request.json", execution_request)
+        append_artifact_commit(
+            run,
+            logical_id=f"day/001/cell/{cell_id}/execution-request",
+            artifact_path=execution_root / "invocation-request.json",
+            parent_logical_ids=("precommit", "day/001/seal"),
+            committed_at_utc=utc(execution_request["created_at_utc"]),
+        )
+        write_json(execution_root / "execution-receipt.json", execution_receipt)
+        append_artifact_commit(
+            run,
+            logical_id=f"day/001/cell/{cell_id}/execution-receipt",
+            artifact_path=execution_root / "execution-receipt.json",
+            parent_logical_ids=(f"day/001/cell/{cell_id}/execution-request",),
+            committed_at_utc=utc(execution_receipt["completed_at_utc"]),
+        )
+        path = run / "responses/day-001" / f"{cell_id}.json"
+        write_json(path, terminal)
+        append_artifact_commit(
+            run,
+            logical_id=f"day/001/cell/{cell_id}/terminal",
+            artifact_path=path,
+            parent_logical_ids=(
+                "day/001/seal",
+                f"day/001/cell/{cell_id}/execution-receipt",
+            ),
+            committed_at_utc=utc(terminal["sealed_at_utc"]),
+        )
+    capability = issue_day_truth_capability(
+        run, REGISTRY, precommit, start, None, day, terminals
+    )
+    return run, capability
+
+
+def commit_truth_stage(
+    run: Path,
+    day: dict,
+    terminals: list[dict],
+    stage: str,
+    artifact: dict,
+) -> None:
+    path = run / "truth/day-001" / f"{stage}.json"
+    write_json(path, artifact)
+    terminal_ids = [
+        f"day/001/cell/{terminal['cell_id']}/terminal" for terminal in terminals
+    ]
+    if stage == "request":
+        parents = ["precommit", "day/001/seal", *terminal_ids]
+    elif stage == "capture":
+        parents = ["day/001/truth/request"]
+    elif stage == "bundle":
+        parents = [
+            "precommit",
+            "day/001/seal",
+            *terminal_ids,
+            "day/001/truth/request",
+            "day/001/truth/capture",
+        ]
+    elif stage == "score":
+        parents = [
+            "precommit",
+            "day/001/seal",
+            *terminal_ids,
+            "day/001/truth/bundle",
+        ]
+    else:
+        raise AssertionError(stage)
+    append_artifact_commit(
+        run,
+        logical_id=f"day/001/truth/{stage}",
+        artifact_path=path,
+        parent_logical_ids=parents,
+        committed_at_utc=utc(day["schedule"]["truth_not_before_utc"]),
+    )
+
+
+def test_one_shot_execution_receipt_is_deeply_bound_and_prompt_eligible() -> None:
+    precommit, start, day, request = _execution_request_and_day()
+    response_text = json.dumps(
+        decision(day), sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    stdout = "\n".join(
+        json.dumps(row, separators=(",", ":"))
+        for row in (
+            {"type": "thread.started", "thread_id": "thread-fresh-1"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "reasoning", "text": "bounded"},
+            },
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": response_text},
+            },
+            {"type": "turn.completed"},
+        )
+    ).encode()
+    receipt = build_execution_receipt(
+        request,
+        raw_stdout_jsonl=stdout,
+        raw_stderr=b"",
+        output_last_message=response_text.encode(),
+        returncode=0,
+        timed_out=False,
+        started_at_utc=utc(request["created_at_utc"]),
+        completed_at_utc=utc(request["created_at_utc"]) + timedelta(seconds=2),
+    )
+    assert validate_execution_receipt(receipt) == receipt
+    terminal = build_executed_cell_terminal(
+        REGISTRY, precommit, start, None, day, receipt
+    )
+    assert terminal["state"] == "EXECUTED_RESPONSE_SEALED"
+    assert terminal["prompt_evaluation_eligible"] is True
+    assert terminal["provider_execution_attestation_present"] is False
+    assert validate_cell_terminal(
+        terminal, REGISTRY, precommit, start, None, day
+    ) == terminal
+
+
+def test_tool_event_becomes_permanent_synthetic_zero_failure() -> None:
+    precommit, start, day, request = _execution_request_and_day()
+    stdout = b'\n'.join(
+        (
+            b'{"type":"thread.started","thread_id":"thread-fresh-1"}',
+            b'{"type":"turn.started"}',
+            b'{"type":"item.completed","item":{"type":"command_execution","command":"pwd"}}',
+            b'{"type":"turn.completed"}',
+        )
+    )
+    receipt = build_execution_receipt(
+        request,
+        raw_stdout_jsonl=stdout,
+        raw_stderr=b"",
+        output_last_message=b"",
+        returncode=0,
+        timed_out=False,
+        started_at_utc=utc(request["created_at_utc"]),
+        completed_at_utc=utc(request["created_at_utc"]) + timedelta(seconds=1),
+    )
+    assert receipt["failure_code"] == "CAPABILITY_VIOLATION"
+    terminal = build_executed_cell_terminal(
+        REGISTRY, precommit, start, None, day, receipt
+    )
+    assert terminal["state"] == "MODEL_EXECUTION_FAILED"
+    assert terminal["economic_fallback"] == "SYNTHETIC_FLAT_ZERO_RETURN"
+    assert terminal["late_response_backfill_allowed"] is False
 
 
 def test_response_cell_and_deadline_cannot_be_selected_after_outcome() -> None:
@@ -740,7 +1036,9 @@ def test_phase_index_derives_exact_90_cell_denominator_after_truth_maturity() ->
     assert index["promotion_eligible"] is False
 
 
-def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> None:
+def test_market_truth_opens_only_after_all_responses_and_scores_from_ba(
+    tmp_path: Path,
+) -> None:
     precommit, start = lifecycle()
     schedule = precommit["schedule"][0]
     day = build_day_requests(
@@ -752,34 +1050,66 @@ def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> Non
         ordinal=1,
         now_utc=utc(schedule["source_not_before_utc"]),
     )
-    terminals = [
-        build_cell_response_seal(
-            REGISTRY,
-            precommit,
-            start,
-            None,
-            day,
-            decision(day, index),
-            cell_id=cell["assignment"]["cell_id"],
-            now_utc=utc(schedule["source_not_before_utc"]),
-        )
-        for index, cell in enumerate(day["cells"])
-    ]
+    terminals = [executed_terminal(precommit, start, day, index) for index in range(3)]
+    run, base_capability = truth_run(tmp_path, precommit, start, day, terminals)
     truth_time = utc(schedule["truth_not_before_utc"])
-    with pytest.raises(DojoAITruthError, match="all three"):
-        build_truth_request(precommit, day, terminals[:2], now_utc=truth_time)
-    request = build_truth_request(precommit, day, terminals, now_utc=truth_time)
-    assert validate_truth_request(request, precommit, day, terminals) == request
+    with pytest.raises(DojoAITruthError, match="exact parents"):
+        build_truth_request(
+            precommit,
+            day,
+            terminals[:2],
+            now_utc=truth_time,
+            graph_capability=base_capability,
+        )
+    request = build_truth_request(
+        precommit,
+        day,
+        terminals,
+        now_utc=truth_time,
+        graph_capability=base_capability,
+    )
+    assert validate_truth_request(
+        request,
+        precommit,
+        day,
+        terminals,
+        graph_capability=base_capability,
+    ) == request
+    commit_truth_stage(run, day, terminals, "request", request)
     capture = build_truth_capture(
         request, truth_response(precommit), acquired_at_utc=truth_time
     )
     assert validate_truth_capture(capture, request) == capture
+    commit_truth_stage(run, day, terminals, "capture", capture)
+    bundle_capability = issue_day_truth_capability(
+        run,
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        day,
+        terminals,
+        required_committed_logical_ids=(
+            "day/001/truth/request",
+            "day/001/truth/capture",
+        ),
+    )
     bundle = build_truth_bundle(
-        precommit, day, terminals, capture, sealed_at_utc=truth_time
+        precommit,
+        day,
+        terminals,
+        capture,
+        sealed_at_utc=truth_time,
+        graph_capability=bundle_capability,
     )
     assert (
         validate_truth_bundle_with_capture(
-            bundle, precommit, day, terminals, capture
+            bundle,
+            precommit,
+            day,
+            terminals,
+            capture,
+            graph_capability=bundle_capability,
         )
         == bundle
     )
@@ -790,6 +1120,21 @@ def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> Non
     assert bundle["returns"]["LONG_FULL"] > 0.0
     assert bundle["returns"]["SHORT_FULL"] < 0.0
     assert len(bundle["answer_keys"]) == 3
+    commit_truth_stage(run, day, terminals, "bundle", bundle)
+    score_capability = issue_day_truth_capability(
+        run,
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        day,
+        terminals,
+        required_committed_logical_ids=(
+            "day/001/truth/request",
+            "day/001/truth/capture",
+            "day/001/truth/bundle",
+        ),
+    )
     day_score = build_truth_day_score(
         precommit,
         day,
@@ -797,10 +1142,18 @@ def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> Non
         capture,
         bundle,
         scored_at_utc=truth_time,
+        graph_capability=score_capability,
     )
+    commit_truth_stage(run, day, terminals, "score", day_score)
     assert (
         validate_truth_day_score(
-            day_score, precommit, day, terminals, capture, bundle
+            day_score,
+            precommit,
+            day,
+            terminals,
+            capture,
+            bundle,
+            graph_capability=score_capability,
         )
         == day_score
     )
@@ -808,7 +1161,7 @@ def test_market_truth_opens_only_after_all_responses_and_scores_from_ba() -> Non
     assert all(row["net_return"] == 0.0 for row in day_score["cell_results"])
 
 
-def test_truth_first_capture_is_terminal_and_exact_boundaries_fail_closed() -> None:
+def test_public_reseal_cannot_bypass_deep_truth_capability(tmp_path: Path) -> None:
     precommit, start = lifecycle()
     schedule = precommit["schedule"][0]
     day = build_day_requests(
@@ -820,32 +1173,86 @@ def test_truth_first_capture_is_terminal_and_exact_boundaries_fail_closed() -> N
         ordinal=1,
         now_utc=utc(schedule["source_not_before_utc"]),
     )
-    terminals = [
-        build_cell_response_seal(
+    terminals = [executed_terminal(precommit, start, day, index) for index in range(3)]
+    truth_run(tmp_path, precommit, start, day, terminals)
+    forged = copy.deepcopy(day)
+    forged["source_sha256"] = "0" * 64
+    forged.pop("day_seal_sha256")
+    forged["day_seal_sha256"] = canonical_sha256(forged)
+    with pytest.raises(DojoAIForwardError, match="derived artifacts drifted"):
+        issue_day_truth_capability(
+            tmp_path / "truth-run",
             REGISTRY,
             precommit,
             start,
             None,
-            day,
-            decision(day, index),
-            cell_id=cell["assignment"]["cell_id"],
-            now_utc=utc(schedule["source_not_before_utc"]),
+            forged,
+            terminals,
         )
-        for index, cell in enumerate(day["cells"])
-    ]
+    with pytest.raises(TypeError):
+        build_truth_request(
+            precommit,
+            day,
+            terminals,
+            now_utc=utc(schedule["truth_not_before_utc"]),
+        )
+
+
+def test_truth_first_capture_is_terminal_and_exact_boundaries_fail_closed(
+    tmp_path: Path,
+) -> None:
+    precommit, start = lifecycle()
+    schedule = precommit["schedule"][0]
+    day = build_day_requests(
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        oanda_response(precommit),
+        ordinal=1,
+        now_utc=utc(schedule["source_not_before_utc"]),
+    )
+    terminals = [executed_terminal(precommit, start, day, index) for index in range(3)]
+    run, base_capability = truth_run(tmp_path, precommit, start, day, terminals)
     truth_time = utc(schedule["truth_not_before_utc"])
-    request = build_truth_request(precommit, day, terminals, now_utc=truth_time)
+    request = build_truth_request(
+        precommit,
+        day,
+        terminals,
+        now_utc=truth_time,
+        graph_capability=base_capability,
+    )
+    commit_truth_stage(run, day, terminals, "request", request)
     sparse = truth_response(precommit)
     sparse["candles"] = sparse["candles"][1:]
     capture = build_truth_capture(request, sparse, acquired_at_utc=truth_time)
     assert capture["response"] == sparse
+    commit_truth_stage(run, day, terminals, "capture", capture)
+    bundle_capability = issue_day_truth_capability(
+        run,
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        day,
+        terminals,
+        required_committed_logical_ids=(
+            "day/001/truth/request",
+            "day/001/truth/capture",
+        ),
+    )
     with pytest.raises(DojoAITruthError, match="exact entry or exit boundary"):
         build_truth_bundle(
-            precommit, day, terminals, capture, sealed_at_utc=truth_time
+            precommit,
+            day,
+            terminals,
+            capture,
+            sealed_at_utc=truth_time,
+            graph_capability=bundle_capability,
         )
 
 
-def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
+def test_truth_phase_score_keeps_exact_90_cell_denominator(tmp_path: Path) -> None:
     precommit, start = lifecycle()
     first_schedule = precommit["schedule"][0]
     first_day = build_day_requests(
@@ -858,25 +1265,59 @@ def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
         now_utc=utc(first_schedule["source_not_before_utc"]),
     )
     terminals = [
-        build_cell_response_seal(
-            REGISTRY,
-            precommit,
-            start,
-            None,
-            first_day,
-            decision(first_day, index),
-            cell_id=cell["assignment"]["cell_id"],
-            now_utc=utc(first_schedule["source_not_before_utc"]),
-        )
-        for index, cell in enumerate(first_day["cells"])
+        executed_terminal(precommit, start, first_day, index) for index in range(3)
     ]
+    run, base_capability = truth_run(
+        tmp_path, precommit, start, first_day, terminals
+    )
     truth_time = utc(first_schedule["truth_not_before_utc"])
-    request = build_truth_request(precommit, first_day, terminals, now_utc=truth_time)
+    request = build_truth_request(
+        precommit,
+        first_day,
+        terminals,
+        now_utc=truth_time,
+        graph_capability=base_capability,
+    )
+    commit_truth_stage(run, first_day, terminals, "request", request)
     capture = build_truth_capture(
         request, truth_response(precommit), acquired_at_utc=truth_time
     )
+    commit_truth_stage(run, first_day, terminals, "capture", capture)
+    bundle_capability = issue_day_truth_capability(
+        run,
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        first_day,
+        terminals,
+        required_committed_logical_ids=(
+            "day/001/truth/request",
+            "day/001/truth/capture",
+        ),
+    )
     bundle = build_truth_bundle(
-        precommit, first_day, terminals, capture, sealed_at_utc=truth_time
+        precommit,
+        first_day,
+        terminals,
+        capture,
+        sealed_at_utc=truth_time,
+        graph_capability=bundle_capability,
+    )
+    commit_truth_stage(run, first_day, terminals, "bundle", bundle)
+    score_capability = issue_day_truth_capability(
+        run,
+        REGISTRY,
+        precommit,
+        start,
+        None,
+        first_day,
+        terminals,
+        required_committed_logical_ids=(
+            "day/001/truth/request",
+            "day/001/truth/capture",
+            "day/001/truth/bundle",
+        ),
     )
     day_score = build_truth_day_score(
         precommit,
@@ -885,7 +1326,9 @@ def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
         capture,
         bundle,
         scored_at_utc=truth_time,
+        graph_capability=score_capability,
     )
+    commit_truth_stage(run, first_day, terminals, "score", day_score)
     days = [first_day]
     previous = first_day
     for ordinal in range(2, 31):
@@ -899,6 +1342,18 @@ def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
             + timedelta(seconds=1),
         )
         days.append(previous)
+        write_json(run / "days" / f"day-{ordinal:03d}.json", previous)
+        append_artifact_commit(
+            run,
+            logical_id=f"day/{ordinal:03d}/seal",
+            artifact_path=run / "days" / f"day-{ordinal:03d}.json",
+            parent_logical_ids=(
+                "precommit",
+                "start",
+                f"day/{ordinal - 1:03d}/seal",
+            ),
+            committed_at_utc=utc(previous["sealed_at_utc"]),
+        )
     phase_time = utc(precommit["schedule"][-1]["truth_not_before_utc"])
     index = build_phase_index(
         REGISTRY,
@@ -908,8 +1363,41 @@ def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
         terminals,
         now_utc=phase_time,
     )
+    write_json(run / "phase-index.json", index)
+    append_artifact_commit(
+        run,
+        logical_id="phase/index",
+        artifact_path=run / "phase-index.json",
+        parent_logical_ids=(
+            "precommit",
+            "start",
+            *(f"day/{ordinal:03d}/seal" for ordinal in range(1, 31)),
+            *(
+                f"day/001/cell/{terminal['cell_id']}/terminal"
+                for terminal in terminals
+            ),
+        ),
+        committed_at_utc=phase_time,
+    )
+    phase_capability = issue_phase_truth_capability(
+        run, precommit, index, [day_score]
+    )
+    with pytest.raises(DojoAITruthError, match="predates"):
+        build_truth_phase_score(
+            precommit,
+            index,
+            days,
+            [day_score],
+            sealed_at_utc=phase_time - timedelta(seconds=1),
+            graph_capability=phase_capability,
+        )
     phase = build_truth_phase_score(
-        precommit, index, days, [day_score], sealed_at_utc=phase_time
+        precommit,
+        index,
+        days,
+        [day_score],
+        sealed_at_utc=phase_time,
+        graph_capability=phase_capability,
     )
     assert phase["allocated_cell_count"] == 90
     assert phase["valid_response_cell_count"] == 3
@@ -919,10 +1407,24 @@ def test_truth_phase_score_keeps_exact_90_cell_denominator() -> None:
     assert phase["prompt_selection_allowed"] is False
     assert phase["effective_independent_n"] == 0
     assert (
-        validate_truth_phase_score(phase, precommit, index, days, [day_score])
+        validate_truth_phase_score(
+            phase,
+            precommit,
+            index,
+            days,
+            [day_score],
+            graph_capability=phase_capability,
+        )
         == phase
     )
     forged = copy.deepcopy(phase)
     forged["best_calendar_30d_multiple"] = 3.0
     with pytest.raises(DojoAITruthError, match="digest"):
-        validate_truth_phase_score(forged, precommit, index, days, [day_score])
+        validate_truth_phase_score(
+            forged,
+            precommit,
+            index,
+            days,
+            [day_score],
+            graph_capability=phase_capability,
+        )

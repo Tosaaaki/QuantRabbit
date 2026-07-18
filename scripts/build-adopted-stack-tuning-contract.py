@@ -15,9 +15,18 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from quant_rabbit.dojo_legacy_admission import (
+    LegacyAdmissionError,
+    admit_legacy_positive_sources,
+    load_current_goal_board,
+    load_strict_json_with_sha256,
+    positive_source_names,
+)
 
 REQUIRED_SOURCES = {
     "survivor_lock": "adaptive_exact_s5_train_lock_v1.json",
@@ -50,7 +59,7 @@ def _canonical_sha(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _load_sealed(path: Path) -> tuple[dict[str, Any], str]:
+def _load_sealed(path: Path) -> tuple[dict[str, Any], str, str]:
     """Accept the digest key whose recomputation verifies.
 
     Artifacts may carry REFERENCE shas to other artifacts (e.g. the
@@ -58,33 +67,69 @@ def _load_sealed(path: Path) -> tuple[dict[str, Any], str]:
     a key is the self-digest only if removing it reproduces its value.
     """
 
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value, file_sha256 = load_strict_json_with_sha256(
+        path,
+        maximum_bytes=64 * 1024 * 1024,
+    )
     for key in DIGEST_KEYS:
         if key in value:
             body = {k: v for k, v in value.items() if k != key}
             if value[key] == _canonical_sha(body):
-                return value, str(value[key])
+                return value, str(value[key]), file_sha256
     raise ValueError(f"{path.name}: no digest key verifies")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument(
+        "--dojo-registry",
+        type=Path,
+        required=True,
+        help=(
+            "Active registry containing exactly one content-addressed current "
+            "DOJO goal board. Legacy positive files cannot be adopted without it."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    provenance: dict[str, str] = {}
-    sources: dict[str, dict[str, Any]] = {}
-    for name, filename in REQUIRED_SOURCES.items():
-        value, sha = _load_sealed(args.data_dir / filename)
-        sources[name] = value
-        provenance[name] = sha
-    for name, filename in OPTIONAL_SOURCES.items():
-        path = args.data_dir / filename
-        if path.exists():
-            value, sha = _load_sealed(path)
+    try:
+        provenance: dict[str, str] = {}
+        sources: dict[str, dict[str, Any]] = {}
+        source_paths: dict[str, Path] = {}
+        source_file_sha256: dict[str, str] = {}
+        for name, filename in REQUIRED_SOURCES.items():
+            path = args.data_dir / filename
+            value, sha, file_sha = _load_sealed(path)
             sources[name] = value
+            source_paths[name] = path
+            source_file_sha256[name] = file_sha
             provenance[name] = sha
+        for name, filename in OPTIONAL_SOURCES.items():
+            path = args.data_dir / filename
+            if path.exists():
+                value, sha, file_sha = _load_sealed(path)
+                sources[name] = value
+                source_paths[name] = path
+                source_file_sha256[name] = file_sha
+                provenance[name] = sha
+
+        board_path, board = load_current_goal_board(args.dojo_registry)
+        admission = admit_legacy_positive_sources(
+            board_path=board_path,
+            board=board,
+            positive_sources={
+                name: (source_paths[name], sources[name])
+                for name in positive_source_names()
+            },
+            loaded_source_sha256={
+                name: source_file_sha256[name] for name in positive_source_names()
+            },
+        )
+    except (LegacyAdmissionError, OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"adopted-stack: blocked by DOJO validity boundary: {exc}", file=sys.stderr)
+        return 2
 
     lock = sources["survivor_lock"]
     body: dict[str, Any] = {
@@ -96,7 +141,7 @@ def main() -> int:
                 "spec": dict(lock["spec"]),
                 "evaluation_policy": dict(lock["evaluation_policy"]),
                 "lock_sha256": lock["lock_sha256"],
-                "status": "VALIDATION_REPLICATED_UNPROVEN_UNTIL_FUTURE_WINDOW",
+                "status": "DOJO_REGISTERED_EDGE_PROVEN_NOT_LIVE_PERMISSION",
             },
             "intraday_stop": {
                 "policy": "CAUSAL_INTRADAY_REALIZED_LOSS_STOP_V1",
@@ -184,6 +229,7 @@ def main() -> int:
             "M5 validator repairs -> acquisition -> lane research (P0-2/P0-3)",
         ],
         "provenance_sha256": provenance,
+        "dojo_positive_admission": admission,
         "monthly_distribution_at_adoption": sources["monthly_distribution"]["distribution_rows"],
         "shadow_only": True,
         "order_authority": "NONE",

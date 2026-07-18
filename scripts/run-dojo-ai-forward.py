@@ -47,11 +47,20 @@ from quant_rabbit.dojo_ai_truth import (  # noqa: E402
     build_truth_bundle,
     build_truth_capture,
     build_truth_request,
+    issue_day_truth_capability,
+    issue_phase_truth_capability,
     validate_day_score as validate_truth_day_score,
     validate_phase_score,
     validate_truth_bundle_with_capture,
     validate_truth_capture,
     validate_truth_request,
+)
+from quant_rabbit.dojo_ai_validity import (  # noqa: E402
+    append_artifact_commit,
+    append_invalidation,
+    assert_artifacts_valid,
+    initialize_registry,
+    status_artifact as validity_status_artifact,
 )
 from quant_rabbit.dojo_prompt_phase import assert_locked_preregistration  # noqa: E402
 
@@ -76,6 +85,7 @@ def _load_parents(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     precommit = validate_precommit(_strict_json(run_dir / "precommit.json"))
     verify_source_bindings_against_repo(precommit["source_bindings"], REPO)
     start = validate_start_receipt(_strict_json(run_dir / "start.json"), precommit)
+    assert_artifacts_valid(run_dir, ("precommit", "start"))
     return precommit, start
 
 
@@ -114,7 +124,173 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
         _write_json_new_or_same(
             args.run_dir / "start.json", receipt, root=args.run_dir
         )
+        initialize_registry(
+            args.run_dir,
+            precommit_path=args.run_dir / "precommit.json",
+            start_path=args.run_dir / "start.json",
+            created_at_utc=_now(),
+        )
         return receipt
+
+
+def _day_parent_ids(ordinal: int) -> list[str]:
+    parents = ["precommit", "start"]
+    if ordinal > 1:
+        parents.append(f"day/{ordinal - 1:03d}/seal")
+    return parents
+
+
+def _commit_source_request(run_dir: Path, ordinal: int) -> None:
+    path = run_dir / "source-requests" / f"day-{ordinal:03d}.json"
+    append_artifact_commit(
+        run_dir,
+        logical_id=f"day/{ordinal:03d}/source-request",
+        artifact_path=path,
+        parent_logical_ids=_day_parent_ids(ordinal),
+        committed_at_utc=_now(),
+    )
+
+
+def _commit_source_capture(run_dir: Path, ordinal: int) -> None:
+    append_artifact_commit(
+        run_dir,
+        logical_id=f"day/{ordinal:03d}/source-capture",
+        artifact_path=run_dir / "source-captures" / f"day-{ordinal:03d}.json",
+        parent_logical_ids=(f"day/{ordinal:03d}/source-request",),
+        committed_at_utc=_now(),
+    )
+
+
+def _commit_day(run_dir: Path, ordinal: int, day: Mapping[str, Any]) -> None:
+    parents = _day_parent_ids(ordinal)
+    if day.get("source_capture_sha256") is not None:
+        parents.append(f"day/{ordinal:03d}/source-capture")
+    else:
+        request_path = run_dir / "source-requests" / f"day-{ordinal:03d}.json"
+        if request_path.is_file() and not request_path.is_symlink():
+            parents.append(f"day/{ordinal:03d}/source-request")
+    append_artifact_commit(
+        run_dir,
+        logical_id=f"day/{ordinal:03d}/seal",
+        artifact_path=run_dir / "days" / f"day-{ordinal:03d}.json",
+        parent_logical_ids=parents,
+        committed_at_utc=_now(),
+    )
+
+
+def _commit_terminal(run_dir: Path, ordinal: int, cell_id: str) -> None:
+    append_artifact_commit(
+        run_dir,
+        logical_id=f"day/{ordinal:03d}/cell/{cell_id}/terminal",
+        artifact_path=_terminal_path(run_dir, ordinal, cell_id),
+        parent_logical_ids=(f"day/{ordinal:03d}/seal",),
+        committed_at_utc=_now(),
+    )
+
+
+def _terminal_logical_ids(day: Mapping[str, Any]) -> list[str]:
+    if day["state"] != "REQUESTS_SEALED":
+        return []
+    return [
+        f"day/{day['ordinal']:03d}/cell/{cell['cell_id']}/terminal"
+        for cell in day["schedule"]["cells"]
+    ]
+
+
+def _commit_phase_index(run_dir: Path, days: list[dict[str, Any]]) -> None:
+    parents = ["precommit", "start"]
+    parents.extend(f"day/{day['ordinal']:03d}/seal" for day in days)
+    for day in days:
+        parents.extend(_terminal_logical_ids(day))
+    append_artifact_commit(
+        run_dir,
+        logical_id="phase/index",
+        artifact_path=run_dir / "phase-index.json",
+        parent_logical_ids=parents,
+        committed_at_utc=_now(),
+    )
+
+
+def _truth_logical(ordinal: int, stage: str) -> str:
+    return f"day/{ordinal:03d}/truth/{stage}"
+
+
+def _issue_truth_capability(
+    run_dir: Path,
+    registry: Mapping[str, Any],
+    precommit: Mapping[str, Any],
+    start: Mapping[str, Any],
+    days: list[dict[str, Any]],
+    day: Mapping[str, Any],
+    terminals: list[dict[str, Any]],
+    *,
+    required_stages: tuple[str, ...] = (),
+):
+    ordinal = int(day["ordinal"])
+    previous = days[ordinal - 2] if ordinal > 1 else None
+    required_ids = tuple(_truth_logical(ordinal, stage) for stage in required_stages)
+    return issue_day_truth_capability(
+        run_dir,
+        registry,
+        precommit,
+        start,
+        previous,
+        day,
+        terminals,
+        required_committed_logical_ids=required_ids,
+    )
+
+
+def _commit_truth_stage(
+    run_dir: Path,
+    day: Mapping[str, Any],
+    stage: str,
+) -> None:
+    ordinal = int(day["ordinal"])
+    terminal_ids = _terminal_logical_ids(day)
+    if stage == "request":
+        parents = ["precommit", f"day/{ordinal:03d}/seal", *terminal_ids]
+    elif stage == "capture":
+        parents = [_truth_logical(ordinal, "request")]
+    elif stage == "bundle":
+        parents = [
+            "precommit",
+            f"day/{ordinal:03d}/seal",
+            *terminal_ids,
+            _truth_logical(ordinal, "request"),
+            _truth_logical(ordinal, "capture"),
+        ]
+    elif stage == "score":
+        parents = [
+            "precommit",
+            f"day/{ordinal:03d}/seal",
+            *terminal_ids,
+            _truth_logical(ordinal, "bundle"),
+        ]
+    else:
+        raise RuntimeError("unknown AI truth validity stage")
+    append_artifact_commit(
+        run_dir,
+        logical_id=_truth_logical(ordinal, stage),
+        artifact_path=run_dir / "truth" / f"day-{ordinal:03d}" / f"{stage}.json",
+        parent_logical_ids=parents,
+        committed_at_utc=_now(),
+    )
+
+
+def _commit_phase_score(run_dir: Path, days: list[dict[str, Any]]) -> None:
+    score_parents = [
+        _truth_logical(int(day["ordinal"]), "score")
+        for day in days
+        if day["state"] == "REQUESTS_SEALED"
+    ]
+    append_artifact_commit(
+        run_dir,
+        logical_id="phase/score",
+        artifact_path=run_dir / "phase-score.json",
+        parent_logical_ids=("precommit", "phase/index", *score_parents),
+        committed_at_utc=_now(),
+    )
 
 
 def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
@@ -146,11 +322,16 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
             )
             if day.get("source_capture_sha256") != capture["source_capture_sha256"]:
                 raise RuntimeError("AI day does not bind its persisted source capture")
+            _commit_source_request(args.run_dir, args.ordinal)
+            _commit_source_capture(args.run_dir, args.ordinal)
+            _commit_day(args.run_dir, args.ordinal, day)
             return day
         if capture_path.is_file():
+            _commit_source_request(args.run_dir, args.ordinal)
             capture = validate_source_capture(
                 _strict_json(capture_path), precommit, start, previous
             )
+            _commit_source_capture(args.run_dir, args.ordinal)
             seal = build_day_requests_from_capture(
                 registry,
                 precommit,
@@ -159,6 +340,7 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
                 capture,
             )
             _write_json_new_or_same(day_path, seal, root=args.run_dir)
+            _commit_day(args.run_dir, args.ordinal, seal)
             return seal
         if request_path.is_file():
             request = validate_source_request(
@@ -175,6 +357,7 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
                 now_utc=_now(),
             )
             _write_json_new_or_same(request_path, request, root=args.run_dir)
+        _commit_source_request(args.run_dir, args.ordinal)
         client = OandaReadOnlyClient()
         if client.base_url != OFFICIAL_OANDA_BASE_URL:
             raise RuntimeError(
@@ -195,6 +378,7 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
             acquired_at_utc=_now(),
         )
         _write_json_new_or_same(capture_path, capture, root=args.run_dir)
+        _commit_source_capture(args.run_dir, args.ordinal)
         seal = build_day_requests_from_capture(
             registry,
             precommit,
@@ -203,6 +387,7 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
             capture,
         )
         _write_json_new_or_same(day_path, seal, root=args.run_dir)
+        _commit_day(args.run_dir, args.ordinal, seal)
         return seal
 
 
@@ -221,9 +406,15 @@ def _seal_missing(args: argparse.Namespace) -> dict[str, Any]:
         )
         failed_capture_sha: str | None = None
         if capture_path.is_file():
+            request_path = (
+                args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
+            )
+            if request_path.is_file() and not request_path.is_symlink():
+                _commit_source_request(args.run_dir, args.ordinal)
             capture = validate_source_capture(
                 _strict_json(capture_path), precommit, start, previous
             )
+            _commit_source_capture(args.run_dir, args.ordinal)
             try:
                 seal = build_day_requests_from_capture(
                     registry,
@@ -240,6 +431,7 @@ def _seal_missing(args: argparse.Namespace) -> dict[str, Any]:
                     seal,
                     root=args.run_dir,
                 )
+                _commit_day(args.run_dir, args.ordinal, seal)
                 return seal
         receipt = build_missing_day_seal(
             precommit,
@@ -254,6 +446,12 @@ def _seal_missing(args: argparse.Namespace) -> dict[str, Any]:
             receipt,
             root=args.run_dir,
         )
+        request_path = (
+            args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
+        )
+        if request_path.is_file() and not request_path.is_symlink():
+            _commit_source_request(args.run_dir, args.ordinal)
+        _commit_day(args.run_dir, args.ordinal, receipt)
         return receipt
 
 
@@ -295,10 +493,11 @@ def _seal_cell_response(args: argparse.Namespace) -> dict[str, Any]:
                 day,
             )
             if (
-                terminal["state"] != "RESPONSE_SEALED"
+                terminal["state"] != "DIAGNOSTIC_IMPORTED_RESPONSE"
                 or terminal["response_receipt"]["response"] != response
             ):
                 raise RuntimeError("immutable cell terminal already differs")
+            _commit_terminal(args.run_dir, args.ordinal, args.cell_id)
             return terminal
         terminal = build_cell_response_seal(
             registry,
@@ -311,6 +510,7 @@ def _seal_cell_response(args: argparse.Namespace) -> dict[str, Any]:
             now_utc=_now(),
         )
         _write_json_new_or_same(path, terminal, root=args.run_dir)
+        _commit_terminal(args.run_dir, args.ordinal, args.cell_id)
         return terminal
 
 
@@ -323,7 +523,7 @@ def _seal_missing_responses(args: argparse.Namespace) -> dict[str, Any]:
         )
         if day["state"] == "MISSING_SOURCE_DEADLINE":
             return {
-                "contract": "QR_DOJO_AI_FORWARD_MISSING_RESPONSE_BATCH_V2",
+                "contract": "QR_DOJO_AI_FORWARD_MISSING_RESPONSE_BATCH_V3",
                 "ordinal": args.ordinal,
                 "created_count": 0,
                 "existing_count": 0,
@@ -345,6 +545,7 @@ def _seal_missing_responses(args: argparse.Namespace) -> dict[str, Any]:
                     previous,
                     day,
                 )
+                _commit_terminal(args.run_dir, args.ordinal, cell_id)
                 existing += 1
                 continue
             terminal = build_cell_response_failure(
@@ -354,9 +555,10 @@ def _seal_missing_responses(args: argparse.Namespace) -> dict[str, Any]:
                 now_utc=now,
             )
             _write_json_new_or_same(path, terminal, root=args.run_dir)
+            _commit_terminal(args.run_dir, args.ordinal, cell_id)
             created += 1
         return {
-            "contract": "QR_DOJO_AI_FORWARD_MISSING_RESPONSE_BATCH_V2",
+            "contract": "QR_DOJO_AI_FORWARD_MISSING_RESPONSE_BATCH_V3",
             "ordinal": args.ordinal,
             "created_count": created,
             "existing_count": existing,
@@ -401,9 +603,17 @@ def _validated_days(
             )
             if request != capture["request"]:
                 raise RuntimeError("AI persisted source request differs from capture")
+            assert_artifacts_valid(
+                run_dir,
+                (
+                    f"day/{ordinal:03d}/source-request",
+                    f"day/{ordinal:03d}/source-capture",
+                ),
+            )
         elif seal["state"] == "REQUESTS_SEALED" or capture_path.exists():
             raise RuntimeError("AI day and persisted capture are not joined")
         valid.append(seal)
+        assert_artifacts_valid(run_dir, (f"day/{ordinal:03d}/seal",))
         previous = seal
     return valid
 
@@ -438,6 +648,10 @@ def _validated_terminals(
             )
             if terminal["cell_id"] != scheduled["cell_id"]:
                 raise RuntimeError("AI cell terminal filename identity drifted")
+            assert_artifacts_valid(
+                run_dir,
+                (f"day/{ordinal:03d}/cell/{scheduled['cell_id']}/terminal",),
+            )
             terminals.append(terminal)
     response_root = run_dir / "responses"
     if response_root.is_symlink():
@@ -459,9 +673,11 @@ def _seal_phase_index(args: argparse.Namespace) -> dict[str, Any]:
         )
         path = args.run_dir / "phase-index.json"
         if path.is_file():
-            return validate_phase_index(
+            existing = validate_phase_index(
                 _strict_json(path), registry, precommit, start, days, terminals
             )
+            _commit_phase_index(args.run_dir, days)
+            return existing
         index = build_phase_index(
             registry,
             precommit,
@@ -471,6 +687,7 @@ def _seal_phase_index(args: argparse.Namespace) -> dict[str, Any]:
             now_utc=_now(),
         )
         _write_json_new_or_same(path, index, root=args.run_dir)
+        _commit_phase_index(args.run_dir, days)
         return index
 
 
@@ -505,33 +722,33 @@ def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
         capture_path = truth_dir / "capture.json"
         bundle_path = truth_dir / "bundle.json"
         score_path = truth_dir / "score.json"
-        if score_path.is_file():
-            capture = validate_truth_capture(
-                _strict_json(capture_path),
-                validate_truth_request(
-                    _strict_json(request_path), precommit, day, terminals
-                ),
-            )
-            bundle = validate_truth_bundle_with_capture(
-                _strict_json(bundle_path), precommit, day, terminals, capture
-            )
-            return validate_truth_day_score(
-                _strict_json(score_path),
+        base_capability = _issue_truth_capability(
+            args.run_dir,
+            registry,
+            precommit,
+            start,
+            days,
+            day,
+            terminals,
+        )
+        if request_path.is_file():
+            request = validate_truth_request(
+                _strict_json(request_path),
                 precommit,
                 day,
                 terminals,
-                capture,
-                bundle,
-            )
-        if request_path.is_file():
-            request = validate_truth_request(
-                _strict_json(request_path), precommit, day, terminals
+                graph_capability=base_capability,
             )
         else:
             request = build_truth_request(
-                precommit, day, terminals, now_utc=_now()
+                precommit,
+                day,
+                terminals,
+                now_utc=_now(),
+                graph_capability=base_capability,
             )
             _write_json_new_or_same(request_path, request, root=args.run_dir)
+        _commit_truth_stage(args.run_dir, day, "request")
         if capture_path.is_file():
             capture = validate_truth_capture(_strict_json(capture_path), request)
         else:
@@ -552,9 +769,25 @@ def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
                 request, response, acquired_at_utc=_now()
             )
             _write_json_new_or_same(capture_path, capture, root=args.run_dir)
+        _commit_truth_stage(args.run_dir, day, "capture")
+        bundle_capability = _issue_truth_capability(
+            args.run_dir,
+            registry,
+            precommit,
+            start,
+            days,
+            day,
+            terminals,
+            required_stages=("request", "capture"),
+        )
         if bundle_path.is_file():
             bundle = validate_truth_bundle_with_capture(
-                _strict_json(bundle_path), precommit, day, terminals, capture
+                _strict_json(bundle_path),
+                precommit,
+                day,
+                terminals,
+                capture,
+                graph_capability=bundle_capability,
             )
         else:
             bundle = build_truth_bundle(
@@ -563,8 +796,20 @@ def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
                 terminals,
                 capture,
                 sealed_at_utc=_now(),
+                graph_capability=bundle_capability,
             )
             _write_json_new_or_same(bundle_path, bundle, root=args.run_dir)
+        _commit_truth_stage(args.run_dir, day, "bundle")
+        score_capability = _issue_truth_capability(
+            args.run_dir,
+            registry,
+            precommit,
+            start,
+            days,
+            day,
+            terminals,
+            required_stages=("request", "capture", "bundle"),
+        )
         score = build_truth_day_score(
             precommit,
             day,
@@ -572,8 +817,10 @@ def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
             capture,
             bundle,
             scored_at_utc=_now(),
+            graph_capability=score_capability,
         )
         _write_json_new_or_same(score_path, score, root=args.run_dir)
+        _commit_truth_stage(args.run_dir, day, "score")
         return score
 
 
@@ -593,30 +840,51 @@ def _seal_phase_score(args: argparse.Namespace) -> dict[str, Any]:
             days,
             terminals,
         )
+        assert_artifacts_valid(args.run_dir, ("phase/index",))
         day_scores = _validated_truth_scores(
             args.run_dir,
+            registry,
             precommit,
+            start,
             days,
             terminals,
             require_all=True,
         )
+        phase_capability = issue_phase_truth_capability(
+            args.run_dir, precommit, index, day_scores
+        )
         score_path = args.run_dir / "phase-score.json"
         if score_path.is_file() or score_path.is_symlink():
-            return validate_phase_score(
-                _strict_json(score_path), precommit, index, days, day_scores
+            existing = validate_phase_score(
+                _strict_json(score_path),
+                precommit,
+                index,
+                days,
+                day_scores,
+                graph_capability=phase_capability,
             )
+            _commit_phase_score(args.run_dir, days)
+            return existing
         phase_score = build_phase_score(
-            precommit, index, days, day_scores, sealed_at_utc=_now()
+            precommit,
+            index,
+            days,
+            day_scores,
+            sealed_at_utc=_now(),
+            graph_capability=phase_capability,
         )
         _write_json_new_or_same(
             args.run_dir / "phase-score.json", phase_score, root=args.run_dir
         )
+        _commit_phase_score(args.run_dir, days)
         return phase_score
 
 
 def _validated_truth_scores(
     run_dir: Path,
+    registry: Mapping[str, Any],
     precommit: Mapping[str, Any],
+    start: Mapping[str, Any],
     days: list[dict[str, Any]],
     terminals: list[dict[str, Any]],
     *,
@@ -660,25 +928,56 @@ def _validated_truth_scores(
             continue
         day = expected[ordinal]
         selected = _terminals_for_day(terminals, day)
-        request = validate_truth_request(
-            _strict_json(entries["request.json"]), precommit, day, selected
+        base_capability = _issue_truth_capability(
+            run_dir, registry, precommit, start, days, day, selected
         )
+        request = validate_truth_request(
+            _strict_json(entries["request.json"]),
+            precommit,
+            day,
+            selected,
+            graph_capability=base_capability,
+        )
+        assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "request"),))
         if "capture.json" not in present:
             continue
         capture = validate_truth_capture(
             _strict_json(entries["capture.json"]), request
         )
+        assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "capture"),))
         if "bundle.json" not in present:
             continue
+        bundle_capability = _issue_truth_capability(
+            run_dir,
+            registry,
+            precommit,
+            start,
+            days,
+            day,
+            selected,
+            required_stages=("request", "capture"),
+        )
         bundle = validate_truth_bundle_with_capture(
             _strict_json(entries["bundle.json"]),
             precommit,
             day,
             selected,
             capture,
+            graph_capability=bundle_capability,
         )
+        assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "bundle"),))
         if "score.json" not in present:
             continue
+        score_capability = _issue_truth_capability(
+            run_dir,
+            registry,
+            precommit,
+            start,
+            days,
+            day,
+            selected,
+            required_stages=("request", "capture", "bundle"),
+        )
         scores.append(
             validate_truth_day_score(
                 _strict_json(entries["score.json"]),
@@ -687,8 +986,10 @@ def _validated_truth_scores(
                 selected,
                 capture,
                 bundle,
+                graph_capability=score_capability,
             )
         )
+        assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "score"),))
     if require_all and set(actual_dirs) != set(expected):
         raise RuntimeError("AI phase score requires every eligible truth day")
     if require_all and len(scores) != len(expected):
@@ -705,7 +1006,9 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
     )
     day_scores = _validated_truth_scores(
         args.run_dir,
+        registry,
         precommit,
+        start,
         valid,
         terminals,
         require_all=False,
@@ -722,17 +1025,38 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
             terminals,
         )
         phase_score = validate_phase_score(
-            _strict_json(phase_score_path), precommit, index, valid, day_scores
+            _strict_json(phase_score_path),
+            precommit,
+            index,
+            valid,
+            day_scores,
+            graph_capability=issue_phase_truth_capability(
+                args.run_dir, precommit, index, day_scores
+            ),
         )
+        assert_artifacts_valid(args.run_dir, ("phase/index", "phase/score"))
     next_ordinal = len(valid) + 1
-    response_count = sum(row["state"] == "RESPONSE_SEALED" for row in terminals)
+    response_count = sum(
+        row["state"] == "EXECUTED_RESPONSE_SEALED" for row in terminals
+    )
+    execution_failure_count = sum(
+        row["state"] == "MODEL_EXECUTION_FAILED" for row in terminals
+    )
+    diagnostic_import_count = sum(
+        row["state"] == "DIAGNOSTIC_IMPORTED_RESPONSE" for row in terminals
+    )
     missing_response_count = sum(
         row["state"] == "MISSING_RESPONSE_DEADLINE" for row in terminals
     )
     missing_source_cells = 3 * sum(
         row["state"] == "MISSING_SOURCE_DEADLINE" for row in valid
     )
-    fixed_cells = response_count + missing_response_count + missing_source_cells
+    fixed_cells = (
+        response_count
+        + execution_failure_count
+        + missing_response_count
+        + missing_source_cells
+    )
     if phase_score is not None:
         state = "PHASE_SCORED_DIAGNOSTIC"
     elif next_ordinal <= 30:
@@ -742,7 +1066,7 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
     else:
         state = "RESPONSES_FIXED_AWAITING_MARKET_TRUTH"
     result: dict[str, Any] = {
-        "contract": "QR_DOJO_AI_FORWARD_STATUS_V2",
+        "contract": "QR_DOJO_AI_FORWARD_STATUS_V3",
         "experiment_id": precommit["experiment_id"],
         "state": state,
         "sealed_day_count": len(valid),
@@ -752,6 +1076,8 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "allocated_cell_count": 90,
         "response_sealed_count": response_count,
+        "execution_failure_cell_count": execution_failure_count,
+        "diagnostic_import_cell_count": diagnostic_import_count,
         "missing_response_cell_count": missing_response_count,
         "missing_source_cell_count": missing_source_cells,
         "fixed_cell_count": fixed_cells,
@@ -761,10 +1087,28 @@ def _status(args: argparse.Namespace) -> dict[str, Any]:
         "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
         "truth_day_score_count": len(day_scores),
         "phase_score_present": phase_score is not None,
+        "validity_registry": validity_status_artifact(args.run_dir),
     }
     if next_ordinal <= 30:
         result["next_schedule"] = precommit["schedule"][next_ordinal - 1]
     return result
+
+
+def _validity_status(args: argparse.Namespace) -> dict[str, Any]:
+    with _run_lock(args.run_dir):
+        return validity_status_artifact(args.run_dir)
+
+
+def _invalidate(args: argparse.Namespace) -> dict[str, Any]:
+    with _run_lock(args.run_dir):
+        append_invalidation(
+            args.run_dir,
+            logical_id=args.logical_id,
+            reason_code=args.reason_code,
+            evidence_sha256=args.evidence_sha256,
+            invalidated_at_utc=_now(),
+        )
+        return validity_status_artifact(args.run_dir)
 
 
 def _get_with_retry(
@@ -941,7 +1285,7 @@ def main() -> int:
     missing.add_argument("--ordinal", type=int, required=True)
     missing.set_defaults(handler=_seal_missing)
 
-    response = subparsers.add_parser("seal-response")
+    response = subparsers.add_parser("import-diagnostic-response")
     response.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     response.add_argument("--run-dir", type=Path, required=True)
     response.add_argument("--ordinal", type=int, required=True)
@@ -978,6 +1322,17 @@ def main() -> int:
     status.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     status.add_argument("--run-dir", type=Path, required=True)
     status.set_defaults(handler=_status)
+
+    validity = subparsers.add_parser("validity-status")
+    validity.add_argument("--run-dir", type=Path, required=True)
+    validity.set_defaults(handler=_validity_status)
+
+    invalidate = subparsers.add_parser("invalidate-artifact")
+    invalidate.add_argument("--run-dir", type=Path, required=True)
+    invalidate.add_argument("--logical-id", required=True)
+    invalidate.add_argument("--reason-code", required=True)
+    invalidate.add_argument("--evidence-sha256", required=True)
+    invalidate.set_defaults(handler=_invalidate)
 
     args = parser.parse_args()
     result = args.handler(args)

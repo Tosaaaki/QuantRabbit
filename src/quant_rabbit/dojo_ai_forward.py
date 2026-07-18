@@ -7,7 +7,8 @@ three-variant request bundle per scheduled cutoff.  The final 90-cell index is
 derived from the chain; it is not treated as the original precommit.
 
 This module never invokes a model, opens answer material, mutates a broker, or
-upgrades evidence beyond a self-attested diagnostic.
+upgrades evidence beyond a self-attested diagnostic.  V3 binds a separate
+operator-side one-shot CLI executor and its locally verifiable receipt.
 """
 
 from __future__ import annotations
@@ -25,14 +26,15 @@ from typing import Any
 
 from quant_rabbit.dojo_ai_discretion import (
     DIAGNOSTIC_TIER,
-    build_capability_manifest,
     build_day_packet,
+    build_provider_capability_manifest,
     canonical_sha256,
     prelock_prompt,
     prelock_scorer,
-    seal_model_manifest,
+    seal_provider_model_manifest,
     seal_response,
 )
+from quant_rabbit.dojo_ai_execution import validate_execution_receipt
 from quant_rabbit.dojo_prompt_phase import (
     LOCKED_EXPERIMENT_ID,
     LOCKED_PREREGISTRATION_SHA256,
@@ -47,16 +49,17 @@ from quant_rabbit.dojo_market_calendar import (
 )
 
 
-PRECOMMIT_CONTRACT = "QR_DOJO_AI_FORWARD_PRECOMMIT_V2"
-START_CONTRACT = "QR_DOJO_AI_FORWARD_START_V2"
-DAY_SEAL_CONTRACT = "QR_DOJO_AI_DAY_SOURCE_SEAL_V2"
-REQUEST_CONTRACT = "QR_DOJO_AI_FORWARD_REQUEST_V2"
-SOURCE_PROVENANCE_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_PROVENANCE_V2"
-SOURCE_CAPTURE_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_CAPTURE_V2"
-SOURCE_REQUEST_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_REQUEST_V2"
-CELL_RESPONSE_CONTRACT = "QR_DOJO_AI_FORWARD_CELL_RESPONSE_V2"
-CELL_FAILURE_CONTRACT = "QR_DOJO_AI_FORWARD_CELL_FAILURE_V2"
-PHASE_INDEX_CONTRACT = "QR_DOJO_AI_FORWARD_PHASE_INDEX_V2"
+PRECOMMIT_CONTRACT = "QR_DOJO_AI_FORWARD_PRECOMMIT_V3"
+START_CONTRACT = "QR_DOJO_AI_FORWARD_START_V3"
+DAY_SEAL_CONTRACT = "QR_DOJO_AI_DAY_SOURCE_SEAL_V3"
+REQUEST_CONTRACT = "QR_DOJO_AI_FORWARD_REQUEST_V3"
+SOURCE_PROVENANCE_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_PROVENANCE_V3"
+SOURCE_CAPTURE_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_CAPTURE_V3"
+SOURCE_REQUEST_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_REQUEST_V3"
+CELL_RESPONSE_CONTRACT = "QR_DOJO_AI_FORWARD_CELL_RESPONSE_V3"
+CELL_EXECUTION_FAILURE_CONTRACT = "QR_DOJO_AI_FORWARD_CELL_EXECUTION_FAILURE_V3"
+CELL_FAILURE_CONTRACT = "QR_DOJO_AI_FORWARD_CELL_FAILURE_V3"
+PHASE_INDEX_CONTRACT = "QR_DOJO_AI_FORWARD_PHASE_INDEX_V3"
 PHASE_ID = "phase_1_diagnostic"
 PAIR = "USD_JPY"
 SOURCE_CONTRACT = "QR_DOJO_AI_DAY_SOURCE_V1"
@@ -86,7 +89,8 @@ LOCKED_REGISTRY_AT = datetime(2026, 7, 18, 18, 2, 4, tzinfo=timezone.utc)
 _LIMITATIONS = [
     "EXTERNAL_MONOTONIC_WITNESS_ABSENT",
     "PROVIDER_MODEL_IDENTITY_ATTESTATION_ABSENT",
-    "MODEL_EXECUTOR_NOT_IMPLEMENTED_BY_THIS_CONTRACT",
+    "PROVIDER_BASE_PROMPT_AND_FULL_REQUEST_ATTESTATION_ABSENT",
+    "LOCAL_EXECUTION_RECEIPT_IS_NOT_PROVIDER_ATTESTATION",
     "MARKET_TRUTH_AND_SCORING_SELF_ATTESTED_WITHOUT_EXTERNAL_WITNESS",
     "UPSTREAM_HTTP_STATUS_AND_HEADER_ATTESTATION_ABSENT",
     "SOURCE_COMPLETENESS_SELF_ATTESTED_FIXED_COVERAGE_GATE",
@@ -101,12 +105,15 @@ _VARIANTS = tuple(LOCKED_VARIANT_PROMPT_SHA256)
 REQUIRED_SOURCE_BINDING_FILES = frozenset(
     {
         "src/quant_rabbit/dojo_ai_forward.py",
+        "src/quant_rabbit/dojo_ai_execution.py",
+        "src/quant_rabbit/dojo_ai_validity.py",
         "src/quant_rabbit/dojo_ai_discretion.py",
         "src/quant_rabbit/dojo_prompt_phase.py",
         "src/quant_rabbit/dojo_market_calendar.py",
         "src/quant_rabbit/dojo_ai_truth.py",
         "src/quant_rabbit/broker/oanda.py",
         "scripts/run-dojo-ai-forward.py",
+        "tools/run-dojo-ai-model-cell.py",
     }
 )
 
@@ -650,13 +657,13 @@ def _build_day_requests_from_source(
             item for item in schedule["cells"] if item["variant_id"] == variant
         )
         context_id = scheduled_cell["context_id"]
-        capability = build_capability_manifest(
+        capability = build_provider_capability_manifest(
             context_id=context_id,
             generated_at_utc=now,
         )
         prompt = lock["prompt_locks"][variant]
         model_policy = lock["model_policy"]
-        model = seal_model_manifest(
+        model = seal_provider_model_manifest(
             model_name=model_policy["model_name"],
             model_version=model_policy["model_version"],
             model_lineage=model_policy["model_lineage"],
@@ -864,7 +871,7 @@ def build_cell_response_seal(
     cell_id: str,
     now_utc: datetime,
 ) -> dict[str, Any]:
-    """Seal one fixed-schema response after its day bundle and before deadline."""
+    """Import a fixed-schema response as diagnostic-only, never as model execution."""
 
     day = validate_day_seal(
         day_seal,
@@ -896,7 +903,7 @@ def build_cell_response_seal(
     body = {
         "contract": CELL_RESPONSE_CONTRACT,
         "schema_version": 2,
-        "state": "RESPONSE_SEALED",
+        "state": "DIAGNOSTIC_IMPORTED_RESPONSE",
         "experiment_id": LOCKED_EXPERIMENT_ID,
         "phase_id": PHASE_ID,
         "ordinal": day["ordinal"],
@@ -916,9 +923,123 @@ def build_cell_response_seal(
         "answer_key_opened": False,
         "response_selection_allowed": False,
         "provider_execution_attestation_present": False,
+        "local_execution_procedure_verified": False,
+        "execution_receipt": None,
+        "prompt_evaluation_eligible": False,
         "evidence_tier": DIAGNOSTIC_TIER,
         "authority": _authority(),
     }
+    return _seal(body, "cell_terminal_sha256")
+
+
+def build_executed_cell_terminal(
+    registry: Mapping[str, Any],
+    precommit: Mapping[str, Any],
+    start_receipt: Mapping[str, Any],
+    previous_day_seal: Mapping[str, Any] | None,
+    day_seal: Mapping[str, Any],
+    execution_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Seal the first one-shot execution outcome as an immutable cell terminal."""
+
+    day = validate_day_seal(
+        day_seal,
+        registry,
+        precommit,
+        start_receipt,
+        previous_day_seal,
+        expected_ordinal=int(day_seal.get("ordinal", 0)),
+    )
+    if day["state"] != "REQUESTS_SEALED":
+        raise DojoAIForwardError("missing-source day cannot execute a model")
+    receipt = validate_execution_receipt(execution_receipt)
+    request = receipt["execution_request"]
+    cell = _find_day_cell(day, str(request.get("cell_id")))
+    if (
+        request.get("precommit_sha256") != precommit.get("precommit_sha256")
+        or request.get("day_seal_sha256") != day["day_seal_sha256"]
+        or request.get("variant_id") != cell["variant_id"]
+        or request.get("context_id") != cell["request_receipt"]["context_id"]
+        or request.get("request_receipt_sha256")
+        != cell["request_receipt"]["request_receipt_sha256"]
+        or request.get("packet_sha256") != cell["packet"]["packet_sha256"]
+        or request.get("prompt_lock_sha256")
+        != precommit["prompt_locks"][cell["variant_id"]]["prompt_lock_sha256"]
+        or request.get("model_sha256") != cell["model_manifest"]["model_sha256"]
+        or request.get("capability_manifest_sha256")
+        != cell["capability_manifest"]["capability_manifest_sha256"]
+        or request.get("answer_key_present") is not False
+    ):
+        raise DojoAIForwardError("execution receipt parent binding drifted")
+    completed = _parse_utc(receipt["completed_at_utc"], "execution completed")
+    day_sealed = _parse_utc(day["sealed_at_utc"], "day sealed_at_utc")
+    deadline = _parse_utc(day["schedule"]["response_deadline_utc"], "deadline")
+    if completed < day_sealed or completed > deadline:
+        raise DojoAIForwardError("execution receipt is outside its response window")
+    common = {
+        "schema_version": 3,
+        "experiment_id": LOCKED_EXPERIMENT_ID,
+        "phase_id": PHASE_ID,
+        "ordinal": day["ordinal"],
+        "blind_day_rank": day["schedule"]["blind_day_rank"],
+        "blind_day_id": day["schedule"]["blind_day_id"],
+        "variant_id": cell["variant_id"],
+        "cell_id": request["cell_id"],
+        "sealed_at_utc": _iso(completed),
+        "response_deadline_utc": day["schedule"]["response_deadline_utc"],
+        "truth_not_before_utc": day["schedule"]["truth_not_before_utc"],
+        "precommit_sha256": precommit["precommit_sha256"],
+        "day_seal_sha256": day["day_seal_sha256"],
+        "request_receipt_sha256": cell["request_receipt"][
+            "request_receipt_sha256"
+        ],
+        "execution_request_sha256": request["execution_request_sha256"],
+        "execution_receipt": receipt,
+        "execution_receipt_sha256": receipt["execution_receipt_sha256"],
+        "answer_key_opened": False,
+        "response_selection_allowed": False,
+        "provider_execution_attestation_present": False,
+        "provider_identity_status": "REQUESTED_MODEL_CLI_REPORTED_UNVERIFIED",
+        "evidence_tier": DIAGNOSTIC_TIER,
+        "authority": _authority(),
+    }
+    if receipt["state"] == "EXECUTION_SUCCEEDED":
+        try:
+            response_receipt = seal_response(
+                receipt["response"],
+                packet=cell["packet"],
+                prompt_lock=precommit["prompt_locks"][cell["variant_id"]],
+                model_manifest=cell["model_manifest"],
+                capability_manifest=cell["capability_manifest"],
+                sealed_at_utc=completed,
+            )
+        except (TypeError, ValueError) as exc:
+            raise DojoAIForwardError(
+                "successful execution response violates the locked schema"
+            ) from exc
+        body = {
+            "contract": CELL_RESPONSE_CONTRACT,
+            "state": "EXECUTED_RESPONSE_SEALED",
+            **common,
+            "response_receipt": response_receipt,
+            "economic_fallback": None,
+            "response_failure": False,
+            "local_execution_procedure_verified": True,
+            "prompt_evaluation_eligible": True,
+        }
+    else:
+        body = {
+            "contract": CELL_EXECUTION_FAILURE_CONTRACT,
+            "state": "MODEL_EXECUTION_FAILED",
+            **common,
+            "response_receipt": None,
+            "economic_fallback": "SYNTHETIC_FLAT_ZERO_RETURN",
+            "response_failure": True,
+            "failure_code": receipt["failure_code"],
+            "late_response_backfill_allowed": False,
+            "local_execution_procedure_verified": False,
+            "prompt_evaluation_eligible": False,
+        }
     return _seal(body, "cell_terminal_sha256")
 
 
@@ -993,7 +1114,7 @@ def validate_cell_terminal(
     artifact = _mapping(value, "AI cell terminal")
     _validate_seal(artifact, "cell_terminal_sha256")
     sealed = _parse_utc(artifact.get("sealed_at_utc"), "sealed_at_utc")
-    if artifact.get("state") == "RESPONSE_SEALED":
+    if artifact.get("state") == "DIAGNOSTIC_IMPORTED_RESPONSE":
         receipt = _mapping(artifact.get("response_receipt"), "response receipt")
         expected = build_cell_response_seal(
             registry,
@@ -1004,6 +1125,18 @@ def validate_cell_terminal(
             receipt.get("response"),
             cell_id=str(artifact.get("cell_id")),
             now_utc=sealed,
+        )
+    elif artifact.get("state") in {
+        "EXECUTED_RESPONSE_SEALED",
+        "MODEL_EXECUTION_FAILED",
+    }:
+        expected = build_executed_cell_terminal(
+            registry,
+            precommit,
+            start_receipt,
+            previous_day_seal,
+            day_seal,
+            _mapping(artifact.get("execution_receipt"), "execution receipt"),
         )
     elif artifact.get("state") == "MISSING_RESPONSE_DEADLINE":
         expected = build_cell_response_failure(
@@ -1112,6 +1245,10 @@ def build_phase_index(
                     terminal["sealed_at_utc"], "terminal sealed_at_utc"
                 ) > now:
                     raise DojoAIForwardError("phase index predates a cell terminal")
+                if terminal["state"] == "DIAGNOSTIC_IMPORTED_RESPONSE":
+                    raise DojoAIForwardError(
+                        "imported response cannot enter the V3 prompt phase"
+                    )
                 consumed.add(cell_id)
                 index.append(
                     {
@@ -1126,7 +1263,8 @@ def build_phase_index(
                         ],
                         "economic_fallback": (
                             terminal.get("economic_fallback")
-                            if terminal["state"] == "MISSING_RESPONSE_DEADLINE"
+                            if terminal["state"]
+                            in {"MISSING_RESPONSE_DEADLINE", "MODEL_EXECUTION_FAILED"}
                             else None
                         ),
                     }
@@ -1137,9 +1275,14 @@ def build_phase_index(
     if len(index) != EXPECTED_CELL_COUNT or len({row["cell_id"] for row in index}) != 90:
         raise DojoAIForwardError("phase index denominator is not exactly 90 cells")
 
-    response_count = sum(row["terminal_state"] == "RESPONSE_SEALED" for row in index)
+    response_count = sum(
+        row["terminal_state"] == "EXECUTED_RESPONSE_SEALED" for row in index
+    )
     missing_response_count = sum(
         row["terminal_state"] == "MISSING_RESPONSE_DEADLINE" for row in index
+    )
+    execution_failure_count = sum(
+        row["terminal_state"] == "MODEL_EXECUTION_FAILED" for row in index
     )
     missing_source_cell_count = sum(
         row["terminal_state"] == "MISSING_SOURCE_DEADLINE" for row in index
@@ -1159,6 +1302,7 @@ def build_phase_index(
         "allocated_cell_count": EXPECTED_CELL_COUNT,
         "response_sealed_count": response_count,
         "missing_response_cell_count": missing_response_count,
+        "execution_failure_cell_count": execution_failure_count,
         "missing_source_cell_count": missing_source_cell_count,
         "cell_index": index,
         "answer_keys_opened": False,

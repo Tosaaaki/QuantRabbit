@@ -1,4 +1,4 @@
-"""Market-derived truth and fixed-denominator scoring for AI forward V2.
+"""Market-derived truth and fixed-denominator scoring for AI forward V3.
 
 The model is tested only on a preregistered 24-hour direction/size decision.
 Targets, invalidations, and prose confidence remain diagnostic fields; they do
@@ -12,8 +12,10 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from quant_rabbit.dojo_ai_discretion import (
@@ -37,8 +39,12 @@ from quant_rabbit.dojo_ai_forward import (
     TRUTH_NOTIONAL_MULTIPLE,
     TRUTH_SEAL_DEADLINE_DELAY,
     TRUTH_SLIPPAGE_PIPS_PER_FILL,
+    validate_cell_terminal,
+    validate_day_seal,
     validate_precommit,
+    validate_start_receipt,
 )
+from quant_rabbit.dojo_ai_validity import assert_artifacts_valid
 from quant_rabbit.dojo_market_calendar import expected_oanda_fx_slots
 from quant_rabbit.dojo_prompt_phase import LOCKED_VARIANT_PROMPT_SHA256
 
@@ -47,7 +53,7 @@ TRUTH_REQUEST_CONTRACT = "QR_DOJO_AI_MARKET_TRUTH_REQUEST_V1"
 TRUTH_CAPTURE_CONTRACT = "QR_DOJO_AI_MARKET_TRUTH_CAPTURE_V1"
 TRUTH_BUNDLE_CONTRACT = "QR_DOJO_AI_MARKET_TRUTH_BUNDLE_V1"
 DAY_SCORE_CONTRACT = "QR_DOJO_AI_MARKET_TRUTH_DAY_SCORE_V1"
-PHASE_SCORE_CONTRACT = "QR_DOJO_AI_FORWARD_PHASE_SCORE_V2"
+PHASE_SCORE_CONTRACT = "QR_DOJO_AI_FORWARD_PHASE_SCORE_V3"
 TRUTH_COVERAGE_POLICY = "OANDA_M5_EXACT_BOUNDARY_FIXED_HORIZON_TRUTH_V1"
 _VARIANTS = tuple(LOCKED_VARIANT_PROMPT_SHA256)
 _TIME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(0+))?Z")
@@ -58,15 +64,283 @@ class DojoAITruthError(ValueError):
     """Market truth, score, or phase aggregation is not causally valid."""
 
 
+_CAPABILITY_TOKEN = object()
+
+
+@dataclass(frozen=True)
+class TruthGraphCapability:
+    """Opaque result of deep parent validation against first-write bytes."""
+
+    _token: object
+    precommit_sha256: str
+    day_seal_sha256: str
+    cell_terminal_sha256s: tuple[str, ...]
+    committed_logical_ids: frozenset[str]
+    registry_tip_sha256: str
+
+
+@dataclass(frozen=True)
+class PhaseGraphCapability:
+    """Opaque first-write binding for phase index and every day score."""
+
+    _token: object
+    precommit_sha256: str
+    phase_index_sha256: str
+    day_score_sha256s: tuple[str, ...]
+    registry_tip_sha256: str
+
+
+def issue_day_truth_capability(
+    run_dir: Path,
+    registry: Mapping[str, Any],
+    precommit: Mapping[str, Any],
+    start_receipt: Mapping[str, Any],
+    previous_day_seal: Mapping[str, Any] | None,
+    day_seal: Mapping[str, Any],
+    cell_terminals: Sequence[Mapping[str, Any]],
+    *,
+    required_committed_logical_ids: Sequence[str] = (),
+) -> TruthGraphCapability:
+    """Deeply validate a day before any truth or answer-key builder can run."""
+
+    lock = validate_precommit(precommit)
+    start = validate_start_receipt(start_receipt, lock)
+    day = validate_day_seal(
+        day_seal,
+        registry,
+        lock,
+        start,
+        previous_day_seal,
+        expected_ordinal=int(day_seal.get("ordinal", 0)),
+    )
+    if day["state"] != "REQUESTS_SEALED":
+        raise DojoAITruthError("truth capability requires a request-sealed day")
+    expected = {cell["cell_id"] for cell in day["schedule"]["cells"]}
+    validated: list[dict[str, Any]] = []
+    for raw in cell_terminals:
+        terminal = validate_cell_terminal(
+            raw,
+            registry,
+            lock,
+            start,
+            previous_day_seal,
+            day,
+        )
+        if terminal["cell_id"] not in expected:
+            raise DojoAITruthError("truth capability contains unknown terminal")
+        validated.append(terminal)
+    if {row["cell_id"] for row in validated} != expected or len(validated) != 3:
+        raise DojoAITruthError("truth capability requires all three exact terminals")
+    ordinal = int(day["ordinal"])
+    source_request_id = f"day/{ordinal:03d}/source-request"
+    source_capture_id = f"day/{ordinal:03d}/source-capture"
+    base_ids = [
+        "precommit",
+        "start",
+        f"day/{ordinal:03d}/seal",
+    ]
+    if day.get("source_capture_sha256") is not None:
+        base_ids.extend((source_request_id, source_capture_id))
+    for row in validated:
+        cell_root = f"day/{ordinal:03d}/cell/{row['cell_id']}"
+        if row["state"] in {
+            "EXECUTED_RESPONSE_SEALED",
+            "MODEL_EXECUTION_FAILED",
+        }:
+            base_ids.extend(
+                (
+                    f"{cell_root}/execution-request",
+                    f"{cell_root}/execution-receipt",
+                )
+            )
+        base_ids.append(f"{cell_root}/terminal")
+    logical_ids = tuple(base_ids) + tuple(required_committed_logical_ids)
+    snapshot = assert_artifacts_valid(run_dir, logical_ids)
+    day_parents = {"precommit", "start"}
+    if ordinal > 1:
+        day_parents.add(f"day/{ordinal - 1:03d}/seal")
+    if day.get("source_capture_sha256") is not None:
+        day_parents.add(source_capture_id)
+        if set(snapshot.committed[source_capture_id]["parent_logical_ids"]) != {
+            source_request_id
+        }:
+            raise DojoAITruthError("source capture validity parents drifted")
+    if set(snapshot.committed[f"day/{ordinal:03d}/seal"]["parent_logical_ids"]) != day_parents:
+        raise DojoAITruthError("day validity parents drifted")
+    for row in validated:
+        cell_root = f"day/{ordinal:03d}/cell/{row['cell_id']}"
+        expected_parents = {f"day/{ordinal:03d}/seal"}
+        if row["state"] in {
+            "EXECUTED_RESPONSE_SEALED",
+            "MODEL_EXECUTION_FAILED",
+        }:
+            request_id = f"{cell_root}/execution-request"
+            receipt_id = f"{cell_root}/execution-receipt"
+            if set(snapshot.committed[request_id]["parent_logical_ids"]) != {
+                "precommit",
+                f"day/{ordinal:03d}/seal",
+            } or set(snapshot.committed[receipt_id]["parent_logical_ids"]) != {
+                request_id
+            }:
+                raise DojoAITruthError("execution validity parents drifted")
+            expected_parents.add(receipt_id)
+        if set(snapshot.committed[f"{cell_root}/terminal"]["parent_logical_ids"]) != expected_parents:
+            raise DojoAITruthError("terminal validity parents drifted")
+    return TruthGraphCapability(
+        _token=_CAPABILITY_TOKEN,
+        precommit_sha256=lock["precommit_sha256"],
+        day_seal_sha256=day["day_seal_sha256"],
+        cell_terminal_sha256s=tuple(
+            sorted(row["cell_terminal_sha256"] for row in validated)
+        ),
+        committed_logical_ids=frozenset(logical_ids),
+        registry_tip_sha256=snapshot.latest_event_sha256,
+    )
+
+
+def _require_truth_capability(
+    capability: TruthGraphCapability,
+    precommit: Mapping[str, Any],
+    day_seal: Mapping[str, Any],
+    cell_terminals: Sequence[Mapping[str, Any]],
+    *,
+    required_logical_ids: Sequence[str] = (),
+) -> None:
+    if not isinstance(capability, TruthGraphCapability) or capability._token is not _CAPABILITY_TOKEN:
+        raise DojoAITruthError("deep truth graph capability is required")
+    terminal_shas = tuple(
+        sorted(
+            str(row.get("cell_terminal_sha256"))
+            for row in cell_terminals
+            if isinstance(row, Mapping)
+        )
+    )
+    if (
+        capability.precommit_sha256 != precommit.get("precommit_sha256")
+        or capability.day_seal_sha256 != day_seal.get("day_seal_sha256")
+        or capability.cell_terminal_sha256s != terminal_shas
+        or not set(required_logical_ids).issubset(
+            capability.committed_logical_ids
+        )
+    ):
+        raise DojoAITruthError("truth graph capability does not bind exact parents")
+
+
+def issue_phase_truth_capability(
+    run_dir: Path,
+    precommit: Mapping[str, Any],
+    phase_index: Mapping[str, Any],
+    day_scores: Sequence[Mapping[str, Any]],
+) -> PhaseGraphCapability:
+    """Bind the phase aggregation inputs to their committed first bytes."""
+
+    lock = validate_precommit(precommit)
+    index = _mapping(phase_index, "phase index")
+    _validate_external_seal(index, "phase_index_sha256")
+    if index.get("precommit_sha256") != lock["precommit_sha256"]:
+        raise DojoAITruthError("phase capability index parent drifted")
+    score_shas: list[str] = []
+    logical_ids = ["precommit", "phase/index"]
+    for raw in day_scores:
+        score = _mapping(raw, "phase day score")
+        _validate_seal(score, "day_score_sha256")
+        ordinal = score.get("ordinal")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            raise DojoAITruthError("phase capability day score ordinal is invalid")
+        logical_ids.append(f"day/{ordinal:03d}/truth/score")
+        score_shas.append(score["day_score_sha256"])
+    snapshot = assert_artifacts_valid(run_dir, logical_ids)
+    if snapshot.committed["precommit"]["artifact_sha256"] != lock["precommit_sha256"]:
+        raise DojoAITruthError("phase capability precommit bytes drifted")
+    if snapshot.committed["phase/index"]["artifact_sha256"] != index["phase_index_sha256"]:
+        raise DojoAITruthError("phase capability index bytes drifted")
+    by_sha: dict[str, str] = {}
+    for logical, row in snapshot.committed.items():
+        digest = str(row["artifact_sha256"])
+        if digest in by_sha:
+            raise DojoAITruthError("phase capability artifact digest is reused")
+        by_sha[digest] = logical
+    index_parent_shas = {
+        lock["precommit_sha256"],
+        str(index.get("start_receipt_sha256")),
+        *(str(item) for item in index.get("day_seal_sha256s", [])),
+        *(
+            str(row.get("terminal_artifact_sha256"))
+            for row in index.get("cell_index", [])
+        ),
+    }
+    try:
+        expected_index_parents = {by_sha[digest] for digest in index_parent_shas}
+    except KeyError as exc:
+        raise DojoAITruthError("phase capability index parent is uncommitted") from exc
+    if set(snapshot.committed["phase/index"]["parent_logical_ids"]) != expected_index_parents:
+        raise DojoAITruthError("phase capability index validity parents drifted")
+    required_parent_ids = set(expected_index_parents)
+    for score, logical in zip(day_scores, logical_ids[2:]):
+        if snapshot.committed[logical]["artifact_sha256"] != score.get("day_score_sha256"):
+            raise DojoAITruthError("phase capability day-score bytes drifted")
+        score_parent_shas = {
+            lock["precommit_sha256"],
+            str(score.get("day_seal_sha256")),
+            str(score.get("truth_bundle_sha256")),
+            *(
+                str(row.get("terminal_artifact_sha256"))
+                for row in score.get("cell_results", [])
+            ),
+        }
+        try:
+            expected_score_parents = {
+                by_sha[digest] for digest in score_parent_shas
+            }
+        except KeyError as exc:
+            raise DojoAITruthError(
+                "phase capability day-score parent is uncommitted"
+            ) from exc
+        if set(snapshot.committed[logical]["parent_logical_ids"]) != expected_score_parents:
+            raise DojoAITruthError("phase capability day-score validity parents drifted")
+        required_parent_ids.update(expected_score_parents)
+    assert_artifacts_valid(run_dir, tuple(required_parent_ids))
+    return PhaseGraphCapability(
+        _token=_CAPABILITY_TOKEN,
+        precommit_sha256=lock["precommit_sha256"],
+        phase_index_sha256=index["phase_index_sha256"],
+        day_score_sha256s=tuple(sorted(score_shas)),
+        registry_tip_sha256=snapshot.latest_event_sha256,
+    )
+
+
+def _require_phase_capability(
+    capability: PhaseGraphCapability,
+    precommit: Mapping[str, Any],
+    phase_index: Mapping[str, Any],
+    day_scores: Sequence[Mapping[str, Any]],
+) -> None:
+    if not isinstance(capability, PhaseGraphCapability) or capability._token is not _CAPABILITY_TOKEN:
+        raise DojoAITruthError("deep phase graph capability is required")
+    score_shas = tuple(
+        sorted(str(score.get("day_score_sha256")) for score in day_scores)
+    )
+    if (
+        capability.precommit_sha256 != precommit.get("precommit_sha256")
+        or capability.phase_index_sha256 != phase_index.get("phase_index_sha256")
+        or capability.day_score_sha256s != score_shas
+    ):
+        raise DojoAITruthError("phase graph capability does not bind exact parents")
+
+
 def build_truth_request(
     precommit: Mapping[str, Any],
     day_seal: Mapping[str, Any],
     cell_terminals: Sequence[Mapping[str, Any]],
     *,
     now_utc: datetime,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     """Freeze one post-response OANDA request before network access."""
 
+    _require_truth_capability(
+        graph_capability, precommit, day_seal, cell_terminals
+    )
     lock = validate_precommit(precommit)
     day = _validated_day(day_seal, lock)
     terminals = _validated_terminal_set(day, cell_terminals)
@@ -115,6 +389,8 @@ def validate_truth_request(
     precommit: Mapping[str, Any],
     day_seal: Mapping[str, Any],
     cell_terminals: Sequence[Mapping[str, Any]],
+    *,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     request = _mapping(value, "truth request")
     _validate_seal(request, "truth_request_sha256")
@@ -123,6 +399,7 @@ def validate_truth_request(
         day_seal,
         cell_terminals,
         now_utc=_parse_utc(request.get("requested_at_utc"), "requested_at_utc"),
+        graph_capability=graph_capability,
     )
     if request != expected:
         raise DojoAITruthError("truth request bytes or parents drifted")
@@ -186,14 +463,31 @@ def build_truth_bundle(
     truth_capture: Mapping[str, Any],
     *,
     sealed_at_utc: datetime,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     """Derive fixed-horizon executable returns and packet-bound answer keys."""
 
+    ordinal = int(day_seal.get("ordinal", 0))
+    required = (
+        f"day/{ordinal:03d}/truth/request",
+        f"day/{ordinal:03d}/truth/capture",
+    )
+    _require_truth_capability(
+        graph_capability,
+        precommit,
+        day_seal,
+        cell_terminals,
+        required_logical_ids=required,
+    )
     lock = validate_precommit(precommit)
     day = _validated_day(day_seal, lock)
     terminals = _validated_terminal_set(day, cell_terminals)
     request = validate_truth_request(
-        truth_capture.get("truth_request", {}), lock, day, terminals
+        truth_capture.get("truth_request", {}),
+        lock,
+        day,
+        terminals,
+        graph_capability=graph_capability,
     )
     capture = validate_truth_capture(truth_capture, request)
     sealed = _utc(sealed_at_utc, "sealed_at_utc")
@@ -208,7 +502,7 @@ def build_truth_bundle(
     returns, execution = _fixed_horizon_returns(candles)
     answer_keys: dict[str, dict[str, Any]] = {}
     for terminal in terminals:
-        if terminal["state"] != "RESPONSE_SEALED":
+        if terminal["state"] != "EXECUTED_RESPONSE_SEALED":
             continue
         receipt = terminal["response_receipt"]
         key = seal_answer_key(
@@ -255,6 +549,8 @@ def validate_truth_bundle_with_capture(
     day_seal: Mapping[str, Any],
     cell_terminals: Sequence[Mapping[str, Any]],
     truth_capture: Mapping[str, Any],
+    *,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     bundle = _mapping(value, "truth bundle")
     _validate_seal(bundle, "truth_bundle_sha256")
@@ -264,6 +560,7 @@ def validate_truth_bundle_with_capture(
         cell_terminals,
         truth_capture,
         sealed_at_utc=_parse_utc(bundle.get("sealed_at_utc"), "sealed_at_utc"),
+        graph_capability=graph_capability,
     )
     if bundle != expected:
         raise DojoAITruthError("truth bundle is not market-derived from its capture")
@@ -278,14 +575,28 @@ def build_day_score(
     truth_bundle: Mapping[str, Any],
     *,
     scored_at_utc: datetime,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     """Score all three fixed cells; deadline failures remain zero-return failures."""
 
+    ordinal = int(day_seal.get("ordinal", 0))
+    _require_truth_capability(
+        graph_capability,
+        precommit,
+        day_seal,
+        cell_terminals,
+        required_logical_ids=(f"day/{ordinal:03d}/truth/bundle",),
+    )
     lock = validate_precommit(precommit)
     day = _validated_day(day_seal, lock)
     terminals = _validated_terminal_set(day, cell_terminals)
     bundle = validate_truth_bundle_with_capture(
-        truth_bundle, lock, day, terminals, truth_capture
+        truth_bundle,
+        lock,
+        day,
+        terminals,
+        truth_capture,
+        graph_capability=graph_capability,
     )
     scored_at = _utc(scored_at_utc, "scored_at_utc")
     if scored_at < _parse_utc(bundle["sealed_at_utc"], "truth sealed_at"):
@@ -293,8 +604,11 @@ def build_day_score(
     rows: list[dict[str, Any]] = []
     for terminal in terminals:
         cell = _find_cell(day, terminal["cell_id"])
-        if terminal["state"] == "MISSING_RESPONSE_DEADLINE":
-            rows.append(_failure_row(day, cell, terminal, "MISSING_RESPONSE_DEADLINE"))
+        if terminal["state"] in {
+            "MISSING_RESPONSE_DEADLINE",
+            "MODEL_EXECUTION_FAILED",
+        }:
+            rows.append(_failure_row(day, cell, terminal, terminal["state"]))
             continue
         answer_key = bundle["answer_keys"].get(terminal["cell_id"])
         if answer_key is None:
@@ -359,6 +673,8 @@ def validate_day_score(
     cell_terminals: Sequence[Mapping[str, Any]],
     truth_capture: Mapping[str, Any],
     truth_bundle: Mapping[str, Any],
+    *,
+    graph_capability: TruthGraphCapability,
 ) -> dict[str, Any]:
     score = _mapping(value, "truth day score")
     _validate_seal(score, "day_score_sha256")
@@ -369,6 +685,7 @@ def validate_day_score(
         truth_capture,
         truth_bundle,
         scored_at_utc=_parse_utc(score.get("scored_at_utc"), "scored_at_utc"),
+        graph_capability=graph_capability,
     )
     if score != expected:
         raise DojoAITruthError("truth day score is not recomputable")
@@ -382,9 +699,13 @@ def build_phase_score(
     day_scores: Sequence[Mapping[str, Any]],
     *,
     sealed_at_utc: datetime,
+    graph_capability: PhaseGraphCapability,
 ) -> dict[str, Any]:
     """Aggregate the immutable 90-cell denominator without prompt selection."""
 
+    _require_phase_capability(
+        graph_capability, precommit, phase_index, day_scores
+    )
     lock = validate_precommit(precommit)
     index = _mapping(phase_index, "phase index")
     _validate_external_seal(index, "phase_index_sha256")
@@ -401,6 +722,16 @@ def build_phase_score(
         _validate_phase_day_score_shape(score, day_by_ordinal, lock)
         for score in day_scores
     ]
+    sealed = _utc(sealed_at_utc, "sealed_at_utc")
+    parent_times = [
+        _parse_utc(index.get("sealed_at_utc"), "phase index sealed_at_utc"),
+        *(
+            _parse_utc(score.get("scored_at_utc"), "day score scored_at_utc")
+            for score in validated_scores
+        ),
+    ]
+    if any(parent_time > sealed for parent_time in parent_times):
+        raise DojoAITruthError("phase score predates an index or day score parent")
     score_by_ordinal = {score["ordinal"]: score for score in validated_scores}
     request_day_ordinals = {
         day["ordinal"] for day in day_seals if day["state"] == "REQUESTS_SEALED"
@@ -496,7 +827,7 @@ def build_phase_score(
         "state": "PHASE_SCORED_DIAGNOSTIC",
         "experiment_id": lock["experiment_id"],
         "phase_id": PHASE_ID,
-        "sealed_at_utc": _iso(_utc(sealed_at_utc, "sealed_at_utc")),
+        "sealed_at_utc": _iso(sealed),
         "precommit_sha256": lock["precommit_sha256"],
         "phase_index_sha256": index["phase_index_sha256"],
         "day_score_sha256s": [score["day_score_sha256"] for score in sorted(validated_scores, key=lambda row: row["ordinal"])],
@@ -538,6 +869,8 @@ def validate_phase_score(
     phase_index: Mapping[str, Any],
     day_seals: Sequence[Mapping[str, Any]],
     day_scores: Sequence[Mapping[str, Any]],
+    *,
+    graph_capability: PhaseGraphCapability,
 ) -> dict[str, Any]:
     score = _mapping(value, "AI phase score")
     _validate_seal(score, "phase_score_sha256")
@@ -547,6 +880,7 @@ def validate_phase_score(
         day_seals,
         day_scores,
         sealed_at_utc=_parse_utc(score.get("sealed_at_utc"), "sealed_at_utc"),
+        graph_capability=graph_capability,
     )
     if score != expected:
         raise DojoAITruthError("AI phase score is not derived from exact day scores")
@@ -786,7 +1120,7 @@ def _validated_terminal_set(
         cell_id = terminal.get("cell_id")
         if cell_id not in expected or cell_id in seen:
             raise DojoAITruthError("truth terminal is unknown or duplicated")
-        if terminal.get("day_seal_sha256") != day["day_seal_sha256"] or terminal.get("state") not in {"RESPONSE_SEALED", "MISSING_RESPONSE_DEADLINE"}:
+        if terminal.get("day_seal_sha256") != day["day_seal_sha256"] or terminal.get("state") not in {"EXECUTED_RESPONSE_SEALED", "MODEL_EXECUTION_FAILED", "MISSING_RESPONSE_DEADLINE"}:
             raise DojoAITruthError("truth terminal parent or state drifted")
         if terminal.get("answer_key_opened") is not False:
             raise DojoAITruthError("truth terminal claims premature answer-key access")

@@ -1,4 +1,4 @@
-"""Fail-closed, offline-only primitives for DOJO AI-discretion evaluation.
+"""Fail-closed primitives for DOJO AI-discretion evaluation.
 
 The module deliberately does not call a model, open a broker connection, or
 grant live authority.  A trial has four phases: prelock prompt/scorer and a
@@ -20,9 +20,11 @@ from typing import Any
 
 SOURCE_CONTRACT = "QR_DOJO_AI_DAY_SOURCE_V1"
 CAPABILITY_MANIFEST_CONTRACT = "QR_DOJO_AI_CAPABILITY_MANIFEST_V1"
+PROVIDER_CAPABILITY_MANIFEST_CONTRACT = "QR_DOJO_AI_PROVIDER_CAPABILITY_MANIFEST_V2"
 PROMPT_LOCK_CONTRACT = "QR_DOJO_AI_PROMPT_LOCK_V1"
 SCORER_LOCK_CONTRACT = "QR_DOJO_AI_SCORER_LOCK_V1"
 MODEL_MANIFEST_CONTRACT = "QR_DOJO_AI_MODEL_MANIFEST_V1"
+PROVIDER_MODEL_MANIFEST_CONTRACT = "QR_DOJO_AI_PROVIDER_MODEL_MANIFEST_V2"
 PACKET_CONTRACT = "QR_DOJO_AI_DISCRETION_PACKET_V1"
 RESPONSE_CONTRACT = "QR_DOJO_AI_DISCRETION_RESPONSE_V1"
 ANSWER_KEY_CONTRACT = "QR_DOJO_AI_DISCRETION_ANSWER_KEY_V1"
@@ -140,6 +142,36 @@ _CAPABILITY_KEYS = {
     "attestation_gap_codes",
     "capability_manifest_sha256",
 }
+_PROVIDER_CAPABILITY_KEYS = {
+    "contract",
+    "schema_version",
+    "validity_status",
+    "generated_at_utc",
+    "context_id",
+    "declared_fresh_context",
+    "declared_mounted_artifact_roles",
+    "declared_answer_key_physically_absent",
+    "declared_answer_key_access",
+    "declared_repository_access",
+    "declared_filesystem_access",
+    "model_initiated_network_or_web_access",
+    "declared_browser_access",
+    "declared_conversation_history_access",
+    "declared_persistent_memory_access",
+    "tool_access",
+    "provider_transport_required",
+    "provider_transport",
+    "external_send_scope",
+    "quant_rabbit_model_api_invoked",
+    "full_provider_request_observable",
+    "provider_base_prompt_attested",
+    "live_permission",
+    "broker_mutation_allowed",
+    "evidence_tier",
+    "external_attestations_verified",
+    "attestation_gap_codes",
+    "capability_manifest_sha256",
+}
 _PROMPT_LOCK_KEYS = {
     "contract",
     "schema_version",
@@ -182,9 +214,11 @@ _RETURN_KEYS = {
 }
 _OWN_SHA_FIELDS = {
     CAPABILITY_MANIFEST_CONTRACT: "capability_manifest_sha256",
+    PROVIDER_CAPABILITY_MANIFEST_CONTRACT: "capability_manifest_sha256",
     PROMPT_LOCK_CONTRACT: "prompt_lock_sha256",
     SCORER_LOCK_CONTRACT: "scorer_lock_sha256",
     MODEL_MANIFEST_CONTRACT: "model_sha256",
+    PROVIDER_MODEL_MANIFEST_CONTRACT: "model_sha256",
     PACKET_CONTRACT: "packet_sha256",
     RESPONSE_CONTRACT: "response_receipt_sha256",
     ANSWER_KEY_CONTRACT: "answer_key_sha256",
@@ -287,6 +321,49 @@ def build_capability_manifest(
     return _seal(body, "capability_manifest_sha256")
 
 
+def build_provider_capability_manifest(
+    *, context_id: str, generated_at_utc: datetime
+) -> dict[str, Any]:
+    """Seal the truthful boundary for a no-tool ChatGPT-auth CLI context.
+
+    The sealed packet necessarily crosses the provider transport.  The model
+    still receives no repository, answer key, browser, shell, prior thread, or
+    persistent memory capability.  This local manifest cannot observe or attest
+    the provider's base prompt and therefore says so explicitly.
+    """
+
+    context = _bounded_text(context_id, "context_id", maximum=200)
+    generated = _aware_utc(generated_at_utc)
+    body = {
+        "contract": PROVIDER_CAPABILITY_MANIFEST_CONTRACT,
+        "schema_version": 2,
+        "validity_status": VALID,
+        "generated_at_utc": generated.isoformat(),
+        "context_id": context,
+        "declared_fresh_context": True,
+        "declared_mounted_artifact_roles": ["INLINE_PACKET_ONLY"],
+        "declared_answer_key_physically_absent": True,
+        "declared_answer_key_access": False,
+        "declared_repository_access": False,
+        "declared_filesystem_access": False,
+        "model_initiated_network_or_web_access": False,
+        "declared_browser_access": False,
+        "declared_conversation_history_access": False,
+        "declared_persistent_memory_access": False,
+        "tool_access": [],
+        "provider_transport_required": True,
+        "provider_transport": "CODEX_CLI_CHATGPT_AUTH",
+        "external_send_scope": "SEALED_PACKET_TO_PROVIDER_ONLY",
+        "quant_rabbit_model_api_invoked": False,
+        "full_provider_request_observable": False,
+        "provider_base_prompt_attested": False,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+        **_diagnostic_fields(),
+    }
+    return _seal(body, "capability_manifest_sha256")
+
+
 def prelock_prompt(
     prompt_text: str,
     *,
@@ -382,6 +459,57 @@ def seal_model_manifest(
         "declared_fresh_context": True,
         "model_api_invoked_by_runtime": False,
         "external_send_allowed": False,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+        "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
+        **_diagnostic_fields(),
+    }
+    return _seal(body, "model_sha256")
+
+
+def seal_provider_model_manifest(
+    *,
+    model_name: str,
+    model_version: str,
+    model_lineage: str,
+    reasoning_effort: str,
+    context_id: str,
+    capability_manifest: Mapping[str, Any],
+    locked_at_utc: datetime,
+) -> dict[str, Any]:
+    """Bind the requested provider model without claiming provider identity."""
+
+    capability = _snapshot(capability_manifest)
+    _validate_capability_manifest(capability)
+    if capability.get("contract") != PROVIDER_CAPABILITY_MANIFEST_CONTRACT:
+        raise ValueError("provider model requires provider capability manifest")
+    if capability["validity_status"] != VALID:
+        raise ValueError("capability manifest is invalidated")
+    context = _bounded_text(context_id, "context_id", maximum=200)
+    if context != capability["context_id"]:
+        raise ValueError("model context does not match capability manifest")
+    body = {
+        "contract": PROVIDER_MODEL_MANIFEST_CONTRACT,
+        "schema_version": 2,
+        "validity_status": VALID,
+        "locked_at_utc": _aware_utc(locked_at_utc).isoformat(),
+        "model_name": _bounded_text(model_name, "model_name", maximum=200),
+        "model_version": _bounded_text(model_version, "model_version", maximum=200),
+        "declared_model_lineage": _bounded_text(
+            model_lineage, "model_lineage", maximum=200
+        ),
+        "model_lineage_attestation_status": "REQUESTED_ONLY_NOT_PROVIDER_ATTESTED",
+        "reasoning_effort": _bounded_text(
+            reasoning_effort, "reasoning_effort", maximum=80
+        ),
+        "context_id": context,
+        "capability_manifest_sha256": capability["capability_manifest_sha256"],
+        "declared_fresh_context": True,
+        "provider_transport_required": True,
+        "provider_transport": "CODEX_CLI_CHATGPT_AUTH",
+        "external_send_scope": "SEALED_PACKET_TO_PROVIDER_ONLY",
+        "quant_rabbit_model_api_invoked": False,
+        "provider_execution_attestation_present": False,
         "live_permission": False,
         "broker_mutation_allowed": False,
         "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
@@ -1122,26 +1250,34 @@ def _validate_response_shape(
 
 
 def _validate_capability_manifest(value: Mapping[str, Any]) -> None:
-    _validate_contract_seal(value, CAPABILITY_MANIFEST_CONTRACT)
-    allowed_keys = _CAPABILITY_KEYS | _INVALIDATION_METADATA_KEYS
-    if not _CAPABILITY_KEYS.issubset(value) or not set(value).issubset(allowed_keys):
+    contract = value.get("contract")
+    if contract not in {
+        CAPABILITY_MANIFEST_CONTRACT,
+        PROVIDER_CAPABILITY_MANIFEST_CONTRACT,
+    }:
+        raise ValueError("capability manifest contract is invalid")
+    _validate_contract_seal(value, str(contract))
+    base_keys = (
+        _PROVIDER_CAPABILITY_KEYS
+        if contract == PROVIDER_CAPABILITY_MANIFEST_CONTRACT
+        else _CAPABILITY_KEYS
+    )
+    allowed_keys = base_keys | _INVALIDATION_METADATA_KEYS
+    if not base_keys.issubset(value) or not set(value).issubset(allowed_keys):
         raise ValueError("capability manifest shape is invalid")
-    if value.get("validity_status") == VALID and set(value) != _CAPABILITY_KEYS:
+    if value.get("validity_status") == VALID and set(value) != base_keys:
         raise ValueError("valid capability manifest contains invalidation metadata")
     if value.get("validity_status") == INVALIDATED and not isinstance(
         value.get("invalidation_reason"), str
     ):
         raise ValueError("invalidated capability manifest lacks an invalidation reason")
-    required_false = (
+    common_false = (
         "declared_answer_key_access",
         "declared_repository_access",
         "declared_filesystem_access",
-        "declared_network_access",
         "declared_browser_access",
         "declared_conversation_history_access",
         "declared_persistent_memory_access",
-        "external_send_allowed",
-        "model_api_invoked_by_runtime",
         "live_permission",
         "broker_mutation_allowed",
     )
@@ -1151,11 +1287,33 @@ def _validate_capability_manifest(value: Mapping[str, Any]) -> None:
         raise ValueError("capability manifest does not exclude the answer key")
     if (
         value.get("declared_mounted_artifact_roles") != ["INLINE_PACKET_ONLY"]
-        or value.get("declared_tools") != []
     ):
         raise ValueError("capability manifest exposes unsupported capabilities")
-    if any(value.get(key) is not False for key in required_false):
+    if any(value.get(key) is not False for key in common_false):
         raise ValueError("capability manifest exposes unsupported capabilities")
+    if contract == CAPABILITY_MANIFEST_CONTRACT:
+        if value.get("declared_tools") != [] or any(
+            value.get(key) is not False
+            for key in (
+                "declared_network_access",
+                "external_send_allowed",
+                "model_api_invoked_by_runtime",
+            )
+        ):
+            raise ValueError("legacy capability manifest exposes unsupported capabilities")
+        return
+    if (
+        value.get("schema_version") != 2
+        or value.get("tool_access") != []
+        or value.get("model_initiated_network_or_web_access") is not False
+        or value.get("provider_transport_required") is not True
+        or value.get("provider_transport") != "CODEX_CLI_CHATGPT_AUTH"
+        or value.get("external_send_scope") != "SEALED_PACKET_TO_PROVIDER_ONLY"
+        or value.get("quant_rabbit_model_api_invoked") is not False
+        or value.get("full_provider_request_observable") is not False
+        or value.get("provider_base_prompt_attested") is not False
+    ):
+        raise ValueError("provider capability manifest is untruthful or unsafe")
 
 
 def _validate_prompt_lock(value: Mapping[str, Any]) -> None:
@@ -1192,7 +1350,29 @@ def _validate_scorer_lock(value: Mapping[str, Any]) -> None:
 
 
 def _validate_model_manifest(value: Mapping[str, Any]) -> None:
-    _validate_contract_seal(value, MODEL_MANIFEST_CONTRACT)
+    contract = value.get("contract")
+    if contract not in {MODEL_MANIFEST_CONTRACT, PROVIDER_MODEL_MANIFEST_CONTRACT}:
+        raise ValueError("model manifest contract is invalid")
+    _validate_contract_seal(value, str(contract))
+    if contract == PROVIDER_MODEL_MANIFEST_CONTRACT:
+        if (
+            value.get("schema_version") != 2
+            or value.get("declared_fresh_context") is not True
+            or value.get("provider_transport_required") is not True
+            or value.get("provider_transport") != "CODEX_CLI_CHATGPT_AUTH"
+            or value.get("external_send_scope") != "SEALED_PACKET_TO_PROVIDER_ONLY"
+            or value.get("quant_rabbit_model_api_invoked") is not False
+            or value.get("provider_execution_attestation_present") is not False
+            or value.get("live_permission") is not False
+            or value.get("broker_mutation_allowed") is not False
+            or value.get("model_lineage_attestation_status")
+            != "REQUESTED_ONLY_NOT_PROVIDER_ATTESTED"
+        ):
+            raise ValueError("provider model manifest boundary is invalid")
+        _require_sha256(
+            value.get("capability_manifest_sha256"), "capability manifest sha256"
+        )
+        return
     if (
         value.get("declared_fresh_context") is not True
         or value.get("model_api_invoked_by_runtime") is not False
@@ -1204,9 +1384,10 @@ def _validate_model_manifest(value: Mapping[str, Any]) -> None:
     _bounded_text(
         value.get("declared_model_lineage"), "declared_model_lineage", maximum=200
     )
-    if value.get("model_lineage_attestation_status") != (
-        "DECLARED_ONLY_NOT_PROVIDER_ATTESTED"
-    ):
+    if value.get("model_lineage_attestation_status") not in {
+        "DECLARED_ONLY_NOT_PROVIDER_ATTESTED",
+        "REQUESTED_ONLY_NOT_PROVIDER_ATTESTED",
+    }:
         raise ValueError("model lineage is not honestly labeled as declared only")
     _require_sha256(
         value.get("capability_manifest_sha256"), "capability manifest sha256"
@@ -1308,9 +1489,10 @@ def _validate_response_receipt(
             _validate_response_shape(response, packet)
     if value.get("answer_key_opened") is not False:
         raise ValueError("response receipt claims premature answer-key access")
-    if value.get("model_lineage_attestation_status") != (
-        "DECLARED_ONLY_NOT_PROVIDER_ATTESTED"
-    ):
+    if value.get("model_lineage_attestation_status") not in {
+        "DECLARED_ONLY_NOT_PROVIDER_ATTESTED",
+        "REQUESTED_ONLY_NOT_PROVIDER_ATTESTED",
+    }:
         raise ValueError("response lineage is not honestly labeled as declared only")
     if (
         value.get("live_permission") is not False
@@ -1388,9 +1570,10 @@ def _validate_score_receipt(value: Mapping[str, Any]) -> None:
             "declared_model_lineage",
             maximum=200,
         )
-        if value.get("model_lineage_attestation_status") != (
-            "DECLARED_ONLY_NOT_PROVIDER_ATTESTED"
-        ):
+        if value.get("model_lineage_attestation_status") not in {
+            "DECLARED_ONLY_NOT_PROVIDER_ATTESTED",
+            "REQUESTED_ONLY_NOT_PROVIDER_ATTESTED",
+        }:
             raise ValueError("score lineage is not honestly labeled as declared only")
         expected_sign = (
             "POSITIVE"
@@ -1602,6 +1785,8 @@ __all__ = [
     "FIXED_RESPONSE_KEYS",
     "FIXED_RESPONSE_SCHEMA",
     "MODEL_MANIFEST_CONTRACT",
+    "PROVIDER_CAPABILITY_MANIFEST_CONTRACT",
+    "PROVIDER_MODEL_MANIFEST_CONTRACT",
     "PACKET_CONTRACT",
     "PILOT_SCORE_CONTRACT",
     "PROMPT_LOCK_CONTRACT",
@@ -1612,6 +1797,7 @@ __all__ = [
     "VALIDITY_REGISTRY_CONTRACT",
     "assert_no_stale_positive_artifacts",
     "build_capability_manifest",
+    "build_provider_capability_manifest",
     "build_day_packet",
     "canonical_sha256",
     "invalidate_artifact",
@@ -1621,6 +1807,7 @@ __all__ = [
     "score_sealed_response",
     "seal_answer_key",
     "seal_model_manifest",
+    "seal_provider_model_manifest",
     "seal_response",
     "seal_validity_registry",
     "validate_score_receipt",
