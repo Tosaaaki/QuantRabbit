@@ -1,0 +1,31 @@
+{
+  "contract": "QR_DOJO_STRATEGY_WORKER_PROPOSER_INPUT_V1",
+  "corpus_window": {
+    "end_utc": "2025-07-01T00:00:00Z",
+    "evidence_tier": "WORN_TRAIN",
+    "start_utc": "2025-06-01T00:00:00Z"
+  },
+  "fixed_cost_arms": [
+    "BASE",
+    "STRESS"
+  ],
+  "fixed_intrabar_paths": [
+    "OHLC",
+    "OLHC"
+  ],
+  "goal": {
+    "average_alone_is_success": false,
+    "monthly_target_multiple": 3.0,
+    "required_scope": "EVERY_MONTH_LONG_HORIZON"
+  },
+  "initial_balance_jpy": 200000.0,
+  "pairs": [
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_JPY"
+  ],
+  "requested_attempt": 1,
+  "schema_version": 1
+}

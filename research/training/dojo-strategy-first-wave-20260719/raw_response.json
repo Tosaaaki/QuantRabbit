@@ -1,0 +1,167 @@
+{
+  "admission_policy": {
+    "broker_leverage": 25.0,
+    "max_global_gross_leverage": 20.0,
+    "max_normal_mtm_drawdown_fraction": 0.1,
+    "max_peak_margin_fraction": 0.45,
+    "max_per_position_gross_leverage": 5.0,
+    "max_stress_mtm_drawdown_fraction": 0.15,
+    "runtime_cap_violation_must_fail_trainer_admission": true,
+    "runtime_portfolio_caps_enforced_by_factory": false
+  },
+  "attempt_ordinal": 1,
+  "authority": {
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false,
+    "research_train_only": true
+  },
+  "candidate_count": 4,
+  "cohort_sha256": "4e305deb60a41ced4a9379d698ce0d1e196902fa87e0b2bd2a2c708221c6dd2a",
+  "contract": "QR_DOJO_STRATEGY_WORKER_BASELINE_COHORT_V1",
+  "families": [
+    "compression_break",
+    "daily_break_pullback",
+    "range_fade_limit",
+    "spike_fade"
+  ],
+  "later_tuning": {
+    "blocked_until": [
+      "APPEND_ONLY_LINEAGE_REGISTRY",
+      "VERIFIED_PRIOR_TRAIN_RESULT_BINDING",
+      "NO_REPEAT_CANDIDATE_REGISTRY"
+    ],
+    "generation_enabled": false
+  },
+  "lineage_total_candidate_cap": 14,
+  "pairs": [
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_JPY"
+  ],
+  "schema_version": 1,
+  "total_attempts_in_lineage": 3,
+  "trainer_candidate_proposals": [
+    {
+      "candidate_id": "qr-a1-01-compression-break",
+      "catalog_contract": "QR_DOJO_BOT_CATALOG_V1",
+      "catalog_sha256": "37ade341765992973e864f88f8cac12fdddef3ac0dfcb2ef0435f5d0f2f443a6",
+      "config": {
+        "atr_floor_pips": 0.5,
+        "ceiling_min": 60,
+        "exit_policy": "FIXED",
+        "external_broker_mutation_allowed": false,
+        "global_max_concurrent": 4,
+        "live_permission": false,
+        "max_concurrent_per_pair": 1,
+        "order_authority": "NONE",
+        "pairs": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_JPY"],
+        "per_pos_lev": 5.0,
+        "signal": "compression_break",
+        "sl_pips": 25.0,
+        "tp_atr": 3.0,
+        "tp_pips": null
+      },
+      "config_sha256": "7f9f325645dcb970dcce376588bee3fc13b4f9ba1241db2afc869dc4640e411a",
+      "contract": "QR_DOJO_BOT_CANDIDATE_PROPOSAL_V1",
+      "family": "compression_break",
+      "hypothesis": "compression_break supplies a distinct market-regime worker under the same fixed entry-risk and exit contract.",
+      "proposal_sha256": "e90e19e994e488698008938e360f167a6b4e7905a8bc7dc2da059815f80859ca",
+      "risk_increase": false,
+      "schema_version": 1
+    },
+    {
+      "candidate_id": "qr-a1-02-daily-break-pullback",
+      "catalog_contract": "QR_DOJO_BOT_CATALOG_V1",
+      "catalog_sha256": "37ade341765992973e864f88f8cac12fdddef3ac0dfcb2ef0435f5d0f2f443a6",
+      "config": {
+        "atr_floor_pips": 0.5,
+        "ceiling_min": 60,
+        "exit_policy": "FIXED",
+        "external_broker_mutation_allowed": false,
+        "global_max_concurrent": 4,
+        "live_permission": false,
+        "max_concurrent_per_pair": 1,
+        "order_authority": "NONE",
+        "pairs": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_JPY"],
+        "per_pos_lev": 5.0,
+        "signal": "daily_break_pullback",
+        "sl_pips": 25.0,
+        "tp_atr": 3.0,
+        "tp_pips": null
+      },
+      "config_sha256": "20d85e82a56b281ec133081bdf9da1ce8ce0c64259f108616dae74c99a4380c5",
+      "contract": "QR_DOJO_BOT_CANDIDATE_PROPOSAL_V1",
+      "family": "daily_break_pullback",
+      "hypothesis": "daily_break_pullback supplies a distinct market-regime worker under the same fixed entry-risk and exit contract.",
+      "proposal_sha256": "9abbc7d6e551fe250d937a7ba4da90090201220b6d8d1ecbb21ecac9261de2ce",
+      "risk_increase": false,
+      "schema_version": 1
+    },
+    {
+      "candidate_id": "qr-a1-03-range-fade-limit",
+      "catalog_contract": "QR_DOJO_BOT_CATALOG_V1",
+      "catalog_sha256": "37ade341765992973e864f88f8cac12fdddef3ac0dfcb2ef0435f5d0f2f443a6",
+      "config": {
+        "atr_floor_pips": 0.5,
+        "ceiling_min": 60,
+        "eff_max": 0.2,
+        "exit_policy": "FIXED",
+        "external_broker_mutation_allowed": false,
+        "fade_atr": 1.2,
+        "global_max_concurrent": 4,
+        "live_permission": false,
+        "max_concurrent_per_pair": 1,
+        "order_authority": "NONE",
+        "pairs": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_JPY"],
+        "per_pos_lev": 5.0,
+        "signal": "range_fade_limit",
+        "sl_pips": 25.0,
+        "tp_atr": 3.0,
+        "tp_pips": null
+      },
+      "config_sha256": "5fb27afa2be991503e070e7339f1d541bd2a4d8168e5c0404cdb8a408ee4a4b4",
+      "contract": "QR_DOJO_BOT_CANDIDATE_PROPOSAL_V1",
+      "family": "range_fade_limit",
+      "hypothesis": "range_fade_limit supplies a distinct market-regime worker under the same fixed entry-risk and exit contract.",
+      "proposal_sha256": "c183df48e5bcd1e7d017d87ae267e9f0a519ce89d7942fafdbb3a8ee4efc4396",
+      "risk_increase": false,
+      "schema_version": 1
+    },
+    {
+      "candidate_id": "qr-a1-04-spike-fade",
+      "catalog_contract": "QR_DOJO_BOT_CATALOG_V1",
+      "catalog_sha256": "37ade341765992973e864f88f8cac12fdddef3ac0dfcb2ef0435f5d0f2f443a6",
+      "config": {
+        "atr_floor_pips": 0.5,
+        "ceiling_min": 60,
+        "exit_policy": "FIXED",
+        "external_broker_mutation_allowed": false,
+        "global_max_concurrent": 4,
+        "live_permission": false,
+        "max_concurrent_per_pair": 1,
+        "order_authority": "NONE",
+        "pairs": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_JPY"],
+        "per_pos_lev": 5.0,
+        "signal": "spike_fade",
+        "sl_pips": 25.0,
+        "tp_atr": 3.0,
+        "tp_pips": null
+      },
+      "config_sha256": "95ace817efcc988545a9472f88edf5e32c5d215cd730c74cd8dc306a7d0eb031",
+      "contract": "QR_DOJO_BOT_CANDIDATE_PROPOSAL_V1",
+      "family": "spike_fade",
+      "hypothesis": "spike_fade supplies a distinct market-regime worker under the same fixed entry-risk and exit contract.",
+      "proposal_sha256": "6b58d2a692fa214f1d53fa0aab6e61984709407046b524f303e67c74ceb17754",
+      "risk_increase": false,
+      "schema_version": 1
+    }
+  ],
+  "trainer_search_budget": {
+    "attempt_ordinal": 1,
+    "max_candidates": 4,
+    "total_attempts_in_lineage": 3
+  }
+}
