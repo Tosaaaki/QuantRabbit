@@ -717,6 +717,11 @@ class VirtualBroker:
                 "slippage_pips": self.slippage_pips,
             },
         )
+        # Attached exits are atomic with a market fill.  If the currently
+        # executable exit-side quote already crossed the SL/TP (for example a
+        # spread wider than the stop), resolve it on this same quote instead
+        # of carrying an impossible position until a future tick.
+        self._resolve_attached_exit_at_quote(trade_id, bid, ask, ts, quote_sequence)
         self._enforce_margin_after_action()
         return trade_id
 
@@ -914,6 +919,11 @@ class VirtualBroker:
             seen.add(pair)
             clean_bid, clean_ask = self._validate_quote(pair, bid, ask, ts)
             normalized.append((pair, clean_bid, clean_ask, ts))
+        # A simultaneous batch has no caller-defined priority.  Canonicalize
+        # the tie-break so capital competition and ledger order cannot change
+        # merely because the same quotes were supplied in a different list
+        # order.
+        normalized.sort(key=lambda item: item[0])
         for pair, bid, ask, ts in normalized:
             self._record_quote(pair, bid, ask, ts)
         batch_watermark = self._quote_seq
@@ -922,8 +932,20 @@ class VirtualBroker:
         events: list[dict[str, Any]] = []
         for pair, bid, ask, ts in normalized:
             events.extend(
-                self._process_current_quote(pair, bid, ask, ts, batch_watermark)
+                self._process_current_quote(
+                    pair,
+                    bid,
+                    ask,
+                    ts,
+                    batch_watermark,
+                    enforce_margin=False,
+                )
             )
+        # Every quote in the atomic phase and every ordinary fill/exit must be
+        # visible before deciding a portfolio-level margin closeout.  Running
+        # this per pair makes a TP on one pair rescue (or fail to rescue) the
+        # account solely according to iteration order.
+        events.extend(self._enforce_margin_after_action())
         return events
 
     @staticmethod
@@ -951,8 +973,79 @@ class VirtualBroker:
         if len(history) > 128:
             del history[:-128]
 
+    def _resolve_attached_exit_at_quote(
+        self,
+        trade_id: str,
+        bid: float,
+        ask: float,
+        ts: str,
+        quote_sequence: int,
+    ) -> dict[str, Any] | None:
+        """Resolve one attached SL/TP against the already-executable quote."""
+
+        pos = self.positions.get(trade_id)
+        if pos is None:
+            return None
+        exit_price = None
+        reason = None
+        if pos.side == "LONG":
+            if pos.sl_price is not None and bid <= pos.sl_price:
+                exit_price, reason = min(pos.sl_price, bid), "SL"
+            elif pos.tp_price is not None and bid >= pos.tp_price:
+                exit_price, reason = pos.tp_price, "TP"
+        else:
+            if pos.sl_price is not None and ask >= pos.sl_price:
+                exit_price, reason = max(pos.sl_price, ask), "SL"
+            elif pos.tp_price is not None and ask <= pos.tp_price:
+                exit_price, reason = pos.tp_price, "TP"
+        if exit_price is None or reason is None:
+            return None
+        applied_slippage_pips = 0.0
+        if reason == "SL":
+            stressed_exit = self._adverse_exit_price(pos.pair, pos.side, exit_price)
+            applied_slippage_pips = abs(stressed_exit - exit_price) / _pip(pos.pair)
+            exit_price = stressed_exit
+        else:
+            # TP is a price-protected limit exit.  Fixed stress slippage must
+            # not fabricate an execution through its protected price.
+            exit_price = _round_price(pos.pair, exit_price)
+        conversion = self._conversion_evidence(pos.pair, quote_sequence, ts)
+        conversion_rate = float(conversion["rate_jpy_per_quote_unit"])
+        diff = (
+            (exit_price - pos.entry_price)
+            if pos.side == "LONG"
+            else (pos.entry_price - exit_price)
+        )
+        gross_pl = diff * pos.units * conversion_rate
+        financing = self._financing_jpy(pos, ts, conversion_rate)
+        pl = gross_pl - financing
+        self.balance_jpy += pl
+        del self.positions[trade_id]
+        event = {
+            "event": f"EXIT_{reason}",
+            "trade_id": trade_id,
+            "price": exit_price,
+            "pl_jpy": round(pl, 2),
+            "quote": {"bid": bid, "ask": ask, "ts": ts},
+            "gross_pl_jpy": round(gross_pl, 2),
+            "financing_jpy": round(financing, 2),
+            "conversion": conversion,
+            "slippage_pips": self.slippage_pips,
+            "applied_slippage_pips": round(applied_slippage_pips, 8),
+            "price_protection": reason == "TP",
+        }
+        self._log(f"EXIT_{reason}", event)
+        return event
+
     def _process_current_quote(
-        self, pair: str, bid: float, ask: float, ts: str, quote_sequence: int
+        self,
+        pair: str,
+        bid: float,
+        ask: float,
+        ts: str,
+        quote_sequence: int,
+        *,
+        enforce_margin: bool = True,
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
 
@@ -1077,58 +1170,14 @@ class VirtualBroker:
             pos = self.positions[trade_id]
             if pos.pair != pair:
                 continue
-            exit_price = None
-            reason = None
-            if pos.side == "LONG":
-                if pos.sl_price is not None and bid <= pos.sl_price:
-                    exit_price, reason = min(pos.sl_price, bid), "SL"
-                elif pos.tp_price is not None and bid >= pos.tp_price:
-                    exit_price, reason = pos.tp_price, "TP"
-            else:
-                if pos.sl_price is not None and ask >= pos.sl_price:
-                    exit_price, reason = max(pos.sl_price, ask), "SL"
-                elif pos.tp_price is not None and ask <= pos.tp_price:
-                    exit_price, reason = pos.tp_price, "TP"
-            if exit_price is None:
-                continue
-            applied_slippage_pips = 0.0
-            if reason == "SL":
-                stressed_exit = self._adverse_exit_price(pair, pos.side, exit_price)
-                applied_slippage_pips = abs(stressed_exit - exit_price) / _pip(pair)
-                exit_price = stressed_exit
-            else:
-                # TP is a price-protected limit exit.  Fixed stress slippage
-                # must not fabricate an execution through its protected price.
-                exit_price = _round_price(pair, exit_price)
-            conversion = self._conversion_evidence(pos.pair, quote_sequence, ts)
-            conversion_rate = float(conversion["rate_jpy_per_quote_unit"])
-            diff = (
-                (exit_price - pos.entry_price)
-                if pos.side == "LONG"
-                else (pos.entry_price - exit_price)
+            event = self._resolve_attached_exit_at_quote(
+                trade_id, bid, ask, ts, quote_sequence
             )
-            gross_pl = diff * pos.units * conversion_rate
-            financing = self._financing_jpy(pos, ts, conversion_rate)
-            pl = gross_pl - financing
-            self.balance_jpy += pl
-            del self.positions[trade_id]
-            event = {
-                "event": f"EXIT_{reason}",
-                "trade_id": trade_id,
-                "price": exit_price,
-                "pl_jpy": round(pl, 2),
-                "quote": {"bid": bid, "ask": ask, "ts": ts},
-                "gross_pl_jpy": round(gross_pl, 2),
-                "financing_jpy": round(financing, 2),
-                "conversion": conversion,
-                "slippage_pips": self.slippage_pips,
-                "applied_slippage_pips": round(applied_slippage_pips, 8),
-                "price_protection": reason == "TP",
-            }
-            self._log(f"EXIT_{reason}", event)
-            events.append(event)
+            if event is not None:
+                events.append(event)
 
-        events.extend(self._enforce_margin_after_action())
+        if enforce_margin:
+            events.extend(self._enforce_margin_after_action())
         return events
 
     def _enforce_margin_after_action(self) -> list[dict[str, Any]]:

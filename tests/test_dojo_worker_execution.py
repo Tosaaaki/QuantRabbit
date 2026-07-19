@@ -46,6 +46,7 @@ def test_operational_worker_result_is_derived_from_virtual_ledgers(
         "eff_max": 0.2,
     }
     dependency_paths = [
+        "src/quant_rabbit/dojo_bot_catalog.py",
         "src/quant_rabbit/dojo_lab_provenance.py",
         "src/quant_rabbit/virtual_broker.py",
         "src/quant_rabbit/dojo_worker_source.py",

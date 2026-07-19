@@ -1080,6 +1080,27 @@ def test_owned_facade_hides_raw_broker_and_returns_immutable_queries(
         position.side = "SHORT"  # type: ignore[misc]
 
 
+def test_owned_facade_exposes_exact_current_market_entry_for_sizing(
+    tmp_path: Path,
+) -> None:
+    broker = VirtualBroker(
+        tmp_path / "ledger.jsonl", fast_ledger=True, slippage_pips=0.3
+    )
+    broker.on_quote("USD_JPY", 150.00, 150.01, "2026-01-01T00:00:00+00:00")
+    view = OwnedBrokerView(broker, "entry-sizing-owner")
+
+    quote = view.executable_quote("USD_JPY")
+    assert (quote.pair, quote.bid, quote.ask) == ("USD_JPY", 150.00, 150.01)
+    assert view.executable_market_entry_price("USD_JPY", "LONG") == 150.013
+    assert view.executable_market_entry_price("USD_JPY", "SHORT") == 149.997
+    with pytest.raises(VirtualBrokerError, match="invalid side"):
+        view.executable_market_entry_price("USD_JPY", "FLAT")
+    with pytest.raises(VirtualBrokerError, match="no live quote"):
+        view.executable_market_entry_price("EUR_USD", "LONG")
+    with pytest.raises(VirtualBrokerError, match="no live quote"):
+        view.executable_quote("EUR_USD")
+
+
 def test_combo_hand_with_short_ceiling_cannot_adopt_or_close_sibling_trade(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1221,7 +1242,9 @@ def test_same_phase_cross_pair_fills_cannot_exceed_owner_global_cap(
         event for event in events if event["event"] == "ORDER_CANCEL_CONCURRENCY_CAP"
     ]
     assert len(rejected) == 1
-    assert rejected[0]["order_id"] == order_ids[-1]
+    # Simultaneous capital competition uses the broker's canonical pair
+    # tie-break, never caller list order. USD_JPY is last lexicographically.
+    assert rejected[0]["order_id"] == order_ids[0]
     assert rejected[0]["admission"] == {
         "scope": "GLOBAL",
         "reason": "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED",

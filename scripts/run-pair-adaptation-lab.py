@@ -49,6 +49,7 @@ SCREENED_WINDOWS = {"LEGACY_S5_SCREEN": LEGACY_S5_SCREEN}
 INTRABAR_PATHS = ("OHLC", "OLHC")
 BOT_MODULE_PATH = REPO / "bots/lab_bot.py"
 BOT_DEPENDENCY_PATHS = (
+    REPO / "src" / "quant_rabbit" / "dojo_bot_catalog.py",
     REPO / "src" / "quant_rabbit" / "dojo_lab_provenance.py",
     REPO / "src" / "quant_rabbit" / "virtual_broker.py",
 )

@@ -21,6 +21,21 @@ def test_market_fill_at_real_ask_and_bid(broker):
     assert broker.positions[sid].entry_price == 150.00  # bid
 
 
+def test_market_order_resolves_attached_stop_on_the_fill_quote(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=200_000.0)
+    stamp = "2026-01-01T00:00:00+00:00#O"
+    b.on_quote("USD_JPY", 100.00, 102.00, stamp)
+
+    trade_id = b.market_order("USD_JPY", "LONG", 100, sl_pips=10)
+
+    assert trade_id not in b.positions
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    owned = [row for row in records if row["payload"].get("trade_id") == trade_id]
+    assert [row["event"] for row in owned] == ["FILL_MARKET", "EXIT_SL"]
+    assert owned[1]["payload"]["price"] == 100.00
+    assert owned[1]["payload"]["quote"]["ts"] == stamp
+
+
 def test_no_quote_refuses_fill(tmp_path):
     b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
     with pytest.raises(VirtualBrokerError, match="no live quote"):
@@ -38,7 +53,7 @@ def test_tp_fills_only_when_quote_touches(broker):
 
 
 def test_sl_first_when_both_touch_same_quote(broker):
-    broker.market_order("USD_JPY", "LONG", 10_000, tp_pips=2, sl_pips=2)
+    broker.market_order("USD_JPY", "LONG", 10_000, tp_pips=2, sl_pips=3)
     # a quote where bid is below SL (gap through both is impossible on one
     # quote; SL-first rule applies when SL is touched)
     events = broker.on_quote("USD_JPY", 149.99, 150.01, "t1")
@@ -46,7 +61,7 @@ def test_sl_first_when_both_touch_same_quote(broker):
 
 
 def test_sl_gap_fills_at_worse_price(broker):
-    tid = broker.market_order("USD_JPY", "LONG", 10_000, sl_pips=2)
+    tid = broker.market_order("USD_JPY", "LONG", 10_000, sl_pips=3)
     events = broker.on_quote("USD_JPY", 149.90, 149.92, "t1")  # gap through SL
     assert events[0]["event"] == "EXIT_SL"
     assert events[0]["price"] == 149.90  # the worse real bid, not the SL level
@@ -333,6 +348,48 @@ def test_quote_batch_uses_current_same_phase_conversion_independent_of_pair_orde
     )
     assert close["conversion"]["rate_jpy_per_quote_unit"] == pytest.approx(160.01)
     assert close["conversion"]["source_quotes"][0]["phase"] == "C"
+
+
+def test_quote_batch_defers_portfolio_margin_check_until_every_pair_is_processed(
+    tmp_path, monkeypatch
+):
+    calls = 0
+    original = VirtualBroker._enforce_margin_after_action
+
+    def counted(self):
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(VirtualBroker, "_enforce_margin_after_action", counted)
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
+
+    b.on_quote_batch([
+        ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
+        ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
+    ])
+
+    assert calls == 1
+
+
+def test_quote_batch_has_canonical_pair_tie_break_independent_of_input_order(tmp_path):
+    quotes = [
+        ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
+        ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
+    ]
+    quote_sequences = []
+    for index, batch in enumerate((quotes, list(reversed(quotes)))):
+        broker = VirtualBroker(
+            ledger_path=tmp_path / f"batch-{index}.jsonl",
+            balance_jpy=2_000_000.0,
+        )
+        broker.on_quote_batch(batch)
+        quote_sequences.append(broker.snapshot()["last_quote_sequences"])
+
+    assert quote_sequences == [
+        {"EUR_USD": 1, "USD_JPY": 2},
+        {"EUR_USD": 1, "USD_JPY": 2},
+    ]
 
 
 def test_stale_conversion_and_unpriceable_margin_fail_closed(tmp_path):

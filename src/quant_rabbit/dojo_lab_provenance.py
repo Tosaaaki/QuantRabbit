@@ -1771,6 +1771,17 @@ class OwnedPositionView:
     opened_ts: str
     tp_price: float | None
     sl_price: float | None
+    current_price: float | None
+
+
+@dataclass(frozen=True)
+class OwnedQuoteView:
+    """Immutable executable bid/ask staged for one owner-scoped decision."""
+
+    pair: str
+    bid: float
+    ask: float
+    ts: str
 
 
 def _owned_components(
@@ -1845,6 +1856,38 @@ class OwnedBrokerView:
         broker, _, _ = _owned_components(self)
         return broker._jpy_per_quote_unit(pair)
 
+    def executable_quote(self, pair: str) -> OwnedQuoteView:
+        broker, _, _ = _owned_components(self)
+        quote = broker.last_quotes.get(pair)
+        if quote is None:
+            raise VirtualBrokerError(f"no live quote for {pair}; cannot execute")
+        bid, ask, ts = quote
+        return OwnedQuoteView(pair=pair, bid=bid, ask=ask, ts=ts)
+
+    def executable_market_entry_price(self, pair: str, side: str) -> float:
+        """Return the exact price a market order would receive at this quote.
+
+        Closed-bar callbacks run only after the next executable open has been
+        staged.  Exposing this immutable scalar lets a strategy size against
+        that current quote (including configured adverse slippage) without
+        exposing mutable broker quote storage.
+        """
+
+        broker, _, _ = _owned_components(self)
+        if side not in {"LONG", "SHORT"}:
+            raise VirtualBrokerError(f"invalid side: {side}")
+        quote = broker.last_quotes.get(pair)
+        if quote is None:
+            raise VirtualBrokerError(f"no live quote for {pair}; cannot size")
+        bid, ask, _ = quote
+        pip = 0.01 if pair.endswith("JPY") else 0.0001
+        slip = broker.slippage_pips * pip
+        price = ask + slip if side == "LONG" else bid - slip
+        price = round(price, 3 if pair.endswith("JPY") else 5)
+        if price <= 0:
+            raise VirtualBrokerError("slippage produced a non-positive entry price")
+        return price
+
     def position(self, trade_id: str) -> OwnedPositionView | None:
         broker, ownership, owner_id = _owned_components(self)
         if trade_id not in ownership.active_trade_ids(owner_id):
@@ -1852,6 +1895,10 @@ class OwnedBrokerView:
         position = broker.positions.get(trade_id)
         if position is None:
             return None
+        quote = broker.last_quotes.get(position.pair)
+        current_price = None
+        if quote is not None:
+            current_price = quote[0] if position.side == "LONG" else quote[1]
         return OwnedPositionView(
             trade_id=position.trade_id,
             pair=position.pair,
@@ -1861,6 +1908,7 @@ class OwnedBrokerView:
             opened_ts=position.opened_ts,
             tp_price=position.tp_price,
             sl_price=position.sl_price,
+            current_price=current_price,
         )
 
     def market_order(self, *args: Any, **kwargs: Any) -> str:

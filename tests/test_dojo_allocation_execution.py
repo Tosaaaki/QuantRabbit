@@ -560,12 +560,12 @@ def test_open_position_executable_quote_must_match_broker_before_claim(
         broker, owner_id, max_concurrent_per_pair=1, global_max_concurrent=2
     )
     trade_id = session._owner_view.market_order(
-        "USD_JPY", "LONG", 1_000.0, sl_pips=15.0
+        "USD_JPY", "LONG", 1_000.0, sl_pips=25.0
     )
     position = _open_position(broker, trade_id, owner_id=owner_id)
     assert (
-        float(position["bid_price"])
-        < float(position["sl_price"])
+        float(position["sl_price"])
+        < float(position["bid_price"])
         < float(position["mark_price"])
     )
     position["bid_price"] = 149.96

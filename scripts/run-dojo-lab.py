@@ -43,6 +43,7 @@ HARDENED_FINANCING_PIPS_PER_DAY = 0.8
 M1_ROOT = "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"
 BOT_MODULE_PATH = REPO / "bots/lab_bot.py"
 BOT_DEPENDENCY_PATHS = (
+    REPO / "src" / "quant_rabbit" / "dojo_bot_catalog.py",
     REPO / "src" / "quant_rabbit" / "dojo_lab_provenance.py",
     REPO / "src" / "quant_rabbit" / "virtual_broker.py",
 )

@@ -45,6 +45,7 @@ EXECUTION_CONTRACT = "QR_DOJO_WORKER_DERIVED_EXECUTION_V1"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 REQUIRED_DEPENDENCIES = frozenset(
     {
+        "src/quant_rabbit/dojo_bot_catalog.py",
         "src/quant_rabbit/dojo_lab_provenance.py",
         "src/quant_rabbit/virtual_broker.py",
         "src/quant_rabbit/dojo_worker_source.py",
