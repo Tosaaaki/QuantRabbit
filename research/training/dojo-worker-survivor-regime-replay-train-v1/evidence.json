@@ -1,0 +1,85 @@
+{
+  "contract": "QR_DOJO_WORKER_SURVIVOR_SEPARATE_REGIME_INDEX_V1",
+  "schema_version": 1,
+  "recorded_at_utc": "2026-07-19T02:49:59Z",
+  "classification": "WORN_HISTORICAL_TRAIN_NO_SURVIVOR",
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE",
+  "artifact_bindings": {
+    "artifact_root": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-survivor-regime-replay-train-v1",
+    "preregistration_file_sha256": "ca252bf662c0090b66976aa49e87616d884a5cae12de6668c91940fe54f9fb49",
+    "scoreboard_file_sha256": "1ae9d511107a7ec36962c21095dc7f23b625cd4d816a4378453492ddd8a1b26f",
+    "scoreboard_canonical_sha256": "3fe9df45ee4f351f589dd1a31eb67350189b3ec8d8900023a5e95150f7d74af2"
+  },
+  "source_candidate_bindings": {
+    "tracked_source_evidence_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
+    "tracked_source_evidence_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
+    "tailguard_sl25_config_sha256": "9a2609d93620777f8abb05806474fb9e06004fd364ca0a985128ecdabe08f46b",
+    "tailguard_sl25_lowlev_4h_config_sha256": "8dbbc55871112e9221cc9345941649cfba74e5ed431882e2d8f81e69235b61f1",
+    "pullback_a2_source_artifact_canonical_sha256": "2c21c1c71989cff90aee3de2069826991e27398850e295a4a23c31d3008e4d39"
+  },
+  "window": {
+    "start_utc": "2026-04-01T00:00:00Z",
+    "end_utc": "2026-05-01T00:00:00Z",
+    "role": "WORN_TRAIN",
+    "overlaps_source_tuning_windows": false
+  },
+  "mechanics": {
+    "source": "SEALED_OANDA_M1_BID_ASK_CANDLES",
+    "intrabar_paths": ["OHLC", "OLHC"],
+    "initial_balance_jpy": 200000.0,
+    "slippage_pips_per_fill": 0.3,
+    "financing_pips_per_day": 0.8,
+    "leverage": 25.0,
+    "period_end_settlement": true,
+    "strategy_owner_isolation": true
+  },
+  "candidates": [
+    {
+      "candidate_id": "pullback_a2",
+      "classification": "REJECTED_SEPARATE_REGIME_TRAIN",
+      "paths": {
+        "OHLC": {"trades": 87, "terminal_net_jpy": -187.4, "calendar_30d_multiple": 0.999063},
+        "OLHC": {"trades": 88, "terminal_net_jpy": -195.94, "calendar_30d_multiple": 0.9990203}
+      },
+      "owner_concurrency_breaches": 0,
+      "margin_closeouts": 0,
+      "terminal_flat": true
+    },
+    {
+      "candidate_id": "tailguard_sl25",
+      "classification": "INCONCLUSIVE_FAILED_CLOSED_NOT_A_SURVIVOR",
+      "path_count": 2,
+      "failed_closed_path_count": 2,
+      "failure": "STALE_CONVERSION_QUOTE_USD_JPY_120_SECONDS"
+    },
+    {
+      "candidate_id": "tailguard_sl25_lowlev_4h",
+      "classification": "INCONCLUSIVE_FAILED_CLOSED_NOT_A_SURVIVOR",
+      "path_count": 2,
+      "failed_closed_path_count": 2,
+      "failure": "STALE_CONVERSION_QUOTE_USD_JPY_120_SECONDS"
+    }
+  ],
+  "aggregate": {
+    "candidate_count": 3,
+    "cell_count": 6,
+    "completed_scoreable_cell_count": 2,
+    "failed_closed_cell_count": 4,
+    "rejected_candidate_count": 1,
+    "inconclusive_candidate_count": 2,
+    "train_survivor_count": 0,
+    "proof_survivor_count": 0,
+    "monthly_3x_proof_reached": false,
+    "verdict": "NO_SEPARATE_REGIME_SURVIVOR"
+  },
+  "limitations": [
+    "ALL_HISTORICAL_2024_TO_2026H1_WINDOWS_ARE_WORN_TRAIN",
+    "NO_GLOBAL_UNTOUCHED_HOLDOUT_REMAINS",
+    "M1_OHLC_AND_OLHC_ARE_SYNTHETIC_INTRABAR_BRACKETS",
+    "TAILGUARD_PATHS_ARE_INCONCLUSIVE_AFTER_SOURCE_SYNCHRONIZATION_FAILURE",
+    "RESULT_CANNOT_PROMOTE_OR_AUTHORIZE_LIVE_TRADING"
+  ]
+}

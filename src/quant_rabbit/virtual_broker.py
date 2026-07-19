@@ -52,6 +52,18 @@ _SNAPSHOT_KEYS = {
     "feed_cursor",
     "ledger_tip_sha",
 }
+_STATEFUL_LEDGER_EVENTS = {
+    "FILL_MARKET",
+    "ORDER_LIMIT",
+    "ORDER_STOP",
+    "ORDER_CANCEL",
+    "ORDER_CANCEL_CONCURRENCY_CAP",
+    "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+    "FILL_LIMIT",
+    "CLOSE",
+    "SET_EXIT",
+    "MARGIN_CLOSEOUT",
+}
 
 
 class VirtualBrokerError(ValueError):
@@ -81,8 +93,21 @@ def _reject_json_constant(value: str) -> None:
     raise VirtualBrokerError(f"non-finite JSON constant is forbidden: {value}")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in row:
+            raise VirtualBrokerError(f"duplicate JSON key is forbidden: {key}")
+        row[key] = value
+    return row
+
+
 def _strict_json_loads(value: str) -> Any:
-    return json.loads(value, parse_constant=_reject_json_constant)
+    return json.loads(
+        value,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_reject_duplicate_json_keys,
+    )
 
 
 def _finite_number(
@@ -192,6 +217,7 @@ class VirtualBroker:
             "financing_pips_per_day", self.financing_pips_per_day, non_negative=True
         )
         self.leverage = _finite_number("leverage", self.leverage, positive=True)
+        requires_state_restore = False
         if self.ledger_path.exists():
             expected_prev = "0" * 64
             with self.ledger_path.open("r", encoding="utf-8") as handle:
@@ -226,7 +252,14 @@ class VirtualBroker:
                             f"ledger sha mismatch at line {line_number}"
                         )
                     expected_prev = supplied_sha
+                    event = record.get("event")
+                    if isinstance(event, str) and (
+                        event in _STATEFUL_LEDGER_EVENTS or event.startswith("EXIT")
+                    ):
+                        requires_state_restore = True
             self._prev_sha = expected_prev
+        self._state_restore_required = requires_state_restore
+        self._state_restore_verified = not requires_state_restore
         self._handle = self.ledger_path.open("a", encoding="utf-8")
 
     # ---- ledger ----------------------------------------------------------
@@ -1368,3 +1401,4 @@ class VirtualBroker:
         self._quote_history = quote_history
         self._quote_seq = quote_seq
         self.feed_cursor = feed_cursor
+        self._state_restore_verified = True

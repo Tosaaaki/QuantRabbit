@@ -14,6 +14,7 @@ from quant_rabbit.dojo_portfolio_allocator import (
 
 
 EPOCH = 1_700_000_000
+QUOTE_TS = "2023-11-14T22:13:20+00:00"
 
 
 def _market_conversion(pair: str) -> tuple[float, float]:
@@ -75,8 +76,11 @@ def _position(
     notional_jpy: float = 100_000.0,
     continuation_edge_jpy: float = 50.0,
     max_reduction_fraction: float = 1.0,
+    stop_distance_pips: float = 10.0,
+    stress_cost_pips: float = 0.3,
 ) -> dict[str, object]:
     mark_price, jpy_per_quote_unit = _market_conversion(pair)
+    pip = 0.01 if pair.endswith("JPY") else 0.0001
     return {
         "position_id": position_id,
         "owner_id": owner_id or f"owner:{position_id}",
@@ -84,6 +88,16 @@ def _position(
         "side": side,
         "units": notional_jpy / (mark_price * jpy_per_quote_unit),
         "mark_price": mark_price,
+        "bid_price": mark_price - pip,
+        "ask_price": mark_price + pip,
+        "quote_timestamp": QUOTE_TS,
+        "quote_sequence": 1,
+        "sl_price": (
+            mark_price - stop_distance_pips * pip
+            if side == "LONG"
+            else mark_price + stop_distance_pips * pip
+        ),
+        "stress_cost_pips": stress_cost_pips,
         "jpy_per_quote_unit": jpy_per_quote_unit,
         "conversion_snapshot_id": None,
         "conversion_snapshot_sha256": None,
@@ -98,6 +112,8 @@ def _pending(
     pair: str = "GBP_JPY",
     side: str = "LONG",
     notional_jpy: float = 100_000.0,
+    sl_pips: float = 10.0,
+    stress_cost_pips: float = 0.3,
 ) -> dict[str, object]:
     trigger_price, jpy_per_quote_unit = _market_conversion(pair)
     return {
@@ -107,6 +123,8 @@ def _pending(
         "side": side,
         "units": notional_jpy / (trigger_price * jpy_per_quote_unit),
         "trigger_price": trigger_price,
+        "sl_pips": sl_pips,
+        "stress_cost_pips": stress_cost_pips,
         "jpy_per_quote_unit": jpy_per_quote_unit,
         "conversion_snapshot_id": None,
         "conversion_snapshot_sha256": None,
@@ -121,8 +139,11 @@ def _allocate(
     margin_cap: float = 0.5,
     currency_cap: float = 100.0,
     candidate_loss_cap: float = 0.05,
+    portfolio_loss_cap: float = 0.5,
     switching_cost_jpy: float = 0.0,
     owner_caps: dict[str, tuple[int, int]] | None = None,
+    decision_quote_timestamp: str = QUOTE_TS,
+    decision_quote_sequence: int = 1,
 ):
     position_rows = list(positions)
     pending_rows = list(pending)
@@ -132,11 +153,14 @@ def _allocate(
     }
     return build_portfolio_allocation(
         decision_epoch=EPOCH,
+        decision_quote_timestamp=decision_quote_timestamp,
+        decision_quote_sequence=decision_quote_sequence,
         equity_jpy=100_000.0,
         leverage=10.0,
         global_margin_cap_fraction=margin_cap,
         currency_cap_fraction=currency_cap,
         max_candidate_loss_fraction=candidate_loss_cap,
+        max_portfolio_loss_fraction=portfolio_loss_cap,
         owner_concurrency_caps=[
             {
                 "owner_id": owner_id,
@@ -189,6 +213,8 @@ def test_same_epoch_normalization_is_order_independent_and_records_all_intents()
     )
 
     assert first == second
+    assert first["contract"] == "QR_DOJO_PORTFOLIO_ALLOCATION_V4"
+    assert first["schema_version"] == 4
     assert first["allocation_sha256"] == second["allocation_sha256"]
     assert [row["intent"]["intent_id"] for row in first["candidate_intent_log"]] == [
         "C1",
@@ -285,6 +311,69 @@ def test_pending_orders_consume_shadow_margin_before_fill():
     ]
 
 
+def test_aggregate_stop_loss_cap_blocks_individually_safe_candidate():
+    allocation = _allocate(
+        positions=[_position("P1", stop_distance_pips=300.0, stress_cost_pips=0.0)],
+        pending=[_pending("O1", sl_pips=300.0, stress_cost_pips=0.0)],
+        candidates=[_candidate("C1", stop_distance_pips=200.0, stress_cost_pips=0.0)],
+        portfolio_loss_cap=0.05,
+    )
+
+    row = allocation["candidate_intent_log"][0]
+    admission = row["initial_admission"]
+    assert row["intent"]["stop_loss_jpy"] < 5_000.0
+    assert admission["projected_portfolio_stop_loss_jpy"] > 5_000.0
+    assert admission["reason_codes"] == [
+        "PORTFOLIO_STOP_LOSS_CAP_EXCEEDED",
+        "PENDING_SHADOW_STOP_LOSS_CONSUMED",
+    ]
+    assert allocation["decision"]["action"] == "SKIP"
+
+
+def test_opposite_open_and_pending_risk_is_gross_without_netting_or_oco_discount():
+    allocation = _allocate(
+        positions=[
+            _position("P1", pair="EUR_JPY", side="LONG"),
+            _position("P2", pair="EUR_JPY", side="SHORT"),
+        ],
+        pending=[
+            _pending("O1", pair="GBP_JPY", side="LONG"),
+            _pending("O2", pair="GBP_JPY", side="SHORT"),
+        ],
+        portfolio_loss_cap=0.5,
+    )
+
+    open_risks = [row["stop_loss_jpy"] for row in allocation["open_positions"]]
+    pending_risks = [row["stop_loss_jpy"] for row in allocation["pending_orders"]]
+    assert allocation["account"]["open_position_stop_loss_jpy"] == pytest.approx(
+        sum(open_risks)
+    )
+    assert allocation["account"]["pending_stop_loss_gross_shadow_jpy"] == pytest.approx(
+        sum(pending_risks)
+    )
+    assert allocation["account"]["reserved_stop_loss_jpy"] == pytest.approx(
+        sum(open_risks) + sum(pending_risks)
+    )
+    assert allocation["policy"]["pending_oco_netting_allowed"] is False
+    assert allocation["policy"]["portfolio_loss_netting_allowed"] is False
+    assert allocation["policy"]["portfolio_loss_enforcement_scope"] == (
+        "PREFLIGHT_DIAGNOSTIC_NOT_FILL_TIME_ENFORCEMENT"
+    )
+
+
+@pytest.mark.parametrize(
+    ("collection", "row", "field", "error"),
+    [
+        ("positions", _position("P1"), "sl_price", "schema mismatch"),
+        ("pending", _pending("O1"), "sl_pips", "schema mismatch"),
+    ],
+)
+def test_existing_and_pending_stop_bounds_are_required(collection, row, field, error):
+    del row[field]
+    with pytest.raises(DojoPortfolioAllocatorError, match=error):
+        _allocate(**{collection: [row]})
+
+
 def test_opposite_pending_orders_do_not_net_currency_shadow():
     allocation = _allocate(
         pending=[
@@ -342,6 +431,78 @@ def test_candidate_loss_cap_uses_derived_stop_loss_bound():
     assert allocation["decision"]["action"] == "SKIP"
 
 
+def test_portfolio_loss_boundary_is_inclusive_and_below_boundary_fails():
+    candidate = _candidate("C1", stress_cost_pips=0.0)
+    expected_loss = float(candidate["units"]) * abs(
+        float(candidate["entry_price"]) - float(candidate["sl_price"])
+    )
+    exact_fraction = expected_loss / 100_000.0
+
+    admitted = _allocate(
+        candidates=[candidate],
+        portfolio_loss_cap=exact_fraction,
+    )
+    rejected = _allocate(
+        candidates=[candidate],
+        portfolio_loss_cap=exact_fraction - 1e-8,
+    )
+
+    assert admitted["decision"]["selected_intent_id"] == "C1"
+    assert rejected["candidate_intent_log"][0]["initial_admission"]["reason_codes"] == [
+        "PORTFOLIO_STOP_LOSS_CAP_EXCEEDED"
+    ]
+
+
+def test_existing_portfolio_over_loss_cap_is_not_described_as_hold_full():
+    allocation = _allocate(
+        positions=[_position("P1", stop_distance_pips=1_000.0, stress_cost_pips=0.0)],
+        portfolio_loss_cap=0.05,
+    )
+
+    assert allocation["account"]["existing_portfolio_loss_cap_breached"] is True
+    assert allocation["decision"]["action"] == "SKIP"
+    assert allocation["decision"]["reason_codes"] == [
+        "EXISTING_PORTFOLIO_LOSS_CAP_EXCEEDED"
+    ]
+
+
+def test_position_stop_already_breached_by_executable_price_fails_closed():
+    position = _position("P1", side="LONG")
+    position["sl_price"] = position["mark_price"]
+
+    with pytest.raises(DojoPortfolioAllocatorError, match="already breached"):
+        _allocate(positions=[position])
+
+
+@pytest.mark.parametrize("side", ["LONG", "SHORT"])
+def test_position_stop_inside_spread_is_already_breached(side: str):
+    position = _position("P1", side=side)
+    mark = float(position["mark_price"])
+    position["sl_price"] = mark - 0.005 if side == "LONG" else mark + 0.005
+
+    with pytest.raises(DojoPortfolioAllocatorError, match="executable price"):
+        _allocate(positions=[position])
+
+
+def test_open_position_quote_timestamp_must_match_decision_epoch():
+    position = _position("P1")
+    position["quote_timestamp"] = "2023-11-14T22:14:20+00:00"
+
+    with pytest.raises(DojoPortfolioAllocatorError, match="decision_epoch"):
+        _allocate(positions=[position])
+
+
+def test_open_and_close_phases_cannot_share_one_allocation_decision():
+    position = _position("P1")
+    position["quote_timestamp"] = f"{QUOTE_TS}#OPEN"
+
+    with pytest.raises(DojoPortfolioAllocatorError, match="phase/watermark"):
+        _allocate(
+            positions=[position],
+            decision_quote_timestamp=f"{QUOTE_TS}#CLOSE",
+        )
+
+
 def test_hold_full_when_best_intent_fits_without_releasing_incumbent():
     allocation = _allocate(
         positions=[_position("P1")],
@@ -382,6 +543,61 @@ def test_hold_reduce_uses_smallest_profitable_release_that_restores_capacity():
     assert plan["lost_continuation_edge_jpy"] == 25.0
     assert plan["switching_cost_jpy"] == 5.0
     assert plan["incremental_expected_edge_jpy"] == 470.0
+    original_risk = allocation["open_positions"][0]["stop_loss_jpy"]
+    assert plan["post_release_admission"][
+        "current_open_stop_loss_jpy"
+    ] == pytest.approx(original_risk * 0.75)
+
+
+def test_partial_close_scales_loss_risk_but_keeps_concurrency_occupancy():
+    full = _allocate(positions=[_position("P_FULL", notional_jpy=100_000.0)])
+    half = _allocate(positions=[_position("P_HALF", notional_jpy=50_000.0)])
+    assert half["account"]["open_position_stop_loss_jpy"] == pytest.approx(
+        full["account"]["open_position_stop_loss_jpy"] * 0.5
+    )
+
+    blocked = _allocate(
+        positions=[
+            _position(
+                "P1",
+                owner_id="owner:A",
+                pair="USD_JPY",
+                max_reduction_fraction=0.5,
+            )
+        ],
+        candidates=[_candidate("C1", owner_id="owner:A", pair="USD_JPY")],
+        margin_cap=0.9,
+        owner_caps={"owner:A": (1, 1)},
+    )
+    assert blocked["decision"]["action"] == "SKIP"
+    assert (
+        "OWNER_PAIR_CONCURRENCY_CAP_REACHED"
+        in blocked["candidate_intent_log"][0]["initial_admission"]["reason_codes"]
+    )
+
+    released = _allocate(
+        positions=[
+            _position(
+                "P1",
+                owner_id="owner:A",
+                pair="USD_JPY",
+                max_reduction_fraction=1.0,
+                continuation_edge_jpy=0.0,
+            )
+        ],
+        candidates=[
+            _candidate(
+                "C1",
+                owner_id="owner:A",
+                pair="USD_JPY",
+                expected_net_edge_jpy=500.0,
+            )
+        ],
+        margin_cap=0.9,
+        owner_caps={"owner:A": (1, 1)},
+    )
+    assert released["decision"]["action"] == "CUT_ROTATE"
+    assert released["decision"]["selected_plan"]["reduction_fraction"] == 1.0
 
 
 def test_cut_rotate_requires_full_release_and_positive_incremental_edge():

@@ -2,7 +2,7 @@
 
 - Current goal-board input: `dojo_goal_board_input_20260719.json`
 - Current content-addressed board:
-  `dojo_goal_board_20260719_2627b7fc34f64fe14fd5ab2415a400d3e783614640d631108350fe85a07427a8.json`
+  `dojo_goal_board_20260719_11c2ac8c81d4f716a08f2ee1cdadad062b632c39b82f09ffe4678827e4525ba6.json`
 - Board result: `HYPOTHESIS / 3X_NOT_REACHABLE`, externally verified independent clusters `0`,
   `proof_admission.promotion_possible=false`
 - Superseded non-content-addressed boards are excluded from the active
@@ -25,6 +25,10 @@
   - existing-direction gate 6/6, next-direction 3/6
   - AI allocation `-26.65 capacity-pips` versus full HOLD `-19.30`; rejected
   - the post-hoc full-HOLD-until-invalid rule is a hypothesis, not a result
+- AI capital recycle v2 diagnostic: `../training/dojo-ai-capital-recycle-train-v2/evidence.json`
+  - one judgment per tool-free context; all six responses sealed before truth
+  - hierarchical policy `-27.4`, full HOLD `-33.9`, cut-to-reserve `-26.8` capacity-pips
+  - better than HOLD but worse than reserve; rejected and not proof
 - AI V3R1 successor-evidence correction:
   `../corrections/dojo-ai-forward-v3r1-supersession-v1.json`
   - invalidates the stale `+0.6 pips` exit rationale for same-bar lookahead
@@ -36,6 +40,10 @@
   - current-byte cap-fixed diversity v2 rerun enforced pair/global limits but all four types lost
   - round-number TP 2→3 ATR follow-up also lost on both paths and was rejected
   - on the capital-policy replay, 60-minute release beat full HOLD and split reserve
+  - capital-policy replay was JPY 200,000 over 11d 21h 59m; its 30-day multiple is extrapolated, not observed
+- Separate-regime worker replay: `../training/dojo-worker-survivor-regime-replay-train-v1/evidence.json`
+  - pullback A2 lost on both paths; both tailguards failed closed on stale conversion data
+  - TRAIN survivors `0`; proof survivors `0`
 - Historical holdout burn registry: `dojo-historical-holdout-burn-v1/events/`
   - 5 hash-chained events: genesis + 4 conservative legacy burns
   - latest event SHA-256 `90f0d3ba8a771ea43b01a2bc2f11a51e61ecec9f69ad5e3432905be103effdc9`

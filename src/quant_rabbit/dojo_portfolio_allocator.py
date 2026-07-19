@@ -6,15 +6,17 @@ market epoch, which single intent has the best bounded use of the shared
 account?  It deliberately records every candidate, including candidates that
 are skipped, so a later replay can resolve counterfactual opportunity cost.
 
-Version 1 is intentionally conservative:
+Version 4 is intentionally conservative:
 
-* open positions and every pending order reserve gross margin;
+* open positions and every pending order reserve gross margin and gross
+  stop-loss risk;
 * pending orders receive no OCO/netting discount;
-* version 1 accepts only JPY-quoted pairs and fixes their conversion at 1.0;
+* version 4 accepts only JPY-quoted pairs and fixes their conversion at 1.0;
   non-JPY quotes stay fail-closed until an independently verified market-data
   conversion receipt exists outside the caller-controlled allocation payload;
 * at most one incumbent position may be reduced for one new intent per epoch;
-* the result has no broker or live-order authority.
+* the result is a preflight diagnostic, not fill-time risk enforcement, and has
+  no broker or live-order authority.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 from quant_rabbit.currency_exposure_guard import (
@@ -30,7 +33,7 @@ from quant_rabbit.currency_exposure_guard import (
     net_currency_exposure,
 )
 
-ALLOCATION_CONTRACT = "QR_DOJO_PORTFOLIO_ALLOCATION_V1"
+ALLOCATION_CONTRACT = "QR_DOJO_PORTFOLIO_ALLOCATION_V4"
 OPPORTUNITY_SCORE_CONTRACT = "QR_DOJO_CANDIDATE_SELECTION_OPPORTUNITY_DIAGNOSTIC_V1"
 REDUCTION_STEPS = (0.25, 0.5, 0.75, 1.0)
 
@@ -114,6 +117,27 @@ def _nullable_price(value: Any, *, field: str) -> float | None:
     return _number(value, field=field, positive=True)
 
 
+def _quote_timestamp_at_epoch(value: Any, *, field: str, decision_epoch: int) -> str:
+    if not isinstance(value, str) or not value:
+        raise DojoPortfolioAllocatorError(f"{field} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.split("#", 1)[0])
+    except ValueError as exc:
+        raise DojoPortfolioAllocatorError(
+            f"{field} must be an ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise DojoPortfolioAllocatorError(f"{field} must include an explicit offset")
+    epoch = parsed.timestamp()
+    if (
+        not math.isfinite(epoch)
+        or not epoch.is_integer()
+        or int(epoch) != decision_epoch
+    ):
+        raise DojoPortfolioAllocatorError(f"{field} must exactly match decision_epoch")
+    return value
+
+
 def _derived_notional_jpy(
     *, units: float, price: float, jpy_per_quote_unit: float
 ) -> float:
@@ -163,6 +187,9 @@ def _normalize_position(
     value: Any,
     *,
     index: int,
+    decision_epoch: int,
+    decision_quote_timestamp: str,
+    decision_quote_sequence: int,
 ) -> dict[str, Any]:
     field = f"open_positions[{index}]"
     row = _require_keys(
@@ -175,6 +202,12 @@ def _normalize_position(
             "side",
             "units",
             "mark_price",
+            "bid_price",
+            "ask_price",
+            "quote_timestamp",
+            "quote_sequence",
+            "sl_price",
+            "stress_cost_pips",
             "jpy_per_quote_unit",
             "conversion_snapshot_id",
             "conversion_snapshot_sha256",
@@ -193,7 +226,32 @@ def _normalize_position(
         )
     units = _number(row["units"], field=f"{field}.units", positive=True)
     mark_price = _number(row["mark_price"], field=f"{field}.mark_price", positive=True)
+    bid_price = _number(row["bid_price"], field=f"{field}.bid_price", positive=True)
+    ask_price = _number(row["ask_price"], field=f"{field}.ask_price", positive=True)
+    if ask_price < bid_price or not math.isclose(
+        mark_price,
+        (bid_price + ask_price) / 2.0,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise DojoPortfolioAllocatorError(
+            f"{field}.mark_price must be the bid/ask midpoint"
+        )
+    sl_price = _number(row["sl_price"], field=f"{field}.sl_price", positive=True)
+    stress_cost_pips = _number(
+        row["stress_cost_pips"],
+        field=f"{field}.stress_cost_pips",
+        non_negative=True,
+    )
     pair = _pair(row["pair"], field=f"{field}.pair")
+    side = _side(row["side"], field=f"{field}.side")
+    executable_price = bid_price if side == "LONG" else ask_price
+    if (side == "LONG" and sl_price >= executable_price) or (
+        side == "SHORT" and sl_price <= executable_price
+    ):
+        raise DojoPortfolioAllocatorError(
+            f"{field}.sl_price is already breached by executable price"
+        )
     jpy_per_quote_unit, snapshot_id, snapshot_sha = _validated_conversion(
         pair=pair,
         jpy_per_quote_unit=row["jpy_per_quote_unit"],
@@ -201,13 +259,44 @@ def _normalize_position(
         conversion_snapshot_sha256=row["conversion_snapshot_sha256"],
         field=field,
     )
+    pip_size = 0.01
+    quote_timestamp = _quote_timestamp_at_epoch(
+        row["quote_timestamp"],
+        field=f"{field}.quote_timestamp",
+        decision_epoch=decision_epoch,
+    )
+    quote_sequence = _integer(
+        row["quote_sequence"], field=f"{field}.quote_sequence", non_negative=True
+    )
+    if quote_sequence <= 0:
+        raise DojoPortfolioAllocatorError(f"{field}.quote_sequence must be positive")
+    if (
+        quote_timestamp != decision_quote_timestamp
+        or quote_sequence != decision_quote_sequence
+    ):
+        raise DojoPortfolioAllocatorError(
+            f"{field} quote phase/watermark does not match the allocation decision"
+        )
+    stop_distance = (
+        executable_price - sl_price if side == "LONG" else sl_price - executable_price
+    )
+    stress_cost_jpy = stress_cost_pips * pip_size * units * jpy_per_quote_unit
+    stop_loss_jpy = stop_distance * units * jpy_per_quote_unit + stress_cost_jpy
     return {
         "position_id": _identity(row["position_id"], field=f"{field}.position_id"),
         "owner_id": _identity(row["owner_id"], field=f"{field}.owner_id"),
         "pair": pair,
-        "side": _side(row["side"], field=f"{field}.side"),
+        "side": side,
         "units": units,
         "mark_price": mark_price,
+        "bid_price": bid_price,
+        "ask_price": ask_price,
+        "quote_timestamp": quote_timestamp,
+        "quote_sequence": quote_sequence,
+        "sl_price": sl_price,
+        "stress_cost_pips": stress_cost_pips,
+        "stress_cost_jpy": stress_cost_jpy,
+        "stop_loss_jpy": stop_loss_jpy,
         "jpy_per_quote_unit": jpy_per_quote_unit,
         "conversion_snapshot_id": snapshot_id,
         "conversion_snapshot_sha256": snapshot_sha,
@@ -240,6 +329,8 @@ def _normalize_pending(
             "side",
             "units",
             "trigger_price",
+            "sl_pips",
+            "stress_cost_pips",
             "jpy_per_quote_unit",
             "conversion_snapshot_id",
             "conversion_snapshot_sha256",
@@ -249,6 +340,12 @@ def _normalize_pending(
     trigger_price = _number(
         row["trigger_price"], field=f"{field}.trigger_price", positive=True
     )
+    sl_pips = _number(row["sl_pips"], field=f"{field}.sl_pips", positive=True)
+    stress_cost_pips = _number(
+        row["stress_cost_pips"],
+        field=f"{field}.stress_cost_pips",
+        non_negative=True,
+    )
     pair = _pair(row["pair"], field=f"{field}.pair")
     jpy_per_quote_unit, snapshot_id, snapshot_sha = _validated_conversion(
         pair=pair,
@@ -257,6 +354,8 @@ def _normalize_pending(
         conversion_snapshot_sha256=row["conversion_snapshot_sha256"],
         field=field,
     )
+    stress_cost_jpy = stress_cost_pips * 0.01 * units * jpy_per_quote_unit
+    stop_loss_jpy = sl_pips * 0.01 * units * jpy_per_quote_unit + stress_cost_jpy
     return {
         "order_id": _identity(row["order_id"], field=f"{field}.order_id"),
         "owner_id": _identity(row["owner_id"], field=f"{field}.owner_id"),
@@ -264,6 +363,10 @@ def _normalize_pending(
         "side": _side(row["side"], field=f"{field}.side"),
         "units": units,
         "trigger_price": trigger_price,
+        "sl_pips": sl_pips,
+        "stress_cost_pips": stress_cost_pips,
+        "stress_cost_jpy": stress_cost_jpy,
+        "stop_loss_jpy": stop_loss_jpy,
         "jpy_per_quote_unit": jpy_per_quote_unit,
         "conversion_snapshot_id": snapshot_id,
         "conversion_snapshot_sha256": snapshot_sha,
@@ -514,6 +617,12 @@ def _margin_jpy(rows: Sequence[Mapping[str, Any]], *, leverage: float) -> float:
     return sum(float(row["notional_jpy"]) for row in rows) / leverage
 
 
+def _gross_stop_loss_jpy(rows: Sequence[Mapping[str, Any]]) -> float:
+    """Return gross bounded loss without hedge, netting, or OCO discounts."""
+
+    return math.fsum(float(row["stop_loss_jpy"]) for row in rows)
+
+
 def _candidate_gate(
     candidate: Mapping[str, Any],
     *,
@@ -524,12 +633,27 @@ def _candidate_gate(
     global_margin_cap_fraction: float,
     currency_cap_fraction: float,
     max_candidate_loss_fraction: float,
+    max_portfolio_loss_fraction: float,
     owner_concurrency_caps: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     current_margin = _margin_jpy([*positions, *pending_orders], leverage=leverage)
     candidate_margin = float(candidate["notional_jpy"]) / leverage
     projected_margin = current_margin + candidate_margin
     margin_cap_jpy = equity_jpy * global_margin_cap_fraction
+    open_stop_loss = _gross_stop_loss_jpy(positions)
+    pending_stop_loss = _gross_stop_loss_jpy(pending_orders)
+    reserved_stop_loss = math.fsum((open_stop_loss, pending_stop_loss))
+    candidate_stop_loss = (
+        float(candidate["stop_loss_jpy"])
+        if candidate.get("finite_exit_bound") is True
+        else None
+    )
+    projected_stop_loss = (
+        math.fsum((reserved_stop_loss, candidate_stop_loss))
+        if candidate_stop_loss is not None
+        else None
+    )
+    portfolio_loss_cap_jpy = equity_jpy * max_portfolio_loss_fraction
     exposure_rows = _exposure_rows(positions, equity_jpy=equity_jpy)
     candidate_exposure = {
         "pair": candidate["pair"],
@@ -582,11 +706,19 @@ def _candidate_gate(
         reasons.append("PENDING_SHADOW_CURRENCY_CAP_EXCEEDED")
     if candidate.get("finite_exit_bound") is not True:
         reasons.append("FINITE_EXIT_BOUND_MISSING")
-    elif (
-        float(candidate["stop_loss_jpy"]) / equity_jpy
-        > max_candidate_loss_fraction + 1e-12
-    ):
-        reasons.append("CANDIDATE_LOSS_CAP_EXCEEDED")
+    else:
+        if (
+            float(candidate["stop_loss_jpy"]) / equity_jpy
+            > max_candidate_loss_fraction + 1e-12
+        ):
+            reasons.append("CANDIDATE_LOSS_CAP_EXCEEDED")
+        if (
+            projected_stop_loss is not None
+            and projected_stop_loss > portfolio_loss_cap_jpy + 1e-9
+        ):
+            reasons.append("PORTFOLIO_STOP_LOSS_CAP_EXCEEDED")
+            if pending_stop_loss > 0:
+                reasons.append("PENDING_SHADOW_STOP_LOSS_CONSUMED")
     if active_pair >= int(owner_cap["max_concurrent_per_pair"]):
         reasons.append("OWNER_PAIR_CONCURRENCY_CAP_REACHED")
     if active_global >= int(owner_cap["global_max_concurrent"]):
@@ -599,6 +731,21 @@ def _candidate_gate(
         "projected_margin_jpy": round(projected_margin, 8),
         "projected_margin_fraction": round(projected_margin / equity_jpy, 12),
         "global_margin_cap_jpy": round(margin_cap_jpy, 8),
+        "current_open_stop_loss_jpy": round(open_stop_loss, 8),
+        "pending_shadow_stop_loss_jpy": round(pending_stop_loss, 8),
+        "reserved_stop_loss_jpy": round(reserved_stop_loss, 8),
+        "candidate_stop_loss_jpy": (
+            round(candidate_stop_loss, 8) if candidate_stop_loss is not None else None
+        ),
+        "projected_portfolio_stop_loss_jpy": (
+            round(projected_stop_loss, 8) if projected_stop_loss is not None else None
+        ),
+        "projected_portfolio_stop_loss_fraction": (
+            round(projected_stop_loss / equity_jpy, 12)
+            if projected_stop_loss is not None
+            else None
+        ),
+        "max_portfolio_stop_loss_jpy": round(portfolio_loss_cap_jpy, 8),
         "currency_exposure": exposure,
         "pending_currency_gross_shadow": pending_currency_gross,
         "worst_case_currency_exposure_fraction": worst_case_currency,
@@ -623,10 +770,17 @@ def _reduced_positions(
     for position in positions:
         row = dict(position)
         if row["position_id"] == position_id:
+            row["units"] = float(row["units"]) * (1.0 - reduction_fraction)
             residual = float(row["notional_jpy"]) * (1.0 - reduction_fraction)
             if residual <= 1e-12:
                 continue
             row["notional_jpy"] = residual
+            row["stress_cost_jpy"] = float(row["stress_cost_jpy"]) * (
+                1.0 - reduction_fraction
+            )
+            row["stop_loss_jpy"] = float(row["stop_loss_jpy"]) * (
+                1.0 - reduction_fraction
+            )
             row["continuation_edge_jpy"] = float(row["continuation_edge_jpy"]) * (
                 1.0 - reduction_fraction
             )
@@ -643,11 +797,14 @@ def _candidate_efficiency(candidate: Mapping[str, Any], *, leverage: float) -> f
 def build_portfolio_allocation(
     *,
     decision_epoch: int,
+    decision_quote_timestamp: str,
+    decision_quote_sequence: int,
     equity_jpy: float,
     leverage: float,
     global_margin_cap_fraction: float,
     currency_cap_fraction: float,
     max_candidate_loss_fraction: float,
+    max_portfolio_loss_fraction: float,
     owner_concurrency_caps: Sequence[Mapping[str, Any]],
     open_positions: Sequence[Mapping[str, Any]],
     pending_orders: Sequence[Mapping[str, Any]],
@@ -662,6 +819,18 @@ def build_portfolio_allocation(
     """
 
     epoch = _integer(decision_epoch, field="decision_epoch", non_negative=True)
+    decision_timestamp = _quote_timestamp_at_epoch(
+        decision_quote_timestamp,
+        field="decision_quote_timestamp",
+        decision_epoch=epoch,
+    )
+    decision_sequence = _integer(
+        decision_quote_sequence,
+        field="decision_quote_sequence",
+        non_negative=True,
+    )
+    if decision_sequence <= 0:
+        raise DojoPortfolioAllocatorError("decision_quote_sequence must be positive")
     equity = _number(equity_jpy, field="equity_jpy", positive=True)
     leverage_value = _number(leverage, field="leverage", positive=True)
     margin_cap = _number(
@@ -681,6 +850,13 @@ def build_portfolio_allocation(
     )
     if candidate_loss_cap > 1:
         raise DojoPortfolioAllocatorError("max_candidate_loss_fraction must be <= 1")
+    portfolio_loss_cap = _number(
+        max_portfolio_loss_fraction,
+        field="max_portfolio_loss_fraction",
+        positive=True,
+    )
+    if portfolio_loss_cap > 1:
+        raise DojoPortfolioAllocatorError("max_portfolio_loss_fraction must be <= 1")
     switching_cost = _number(
         switching_cost_jpy, field="switching_cost_jpy", non_negative=True
     )
@@ -690,6 +866,9 @@ def build_portfolio_allocation(
             _normalize_position(
                 value,
                 index=index,
+                decision_epoch=epoch,
+                decision_quote_timestamp=decision_timestamp,
+                decision_quote_sequence=decision_sequence,
             )
             for index, value in enumerate(open_positions)
         ],
@@ -745,6 +924,12 @@ def build_portfolio_allocation(
     )
     current_position_margin = _margin_jpy(positions, leverage=leverage_value)
     pending_shadow_margin = _margin_jpy(pending, leverage=leverage_value)
+    current_position_stop_loss = _gross_stop_loss_jpy(positions)
+    pending_shadow_stop_loss = _gross_stop_loss_jpy(pending)
+    reserved_stop_loss = math.fsum(
+        (current_position_stop_loss, pending_shadow_stop_loss)
+    )
+    portfolio_loss_cap_jpy = equity * portfolio_loss_cap
 
     candidate_evaluations: dict[str, dict[str, Any]] = {}
     feasible_plans: list[dict[str, Any]] = []
@@ -761,6 +946,7 @@ def build_portfolio_allocation(
             global_margin_cap_fraction=margin_cap,
             currency_cap_fraction=currency_cap,
             max_candidate_loss_fraction=candidate_loss_cap,
+            max_portfolio_loss_fraction=portfolio_loss_cap,
             owner_concurrency_caps=owner_caps_by_id,
         )
         candidate_evaluations[intent_id] = {
@@ -813,6 +999,7 @@ def build_portfolio_allocation(
                     global_margin_cap_fraction=margin_cap,
                     currency_cap_fraction=currency_cap,
                     max_candidate_loss_fraction=candidate_loss_cap,
+                    max_portfolio_loss_fraction=portfolio_loss_cap,
                     owner_concurrency_caps=owner_caps_by_id,
                 )
                 if gate["admitted"] is not True:
@@ -876,7 +1063,15 @@ def build_portfolio_allocation(
             ],
             "CUT_ROTATE": ["FULL_RELEASE_RESTORES_CAPACITY_AND_IMPROVES_EXPECTED_EDGE"],
         }[action]
-    elif not candidates and positions:
+    elif (
+        not candidates
+        and (positions or pending)
+        and reserved_stop_loss > portfolio_loss_cap_jpy + 1e-9
+    ):
+        action = "SKIP"
+        selected_intent_id = None
+        reason_codes = ["EXISTING_PORTFOLIO_LOSS_CAP_EXCEEDED"]
+    elif not candidates and (positions or pending):
         action = "HOLD_FULL"
         selected_intent_id = None
         reason_codes = ["NO_CANDIDATE_INTENTS_KEEP_EXISTING_PORTFOLIO"]
@@ -942,17 +1137,28 @@ def build_portfolio_allocation(
 
     body: dict[str, Any] = {
         "contract": ALLOCATION_CONTRACT,
-        "schema_version": 1,
+        "schema_version": 4,
         "decision_epoch": epoch,
+        "decision_quote_timestamp": decision_timestamp,
+        "decision_quote_sequence": decision_sequence,
         "policy": {
             "leverage": leverage_value,
             "global_margin_cap_fraction": margin_cap,
             "currency_cap_fraction": currency_cap,
             "max_candidate_loss_fraction": candidate_loss_cap,
+            "max_portfolio_loss_fraction": portfolio_loss_cap,
             "switching_cost_jpy": switching_cost,
             "reduction_steps": list(REDUCTION_STEPS),
             "margin_model": "GROSS_OPEN_PLUS_ALL_PENDING_SHADOW_DIVIDED_BY_LEVERAGE",
+            "portfolio_loss_model": (
+                "GROSS_OPEN_MARK_TO_SL_PLUS_ALL_PENDING_TRIGGER_TO_SL_PLUS_CANDIDATE_WITH_STRESS"
+            ),
             "pending_oco_netting_allowed": False,
+            "portfolio_loss_netting_allowed": False,
+            "portfolio_loss_enforcement_scope": (
+                "PREFLIGHT_DIAGNOSTIC_NOT_FILL_TIME_ENFORCEMENT"
+            ),
+            "open_units_semantics": "REMAINING_UNITS_AFTER_PARTIAL_CLOSE",
             "max_new_intents_per_epoch": 1,
             "max_incumbents_released_per_epoch": 1,
             "release_owner_policy": "CANDIDATE_OWNER_ONLY",
@@ -972,6 +1178,14 @@ def build_portfolio_allocation(
                 (current_position_margin + pending_shadow_margin) / equity, 12
             ),
             "global_margin_cap_jpy": round(equity * margin_cap, 8),
+            "open_position_stop_loss_jpy": round(current_position_stop_loss, 8),
+            "pending_stop_loss_gross_shadow_jpy": round(pending_shadow_stop_loss, 8),
+            "reserved_stop_loss_jpy": round(reserved_stop_loss, 8),
+            "reserved_stop_loss_fraction": round(reserved_stop_loss / equity, 12),
+            "max_portfolio_stop_loss_jpy": round(portfolio_loss_cap_jpy, 8),
+            "existing_portfolio_loss_cap_breached": (
+                reserved_stop_loss > portfolio_loss_cap_jpy + 1e-9
+            ),
             "current_position_currency_exposure": current_position_currency_exposure,
             "pending_currency_gross_shadow": pending_currency_gross,
             "reserved_worst_case_currency_exposure_fraction": (
@@ -1010,6 +1224,8 @@ def score_allocation_opportunity_cost(
             "contract",
             "schema_version",
             "decision_epoch",
+            "decision_quote_timestamp",
+            "decision_quote_sequence",
             "policy",
             "account",
             "open_positions",
@@ -1032,7 +1248,7 @@ def score_allocation_opportunity_cost(
     if (
         allocation_row["contract"] != ALLOCATION_CONTRACT
         or isinstance(allocation_row["schema_version"], bool)
-        or allocation_row["schema_version"] != 1
+        or allocation_row["schema_version"] != 4
         or allocation_row["allocation_sha256"] != _canonical_sha(allocation_body)
     ):
         raise DojoPortfolioAllocatorError("allocation receipt verification failed")
@@ -1051,10 +1267,15 @@ def score_allocation_opportunity_cost(
             "global_margin_cap_fraction",
             "currency_cap_fraction",
             "max_candidate_loss_fraction",
+            "max_portfolio_loss_fraction",
             "switching_cost_jpy",
             "reduction_steps",
             "margin_model",
+            "portfolio_loss_model",
             "pending_oco_netting_allowed",
+            "portfolio_loss_netting_allowed",
+            "portfolio_loss_enforcement_scope",
+            "open_units_semantics",
             "max_new_intents_per_epoch",
             "max_incumbents_released_per_epoch",
             "release_owner_policy",
@@ -1072,6 +1293,12 @@ def score_allocation_opportunity_cost(
             "reserved_margin_jpy",
             "reserved_margin_fraction",
             "global_margin_cap_jpy",
+            "open_position_stop_loss_jpy",
+            "pending_stop_loss_gross_shadow_jpy",
+            "reserved_stop_loss_jpy",
+            "reserved_stop_loss_fraction",
+            "max_portfolio_stop_loss_jpy",
+            "existing_portfolio_loss_cap_breached",
             "current_position_currency_exposure",
             "pending_currency_gross_shadow",
             "reserved_worst_case_currency_exposure_fraction",
@@ -1087,13 +1314,21 @@ def score_allocation_opportunity_cost(
     ):
         raise DojoPortfolioAllocatorError("allocation source collections are malformed")
     position_sources = [
-        {key: value for key, value in row.items() if key != "notional_jpy"}
+        {
+            key: value
+            for key, value in row.items()
+            if key not in {"notional_jpy", "stress_cost_jpy", "stop_loss_jpy"}
+        }
         if isinstance(row, Mapping)
         else row
         for row in open_positions
     ]
     pending_sources = [
-        {key: value for key, value in row.items() if key != "notional_jpy"}
+        {
+            key: value
+            for key, value in row.items()
+            if key not in {"notional_jpy", "stress_cost_jpy", "stop_loss_jpy"}
+        }
         if isinstance(row, Mapping)
         else row
         for row in pending_orders
@@ -1120,11 +1355,14 @@ def score_allocation_opportunity_cost(
         )
     rebuilt = build_portfolio_allocation(
         decision_epoch=allocation_row["decision_epoch"],
+        decision_quote_timestamp=allocation_row["decision_quote_timestamp"],
+        decision_quote_sequence=allocation_row["decision_quote_sequence"],
         equity_jpy=account["equity_jpy"],
         leverage=policy["leverage"],
         global_margin_cap_fraction=policy["global_margin_cap_fraction"],
         currency_cap_fraction=policy["currency_cap_fraction"],
         max_candidate_loss_fraction=policy["max_candidate_loss_fraction"],
+        max_portfolio_loss_fraction=policy["max_portfolio_loss_fraction"],
         owner_concurrency_caps=policy["owner_concurrency_caps"],
         open_positions=position_sources,
         pending_orders=pending_sources,

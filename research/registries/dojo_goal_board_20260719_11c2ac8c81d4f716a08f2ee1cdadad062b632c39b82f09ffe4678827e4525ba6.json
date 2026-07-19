@@ -1,5 +1,5 @@
 {
-  "board_sha256": "2627b7fc34f64fe14fd5ab2415a400d3e783614640d631108350fe85a07427a8",
+  "board_sha256": "11c2ac8c81d4f716a08f2ee1cdadad062b632c39b82f09ffe4678827e4525ba6",
   "broker_mutation_allowed": false,
   "contract": "QR_DOJO_GOAL_BOARD_V2",
   "correlation_clusters": [
@@ -11,6 +11,7 @@
       "independence_validated": false,
       "lane_ids": [
         "ai_capital_recycle_train_v1",
+        "ai_capital_recycle_train_v2",
         "ai_dayread_w54_clean_legacy_contract_invalid",
         "ai_dayread_w54_leaked",
         "ai_exit_train_v1_diagnostic",
@@ -22,6 +23,7 @@
         "ai_prompt_phase_v3r1_started",
         "usd_jpy_mean_reversion_strategy_ideas_v1",
         "worker_ai_capital_recycle_substrate_train_v1",
+        "worker_ai_capital_recycle_substrate_train_v2",
         "worker_ai_exit_entry_policy_train_v2",
         "worker_capital_time_release_train_v1",
         "worker_forward_smoke_v1_started",
@@ -29,11 +31,13 @@
         "worker_pullback_a2_train_v1",
         "worker_spikefade_tailguard_lowlev_train_v1",
         "worker_spikefade_tailguard_sl25_train_v1",
+        "worker_survivor_regime_replay_train_v1",
         "worker_w46_w53_legacy_performance_invalid"
       ],
       "representative_lane_id": "ai_capital_recycle_train_v1",
       "return_summation_allowed": false,
       "suppressed_correlated_lane_ids": [
+        "ai_capital_recycle_train_v2",
         "ai_dayread_w54_clean_legacy_contract_invalid",
         "ai_dayread_w54_leaked",
         "ai_exit_train_v1_diagnostic",
@@ -45,6 +49,7 @@
         "ai_prompt_phase_v3r1_started",
         "usd_jpy_mean_reversion_strategy_ideas_v1",
         "worker_ai_capital_recycle_substrate_train_v1",
+        "worker_ai_capital_recycle_substrate_train_v2",
         "worker_ai_exit_entry_policy_train_v2",
         "worker_capital_time_release_train_v1",
         "worker_forward_smoke_v1_started",
@@ -52,6 +57,7 @@
         "worker_pullback_a2_train_v1",
         "worker_spikefade_tailguard_lowlev_train_v1",
         "worker_spikefade_tailguard_sl25_train_v1",
+        "worker_survivor_regime_replay_train_v1",
         "worker_w46_w53_legacy_performance_invalid"
       ]
     }
@@ -67,7 +73,7 @@
   },
   "goal_status": "3X_NOT_REACHABLE",
   "guarantee": false,
-  "input_sha256": "4a277daec065f0a0468272366fe3c9e92ececa5dfe33eb289e4b8eee3f11d854",
+  "input_sha256": "99847e9a786f4c00d6739521cff66c0e3da0c970c18cc14117fe586fea39a892",
   "lane_evaluations": [
     {
       "correlation_cluster": "UNVERIFIED_DEPENDENCE",
@@ -347,16 +353,17 @@
         "BOUNDED_RISK_REQUIRED",
         "NORMAL_MTM_DRAWDOWN_UNKNOWN",
         "STRESSED_MTM_DRAWDOWN_UNKNOWN",
-        "MARGIN_CAP_BREACHED"
+        "MARGIN_CAP_BREACHED",
+        "LIFECYCLE_SUPERSEDED_BY:worker_survivor_regime_replay_train_v1"
       ],
       "edge_status": "HYPOTHESIS",
       "evidence_verification": {
-        "actual_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "actual_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
         "artifact_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
         "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
         "contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1",
-        "expected_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
-        "size_bytes": 16962,
+        "expected_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
+        "size_bytes": 17289,
         "status": "UNTRUSTED_CONTRACT",
         "trusted": false,
         "verified_dependence": null
@@ -373,8 +380,8 @@
       "lane_id": "worker_spikefade_tailguard_sl25_train_v1",
       "lane_type": "WORKER",
       "lifecycle": {
-        "state": "CURRENT",
-        "superseded_by_lane_id": null,
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "worker_survivor_regime_replay_train_v1",
         "supersedes_lane_ids": []
       },
       "parent_lane_ids": [],
@@ -407,16 +414,17 @@
         "MARK_TO_MARKET_RISK_REQUIRED",
         "BOUNDED_RISK_REQUIRED",
         "NORMAL_MTM_DRAWDOWN_UNKNOWN",
-        "STRESSED_MTM_DRAWDOWN_UNKNOWN"
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "LIFECYCLE_SUPERSEDED_BY:worker_survivor_regime_replay_train_v1"
       ],
       "edge_status": "HYPOTHESIS",
       "evidence_verification": {
-        "actual_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "actual_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
         "artifact_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
         "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
         "contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1",
-        "expected_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
-        "size_bytes": 16962,
+        "expected_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
+        "size_bytes": 17289,
         "status": "UNTRUSTED_CONTRACT",
         "trusted": false,
         "verified_dependence": null
@@ -433,8 +441,8 @@
       "lane_id": "worker_spikefade_tailguard_lowlev_train_v1",
       "lane_type": "WORKER",
       "lifecycle": {
-        "state": "CURRENT",
-        "superseded_by_lane_id": null,
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "worker_survivor_regime_replay_train_v1",
         "supersedes_lane_ids": []
       },
       "parent_lane_ids": [],
@@ -467,16 +475,17 @@
         "MARK_TO_MARKET_RISK_REQUIRED",
         "BOUNDED_RISK_REQUIRED",
         "NORMAL_MTM_DRAWDOWN_UNKNOWN",
-        "STRESSED_MTM_DRAWDOWN_UNKNOWN"
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "LIFECYCLE_SUPERSEDED_BY:worker_survivor_regime_replay_train_v1"
       ],
       "edge_status": "HYPOTHESIS",
       "evidence_verification": {
-        "actual_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "actual_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
         "artifact_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
         "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
         "contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1",
-        "expected_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
-        "size_bytes": 16962,
+        "expected_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
+        "size_bytes": 17289,
         "status": "UNTRUSTED_CONTRACT",
         "trusted": false,
         "verified_dependence": null
@@ -493,8 +502,8 @@
       "lane_id": "worker_pullback_a2_train_v1",
       "lane_type": "WORKER",
       "lifecycle": {
-        "state": "CURRENT",
-        "superseded_by_lane_id": null,
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "worker_survivor_regime_replay_train_v1",
         "supersedes_lane_ids": []
       },
       "parent_lane_ids": [],
@@ -532,12 +541,12 @@
       ],
       "edge_status": "HYPOTHESIS",
       "evidence_verification": {
-        "actual_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "actual_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
         "artifact_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
         "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
         "contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1",
-        "expected_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
-        "size_bytes": 16962,
+        "expected_sha256": "eceb1d73066180df4145cc45809265ef1f5ccc90a87db3399c85a72e44d4e7a7",
+        "size_bytes": 17289,
         "status": "UNTRUSTED_CONTRACT",
         "trusted": false,
         "verified_dependence": null
@@ -1186,6 +1195,196 @@
     },
     {
       "correlation_cluster": "UNVERIFIED_DEPENDENCE",
+      "declared_correlation_cluster": "MULTI_PAIR_AI_CAPITAL_RECYCLE_TRAIN_V2",
+      "declared_status": "HYPOTHESIS",
+      "dependence": null,
+      "distribution_30d": {
+        "active_days": 0,
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_drawdown_20pct": null,
+        "probability_losing_month": null,
+        "probability_ruin_12m": null,
+        "sample_months": 0,
+        "stressed_median_multiple": null
+      },
+      "edge_blockers": [
+        "DECLARED_HYPOTHESIS",
+        "PROSPECTIVE_PROVENANCE_REQUIRED",
+        "PROSPECTIVE_FORWARD_DISTRIBUTION_REQUIRED",
+        "PROSPECTIVE_MONTH_FLOOR_NOT_MET",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "POST_COST_EDGE_LOWER_BOUND_NOT_POSITIVE",
+        "MARK_TO_MARKET_RISK_REQUIRED",
+        "BOUNDED_RISK_REQUIRED",
+        "NORMAL_MTM_DRAWDOWN_UNKNOWN",
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "MARGIN_PEAK_USAGE_UNKNOWN"
+      ],
+      "edge_status": "HYPOTHESIS",
+      "evidence_verification": {
+        "actual_sha256": "66c0d059bb1869fde90c568f51532b332e69e7eef301c481454902c94a09ade1",
+        "artifact_path": "research/training/dojo-ai-capital-recycle-train-v2/evidence.json",
+        "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "contract": "QR_DOJO_AI_CAPITAL_RECYCLE_TRAIN_EVIDENCE_V2",
+        "expected_sha256": "66c0d059bb1869fde90c568f51532b332e69e7eef301c481454902c94a09ade1",
+        "size_bytes": 10087,
+        "status": "UNTRUSTED_CONTRACT",
+        "trusted": false,
+        "verified_dependence": null
+      },
+      "goal_blockers": [
+        "EDGE_NOT_PROVEN",
+        "STRESSED_MEDIAN_MULTIPLE_UNKNOWN",
+        "PROBABILITY_3X_LCB_UNKNOWN",
+        "LOSING_MONTH_PROBABILITY_UNKNOWN",
+        "DRAWDOWN_20PCT_PROBABILITY_UNKNOWN",
+        "RUIN_12M_PROBABILITY_UNKNOWN"
+      ],
+      "goal_status": "3X_NOT_REACHABLE",
+      "lane_id": "worker_ai_capital_recycle_substrate_train_v2",
+      "lane_type": "WORKER",
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "parent_lane_ids": [],
+      "reverse_engineered_from_goal": false
+    },
+    {
+      "correlation_cluster": "UNVERIFIED_DEPENDENCE",
+      "declared_correlation_cluster": "MULTI_PAIR_AI_CAPITAL_RECYCLE_TRAIN_V2",
+      "declared_status": "HYPOTHESIS",
+      "dependence": null,
+      "distribution_30d": {
+        "active_days": 0,
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_drawdown_20pct": null,
+        "probability_losing_month": null,
+        "probability_ruin_12m": null,
+        "sample_months": 0,
+        "stressed_median_multiple": null
+      },
+      "edge_blockers": [
+        "DECLARED_HYPOTHESIS",
+        "PROSPECTIVE_PROVENANCE_REQUIRED",
+        "PROSPECTIVE_FORWARD_DISTRIBUTION_REQUIRED",
+        "PROSPECTIVE_MONTH_FLOOR_NOT_MET",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "POST_COST_EDGE_LOWER_BOUND_NOT_POSITIVE",
+        "MARK_TO_MARKET_RISK_REQUIRED",
+        "BOUNDED_RISK_REQUIRED",
+        "NORMAL_MTM_DRAWDOWN_UNKNOWN",
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "MARGIN_PEAK_USAGE_UNKNOWN",
+        "PARENT_EDGE_NOT_PROVEN:worker_ai_capital_recycle_substrate_train_v2"
+      ],
+      "edge_status": "HYPOTHESIS",
+      "evidence_verification": {
+        "actual_sha256": "66c0d059bb1869fde90c568f51532b332e69e7eef301c481454902c94a09ade1",
+        "artifact_path": "research/training/dojo-ai-capital-recycle-train-v2/evidence.json",
+        "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "contract": "QR_DOJO_AI_CAPITAL_RECYCLE_TRAIN_EVIDENCE_V2",
+        "expected_sha256": "66c0d059bb1869fde90c568f51532b332e69e7eef301c481454902c94a09ade1",
+        "size_bytes": 10087,
+        "status": "UNTRUSTED_CONTRACT",
+        "trusted": false,
+        "verified_dependence": null
+      },
+      "goal_blockers": [
+        "EDGE_NOT_PROVEN",
+        "STRESSED_MEDIAN_MULTIPLE_UNKNOWN",
+        "PROBABILITY_3X_LCB_UNKNOWN",
+        "LOSING_MONTH_PROBABILITY_UNKNOWN",
+        "DRAWDOWN_20PCT_PROBABILITY_UNKNOWN",
+        "RUIN_12M_PROBABILITY_UNKNOWN"
+      ],
+      "goal_status": "3X_NOT_REACHABLE",
+      "lane_id": "ai_capital_recycle_train_v2",
+      "lane_type": "AI",
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "parent_lane_ids": [
+        "worker_ai_capital_recycle_substrate_train_v2"
+      ],
+      "reverse_engineered_from_goal": false
+    },
+    {
+      "correlation_cluster": "UNVERIFIED_DEPENDENCE",
+      "declared_correlation_cluster": "MULTIPAIR_SEPARATE_REGIME_TRAIN",
+      "declared_status": "HYPOTHESIS",
+      "dependence": null,
+      "distribution_30d": {
+        "active_days": 22,
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_drawdown_20pct": null,
+        "probability_losing_month": null,
+        "probability_ruin_12m": null,
+        "sample_months": 1,
+        "stressed_median_multiple": null
+      },
+      "edge_blockers": [
+        "DECLARED_HYPOTHESIS",
+        "PROSPECTIVE_PROVENANCE_REQUIRED",
+        "PROSPECTIVE_FORWARD_DISTRIBUTION_REQUIRED",
+        "PROSPECTIVE_MONTH_FLOOR_NOT_MET",
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "POST_COST_EDGE_LOWER_BOUND_NOT_POSITIVE",
+        "MARK_TO_MARKET_RISK_REQUIRED",
+        "BOUNDED_RISK_REQUIRED",
+        "NORMAL_MTM_DRAWDOWN_UNKNOWN",
+        "STRESSED_MTM_DRAWDOWN_UNKNOWN",
+        "MARGIN_PEAK_USAGE_UNKNOWN"
+      ],
+      "edge_status": "HYPOTHESIS",
+      "evidence_verification": {
+        "actual_sha256": "6788373f0c07f1dfeaf0b447271109cbe903c333917be36af95970689d29b296",
+        "artifact_path": "research/training/dojo-worker-survivor-regime-replay-train-v1/evidence.json",
+        "blocker": "TRUSTED_PROOF_CONTRACT_UNAVAILABLE",
+        "contract": "QR_DOJO_WORKER_SURVIVOR_SEPARATE_REGIME_INDEX_V1",
+        "expected_sha256": "6788373f0c07f1dfeaf0b447271109cbe903c333917be36af95970689d29b296",
+        "size_bytes": 3449,
+        "status": "UNTRUSTED_CONTRACT",
+        "trusted": false,
+        "verified_dependence": null
+      },
+      "goal_blockers": [
+        "EDGE_NOT_PROVEN",
+        "STRESSED_MEDIAN_MULTIPLE_UNKNOWN",
+        "PROBABILITY_3X_LCB_UNKNOWN",
+        "LOSING_MONTH_PROBABILITY_UNKNOWN",
+        "DRAWDOWN_20PCT_PROBABILITY_UNKNOWN",
+        "RUIN_12M_PROBABILITY_UNKNOWN"
+      ],
+      "goal_status": "3X_NOT_REACHABLE",
+      "lane_id": "worker_survivor_regime_replay_train_v1",
+      "lane_type": "WORKER",
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": [
+          "worker_pullback_a2_train_v1",
+          "worker_spikefade_tailguard_lowlev_train_v1",
+          "worker_spikefade_tailguard_sl25_train_v1"
+        ]
+      },
+      "parent_lane_ids": [],
+      "reverse_engineered_from_goal": false
+    },
+    {
+      "correlation_cluster": "UNVERIFIED_DEPENDENCE",
       "declared_correlation_cluster": "USDJPY_MEAN_REVERSION",
       "declared_status": "INVALID",
       "dependence": {
@@ -1311,6 +1510,7 @@
     "included_lane_ids": [],
     "independent_correlation_cluster_count": 0,
     "suppressed_correlated_lane_ids": [
+      "ai_capital_recycle_train_v2",
       "ai_dayread_w54_clean_legacy_contract_invalid",
       "ai_dayread_w54_leaked",
       "ai_exit_train_v1_diagnostic",
@@ -1322,6 +1522,7 @@
       "ai_prompt_phase_v3r1_started",
       "usd_jpy_mean_reversion_strategy_ideas_v1",
       "worker_ai_capital_recycle_substrate_train_v1",
+      "worker_ai_capital_recycle_substrate_train_v2",
       "worker_ai_exit_entry_policy_train_v2",
       "worker_capital_time_release_train_v1",
       "worker_forward_smoke_v1_started",
@@ -1329,10 +1530,12 @@
       "worker_pullback_a2_train_v1",
       "worker_spikefade_tailguard_lowlev_train_v1",
       "worker_spikefade_tailguard_sl25_train_v1",
+      "worker_survivor_regime_replay_train_v1",
       "worker_w46_w53_legacy_performance_invalid"
     ],
     "unverified_dependence_lane_ids": [
       "ai_capital_recycle_train_v1",
+      "ai_capital_recycle_train_v2",
       "ai_dayread_w54_clean_legacy_contract_invalid",
       "ai_dayread_w54_leaked",
       "ai_exit_train_v1_diagnostic",
@@ -1344,6 +1547,7 @@
       "ai_prompt_phase_v3r1_started",
       "usd_jpy_mean_reversion_strategy_ideas_v1",
       "worker_ai_capital_recycle_substrate_train_v1",
+      "worker_ai_capital_recycle_substrate_train_v2",
       "worker_ai_exit_entry_policy_train_v2",
       "worker_capital_time_release_train_v1",
       "worker_forward_smoke_v1_started",
@@ -1351,6 +1555,7 @@
       "worker_pullback_a2_train_v1",
       "worker_spikefade_tailguard_lowlev_train_v1",
       "worker_spikefade_tailguard_sl25_train_v1",
+      "worker_survivor_regime_replay_train_v1",
       "worker_w46_w53_legacy_performance_invalid"
     ]
   },

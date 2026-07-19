@@ -179,6 +179,11 @@ def test_ai_supervised_worker_tuning_keeps_train_survivors_out_of_proof() -> Non
     assert all(row["pnl_jpy"] < 0 for row in followup["intrabar_results"])
     capital = batches["CAPITAL_HOLD_OPPORTUNITY_V1"]
     policies = {row["candidate_id"]: row for row in capital["policies"]}
+    assert capital["window_from_utc"] == "2025-03-03T00:00:00Z"
+    assert capital["window_to_utc"] == "2025-03-14T21:59:00Z"
+    assert capital["actual_elapsed_calendar_days"] == 11.91597222
+    assert capital["initial_balance_jpy"] == 200000.0
+    assert "NOT_A_MONTH_RESULT" in capital["calendar_30d_multiple_method"]
     assert capital["diagnostic_winner"] == "full_time_release"
     assert capital["audit_gates"]["owner_pair_or_global_cap_breaches"] == 0
     assert capital["audit_gates"]["margin_closeouts"] == 0
@@ -254,6 +259,95 @@ def test_ai_capital_recycle_separates_direction_gate_from_failed_allocation() ->
         "ai_capital_recycle_train_v1",
     ):
         assert lanes[lane_id]["provenance"]["content_sha256"] == actual
+
+
+def test_ai_capital_recycle_v2_is_rejected_and_content_bound() -> None:
+    path = ROOT / "research/training/dojo-ai-capital-recycle-train-v2/evidence.json"
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    cells = evidence["cells"]
+    score = evidence["score"]
+
+    assert evidence["classification"] == (
+        "SELF_ATTESTED_LOOKAHEAD_FREE_WORN_TRAIN_DIAGNOSTIC"
+    )
+    assert evidence["proof_eligible"] is False
+    assert evidence["promotion_eligible"] is False
+    assert evidence["live_permission"] is False
+    assert evidence["fresh_context_contract"]["fixed_denominator"] == len(cells) == 6
+    assert evidence["fresh_context_contract"]["valid_context_count"] == 6
+    assert all(row["response_status"] == "VALID" for row in cells)
+    assert score["existing_direction_hits"] == sum(
+        row["existing_direction_hit"] for row in cells
+    )
+    assert score["next_direction_hits"] == sum(
+        row["next_direction_hit"] for row in cells
+    )
+    assert score["totals_capacity_pips"]["hierarchical"] == round(
+        sum(row["hierarchical_policy_pips"] for row in cells), 1
+    )
+    assert score["delta_hierarchical_vs_full_hold_pips"] > 0
+    assert score["delta_hierarchical_vs_cut_pips"] < 0
+    assert score["absolute_profit_positive"] is False
+    assert score["verdict"] == "REJECTED_SMALL_WORN_TRAIN_HIERARCHICAL_POLICY"
+
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    board_input = _load("research/registries/dojo_goal_board_input_20260719.json")
+    lanes = {lane["lane_id"]: lane for lane in board_input["lanes"]}
+    for lane_id in (
+        "worker_ai_capital_recycle_substrate_train_v2",
+        "ai_capital_recycle_train_v2",
+    ):
+        assert lanes[lane_id]["provenance"]["content_sha256"] == actual
+
+
+def test_worker_separate_regime_replay_has_no_survivor_and_is_content_bound() -> None:
+    path = (
+        ROOT
+        / "research/training/dojo-worker-survivor-regime-replay-train-v1/evidence.json"
+    )
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    candidates = {row["candidate_id"]: row for row in evidence["candidates"]}
+
+    assert evidence["classification"] == "WORN_HISTORICAL_TRAIN_NO_SURVIVOR"
+    assert evidence["proof_eligible"] is False
+    assert evidence["promotion_eligible"] is False
+    assert evidence["live_permission"] is False
+    assert candidates["pullback_a2"]["paths"]["OHLC"]["terminal_net_jpy"] < 0
+    assert candidates["pullback_a2"]["paths"]["OLHC"]["terminal_net_jpy"] < 0
+    assert candidates["tailguard_sl25"]["failed_closed_path_count"] == 2
+    assert candidates["tailguard_sl25_lowlev_4h"]["failed_closed_path_count"] == 2
+    assert evidence["aggregate"]["train_survivor_count"] == 0
+    assert evidence["aggregate"]["proof_survivor_count"] == 0
+    assert evidence["aggregate"]["monthly_3x_proof_reached"] is False
+    source_binding = evidence["source_candidate_bindings"]
+    source_path = ROOT / source_binding["tracked_source_evidence_path"]
+    assert (
+        hashlib.sha256(source_path.read_bytes()).hexdigest()
+        == (source_binding["tracked_source_evidence_sha256"])
+    )
+    assert len(source_binding["tailguard_sl25_config_sha256"]) == SHA256_HEX_LENGTH
+    assert (
+        len(source_binding["tailguard_sl25_lowlev_4h_config_sha256"])
+        == SHA256_HEX_LENGTH
+    )
+
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    board_input = _load("research/registries/dojo_goal_board_input_20260719.json")
+    lanes = {lane["lane_id"]: lane for lane in board_input["lanes"]}
+    lane = lanes["worker_survivor_regime_replay_train_v1"]
+    assert lane["provenance"]["content_sha256"] == actual
+    superseded = {
+        "worker_pullback_a2_train_v1",
+        "worker_spikefade_tailguard_lowlev_train_v1",
+        "worker_spikefade_tailguard_sl25_train_v1",
+    }
+    assert set(lane["lifecycle"]["supersedes_lane_ids"]) == superseded
+    for lane_id in superseded:
+        assert lanes[lane_id]["lifecycle"] == {
+            "state": "SUPERSEDED",
+            "superseded_by_lane_id": "worker_survivor_regime_replay_train_v1",
+            "supersedes_lane_ids": [],
+        }
 
 
 def test_v3r1_supersession_stale_positive_is_explicitly_invalidated() -> None:

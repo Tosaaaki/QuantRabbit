@@ -279,7 +279,10 @@
       "supplementary_margin_audit_canonical_sha256": "1ac8c28222cbba1b1e8653db9aec096cceaa55b166bed5f541b3ceb3b3fc9ba4",
       "pairs": ["USD_JPY", "CAD_JPY", "EUR_USD", "GBP_USD"],
       "window_from_utc": "2025-03-03T00:00:00Z",
-      "window_to_utc": "2025-03-14T00:00:00Z",
+      "window_to_utc": "2025-03-14T21:59:00Z",
+      "actual_elapsed_calendar_days": 11.91597222,
+      "initial_balance_jpy": 200000.0,
+      "calendar_30d_multiple_method": "MECHANICAL_COMPOUND_EXTRAPOLATION_FROM_ACTUAL_11D_21H_59M_TRAIN_PERIOD_NOT_A_MONTH_RESULT",
       "candidate_count": 3,
       "train_survivor_count": 3,
       "classification": "WORN_TRAIN_CAPITAL_POLICY_DIAGNOSTIC",
@@ -351,6 +354,7 @@
         "all_terminal_flat": true
       },
       "margin_measurement_note": "ENTRY_NOTIONAL_DIVIDED_BY_REALIZED_NAV_AT_LEDGER_EVENTS_NOT_CONTINUOUS_MTM_USAGE",
+      "drawdown_measurement_note": "REALIZED_EXIT_EVENT_DRAWDOWN_NOT_CONTINUOUS_MARK_TO_MARKET_DRAWDOWN",
       "verdict": "STALE_60_MINUTE_RELEASE_BEATS_FULL_HOLD_AND_SPLIT_RESERVE_ON_BOTH_TRAIN_PATHS"
     }
   ],

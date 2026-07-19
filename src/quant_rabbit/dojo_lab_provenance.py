@@ -33,7 +33,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterator, Mapping, MutableMapping, Sequence
 
-from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
+from quant_rabbit.virtual_broker import (
+    VirtualBroker,
+    VirtualBrokerError,
+    _strict_json_loads,
+)
 
 
 UTC = timezone.utc
@@ -1447,6 +1451,7 @@ class StrategyOwnershipRegistry:
         self._order_owner_history: dict[str, str] = {}
         self._trade_owner_history: dict[str, str] = {}
         self._entry_caps: dict[str, tuple[int, int]] = {}
+        self._rehydrate_from_ledger(broker)
         original_log = broker._log
 
         def owned_log(event: str, payload: dict[str, Any]) -> None:
@@ -1464,6 +1469,71 @@ class StrategyOwnershipRegistry:
 
         broker._log = owned_log  # type: ignore[method-assign]
         broker._entry_admission = self._entry_admission_decision
+
+    def _rehydrate_from_ledger(self, broker: VirtualBroker) -> None:
+        """Restore durable owner history before wrapping a reopened broker."""
+
+        try:
+            raw_lines = broker.ledger_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise StrategyOwnershipError(
+                "broker ownership ledger is unreadable"
+            ) from exc
+        expected_previous = _ZERO_SHA256
+        parsed_records: list[tuple[str, Mapping[str, Any]]] = []
+        for line_number, raw_line in enumerate(raw_lines, start=1):
+            try:
+                record = _strict_json_loads(raw_line)
+            except (json.JSONDecodeError, VirtualBrokerError) as exc:
+                raise StrategyOwnershipError(
+                    f"broker ownership ledger is invalid at line {line_number}"
+                ) from exc
+            if not isinstance(record, Mapping) or set(record) != {
+                "ts_utc",
+                "event",
+                "payload",
+                "prev_sha",
+                "sha",
+            }:
+                raise StrategyOwnershipError(
+                    f"broker ownership ledger is invalid at line {line_number}"
+                )
+            event = record.get("event")
+            payload = record.get("payload")
+            body = {key: value for key, value in record.items() if key != "sha"}
+            if (
+                not isinstance(event, str)
+                or not isinstance(payload, Mapping)
+                or record.get("prev_sha") != expected_previous
+                or not isinstance(record.get("sha"), str)
+                or record["sha"] != _canonical_sha256(body)
+            ):
+                raise StrategyOwnershipError(
+                    f"broker ownership ledger is invalid at line {line_number}"
+                )
+            expected_previous = record["sha"]
+            parsed_records.append((event, payload))
+        if expected_previous != broker._prev_sha:
+            raise StrategyOwnershipError(
+                "broker ownership ledger terminal hash does not match broker state"
+            )
+        for event, payload in parsed_records:
+            owner = self._identity(payload, "strategy_owner_id")
+            if owner is not None:
+                self._commit_event(event, payload, owner)
+
+    def reload_durable_state(self) -> None:
+        """Rebuild owner maps after a broker transaction rollback."""
+
+        if self._submission_stack:
+            raise StrategyOwnershipError(
+                "cannot reload ownership during an active submission"
+            )
+        self._active_order_owner.clear()
+        self._active_trade_owner.clear()
+        self._order_owner_history.clear()
+        self._trade_owner_history.clear()
+        self._rehydrate_from_ledger(self.__broker)
 
     def register_owner(
         self,

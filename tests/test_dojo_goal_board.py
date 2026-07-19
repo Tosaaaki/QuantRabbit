@@ -742,6 +742,7 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     tailguard = lanes["worker_spikefade_tailguard_sl25_train_v1"]
     tailguard_lowlev = lanes["worker_spikefade_tailguard_lowlev_train_v1"]
     pullback = lanes["worker_pullback_a2_train_v1"]
+    separate_regime = lanes["worker_survivor_regime_replay_train_v1"]
     clean_legacy = lanes["ai_dayread_w54_clean_legacy_contract_invalid"]
     assert idea["status"] == "HYPOTHESIS"
     assert idea["distribution_30d"]["stressed_median_multiple"] is None
@@ -797,12 +798,21 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     )
     for tuned_worker in (tailguard, tailguard_lowlev, pullback):
         assert tuned_worker["status"] == "HYPOTHESIS"
-        assert tuned_worker["lifecycle"]["state"] == "CURRENT"
+        assert tuned_worker["lifecycle"]["state"] == "SUPERSEDED"
+        assert tuned_worker["lifecycle"]["superseded_by_lane_id"] == (
+            "worker_survivor_regime_replay_train_v1"
+        )
         assert tuned_worker["provenance"]["valid"] is True
         assert tuned_worker["provenance"]["prospective"] is False
         assert tuned_worker["provenance"]["evidence_path"].endswith(
             "dojo-worker-ai-tuning-20260719/evidence.json"
         )
+    assert separate_regime["lifecycle"]["state"] == "CURRENT"
+    assert set(separate_regime["lifecycle"]["supersedes_lane_ids"]) == {
+        tailguard["lane_id"],
+        tailguard_lowlev["lane_id"],
+        pullback["lane_id"],
+    }
     assert (
         tailguard["margin"]["peak_usage_fraction"] > tailguard["margin"]["cap_fraction"]
     )

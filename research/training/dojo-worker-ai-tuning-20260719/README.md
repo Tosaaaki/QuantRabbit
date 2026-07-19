@@ -27,10 +27,14 @@ hypothesis is rejected: wider winners did not compensate for the lower hit rate.
 Capital occupancy was tested on one fixed four-pair spike-fade stream.  The
 60-minute stale-position release beat both 480-minute full HOLD and 5x split
 reserve on both intrabar paths.  On the pessimistic path it made JPY 166,990.89
-versus JPY 90,671.91 for full HOLD, while realized drawdown fell from 10.47% to
+profit from JPY 200,000, ending at JPY 366,990.89, versus JPY 90,671.91 for
+full HOLD. The replay ran only from 2025-03-03 00:00 through 2025-03-14 21:59
+UTC (11 days 21 hours 59 minutes), not one month. Realized drawdown fell from 10.47% to
 9.30%.  The split policy had zero margin rejects and only 4.25% drawdown, but
-left too much capacity idle and made JPY 43,704.45.  These annualized 30-day
-figures are worn TRAIN diagnostics, not monthly proof.
+left too much capacity idle and made JPY 43,704.45.  These 30-day figures are
+mechanical compound extrapolations from that short worn-TRAIN
+period, not observed monthly results or monthly proof. Drawdown is measured at
+realized exit events, not continuously marked to market.
 
 All valid runs used OANDA M1 bid/ask, OHLC and OLHC paths, declared slippage and
 financing, owner isolation, margin accounting, and terminal settlement.
