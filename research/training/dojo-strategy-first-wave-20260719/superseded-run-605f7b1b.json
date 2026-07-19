@@ -1,0 +1,24 @@
+{
+  "classification": "INTERRUPTED_NON_EVIDENCE_DIAGNOSTIC",
+  "failed_coordinate": {
+    "candidate_id": "qr-a1-01-compression-break",
+    "cost_arm": "BASE",
+    "intrabar": "OHLC"
+  },
+  "failure": "MTM scorer rejected OANDA's 9-digit fractional timestamp before trade metrics could be admitted",
+  "fixed_denominator_complete": false,
+  "old_study_sha256": "605f7b1b2ba8720e5efb12319e76d3ff876a051dc8d493474fe741fabb8beb68",
+  "output_dir": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-trainer/strategy-first-wave-20260719-605f7b1b",
+  "post_fix_diagnostic_rescore": {
+    "fill_count": 724,
+    "metrics_sha256": "240ac98c7f136a39f60ebfade826418d2f2e2b4fbd8fa5f712bb4d0daed45b03",
+    "mtm_complete": true,
+    "mtm_max_drawdown_fraction": 0.558920445166,
+    "terminal_net_jpy": -110282.81
+  },
+  "post_fix_diagnostic_rescore_is_official_cell": false,
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "reason": "run was stopped after the repeated deterministic parser failure was identified; session 2 was incomplete",
+  "schema_version": 1
+}

@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -1659,6 +1660,21 @@ def _parse_utc(value: Any, *, field: str, allow_naive: bool = False) -> datetime
     if not isinstance(value, str) or not value:
         raise DojoBotTrainerError(f"{field} must be an ISO-8601 timestamp")
     text = value.split("#", 1)[0]
+    # OANDA emits RFC3339 timestamps with nanosecond precision while Python
+    # 3.10's ``datetime.fromisoformat`` accepts at most microseconds.  Truncate
+    # only the sub-microsecond tail; this preserves the M1 epoch and matches the
+    # corpus preflight parser used by the runner.
+    match = re.fullmatch(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?" r"(Z|[+-]\d{2}:\d{2})?",
+        text,
+    )
+    if match is not None:
+        head, fraction, zone = match.groups()
+        text = head
+        if fraction:
+            text += "." + fraction[:6]
+        if zone:
+            text += zone
     if text.endswith("Z"):
         text = f"{text[:-1]}+00:00"
     try:

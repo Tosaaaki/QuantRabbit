@@ -9,7 +9,7 @@ This is a worn-TRAIN study, not forward proof and not live permission.
 - Fixed cells: OHLC/OLHC x BASE/STRESS
 - True LOPO: main plus five leave-one-pair-out replays per cell
 - Fixed denominator: 4 candidates x 4 cells x 6 replay scopes = 96 replays
-- Study SHA-256: `605f7b1b2ba8720e5efb12319e76d3ff876a051dc8d493474fe741fabb8beb68`
+- Study SHA-256: `bacf5389b53cf1c1077aa867d8ae8c145df74101b3b94c4f171f65806304f1d7`
 
 The June 2025 five-pair source passes the existing 98% full-day, 80% short-day,
 and 900-second causal-gap preflight. No threshold was relaxed to admit it.

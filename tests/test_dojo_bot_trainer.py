@@ -49,6 +49,13 @@ def _bot_config(*, pairs: list[str] | None = None) -> dict:
     }
 
 
+def test_parse_utc_accepts_oanda_nanosecond_timestamp() -> None:
+    parsed = trainer_module._parse_utc(
+        "2025-01-01T00:00:00.123456789Z", field="corpus.time"
+    )
+    assert parsed.isoformat() == "2025-01-01T00:00:00.123456+00:00"
+
+
 def _proposal(candidate_id: str = "C1") -> dict:
     return seal_candidate_proposal(
         {
