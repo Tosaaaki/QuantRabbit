@@ -344,6 +344,128 @@ def _validate_corpus_pair_coverage(
         )
 
 
+def _replay_coordinate(
+    *, epoch: int, phase: str, granularity: str, intrabar: str
+) -> dict:
+    return {
+        "mode": "replay",
+        "epoch": epoch,
+        "phase": phase,
+        "granularity": granularity,
+        "intrabar": intrabar,
+    }
+
+
+def _expected_quote_batch_receipt(
+    quotes: list[tuple[str, float, float, str]],
+    *,
+    coordinate: dict,
+    feed_pairs: list[str],
+    batch_index: int,
+    previous_batch_sha256: str,
+) -> dict:
+    """Mirror the broker's public quote-batch receipt for pre-registration.
+
+    The manifest must commit the terminal batch-chain digest before the bot is
+    loaded.  Keeping this pure predictor next to manifest construction makes
+    any drift from ``VirtualBroker.record_quote_batch_begin`` fail the actual
+    replay's terminal comparison rather than silently changing the evidence.
+    """
+
+    canonical_quotes = [
+        {"pair": pair, "bid": bid, "ask": ask, "ts": ts}
+        for pair, bid, ask, ts in sorted(quotes, key=lambda row: row[0])
+    ]
+    canonical_feed_pairs = sorted(feed_pairs)
+    batch_pairs = [row["pair"] for row in canonical_quotes]
+    payload = {
+        "contract": "QR_VIRTUAL_QUOTE_BATCH_V1",
+        "batch_index": batch_index,
+        "coordinate": coordinate,
+        "feed_pairs": canonical_feed_pairs,
+        "batch_pairs": batch_pairs,
+        "coverage_complete": batch_pairs == canonical_feed_pairs,
+        "quotes": canonical_quotes,
+        "quotes_sha256": _canonical_sha256(canonical_quotes),
+        "previous_batch_sha256": previous_batch_sha256,
+    }
+    return {**payload, "batch_sha256": _canonical_sha256(payload)}
+
+
+def _build_replay_mtm_commitment(
+    *,
+    root: Path,
+    pairs: list[str],
+    time_from: str,
+    time_to: str,
+    intrabar: str,
+    granularity: str,
+    expected_shards: list[dict],
+) -> dict:
+    """Pre-register every causal MTM coordinate and quote-batch chain tip."""
+
+    phase_order = [
+        phase
+        for phase, _ in sorted(PHASE_ORDERS[intrabar].items(), key=lambda item: item[1])
+    ]
+    previous_batch_sha256 = "0" * 64
+    phase_mark_count = 0
+    partial_coordinates: list[dict] = []
+    first_coordinate = None
+    last_coordinate = None
+    for epoch, phase, quote_batch in _iter_replay_quote_batches(
+        root,
+        pairs,
+        time_from,
+        time_to,
+        intrabar,
+        granularity,
+        expected_shards=expected_shards,
+    ):
+        coordinate = _replay_coordinate(
+            epoch=epoch,
+            phase=phase,
+            granularity=granularity,
+            intrabar=intrabar,
+        )
+        receipt = _expected_quote_batch_receipt(
+            quote_batch,
+            coordinate=coordinate,
+            feed_pairs=pairs,
+            batch_index=phase_mark_count,
+            previous_batch_sha256=previous_batch_sha256,
+        )
+        if not receipt["coverage_complete"]:
+            partial_coordinates.append(coordinate)
+        if first_coordinate is None:
+            first_coordinate = coordinate
+        last_coordinate = coordinate
+        previous_batch_sha256 = receipt["batch_sha256"]
+        phase_mark_count += 1
+
+    if phase_mark_count == 0 or first_coordinate is None or last_coordinate is None:
+        raise ValueError("replay MTM coordinate set is empty")
+    if partial_coordinates:
+        sample = ",".join(
+            f"{row['epoch']}#{row['phase']}" for row in partial_coordinates[:3]
+        )
+        raise ValueError(
+            "replay MTM requires full feed-pair coverage at every epoch/phase; "
+            f"partial_phase_count={len(partial_coordinates)} sample={sample}"
+        )
+    return {
+        "mtm_coordinate_contract": "QR_REPLAY_MTM_COORDINATES_V1",
+        "phase_order": phase_order,
+        "feed_pairs": sorted(pairs),
+        "expected_phase_mark_count": phase_mark_count,
+        "expected_batch_chain_terminal_sha256": previous_batch_sha256,
+        "full_pair_phase_coverage": True,
+        "partial_phase_count": 0,
+        "first_coordinate": first_coordinate,
+        "last_coordinate": last_coordinate,
+    }
+
+
 def _build_reproducibility_manifest(args) -> dict:
     """Bind every material replay, cost, source, and worker input.
 
@@ -389,6 +511,10 @@ def _build_reproducibility_manifest(args) -> dict:
         }
         for path in shards
     ]
+
+    continuous_mtm = bool(getattr(args, "continuous_mtm", False))
+    if continuous_mtm and args.feed != "replay":
+        raise ValueError("--continuous-mtm requires --feed replay")
 
     if args.bot and args.bot_module:
         raise ValueError("--bot and --bot-module are mutually exclusive")
@@ -476,12 +602,30 @@ def _build_reproducibility_manifest(args) -> dict:
         if snapshot_path is not None and snapshot_path.is_file()
         else None
     )
+    if continuous_mtm and resume_snapshot is not None:
+        raise ValueError(
+            "resumed replay cannot attest QR_REPLAY_MTM_COORDINATES_V1; "
+            "start a fresh session for trainer evidence"
+        )
 
     corpus_manifest = {
         "root": str(root) if args.feed == "replay" else None,
         "shards": shard_rows,
     }
     corpus_manifest["corpus_sha256"] = _canonical_sha256(corpus_manifest)
+    replay_mtm_commitment = (
+        _build_replay_mtm_commitment(
+            root=root,
+            pairs=pairs,
+            time_from=args.time_from,
+            time_to=args.time_to,
+            intrabar=args.intrabar,
+            granularity=args.granularity,
+            expected_shards=shard_rows,
+        )
+        if continuous_mtm
+        else {}
+    )
     manifest = {
         "schema": "QR_VIRTUAL_SESSION_REPRODUCIBILITY_V1",
         "source": {
@@ -502,6 +646,8 @@ def _build_reproducibility_manifest(args) -> dict:
             "intrabar": args.intrabar,
             "bot_bar": args.bot_bar,
             "period_end_settlement": settle_at_end,
+            "continuous_mtm": continuous_mtm,
+            **replay_mtm_commitment,
         },
         "corpus": corpus_manifest,
         "costs": {
@@ -993,7 +1139,8 @@ def run_replay(
     *,
     replay_identity_sha256: str | None = None,
     expected_shards=None,
-) -> None:
+    mtm_contract: dict | None = None,
+) -> dict:
     pairs = _normalized_pairs(args.pairs)
     root = Path(args.corpus_root).expanduser().resolve()
     bars_per_second = _finite_number(
@@ -1016,6 +1163,10 @@ def run_replay(
     resume_key: tuple[int, int] | None = None
     bar_count = 0
     if cursor is not None:
+        if mtm_contract is not None:
+            raise VirtualBrokerError(
+                "resumed replay cannot attest the continuous MTM contract"
+            )
         if cursor.get("mode") != "replay":
             raise VirtualBrokerError("snapshot feed mode is not replay")
         if (
@@ -1047,6 +1198,12 @@ def run_replay(
 
     bar_seconds = 5 if args.granularity == "S5" else 60
     processed_any = False
+    phase_mark_count = 0
+    first_coordinate = None
+    last_coordinate = None
+    last_batch_receipt = None
+    last_phase_mark = None
+    expected_previous_batch_sha256 = "0" * 64
     for epoch, phase, quote_batch in _iter_replay_quote_batches(
         root,
         pairs,
@@ -1059,6 +1216,12 @@ def run_replay(
         key = _cursor_key(epoch, phase, args.intrabar)
         if resume_key is not None and key <= resume_key:
             continue
+        coordinate = _replay_coordinate(
+            epoch=epoch,
+            phase=phase,
+            granularity=args.granularity,
+            intrabar=args.intrabar,
+        )
         boundary = phase == "O" and epoch != current_epoch
         publish_state = False
         closed_bars: list[tuple[str, dict]] = []
@@ -1103,6 +1266,29 @@ def run_replay(
 
         # Existing orders/exits see the next executable phase first.  Only
         # after the new O is staged may a closed-bar decision submit MARKET.
+        batch_receipt = None
+        if mtm_contract is not None:
+            expected_receipt = _expected_quote_batch_receipt(
+                quote_batch,
+                coordinate=coordinate,
+                feed_pairs=pairs,
+                batch_index=phase_mark_count,
+                previous_batch_sha256=expected_previous_batch_sha256,
+            )
+            batch_receipt = broker.record_quote_batch_begin(
+                quote_batch,
+                coordinate=coordinate,
+                feed_pairs=pairs,
+            )
+            if batch_receipt != expected_receipt:
+                raise VirtualBrokerError(
+                    "runtime quote-batch receipt differs from sealed commitment"
+                )
+            if not batch_receipt["coverage_complete"]:
+                raise VirtualBrokerError(
+                    "runtime quote batch lacks complete feed-pair coverage"
+                )
+            expected_previous_batch_sha256 = batch_receipt["batch_sha256"]
         broker.on_quote_batch(quote_batch)
         processed_any = True
         broker.feed_cursor = {
@@ -1168,12 +1354,49 @@ def run_replay(
                     mb["bid_c"] = bid
                     mb["ask_c"] = ask
 
+        if mtm_contract is not None:
+            last_phase_mark = broker.account_mark(
+                "PHASE",
+                coordinate=coordinate,
+                batch_receipt=batch_receipt,
+                feed_cursor=dict(broker.feed_cursor),
+            )
+            if first_coordinate is None:
+                first_coordinate = coordinate
+            last_coordinate = coordinate
+            last_batch_receipt = batch_receipt
+            phase_mark_count += 1
+
     if processed_any and broker.feed_cursor is not None:
         broker.feed_cursor["completed"] = True
     elif cursor is not None:
         broker.feed_cursor = dict(cursor)
         broker.feed_cursor["completed"] = True
     _write_state(session_dir, broker, "REPLAY_END", "replay", "replay finished")
+    runtime = {
+        "phase_mark_count": phase_mark_count,
+        "first_coordinate": first_coordinate,
+        "last_coordinate": last_coordinate,
+        "last_batch_receipt": last_batch_receipt,
+        "last_phase_mark": last_phase_mark,
+    }
+    if mtm_contract is not None:
+        actual = {
+            "expected_phase_mark_count": phase_mark_count,
+            "expected_batch_chain_terminal_sha256": (
+                last_batch_receipt["batch_sha256"]
+                if last_batch_receipt is not None
+                else None
+            ),
+            "first_coordinate": first_coordinate,
+            "last_coordinate": last_coordinate,
+        }
+        for field, actual_value in actual.items():
+            if mtm_contract.get(field) != actual_value:
+                raise VirtualBrokerError(
+                    f"runtime MTM coordinate commitment mismatch: {field}"
+                )
+    return runtime
 
 
 def main() -> int:
@@ -1234,6 +1457,11 @@ def main() -> int:
         "--fast-ledger",
         action="store_true",
         help="ledger flush without fsync (lab runs)",
+    )
+    parser.add_argument(
+        "--continuous-mtm",
+        action="store_true",
+        help="replay: seal coordinate-complete account marks; fresh sessions only",
     )
     parser.add_argument(
         "--slippage-pips",
@@ -1333,30 +1561,101 @@ def main() -> int:
                 "strategy_owner_id": args.strategy_owner_id,
             },
         )
+    mtm_contract = (
+        reproducibility_manifest["replay"]
+        if reproducibility_manifest["replay"].get("mtm_coordinate_contract")
+        else None
+    )
+    mtm_start_mark = None
+    replay_runtime = None
+    replay_completed = False
+    terminal_mark = None
     try:
+        if mtm_contract is not None:
+            # START deliberately follows custom BOT_LOADED (or completion of
+            # built-in/none construction), so no constructor side effect can
+            # be hidden before the continuous account curve begins.
+            mtm_start_mark = broker.account_mark("START")
         if args.feed == "live":
             run_live(args, broker, session_dir, bot=bot)
         else:
-            run_replay(
+            replay_runtime = run_replay(
                 args,
                 broker,
                 session_dir,
                 bot=bot,
                 replay_identity_sha256=replay_identity,
                 expected_shards=reproducibility_manifest["corpus"]["shards"],
+                mtm_contract=mtm_contract,
             )
             if args.settle_at_end:
                 _settle_custom_bot_at_end(broker, args.strategy_owner_id)
+            replay_completed = True
     finally:
+        terminal_failure = None
+        mtm_complete = False
+        if mtm_contract is not None and replay_completed:
+            try:
+                if replay_runtime is None:
+                    raise VirtualBrokerError("continuous MTM replay result is missing")
+                terminal_mark = broker.account_mark(
+                    "TERMINAL",
+                    batch_receipt=replay_runtime["last_batch_receipt"],
+                    feed_cursor=(
+                        dict(broker.feed_cursor)
+                        if broker.feed_cursor is not None
+                        else None
+                    ),
+                )
+                expected_total_marks = mtm_contract["expected_phase_mark_count"] + 2
+                if mtm_start_mark is None or mtm_start_mark.get("kind") != "START":
+                    raise VirtualBrokerError("continuous MTM START mark is missing")
+                if (
+                    replay_runtime["phase_mark_count"]
+                    != mtm_contract["expected_phase_mark_count"]
+                ):
+                    raise VirtualBrokerError("continuous MTM phase count mismatch")
+                if (
+                    replay_runtime["last_batch_receipt"]["batch_sha256"]
+                    != mtm_contract["expected_batch_chain_terminal_sha256"]
+                ):
+                    raise VirtualBrokerError("continuous MTM batch chain mismatch")
+                if terminal_mark["mark_index"] + 1 != expected_total_marks:
+                    raise VirtualBrokerError("continuous MTM mark count mismatch")
+                mtm_complete = True
+            except Exception as exc:  # fail closed, but still seal SESSION_STOP
+                terminal_failure = exc
+
         try:
-            stop_account = broker.account() if broker.last_quotes else None
-            stop_error = None
+            stop_account = (
+                terminal_mark["account"]
+                if mtm_complete and terminal_mark is not None
+                else (broker.account() if broker.last_quotes else None)
+            )
+            stop_error = (
+                str(terminal_failure)[:200] if terminal_failure is not None else None
+            )
         except VirtualBrokerError as exc:
             stop_account = None
             stop_error = str(exc)[:200]
-        broker._log(
-            "SESSION_STOP", {"account": stop_account, "account_error": stop_error}
-        )
+        stop_payload = {"account": stop_account, "account_error": stop_error}
+        if mtm_contract is not None:
+            stop_payload.update(
+                {
+                    "mtm_complete": mtm_complete,
+                    "mtm_mark_count": (
+                        terminal_mark["mark_index"] + 1
+                        if terminal_mark is not None
+                        else None
+                    ),
+                    "mtm_terminal_mark_sha256": (
+                        terminal_mark["mark_sha256"]
+                        if terminal_mark is not None
+                        else None
+                    ),
+                }
+            )
+        broker._log("SESSION_STOP", stop_payload)
         tmp = session_dir / ".broker_snapshot.json.tmp"
         tmp.write_text(
             json.dumps(
@@ -1364,6 +1663,8 @@ def main() -> int:
             )
         )
         os.replace(tmp, snap_path)
+        if terminal_failure is not None:
+            raise terminal_failure
     print(
         json.dumps(
             {

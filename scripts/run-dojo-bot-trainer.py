@@ -613,6 +613,7 @@ def _verify_replay_manifest(
         "intrabar": intrabar,
         "bot_bar": "feed",
         "period_end_settlement": True,
+        "continuous_mtm": True,
     }
     if any(replay.get(key) != value for key, value in expected_replay.items()):
         raise TrainerRunnerError("ledger replay coordinate drift detected")
@@ -702,6 +703,7 @@ def _run_replay(
         "--state-every",
         "1000000",
         "--fast-ledger",
+        "--continuous-mtm",
         "--slippage-pips",
         str(cost["slippage_pips_per_fill"]),
         "--financing-pips-day",

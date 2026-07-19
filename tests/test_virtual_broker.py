@@ -12,6 +12,16 @@ def broker(tmp_path):
     return b
 
 
+def _replay_coordinate(phase="O"):
+    return {
+        "mode": "replay",
+        "epoch": 1_735_689_600,
+        "phase": phase,
+        "granularity": "M1",
+        "intrabar": "OHLC",
+    }
+
+
 def test_market_fill_at_real_ask_and_bid(broker):
     tid = broker.market_order("USD_JPY", "LONG", 10_000, tp_pips=5, sl_pips=None)
     pos = broker.positions[tid]
@@ -73,6 +83,10 @@ def test_limit_fill_at_level_or_better_never_synthesized(broker):
     events = broker.on_quote("USD_JPY", 149.92, 149.94, "t2")  # ask below limit
     assert events[0]["event"] == "FILL_LIMIT"
     assert events[0]["price"] == 149.94  # better real ask, not the level
+    assert events[0]["entry"] == 149.94
+    assert events[0]["tp"] == 150.04
+    assert events[0]["sl"] is None
+    assert events[0]["order_kind"] == "LIMIT"
     assert oid not in broker.orders
 
 
@@ -433,3 +447,322 @@ def test_test_helper_sha_matches_ledger_body(broker):
         record = json.loads(line)
         supplied = record.pop("sha")
         assert supplied == _sha(record)
+
+
+def test_quote_batch_receipt_is_canonical_and_broker_chained(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    first_coordinate = {
+        "mode": "replay",
+        "epoch": 1_735_689_600,
+        "phase": "O",
+        "granularity": "M1",
+        "intrabar": "OHLC",
+    }
+    first_quotes = [
+        ("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O"),
+        ("EUR_USD", 1.1, 1.1002, "2025-01-01T00:00:00+00:00#O"),
+    ]
+
+    first = b.record_quote_batch_begin(
+        first_quotes,
+        coordinate=first_coordinate,
+        feed_pairs=["USD_JPY", "EUR_USD"],
+    )
+    second = b.record_quote_batch_begin(
+        [("USD_JPY", 150.01, 150.03, "2025-01-01T00:00:00+00:00#H")],
+        coordinate={**first_coordinate, "phase": "H"},
+        feed_pairs=["EUR_USD", "USD_JPY"],
+    )
+
+    assert first["contract"] == "QR_VIRTUAL_QUOTE_BATCH_V1"
+    assert first["batch_index"] == 0
+    assert first["previous_batch_sha256"] == "0" * 64
+    assert first["feed_pairs"] == ["EUR_USD", "USD_JPY"]
+    assert first["batch_pairs"] == ["EUR_USD", "USD_JPY"]
+    assert [row["pair"] for row in first["quotes"]] == ["EUR_USD", "USD_JPY"]
+    assert first["coverage_complete"] is True
+    assert first["quotes_sha256"] == _sha(first["quotes"])
+    assert first["batch_sha256"] == _sha(
+        {key: value for key, value in first.items() if key != "batch_sha256"}
+    )
+    assert second["batch_index"] == 1
+    assert second["previous_batch_sha256"] == first["batch_sha256"]
+    assert second["coverage_complete"] is False
+    assert second["batch_pairs"] == ["USD_JPY"]
+
+    events = [
+        json.loads(line)["event"] for line in b.ledger_path.read_text().splitlines()
+    ]
+    assert events == ["QUOTE_BATCH_BEGIN", "QUOTE_BATCH_BEGIN"]
+
+
+def test_account_marks_bind_broker_state_and_allow_terminal_final_binding(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
+    start = b.account_mark("START")
+    coordinate = {
+        "mode": "replay",
+        "epoch": 1_735_689_600,
+        "phase": "O",
+        "granularity": "M1",
+        "intrabar": "OHLC",
+    }
+    quotes = [
+        ("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O"),
+        ("EUR_USD", 1.1, 1.1002, "2025-01-01T00:00:00+00:00#O"),
+    ]
+    receipt = b.record_quote_batch_begin(
+        quotes,
+        coordinate=coordinate,
+        feed_pairs=["USD_JPY", "EUR_USD"],
+    )
+    b.on_quote_batch(quotes)
+    b.market_order("USD_JPY", "LONG", 100)
+    b.limit_order("EUR_USD", "SHORT", 100, price=1.2, tp_pips=10, sl_pips=5)
+    b.feed_cursor = {
+        "mode": "replay",
+        "epoch": coordinate["epoch"],
+        "phase": "O",
+        "bar_count": 0,
+        "completed": False,
+        "replay_identity_sha256": "a" * 64,
+    }
+    phase = b.account_mark("PHASE", batch_receipt=receipt)
+    terminal_cursor = {**b.feed_cursor, "completed": True}
+    terminal = b.account_mark(
+        "TERMINAL", batch_receipt=receipt, feed_cursor=terminal_cursor
+    )
+
+    assert start["mark_index"] == 0
+    assert start["coordinate"] is None
+    assert start["batch_index"] is None
+    assert start["batch_sha256"] is None
+    assert start["feed_cursor"] is None
+    assert start["previous_mark_sha256"] == "0" * 64
+    assert start["mark_sha256"] == _sha(
+        {key: value for key, value in start.items() if key != "mark_sha256"}
+    )
+
+    assert phase["mark_index"] == 1
+    assert phase["previous_mark_sha256"] == start["mark_sha256"]
+    assert phase["coordinate"] == coordinate
+    assert phase["batch_index"] == receipt["batch_index"]
+    assert phase["batch_sha256"] == receipt["batch_sha256"]
+    assert [row["trade_id"] for row in phase["positions"]] == ["T000001"]
+    assert [row["order_id"] for row in phase["orders"]] == ["O000002"]
+    assert [row["pair"] for row in phase["quotes"]] == ["EUR_USD", "USD_JPY"]
+    assert phase["account"] == b.account()
+    for field in ("account", "positions", "orders", "quotes"):
+        assert phase[f"{field}_sha256"] == _sha(phase[field])
+    assert phase["mark_sha256"] == _sha(
+        {key: value for key, value in phase.items() if key != "mark_sha256"}
+    )
+
+    assert terminal["kind"] == "TERMINAL"
+    assert terminal["mark_index"] == 2
+    assert terminal["previous_mark_sha256"] == phase["mark_sha256"]
+    assert terminal["coordinate"] is None
+    assert terminal["batch_index"] == receipt["batch_index"]
+    assert terminal["batch_sha256"] == receipt["batch_sha256"]
+    assert terminal["feed_cursor"] == terminal_cursor
+    assert terminal["account"] == b.account()
+
+
+def test_account_mark_rejects_tamper_phase_reuse_and_post_terminal_work(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    b.account_mark("START")
+    coordinate = _replay_coordinate()
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+    receipt = b.record_quote_batch_begin(
+        quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+    )
+    b.on_quote_batch(quotes)
+    b.feed_cursor = {
+        "mode": "replay",
+        "epoch": coordinate["epoch"],
+        "phase": "O",
+    }
+    tampered = json.loads(json.dumps(receipt))
+    tampered["quotes"][0]["ask"] = 999.0
+
+    with pytest.raises(VirtualBrokerError, match="digest mismatch"):
+        b.account_mark("PHASE", batch_receipt=tampered)
+    phase = b.account_mark("PHASE", batch_receipt=receipt)
+    with pytest.raises(VirtualBrokerError, match="reused or skips"):
+        b.account_mark("PHASE", batch_receipt=receipt)
+
+    b.feed_cursor["completed"] = True
+    terminal = b.account_mark("TERMINAL", batch_receipt=receipt)
+    assert terminal["previous_mark_sha256"] == phase["mark_sha256"]
+    with pytest.raises(VirtualBrokerError, match="follow TERMINAL"):
+        b.account_mark("TERMINAL", batch_receipt=receipt)
+    with pytest.raises(VirtualBrokerError, match="follow a terminal"):
+        b.record_quote_batch_begin(
+            quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+        )
+
+
+def test_terminal_requires_latest_phase_receipt_and_completed_matching_cursor(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    b.account_mark("START")
+    coordinate = _replay_coordinate()
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+    receipt = b.record_quote_batch_begin(
+        quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+    )
+    b.on_quote_batch(quotes)
+    b.feed_cursor = {
+        "mode": "replay",
+        "epoch": coordinate["epoch"],
+        "phase": "O",
+        "completed": False,
+    }
+    b.account_mark("PHASE", batch_receipt=receipt)
+
+    with pytest.raises(VirtualBrokerError, match="latest PHASE-marked"):
+        b.account_mark("TERMINAL")
+    with pytest.raises(VirtualBrokerError, match="completed true"):
+        b.account_mark("TERMINAL", batch_receipt=receipt)
+    with pytest.raises(VirtualBrokerError, match="epoch does not match"):
+        b.account_mark(
+            "TERMINAL",
+            batch_receipt=receipt,
+            feed_cursor={**b.feed_cursor, "epoch": 0, "completed": True},
+        )
+
+    terminal = b.account_mark(
+        "TERMINAL",
+        batch_receipt=receipt,
+        feed_cursor={**b.feed_cursor, "completed": True},
+    )
+    assert terminal["batch_sha256"] == receipt["batch_sha256"]
+    assert terminal["feed_cursor"]["completed"] is True
+
+
+def test_terminal_freezes_every_public_broker_state_mutation(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
+    b.account_mark("START")
+    coordinate = _replay_coordinate()
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+    receipt = b.record_quote_batch_begin(
+        quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+    )
+    b.on_quote_batch(quotes)
+    trade_id = b.market_order("USD_JPY", "LONG", 100)
+    order_id = b.limit_order("USD_JPY", "LONG", 100, 149.0)
+    b.feed_cursor = {
+        "mode": "replay",
+        "epoch": coordinate["epoch"],
+        "phase": "O",
+        "completed": False,
+    }
+    b.account_mark("PHASE", batch_receipt=receipt)
+    pre_terminal_snapshot = b.snapshot()
+    b.feed_cursor["completed"] = True
+    b.account_mark("TERMINAL", batch_receipt=receipt)
+    frozen_snapshot = b.snapshot()
+
+    mutations = [
+        lambda: b.on_quote(
+            "USD_JPY", 150.01, 150.03, "2025-01-01T00:01:00+00:00"
+        ),
+        lambda: b.on_quote_batch(
+            [("USD_JPY", 150.01, 150.03, "2025-01-01T00:01:00+00:00")]
+        ),
+        lambda: b.market_order("USD_JPY", "LONG", 1),
+        lambda: b.limit_order("USD_JPY", "LONG", 1, 149.0),
+        lambda: b.stop_order("USD_JPY", "LONG", 1, 151.0),
+        lambda: b.cancel_order(order_id),
+        lambda: b.close_trade(trade_id),
+        lambda: b.set_exit(trade_id, sl_price=149.5),
+        lambda: b.restore(pre_terminal_snapshot),
+        lambda: b.record_quote_batch_begin(
+            quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+        ),
+    ]
+    for mutate in mutations:
+        with pytest.raises(VirtualBrokerError, match="terminal|TERMINAL"):
+            mutate()
+        assert b.snapshot() == frozen_snapshot
+
+    b._log("SESSION_STOP", {"account": b.account()})
+    assert json.loads(b.ledger_path.read_text().splitlines()[-1])["event"] == (
+        "SESSION_STOP"
+    )
+
+
+def test_account_mark_requires_each_started_batch_to_receive_one_phase(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    b.account_mark("START")
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+    b.record_quote_batch_begin(
+        quotes,
+        coordinate=_replay_coordinate(),
+        feed_pairs=["USD_JPY"],
+    )
+
+    with pytest.raises(VirtualBrokerError, match="no post-action PHASE"):
+        b.record_quote_batch_begin(
+            [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#H")],
+            coordinate=_replay_coordinate("H"),
+            feed_pairs=["USD_JPY"],
+        )
+
+
+def test_phase_mark_requires_exact_committed_quote_batch_application(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    b.account_mark("START")
+    coordinate = _replay_coordinate()
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+    receipt = b.record_quote_batch_begin(
+        quotes, coordinate=coordinate, feed_pairs=["USD_JPY"]
+    )
+    b.feed_cursor = {
+        "mode": "replay",
+        "epoch": coordinate["epoch"],
+        "phase": "O",
+    }
+
+    with pytest.raises(VirtualBrokerError, match="has not been applied"):
+        b.account_mark("PHASE", batch_receipt=receipt)
+
+    b.on_quote_batch(quotes)
+    phase = b.account_mark("PHASE", batch_receipt=receipt)
+    assert phase["quotes"][0]["sequence"] == 1
+    assert phase["quotes"][0]["watermark"] == 1
+
+
+def test_continuous_marks_reject_uncommitted_or_mismatched_quote_delivery(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl")
+    b.account_mark("START")
+    quotes = [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")]
+
+    with pytest.raises(VirtualBrokerError, match="no preceding broker commitment"):
+        b.on_quote_batch(quotes)
+    with pytest.raises(VirtualBrokerError, match="atomic committed"):
+        b.on_quote(*quotes[0])
+
+    b.record_quote_batch_begin(
+        quotes, coordinate=_replay_coordinate(), feed_pairs=["USD_JPY"]
+    )
+    with pytest.raises(VirtualBrokerError, match="does not match broker commitment"):
+        b.on_quote_batch([("USD_JPY", 149.0, 149.02, "2025-01-01T00:00:00+00:00#O")])
+    b.on_quote_batch(quotes)
+    with pytest.raises(VirtualBrokerError, match="no unconsumed broker commitment"):
+        b.on_quote_batch(quotes)
+
+
+def test_continuous_evidence_index_cannot_restart_on_reopened_ledger(tmp_path):
+    path = tmp_path / "l.jsonl"
+    b = VirtualBroker(ledger_path=path)
+    b.account_mark("START")
+    b._handle.close()
+
+    reopened = VirtualBroker(ledger_path=path)
+    with pytest.raises(VirtualBrokerError, match="fresh broker session"):
+        reopened.account_mark("START")
+    with pytest.raises(VirtualBrokerError, match="fresh broker session"):
+        reopened.record_quote_batch_begin(
+            [("USD_JPY", 150.0, 150.02, "2025-01-01T00:00:00+00:00#O")],
+            coordinate=_replay_coordinate(),
+            feed_pairs=["USD_JPY"],
+        )

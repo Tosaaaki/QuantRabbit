@@ -38,6 +38,47 @@ LEVERAGE_DEFAULT = 25.0
 CLOSEOUT_USAGE = 1.0
 MAX_CONVERSION_QUOTE_AGE_S = 90.0
 SNAPSHOT_SCHEMA = "QR_VIRTUAL_BROKER_SNAPSHOT_V2"
+QUOTE_BATCH_CONTRACT = "QR_VIRTUAL_QUOTE_BATCH_V1"
+ACCOUNT_MARK_CONTRACT = "QR_VIRTUAL_ACCOUNT_MARK_V1"
+_CHAIN_GENESIS_SHA256 = "0" * 64
+_QUOTE_BATCH_RECEIPT_KEYS = {
+    "contract",
+    "batch_index",
+    "coordinate",
+    "feed_pairs",
+    "batch_pairs",
+    "coverage_complete",
+    "quotes",
+    "quotes_sha256",
+    "previous_batch_sha256",
+    "batch_sha256",
+}
+_ACCOUNT_MARK_KEYS = {
+    "contract",
+    "mark_index",
+    "kind",
+    "coordinate",
+    "batch_index",
+    "batch_sha256",
+    "feed_cursor",
+    "account",
+    "account_sha256",
+    "positions",
+    "positions_sha256",
+    "orders",
+    "orders_sha256",
+    "quotes",
+    "quotes_sha256",
+    "previous_mark_sha256",
+    "mark_sha256",
+}
+_REPLAY_COORDINATE_KEYS = {
+    "mode",
+    "epoch",
+    "phase",
+    "granularity",
+    "intrabar",
+}
 _SNAPSHOT_KEYS = {
     "schema",
     "balance_jpy",
@@ -108,6 +149,23 @@ def _strict_json_loads(value: str) -> Any:
         parse_constant=_reject_json_constant,
         object_pairs_hook=_reject_duplicate_json_keys,
     )
+
+
+def _canonical_json_copy(name: str, value: Any) -> Any:
+    """Detach caller-owned evidence using the same JSON domain as ledger hashes."""
+
+    _validate_finite_tree(value, name)
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return _strict_json_loads(encoded)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise VirtualBrokerError(f"{name} must be canonical JSON") from exc
 
 
 def _finite_number(
@@ -207,6 +265,27 @@ class VirtualBroker:
     ] = field(default=None, init=False, repr=False)
     _seq: int = 0
     _prev_sha: str = "0" * 64
+    _batch_index: int = field(default=0, init=False, repr=False)
+    _previous_batch_sha256: str = field(
+        default=_CHAIN_GENESIS_SHA256, init=False, repr=False
+    )
+    _last_batch_receipt: Optional[dict[str, Any]] = field(
+        default=None, init=False, repr=False
+    )
+    _mark_index: int = field(default=0, init=False, repr=False)
+    _previous_mark_sha256: str = field(
+        default=_CHAIN_GENESIS_SHA256, init=False, repr=False
+    )
+    _last_phase_batch_index: int = field(default=-1, init=False, repr=False)
+    _account_mark_chain_started: bool = field(default=False, init=False, repr=False)
+    _mtm_terminal_emitted: bool = field(default=False, init=False, repr=False)
+    _last_batch_quote_seq_before: Optional[int] = field(
+        default=None, init=False, repr=False
+    )
+    _last_batch_applied: bool = field(default=False, init=False, repr=False)
+    _continuous_evidence_resume_forbidden: bool = field(
+        default=False, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.balance_jpy = _finite_number("balance_jpy", self.balance_jpy)
@@ -253,6 +332,17 @@ class VirtualBroker:
                         )
                     expected_prev = supplied_sha
                     event = record.get("event")
+                    payload = record.get("payload")
+                    if event == "QUOTE_BATCH_BEGIN" or (
+                        event == "ACCOUNT_MARK"
+                        and isinstance(payload, dict)
+                        and payload.get("contract") == ACCOUNT_MARK_CONTRACT
+                    ):
+                        # The snapshot schema deliberately remains V2 for this
+                        # fresh-replay milestone and therefore carries no MTM
+                        # chain cursor.  Refuse to mint duplicate indices when
+                        # a prior continuous-evidence ledger is reopened.
+                        self._continuous_evidence_resume_forbidden = True
                     if isinstance(event, str) and (
                         event in _STATEFUL_LEDGER_EVENTS or event.startswith("EXIT")
                     ):
@@ -284,6 +374,423 @@ class VirtualBroker:
     def _next_id(self, prefix: str) -> str:
         self._seq += 1
         return f"{prefix}{self._seq:06d}"
+
+    def _require_state_mutation_allowed(self) -> None:
+        """Keep the terminal account mark immutable until SESSION_STOP is sealed."""
+
+        if self._mtm_terminal_emitted:
+            raise VirtualBrokerError("broker state mutation cannot follow TERMINAL")
+
+    # ---- continuous replay evidence ------------------------------------
+    @staticmethod
+    def _normalized_feed_pairs(feed_pairs: Any) -> list[str]:
+        if not isinstance(feed_pairs, (list, tuple)) or not feed_pairs:
+            raise VirtualBrokerError("feed_pairs must be a non-empty sequence")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for pair in feed_pairs:
+            if not isinstance(pair, str):
+                raise VirtualBrokerError("feed_pairs must contain pair strings")
+            _validate_pair(pair)
+            if pair in seen:
+                raise VirtualBrokerError(f"duplicate feed pair: {pair}")
+            seen.add(pair)
+            normalized.append(pair)
+        return sorted(normalized)
+
+    def _normalized_batch_quotes(self, quotes: Any) -> list[dict[str, Any]]:
+        if not isinstance(quotes, (list, tuple)) or not quotes:
+            raise VirtualBrokerError("quote batch must be a non-empty sequence")
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in quotes:
+            if not isinstance(item, (list, tuple)) or len(item) != 4:
+                raise VirtualBrokerError(
+                    "quote batch rows must be (pair, bid, ask, ts)"
+                )
+            pair, bid, ask, ts = item
+            if not isinstance(pair, str):
+                raise VirtualBrokerError("quote pair must be a string")
+            if pair in seen:
+                raise VirtualBrokerError(f"duplicate pair in quote batch: {pair}")
+            seen.add(pair)
+            clean_bid, clean_ask = self._validate_quote(pair, bid, ask, ts)
+            normalized.append(
+                {"pair": pair, "bid": clean_bid, "ask": clean_ask, "ts": ts}
+            )
+        return sorted(normalized, key=lambda row: row["pair"])
+
+    @staticmethod
+    def _validate_replay_coordinate(
+        coordinate: dict[str, Any], quotes: list[dict[str, Any]]
+    ) -> None:
+        if set(coordinate) != _REPLAY_COORDINATE_KEYS:
+            raise VirtualBrokerError("replay coordinate schema mismatch")
+        if coordinate.get("mode") != "replay":
+            raise VirtualBrokerError("account-mark coordinate mode must be replay")
+        epoch = coordinate.get("epoch")
+        if isinstance(epoch, bool) or not isinstance(epoch, int):
+            raise VirtualBrokerError("replay coordinate epoch must be an integer")
+        phase = coordinate.get("phase")
+        if phase not in {"O", "H", "L", "C"}:
+            raise VirtualBrokerError("replay coordinate phase is invalid")
+        if coordinate.get("granularity") not in {"M1", "S5"}:
+            raise VirtualBrokerError("replay coordinate granularity is invalid")
+        if coordinate.get("intrabar") not in {"OHLC", "OLHC"}:
+            raise VirtualBrokerError("replay coordinate intrabar is invalid")
+        for quote in quotes:
+            ts = str(quote["ts"])
+            if VirtualBroker._quote_phase(ts) != phase:
+                raise VirtualBrokerError(
+                    "quote timestamp phase does not match replay coordinate"
+                )
+            try:
+                instant = datetime.fromisoformat(ts.rsplit("#", 1)[0])
+            except ValueError as exc:
+                raise VirtualBrokerError(
+                    "quote timestamp is not a replay coordinate instant"
+                ) from exc
+            if instant.tzinfo is None or instant.utcoffset() is None:
+                raise VirtualBrokerError(
+                    "quote timestamp must be timezone-aware for replay evidence"
+                )
+            if instant.timestamp() != float(epoch):
+                raise VirtualBrokerError(
+                    "quote timestamp epoch does not match replay coordinate"
+                )
+
+    @staticmethod
+    def _validate_receipt_digest(receipt: dict[str, Any]) -> None:
+        if set(receipt) != _QUOTE_BATCH_RECEIPT_KEYS:
+            raise VirtualBrokerError("quote batch receipt schema mismatch")
+        if receipt.get("contract") != QUOTE_BATCH_CONTRACT:
+            raise VirtualBrokerError("quote batch receipt contract mismatch")
+        supplied = receipt.get("batch_sha256")
+        body = {key: value for key, value in receipt.items() if key != "batch_sha256"}
+        if not isinstance(supplied, str) or supplied != _sha(body):
+            raise VirtualBrokerError("quote batch receipt digest mismatch")
+        quotes = receipt.get("quotes")
+        if receipt.get("quotes_sha256") != _sha(quotes):
+            raise VirtualBrokerError("quote batch quotes digest mismatch")
+
+    @staticmethod
+    def _validate_mark_digest(mark: dict[str, Any]) -> None:
+        if set(mark) != _ACCOUNT_MARK_KEYS:
+            raise VirtualBrokerError("account mark schema mismatch")
+        if mark.get("contract") != ACCOUNT_MARK_CONTRACT:
+            raise VirtualBrokerError("account mark contract mismatch")
+        supplied = mark.get("mark_sha256")
+        body = {key: value for key, value in mark.items() if key != "mark_sha256"}
+        if not isinstance(supplied, str) or supplied != _sha(body):
+            raise VirtualBrokerError("account mark digest mismatch")
+        for field_name in ("account", "positions", "orders", "quotes"):
+            if mark.get(f"{field_name}_sha256") != _sha(mark.get(field_name)):
+                raise VirtualBrokerError(f"account mark {field_name} digest mismatch")
+
+    def _require_latest_batch_receipt(self, batch_receipt: Any) -> dict[str, Any]:
+        if not isinstance(batch_receipt, dict):
+            raise VirtualBrokerError("batch_receipt must be an object")
+        supplied = _canonical_json_copy("batch_receipt", batch_receipt)
+        self._validate_receipt_digest(supplied)
+        if self._last_batch_receipt is None or supplied != self._last_batch_receipt:
+            raise VirtualBrokerError(
+                "batch_receipt is not the broker's latest immutable receipt"
+            )
+        return supplied
+
+    def record_quote_batch_begin(
+        self,
+        quotes: list[tuple[str, float, float, str]],
+        *,
+        coordinate: dict[str, Any],
+        feed_pairs: list[str],
+    ) -> dict[str, Any]:
+        """Commit one expected feed coordinate before its quotes are applied.
+
+        The broker, rather than the runner, owns the sequence and previous
+        digest.  The receipt is therefore safe to bind to the post-action
+        account mark without accepting a caller-authored chain claim.
+        """
+
+        if self._continuous_evidence_resume_forbidden:
+            raise VirtualBrokerError(
+                "continuous evidence requires a fresh broker session"
+            )
+        if self._mtm_terminal_emitted:
+            raise VirtualBrokerError("quote batch cannot follow a terminal mark")
+        if not isinstance(coordinate, dict) or not coordinate:
+            raise VirtualBrokerError("quote batch coordinate must be an object")
+        canonical_coordinate = _canonical_json_copy("coordinate", coordinate)
+        canonical_feed_pairs = self._normalized_feed_pairs(feed_pairs)
+        canonical_quotes = self._normalized_batch_quotes(quotes)
+        self._validate_replay_coordinate(canonical_coordinate, canonical_quotes)
+        batch_pairs = [str(row["pair"]) for row in canonical_quotes]
+        if (
+            self._account_mark_chain_started
+            and self._last_batch_receipt is not None
+            and self._last_phase_batch_index
+            != int(self._last_batch_receipt["batch_index"])
+        ):
+            raise VirtualBrokerError(
+                "previous quote batch has no post-action PHASE account mark"
+            )
+        body = {
+            "contract": QUOTE_BATCH_CONTRACT,
+            "batch_index": self._batch_index,
+            "coordinate": canonical_coordinate,
+            "feed_pairs": canonical_feed_pairs,
+            "batch_pairs": batch_pairs,
+            "coverage_complete": batch_pairs == canonical_feed_pairs,
+            "quotes": canonical_quotes,
+            "quotes_sha256": _sha(canonical_quotes),
+            "previous_batch_sha256": self._previous_batch_sha256,
+        }
+        receipt = {**body, "batch_sha256": _sha(body)}
+        self._validate_receipt_digest(receipt)
+        self._log("QUOTE_BATCH_BEGIN", receipt)
+        self._last_batch_receipt = _canonical_json_copy("quote batch receipt", receipt)
+        self._previous_batch_sha256 = receipt["batch_sha256"]
+        self._last_batch_quote_seq_before = self._quote_seq
+        self._last_batch_applied = False
+        self._batch_index += 1
+        return _canonical_json_copy("quote batch receipt", receipt)
+
+    def _require_latest_batch_applied(self, receipt: dict[str, Any]) -> None:
+        baseline = self._last_batch_quote_seq_before
+        if baseline is None:
+            raise VirtualBrokerError("quote batch application baseline is missing")
+        if not self._last_batch_applied:
+            raise VirtualBrokerError("committed quote batch has not been applied")
+        expected_quotes = receipt["quotes"]
+        expected_watermark = baseline + len(expected_quotes)
+        if self._quote_seq != expected_watermark:
+            raise VirtualBrokerError(
+                "quote state does not contain exactly the committed batch"
+            )
+        for offset, expected in enumerate(expected_quotes, start=1):
+            pair = str(expected["pair"])
+            current = self.last_quotes.get(pair)
+            if current != (expected["bid"], expected["ask"], expected["ts"]):
+                raise VirtualBrokerError(
+                    f"applied quote does not match batch receipt for {pair}"
+                )
+            if self._last_quote_sequences.get(pair) != baseline + offset:
+                raise VirtualBrokerError(
+                    f"applied quote sequence does not match batch receipt for {pair}"
+                )
+            if self._last_quote_watermarks.get(pair) != expected_watermark:
+                raise VirtualBrokerError(
+                    f"applied quote watermark does not match batch receipt for {pair}"
+                )
+
+    @staticmethod
+    def _require_cursor_matches_coordinate(
+        cursor: dict[str, Any], coordinate: dict[str, Any]
+    ) -> None:
+        """Bind runner progress to the broker-owned batch coordinate."""
+
+        for key in ("mode", "epoch", "phase"):
+            if key not in cursor or key not in coordinate:
+                raise VirtualBrokerError(
+                    f"feed_cursor and coordinate require matching {key}"
+                )
+            if cursor[key] != coordinate[key]:
+                raise VirtualBrokerError(
+                    f"feed_cursor {key} does not match batch coordinate"
+                )
+
+    def _mark_positions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "trade_id": pos.trade_id,
+                "pair": pos.pair,
+                "side": pos.side,
+                "units": pos.units,
+                "entry_price": pos.entry_price,
+                "opened_ts": pos.opened_ts,
+                "tp_price": pos.tp_price,
+                "sl_price": pos.sl_price,
+            }
+            for _, pos in sorted(self.positions.items())
+        ]
+
+    def _mark_orders(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "order_id": order.order_id,
+                "pair": order.pair,
+                "side": order.side,
+                "units": order.units,
+                "limit_price": order.limit_price,
+                "tp_pips": order.tp_pips,
+                "sl_pips": order.sl_pips,
+                "kind": order.kind,
+            }
+            for _, order in sorted(self.orders.items())
+        ]
+
+    def _mark_quotes(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for pair, quote in sorted(self.last_quotes.items()):
+            sequence = self._last_quote_sequences.get(pair)
+            watermark = self._last_quote_watermarks.get(pair)
+            if sequence is None or watermark is None:
+                raise VirtualBrokerError(
+                    f"quote evidence is incomplete for account mark pair {pair}"
+                )
+            rows.append(
+                {
+                    "pair": pair,
+                    "bid": quote[0],
+                    "ask": quote[1],
+                    "ts": quote[2],
+                    "sequence": sequence,
+                    "watermark": watermark,
+                }
+            )
+        return rows
+
+    def account_mark(
+        self,
+        kind: str,
+        *,
+        coordinate: Optional[dict[str, Any]] = None,
+        batch_receipt: Optional[dict[str, Any]] = None,
+        feed_cursor: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Record a broker-reconstructed START, PHASE, or TERMINAL MTM mark."""
+
+        if self._continuous_evidence_resume_forbidden:
+            raise VirtualBrokerError(
+                "continuous evidence requires a fresh broker session"
+            )
+        if kind not in {"START", "PHASE", "TERMINAL"}:
+            raise VirtualBrokerError("account mark kind is invalid")
+        if self._mtm_terminal_emitted:
+            raise VirtualBrokerError("account mark cannot follow TERMINAL")
+
+        canonical_coordinate: dict[str, Any] | None = None
+        canonical_cursor: dict[str, Any] | None = None
+        bound_batch_index: int | None = None
+        bound_batch_sha: str | None = None
+
+        if kind == "START":
+            if (
+                self._mark_index != 0
+                or self._batch_index != 0
+                or coordinate is not None
+                or batch_receipt is not None
+                or feed_cursor is not None
+                or self._quote_seq != 0
+                or self.positions
+                or self.orders
+                or self.feed_cursor is not None
+            ):
+                raise VirtualBrokerError(
+                    "START mark must precede all batches and carry no binding"
+                )
+        elif kind == "PHASE":
+            if not self._account_mark_chain_started:
+                raise VirtualBrokerError("PHASE mark requires a preceding START")
+            receipt = self._require_latest_batch_receipt(batch_receipt)
+            self._require_latest_batch_applied(receipt)
+            bound_batch_index = int(receipt["batch_index"])
+            bound_batch_sha = str(receipt["batch_sha256"])
+            if bound_batch_index != self._last_phase_batch_index + 1:
+                raise VirtualBrokerError(
+                    "batch receipt is reused or skips a PHASE account mark"
+                )
+            receipt_coordinate = receipt["coordinate"]
+            if coordinate is None:
+                canonical_coordinate = _canonical_json_copy(
+                    "coordinate", receipt_coordinate
+                )
+            else:
+                canonical_coordinate = _canonical_json_copy("coordinate", coordinate)
+                if canonical_coordinate != receipt_coordinate:
+                    raise VirtualBrokerError(
+                        "account mark coordinate does not match batch receipt"
+                    )
+            cursor_value = self.feed_cursor if feed_cursor is None else feed_cursor
+            if not isinstance(cursor_value, dict):
+                raise VirtualBrokerError("PHASE account mark requires feed_cursor")
+            canonical_cursor = _canonical_json_copy("feed_cursor", cursor_value)
+            self._require_cursor_matches_coordinate(
+                canonical_cursor, canonical_coordinate
+            )
+        else:
+            if not self._account_mark_chain_started:
+                raise VirtualBrokerError("TERMINAL mark requires a preceding START")
+            if coordinate is not None:
+                raise VirtualBrokerError("TERMINAL mark coordinate must be null")
+            if self._last_batch_receipt is not None:
+                if batch_receipt is None:
+                    raise VirtualBrokerError(
+                        "TERMINAL requires the latest PHASE-marked batch receipt"
+                    )
+                receipt = self._require_latest_batch_receipt(batch_receipt)
+                bound_batch_index = int(receipt["batch_index"])
+                bound_batch_sha = str(receipt["batch_sha256"])
+                if bound_batch_index != self._last_phase_batch_index:
+                    raise VirtualBrokerError(
+                        "TERMINAL may bind only the latest PHASE-marked receipt"
+                    )
+            elif batch_receipt is not None:
+                raise VirtualBrokerError("TERMINAL has no quote batch to bind")
+            cursor_value = self.feed_cursor if feed_cursor is None else feed_cursor
+            if self._last_batch_receipt is not None:
+                if not isinstance(cursor_value, dict):
+                    raise VirtualBrokerError(
+                        "TERMINAL requires a completed feed_cursor"
+                    )
+                canonical_cursor = _canonical_json_copy("feed_cursor", cursor_value)
+                self._require_cursor_matches_coordinate(
+                    canonical_cursor, receipt["coordinate"]
+                )
+                if canonical_cursor.get("completed") is not True:
+                    raise VirtualBrokerError(
+                        "TERMINAL feed_cursor must declare completed true"
+                    )
+            elif cursor_value is not None:
+                if not isinstance(cursor_value, dict):
+                    raise VirtualBrokerError("feed_cursor must be an object")
+                canonical_cursor = _canonical_json_copy("feed_cursor", cursor_value)
+
+        account = self.account()
+        positions = self._mark_positions()
+        orders = self._mark_orders()
+        quotes = self._mark_quotes()
+        body = {
+            "contract": ACCOUNT_MARK_CONTRACT,
+            "mark_index": self._mark_index,
+            "kind": kind,
+            "coordinate": canonical_coordinate,
+            "batch_index": bound_batch_index,
+            "batch_sha256": bound_batch_sha,
+            "feed_cursor": canonical_cursor,
+            "account": account,
+            "account_sha256": _sha(account),
+            "positions": positions,
+            "positions_sha256": _sha(positions),
+            "orders": orders,
+            "orders_sha256": _sha(orders),
+            "quotes": quotes,
+            "quotes_sha256": _sha(quotes),
+            "previous_mark_sha256": self._previous_mark_sha256,
+        }
+        mark = {**body, "mark_sha256": _sha(body)}
+        self._validate_mark_digest(mark)
+        self._log("ACCOUNT_MARK", mark)
+        self._previous_mark_sha256 = mark["mark_sha256"]
+        self._mark_index += 1
+        if kind == "START":
+            self._account_mark_chain_started = True
+        elif kind == "PHASE":
+            assert bound_batch_index is not None
+            self._last_phase_batch_index = bound_batch_index
+        else:
+            self._mtm_terminal_emitted = True
+        return _canonical_json_copy("account mark", mark)
 
     # ---- conversion / accounting ----------------------------------------
     @staticmethod
@@ -637,6 +1144,7 @@ class VirtualBroker:
         tp_pips: Optional[float] = None,
         sl_pips: Optional[float] = None,
     ) -> str:
+        self._require_state_mutation_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -734,6 +1242,7 @@ class VirtualBroker:
         tp_pips: Optional[float] = None,
         sl_pips: Optional[float] = None,
     ) -> str:
+        self._require_state_mutation_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -779,6 +1288,7 @@ class VirtualBroker:
         """Breakout entry: LONG fills once the real ask reaches price (at
         the level or WORSE when gapped); SHORT once the real bid does."""
 
+        self._require_state_mutation_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -814,12 +1324,14 @@ class VirtualBroker:
         return order_id
 
     def cancel_order(self, order_id: str) -> None:
+        self._require_state_mutation_allowed()
         if order_id not in self.orders:
             raise VirtualBrokerError(f"unknown order: {order_id}")
         del self.orders[order_id]
         self._log("ORDER_CANCEL", {"order_id": order_id})
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> float:
+        self._require_state_mutation_allowed()
         pos = self.positions.get(trade_id)
         if pos is None:
             raise VirtualBrokerError(f"unknown trade: {trade_id}")
@@ -878,6 +1390,7 @@ class VirtualBroker:
         tp_price: Optional[float] = None,
         sl_price: Optional[float] = None,
     ) -> None:
+        self._require_state_mutation_allowed()
         pos = self.positions.get(trade_id)
         if pos is None:
             raise VirtualBrokerError(f"unknown trade: {trade_id}")
@@ -895,6 +1408,11 @@ class VirtualBroker:
     ) -> list[dict[str, Any]]:
         """Process one real quote: resting orders, TP/SL, margin. Returns events."""
 
+        self._require_state_mutation_allowed()
+        if self._account_mark_chain_started and not self._mtm_terminal_emitted:
+            raise VirtualBrokerError(
+                "continuous replay evidence requires atomic committed quote batches"
+            )
         bid, ask = self._validate_quote(pair, bid, ask, ts)
         self._record_quote(pair, bid, ask, ts)
         self._last_quote_watermarks[pair] = self._quote_seq
@@ -909,8 +1427,31 @@ class VirtualBroker:
         than depending on lexicographic pair delivery order.
         """
 
+        self._require_state_mutation_allowed()
         if not quotes:
             raise VirtualBrokerError("quote batch must not be empty")
+        if self._account_mark_chain_started:
+            if self._last_batch_receipt is None:
+                raise VirtualBrokerError(
+                    "quote batch has no preceding broker commitment"
+                )
+            if (
+                self._last_phase_batch_index
+                == int(self._last_batch_receipt["batch_index"])
+                or self._last_batch_applied
+            ):
+                raise VirtualBrokerError(
+                    "quote batch has no unconsumed broker commitment"
+                )
+            supplied_quotes = self._normalized_batch_quotes(quotes)
+            if supplied_quotes != self._last_batch_receipt["quotes"]:
+                raise VirtualBrokerError(
+                    "applied quote batch does not match broker commitment"
+                )
+            if self._quote_seq != self._last_batch_quote_seq_before:
+                raise VirtualBrokerError(
+                    "quote state advanced outside the committed batch"
+                )
         normalized: list[tuple[str, float, float, str]] = []
         seen: set[str] = set()
         for pair, bid, ask, ts in quotes:
@@ -946,6 +1487,8 @@ class VirtualBroker:
         # this per pair makes a TP on one pair rescue (or fail to rescue) the
         # account solely according to iteration order.
         events.extend(self._enforce_margin_after_action())
+        if self._account_mark_chain_started:
+            self._last_batch_applied = True
         return events
 
     @staticmethod
@@ -1156,6 +1699,10 @@ class VirtualBroker:
                 "side": order.side,
                 "units": order.units,
                 "price": filled_price,
+                "entry": filled_price,
+                "tp": tp,
+                "sl": sl,
+                "order_kind": order.kind,
                 "quote": {"bid": bid, "ask": ask, "ts": ts},
                 "conversion": conversion,
                 "slippage_pips": self.slippage_pips,
@@ -1252,6 +1799,7 @@ class VirtualBroker:
         return snap
 
     def restore(self, snap: dict[str, Any]) -> None:
+        self._require_state_mutation_allowed()
         if not isinstance(snap, dict):
             raise VirtualBrokerError("broker snapshot must be an object")
         if set(snap) != _SNAPSHOT_KEYS or snap.get("schema") != SNAPSHOT_SCHEMA:

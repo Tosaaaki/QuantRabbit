@@ -14,11 +14,13 @@ or promotion.  It accepts only worn-history ``TRAIN`` studies.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import math
 import os
 import stat
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -53,6 +55,9 @@ MIN_STRESS_FINANCING_PIPS_PER_DAY = 0.8
 _ZERO_SHA256 = "0" * 64
 _SHA256_LENGTH = 64
 _MAX_LEDGER_BYTES = 4 * 1024 * 1024 * 1024
+_MTM_COORDINATE_CONTRACT = "QR_REPLAY_MTM_COORDINATES_V1"
+_QUOTE_BATCH_CONTRACT = "QR_VIRTUAL_QUOTE_BATCH_V1"
+_ACCOUNT_MARK_CONTRACT = "QR_VIRTUAL_ACCOUNT_MARK_V1"
 _FILL_EVENTS = {"FILL_MARKET", "FILL_LIMIT", "FILL_STOP"}
 _EXIT_EVENTS = {"EXIT_TP", "EXIT_SL", "CLOSE", "MARGIN_CLOSEOUT"}
 _MARGIN_REJECTION_EVENTS = {
@@ -60,8 +65,21 @@ _MARGIN_REJECTION_EVENTS = {
     "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
 }
 _OWNED_LEDGER_EVENTS = (
-    _FILL_EVENTS | _EXIT_EVENTS | _MARGIN_REJECTION_EVENTS | {"PERIOD_END_SETTLEMENT"}
+    _FILL_EVENTS
+    | _EXIT_EVENTS
+    | _MARGIN_REJECTION_EVENTS
+    | {
+        "ORDER_LIMIT",
+        "ORDER_STOP",
+        "ORDER_CANCEL",
+        "ORDER_CANCEL_CONCURRENCY_CAP",
+        "ORDER_REJECTED_CONCURRENCY_CAP",
+        "SET_EXIT",
+        "PERIOD_END_SETTLEMENT",
+    }
 )
+_MAX_CORPUS_COMMITMENT_CACHE = 8
+_CORPUS_COMMITMENT_CACHE: OrderedDict[str, str] = OrderedDict()
 
 
 class DojoBotTrainerError(ValueError):
@@ -1106,6 +1124,11 @@ def _score_verified_receipt(
     config_sha = _expected_runtime_config_sha256(
         candidate["config"], pairs=trade_pairs, owner_id=owner
     )
+    expected_pair_cap = int(candidate["config"]["max_concurrent_per_pair"])
+    expected_global_cap = min(
+        int(candidate["config"]["global_max_concurrent"]),
+        expected_pair_cap * len(trade_pairs),
+    )
     module_sha = sealed_study["source_digests"].get("bots/lab_bot.py")
     if module_sha is None:
         raise DojoBotTrainerError("sealed study does not bind bots/lab_bot.py")
@@ -1127,6 +1150,8 @@ def _score_verified_receipt(
             expected_bot_dependency_sha256=sealed_study["source_digests"],
             expected_feed_pairs=study["feed_pairs"],
             ledger_artifact_path=str(receipt["artifact_relpath"]),
+            expected_max_concurrent_per_pair=expected_pair_cap,
+            expected_global_max_concurrent=expected_global_cap,
         )
     for receipt_field, score_field in (
         ("artifact_size_bytes", "ledger_size_bytes"),
@@ -1649,6 +1674,1962 @@ def _sim_quote_time(payload: Mapping[str, Any], *, field: str) -> datetime:
     return _parse_utc(quote.get("ts"), field=f"{field}.quote.ts", allow_naive=True)
 
 
+def _mtm_violation(detail: str) -> None:
+    raise DojoBotTrainerError(f"MTM_CONTRACT_VIOLATION: {detail}")
+
+
+def _mtm_price(pair: str, value: float) -> float:
+    return round(value, 3 if pair.endswith("JPY") else 5)
+
+
+def _mtm_pip(pair: str) -> float:
+    return 0.01 if pair.endswith("JPY") else 0.0001
+
+
+def _mtm_optional_number(value: Any, *, field: str) -> float | None:
+    return None if value is None else _number(value, field=field, positive=True)
+
+
+def _safe_corpus_shard_path(root: Path, relative: Any, *, field: str) -> Path:
+    if not isinstance(relative, str) or not relative:
+        _mtm_violation(f"{field} must be a non-empty relative path")
+    pure = PurePosixPath(relative)
+    if pure.is_absolute() or ".." in pure.parts or "." in pure.parts:
+        _mtm_violation(f"{field} escapes the sealed corpus root")
+    if not root.is_absolute():
+        _mtm_violation("manifest corpus root must be absolute")
+    try:
+        root_info = root.lstat()
+    except OSError as exc:
+        _mtm_violation(f"sealed corpus root is unavailable: {exc}")
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        _mtm_violation("sealed corpus root must be a real directory")
+    current = root
+    for part in pure.parts[:-1]:
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            _mtm_violation(f"sealed corpus directory is unavailable: {exc}")
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            _mtm_violation("sealed corpus path contains a symlink or non-directory")
+    path = current / pure.name
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        _mtm_violation(f"sealed corpus shard is unavailable: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        _mtm_violation("sealed corpus shard must be a regular non-symlink")
+    return path
+
+
+def _verified_corpus_commitment_cache_key(
+    *,
+    corpus: Mapping[str, Any],
+    replay: Mapping[str, Any],
+    feed_pairs: Sequence[str],
+    expected_batch_count: int,
+) -> str:
+    """Authenticate compressed shards and return a bounded-cache identity.
+
+    Cache hits still hash every sealed compressed shard, so an in-place corpus
+    mutation cannot inherit an earlier verification.  The cache only avoids
+    repeating gzip inflation, strict JSON/OHLC parsing, and coordinate-chain
+    derivation across candidate/cost cells sharing identical replay bytes.
+    """
+
+    root_value = corpus.get("root")
+    raw_receipts = corpus.get("shards")
+    if not isinstance(root_value, str) or not root_value:
+        _mtm_violation("manifest corpus root is missing")
+    if not isinstance(raw_receipts, list) or not raw_receipts:
+        _mtm_violation("manifest corpus shards are missing")
+    root = Path(root_value)
+    authenticated: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for index, raw_receipt in enumerate(raw_receipts):
+        field = f"manifest.corpus.shards[{index}]"
+        receipt = _require_exact_keys(
+            raw_receipt,
+            field=field,
+            expected={"path", "size_bytes", "sha256"},
+        )
+        relative = receipt["path"]
+        if not isinstance(relative, str) or relative in seen_paths:
+            _mtm_violation("manifest corpus shard paths must be unique strings")
+        pair = PurePosixPath(relative).parent.name
+        if pair not in feed_pairs:
+            _mtm_violation("manifest corpus contains an unexpected pair shard")
+        path = _safe_corpus_shard_path(root, relative, field=f"{field}.path")
+        expected_size = _integer(
+            receipt.get("size_bytes"), field=f"{field}.size_bytes", non_negative=True
+        )
+        expected_sha = _sha256(receipt.get("sha256"), field=f"{field}.sha256")
+        try:
+            flags = (
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            _mtm_violation(f"sealed corpus shard cannot be opened safely: {exc}")
+        with os.fdopen(descriptor, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size != expected_size:
+                _mtm_violation(f"sealed corpus shard size changed: {path.name}")
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_sha:
+            _mtm_violation(f"sealed corpus shard digest changed: {path.name}")
+        seen_paths.add(relative)
+        authenticated.append(
+            {"path": relative, "size_bytes": expected_size, "sha256": expected_sha}
+        )
+    return _canonical_sha256(
+        {
+            "corpus_sha256": corpus.get("corpus_sha256"),
+            "shards": authenticated,
+            "time_from": replay.get("time_from"),
+            "time_to": replay.get("time_to"),
+            "granularity": replay.get("granularity"),
+            "intrabar": replay.get("intrabar"),
+            "feed_pairs": list(feed_pairs),
+            "expected_batch_count": expected_batch_count,
+        }
+    )
+
+
+def _iter_verified_pair_corpus_rows(
+    *,
+    root: Path,
+    receipts: Sequence[Mapping[str, Any]],
+    pair: str,
+    granularity: str,
+    window_start: datetime,
+    window_end: datetime,
+    maximum_rows: int,
+) -> Iterator[tuple[int, dict[str, dict[str, float]]]]:
+    previous_epoch: int | None = None
+    yielded = 0
+    pair_receipts = [
+        receipt
+        for receipt in receipts
+        if PurePosixPath(str(receipt["path"])).parent.name == pair
+    ]
+    if not pair_receipts:
+        _mtm_violation(f"sealed corpus has no shard for {pair}")
+
+    def receipt_sort_key(receipt: Mapping[str, Any]) -> tuple[int, str]:
+        path = str(receipt["path"])
+        try:
+            year = int(Path(path).name.split(f"_{granularity}_BA_", 1)[1][:4])
+        except (IndexError, ValueError) as exc:
+            raise DojoBotTrainerError(
+                f"invalid sealed corpus shard name: {Path(path).name}"
+            ) from exc
+        return year, path
+
+    pair_receipts.sort(key=receipt_sort_key)
+    for receipt_index, receipt in enumerate(pair_receipts):
+        field = f"manifest.corpus.shards[{receipt_index}]"
+        path = _safe_corpus_shard_path(root, receipt["path"], field=f"{field}.path")
+        size = _integer(
+            receipt.get("size_bytes"), field=f"{field}.size_bytes", non_negative=True
+        )
+        expected_sha = _sha256(receipt.get("sha256"), field=f"{field}.sha256")
+        expected_year = receipt_sort_key(receipt)[0]
+        try:
+            flags = (
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            _mtm_violation(f"sealed corpus shard cannot be opened safely: {exc}")
+        with os.fdopen(descriptor, "rb") as raw_handle:
+            info = os.fstat(raw_handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+                _mtm_violation(f"sealed corpus shard size changed: {path.name}")
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: raw_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+            if digest.hexdigest() != expected_sha:
+                _mtm_violation(f"sealed corpus shard digest changed: {path.name}")
+            raw_handle.seek(0)
+            try:
+                gzip_handle = gzip.GzipFile(fileobj=raw_handle, mode="rb")
+                with gzip_handle:
+                    line_number = 0
+                    while True:
+                        raw_line = gzip_handle.readline(MAX_JSON_BYTES + 1)
+                        if not raw_line:
+                            break
+                        line_number += 1
+                        if len(raw_line) > MAX_JSON_BYTES:
+                            _mtm_violation(
+                                f"corpus row exceeds JSON limit: {path.name}:{line_number}"
+                            )
+                        row = _load_jsonish(
+                            raw_line, field=f"corpus {path.name}:{line_number}"
+                        )
+                        if not isinstance(row, Mapping):
+                            _mtm_violation(
+                                f"corpus row must be an object: {path.name}:{line_number}"
+                            )
+                        stamp = _parse_utc(
+                            row.get("time"),
+                            field=f"corpus {path.name}:{line_number}.time",
+                            allow_naive=True,
+                        )
+                        if stamp.year != expected_year:
+                            _mtm_violation(
+                                f"corpus row year/file mismatch: {path.name}:{line_number}"
+                            )
+                        parsed_sides: dict[str, dict[str, float]] = {}
+                        for side in ("bid", "ask"):
+                            values = row.get(side)
+                            if not isinstance(values, Mapping) or not {
+                                "o",
+                                "h",
+                                "l",
+                                "c",
+                            }.issubset(values):
+                                _mtm_violation(
+                                    f"corpus {side} OHLC is incomplete: "
+                                    f"{path.name}:{line_number}"
+                                )
+                            parsed = {
+                                key: _number(
+                                    values[key],
+                                    field=(
+                                        f"corpus {path.name}:{line_number}."
+                                        f"{side}.{key}"
+                                    ),
+                                    positive=True,
+                                )
+                                for key in ("o", "h", "l", "c")
+                            }
+                            if parsed["h"] < max(
+                                parsed["o"], parsed["l"], parsed["c"]
+                            ) or parsed["l"] > min(
+                                parsed["o"], parsed["h"], parsed["c"]
+                            ):
+                                _mtm_violation(
+                                    f"corpus {side} OHLC geometry is invalid: "
+                                    f"{path.name}:{line_number}"
+                                )
+                            parsed_sides[side] = parsed
+                        if any(
+                            parsed_sides["ask"][key] < parsed_sides["bid"][key]
+                            for key in ("o", "h", "l", "c")
+                        ):
+                            _mtm_violation(
+                                f"corpus ask is below bid: {path.name}:{line_number}"
+                            )
+                        if not window_start <= stamp < window_end:
+                            continue
+                        epoch = int(stamp.timestamp())
+                        if stamp.timestamp() != epoch or (
+                            granularity == "M1" and epoch % 60 != 0
+                        ):
+                            _mtm_violation(
+                                f"corpus row is not aligned to {granularity}: "
+                                f"{path.name}:{line_number}"
+                            )
+                        if previous_epoch is not None and epoch <= previous_epoch:
+                            _mtm_violation(
+                                f"corpus rows are duplicate or noncausal for {pair}"
+                            )
+                        previous_epoch = epoch
+                        yielded += 1
+                        if yielded > maximum_rows:
+                            _mtm_violation(
+                                f"corpus has more rows than the MTM commitment for {pair}"
+                            )
+                        yield epoch, parsed_sides
+            except (OSError, EOFError, UnicodeError) as exc:
+                _mtm_violation(f"sealed corpus shard is corrupt: {path.name}: {exc}")
+    if yielded == 0:
+        _mtm_violation(f"sealed corpus has no in-window rows for {pair}")
+
+
+def _iter_verified_corpus_batches(
+    *,
+    corpus: Mapping[str, Any],
+    feed_pairs: Sequence[str],
+    replay: Mapping[str, Any],
+    expected_batch_count: int,
+) -> Iterator[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    root_value = corpus.get("root")
+    if not isinstance(root_value, str) or not root_value:
+        _mtm_violation("manifest corpus root is missing")
+    root = Path(root_value)
+    raw_receipts = corpus.get("shards")
+    if not isinstance(raw_receipts, list) or not raw_receipts:
+        _mtm_violation("manifest corpus shards are missing")
+    receipts: list[Mapping[str, Any]] = []
+    seen_paths: set[str] = set()
+    for index, raw_receipt in enumerate(raw_receipts):
+        receipt = _require_exact_keys(
+            raw_receipt,
+            field=f"manifest.corpus.shards[{index}]",
+            expected={"path", "size_bytes", "sha256"},
+        )
+        path = receipt["path"]
+        if not isinstance(path, str) or path in seen_paths:
+            _mtm_violation("manifest corpus shard paths must be unique strings")
+        pair = PurePosixPath(path).parent.name
+        if pair not in feed_pairs:
+            _mtm_violation("manifest corpus contains an unexpected pair shard")
+        seen_paths.add(path)
+        receipts.append(receipt)
+    window_start = _parse_utc(
+        replay.get("time_from"), field="manifest.replay.time_from", allow_naive=True
+    )
+    window_end = _parse_utc(
+        replay.get("time_to"), field="manifest.replay.time_to", allow_naive=True
+    )
+    phase_keys = (
+        (("O", "o"), ("H", "h"), ("L", "l"), ("C", "c"))
+        if replay.get("intrabar") == "OHLC"
+        else (("O", "o"), ("L", "l"), ("H", "h"), ("C", "c"))
+    )
+    expected_epoch_count = expected_batch_count // len(phase_keys)
+    iterators = {
+        pair: _iter_verified_pair_corpus_rows(
+            root=root,
+            receipts=receipts,
+            pair=pair,
+            granularity=str(replay.get("granularity")),
+            window_start=window_start,
+            window_end=window_end,
+            maximum_rows=expected_epoch_count,
+        )
+        for pair in feed_pairs
+    }
+    sentinel = object()
+    current: dict[str, Any] = {
+        pair: next(iterator, sentinel) for pair, iterator in iterators.items()
+    }
+    epoch_count = 0
+    while any(value is not sentinel for value in current.values()):
+        if any(value is sentinel for value in current.values()):
+            _mtm_violation("sealed corpus feed pairs have partial epoch coverage")
+        epochs = {int(value[0]) for value in current.values()}
+        if len(epochs) != 1:
+            _mtm_violation("sealed corpus feed pairs are not epoch-synchronized")
+        epoch = epochs.pop()
+        epoch_count += 1
+        if epoch_count > expected_epoch_count:
+            _mtm_violation("sealed corpus exceeds the committed coordinate count")
+        for phase, price_key in phase_keys:
+            timestamp = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat() + (
+                f"#{phase}"
+            )
+            coordinate = {
+                "mode": "replay",
+                "epoch": epoch,
+                "phase": phase,
+                "granularity": replay.get("granularity"),
+                "intrabar": replay.get("intrabar"),
+            }
+            batch_quotes = [
+                {
+                    "pair": pair,
+                    "bid": current[pair][1]["bid"][price_key],
+                    "ask": current[pair][1]["ask"][price_key],
+                    "ts": timestamp,
+                }
+                for pair in feed_pairs
+            ]
+            yield coordinate, batch_quotes
+        current = {
+            pair: next(iterator, sentinel) for pair, iterator in iterators.items()
+        }
+    if epoch_count != expected_epoch_count:
+        _mtm_violation("sealed corpus has fewer rows than the MTM commitment")
+
+
+def _verify_coordinate_mtm_contract(
+    records: Iterator[Mapping[str, Any]],
+    *,
+    manifest: Mapping[str, Any],
+    replay: Mapping[str, Any],
+    feed_pairs: Sequence[str],
+    trade_pairs: Sequence[str],
+    start_balance: float,
+    expected_owner: str,
+    expected_intrabar: str,
+    expected_slippage: float,
+    expected_financing: float,
+    leverage: float,
+    expected_max_concurrent_per_pair: int | None,
+    expected_global_max_concurrent: int | None,
+) -> dict[str, Any] | None:
+    """Verify the prospective coordinate-complete account-mark contract.
+
+    Absence of the contract is the legacy fail-closed path.  Once declared,
+    every coordinate, quote batch, broker mutation, state snapshot, account
+    mark and terminal receipt is independently rebuilt; any defect rejects the
+    ledger instead of silently falling back to diagnostic-only MTM.
+    """
+
+    if replay.get("mtm_coordinate_contract") is None:
+        return None
+    try:
+        if (
+            expected_max_concurrent_per_pair is None
+            or expected_global_max_concurrent is None
+        ):
+            _mtm_violation(
+                "owner concurrency caps are required for mandatory fill admission"
+            )
+        if replay.get("mtm_coordinate_contract") != _MTM_COORDINATE_CONTRACT:
+            _mtm_violation("unknown replay MTM coordinate contract")
+        phase_order = replay.get("phase_order")
+        expected_phase_order = (
+            ["O", "H", "L", "C"]
+            if expected_intrabar == "OHLC"
+            else ["O", "L", "H", "C"]
+        )
+        if phase_order != expected_phase_order:
+            _mtm_violation("manifest phase_order does not match intrabar mechanics")
+        if replay.get("feed_pairs") != list(feed_pairs):
+            _mtm_violation("manifest MTM feed_pairs are not exact and sorted")
+        expected_batch_count = _integer(
+            replay.get("expected_phase_mark_count"),
+            field="manifest.replay.expected_phase_mark_count",
+            non_negative=True,
+        )
+        if expected_batch_count <= 0:
+            _mtm_violation("manifest expected phase mark count must be positive")
+        if expected_batch_count % len(expected_phase_order) != 0:
+            _mtm_violation("manifest phase mark count does not contain full bars")
+        if (
+            replay.get("full_pair_phase_coverage") is not True
+            or _integer(
+                replay.get("partial_phase_count"),
+                field="manifest.replay.partial_phase_count",
+                non_negative=True,
+            )
+            != 0
+        ):
+            _mtm_violation("manifest does not precommit full-pair phase coverage")
+        expected_batch_terminal = _sha256(
+            replay.get("expected_batch_chain_terminal_sha256"),
+            field="manifest.replay.expected_batch_chain_terminal_sha256",
+        )
+
+        coordinate_keys = {"mode", "epoch", "phase", "granularity", "intrabar"}
+        coordinate_window_start = _parse_utc(
+            replay.get("time_from"),
+            field="manifest.replay.time_from",
+            allow_naive=True,
+        )
+        coordinate_window_end = _parse_utc(
+            replay.get("time_to"),
+            field="manifest.replay.time_to",
+            allow_naive=True,
+        )
+
+        def coordinate(value: Any, *, field: str) -> dict[str, Any]:
+            row = dict(
+                _require_exact_keys(value, field=field, expected=coordinate_keys)
+            )
+            if row["mode"] != "replay":
+                _mtm_violation(f"{field}.mode is not replay")
+            epoch = _integer(row["epoch"], field=f"{field}.epoch", non_negative=True)
+            if row["phase"] not in expected_phase_order:
+                _mtm_violation(f"{field}.phase is not in the sealed phase order")
+            if row["granularity"] != replay.get("granularity"):
+                _mtm_violation(f"{field}.granularity drifted")
+            if row["intrabar"] != expected_intrabar:
+                _mtm_violation(f"{field}.intrabar drifted")
+            coordinate_time = datetime.fromtimestamp(epoch, tz=timezone.utc)
+            if not coordinate_window_start <= coordinate_time < coordinate_window_end:
+                _mtm_violation(f"{field}.epoch is outside the sealed replay window")
+            if row["granularity"] == "M1" and epoch % 60 != 0:
+                _mtm_violation(f"{field}.epoch is not aligned to M1")
+            return {**row, "epoch": epoch}
+
+        expected_first_coordinate = coordinate(
+            replay.get("first_coordinate"), field="manifest.replay.first_coordinate"
+        )
+        expected_last_coordinate = coordinate(
+            replay.get("last_coordinate"), field="manifest.replay.last_coordinate"
+        )
+        if expected_first_coordinate["phase"] != "O":
+            _mtm_violation("manifest first coordinate must begin at phase O")
+        if expected_last_coordinate["phase"] != "C":
+            _mtm_violation("manifest last coordinate must end at phase C")
+
+        corpus = manifest.get("corpus")
+        if not isinstance(corpus, Mapping):
+            _mtm_violation("manifest corpus binding is missing")
+        corpus_cache_key = _verified_corpus_commitment_cache_key(
+            corpus=corpus,
+            replay=replay,
+            feed_pairs=feed_pairs,
+            expected_batch_count=expected_batch_count,
+        )
+        cached_corpus_terminal = _CORPUS_COMMITMENT_CACHE.get(corpus_cache_key)
+        if cached_corpus_terminal is not None:
+            _CORPUS_COMMITMENT_CACHE.move_to_end(corpus_cache_key)
+            if cached_corpus_terminal != expected_batch_terminal:
+                _mtm_violation("cached corpus commitment conflicts with manifest")
+            corpus_batches: (
+                Iterator[tuple[dict[str, Any], list[dict[str, Any]]]] | None
+            ) = None
+        else:
+            corpus_batches = _iter_verified_corpus_batches(
+                corpus=corpus,
+                feed_pairs=feed_pairs,
+                replay=replay,
+                expected_batch_count=expected_batch_count,
+            )
+
+        replay_identity_material = {
+            "source": manifest.get("source"),
+            "replay": manifest.get("replay"),
+            "corpus": manifest.get("corpus"),
+            "costs": manifest.get("costs"),
+            "initial_balance_jpy": manifest.get("initial_balance_jpy"),
+            "bot": manifest.get("bot"),
+            "order_authority": manifest.get("order_authority"),
+        }
+        replay_identity_sha = _canonical_sha256(replay_identity_material)
+
+        positions: dict[str, dict[str, Any]] = {}
+        orders: dict[str, dict[str, Any]] = {}
+        quotes: dict[str, dict[str, Any]] = {}
+        seen_trade_ids: set[str] = set()
+        seen_order_ids: set[str] = set()
+        reconstructed_balance = start_balance
+        independently_resolved_exits = 0
+        quote_sequence = 0
+        batch_count = 0
+        previous_batch_sha = _ZERO_SHA256
+        previous_mark_sha = _ZERO_SHA256
+        mark_count = 0
+        first_observed_coordinate: dict[str, Any] | None = None
+        last_observed_coordinate: dict[str, Any] | None = None
+        current_batch: dict[str, Any] | None = None
+        current_batch_manual_started = False
+        current_market_consequence_trade_id: str | None = None
+        current_market_consequence_window = False
+        margin_closeout_sequence_active = False
+        batch_eligible_order_ids: set[str] = set()
+        batch_eligible_position_ids: set[str] = set()
+        latest_epoch: int | None = None
+        epoch_count = 0
+        mtm_equity_peak = start_balance
+        mtm_drawdown = 0.0
+        peak_margin_jpy = 0.0
+        peak_margin_fraction = 0.0
+        terminal_mark_payload: Mapping[str, Any] | None = None
+
+        def current_quote(pair: str, *, field: str) -> dict[str, Any]:
+            if pair not in quotes:
+                _mtm_violation(f"{field} has no causally prior executable quote")
+            return quotes[pair]
+
+        def conversion_rate(pair: str, *, field: str) -> float:
+            quote_currency = pair.split("_")[1]
+            if quote_currency == "JPY":
+                return 1.0
+            if quote_currency == "USD":
+                source = current_quote("USD_JPY", field=field)
+                return (float(source["bid"]) + float(source["ask"])) / 2.0
+            direct_pair = f"{quote_currency}_JPY"
+            if direct_pair in quotes:
+                source = quotes[direct_pair]
+                return (float(source["bid"]) + float(source["ask"])) / 2.0
+            usd_jpy = current_quote("USD_JPY", field=field)
+            via_usd = current_quote(f"USD_{quote_currency}", field=field)
+            via_mid = (float(via_usd["bid"]) + float(via_usd["ask"])) / 2.0
+            if via_mid <= 0:
+                _mtm_violation(f"{field} conversion denominator is non-positive")
+            return ((float(usd_jpy["bid"]) + float(usd_jpy["ask"])) / 2.0) / via_mid
+
+        def financing_jpy(
+            position: Mapping[str, Any], *, units: float, mark_ts: str, field: str
+        ) -> float:
+            opened = _parse_utc(
+                position["opened_ts"], field=f"{field}.opened_ts", allow_naive=True
+            )
+            marked = _parse_utc(mark_ts, field=f"{field}.mark_ts", allow_naive=True)
+            if marked < opened:
+                _mtm_violation(f"{field} financing mark precedes the fill")
+            held_days = (marked - opened).total_seconds() / 86400.0
+            return (
+                expected_financing
+                * _mtm_pip(str(position["pair"]))
+                * units
+                * conversion_rate(str(position["pair"]), field=field)
+                * held_days
+            )
+
+        def expected_account(*, field: str) -> dict[str, Any]:
+            equity = reconstructed_balance
+            accrued_financing = 0.0
+            hedge_units: dict[str, dict[str, float]] = {}
+            for trade_id, position in positions.items():
+                pair = str(position["pair"])
+                quote = current_quote(pair, field=f"{field}.positions.{trade_id}")
+                mark = (
+                    float(quote["bid"])
+                    if position["side"] == "LONG"
+                    else float(quote["ask"])
+                )
+                direction_diff = (
+                    mark - float(position["entry_price"])
+                    if position["side"] == "LONG"
+                    else float(position["entry_price"]) - mark
+                )
+                rate = conversion_rate(pair, field=f"{field}.positions.{trade_id}")
+                gross = direction_diff * float(position["units"]) * rate
+                financing = financing_jpy(
+                    position,
+                    units=float(position["units"]),
+                    mark_ts=str(quote["ts"]),
+                    field=f"{field}.positions.{trade_id}",
+                )
+                equity += gross - financing
+                accrued_financing += financing
+                sides = hedge_units.setdefault(pair, {"LONG": 0.0, "SHORT": 0.0})
+                sides[str(position["side"])] += float(position["units"])
+            margin = 0.0
+            for pair, sides in hedge_units.items():
+                quote = current_quote(pair, field=f"{field}.margin.{pair}")
+                mid = (float(quote["bid"]) + float(quote["ask"])) / 2.0
+                rate = conversion_rate(pair, field=f"{field}.margin.{pair}")
+                margin += max(sides["LONG"], sides["SHORT"]) * mid * rate / leverage
+            usage = margin / equity if equity > 0 else 999.0
+            return {
+                "balance_jpy": round(reconstructed_balance, 2),
+                "equity_jpy": round(equity, 2),
+                "margin_used_jpy": round(margin, 2),
+                "margin_usage": round(usage, 6),
+                "accrued_financing_jpy": round(accrued_financing, 2),
+                "open_positions": len(positions),
+                "resting_orders": len(orders),
+            }
+
+        def touched_order(order: Mapping[str, Any], *, field: str) -> bool:
+            quote = current_quote(str(order["pair"]), field=field)
+            executable = float(
+                quote["ask"] if order["side"] == "LONG" else quote["bid"]
+            )
+            protected = float(order["limit_price"])
+            if order["kind"] == "LIMIT":
+                return (
+                    executable <= protected
+                    if order["side"] == "LONG"
+                    else executable >= protected
+                )
+            return (
+                executable >= protected
+                if order["side"] == "LONG"
+                else executable <= protected
+            )
+
+        def touched_exit(position: Mapping[str, Any], *, field: str) -> str | None:
+            quote = current_quote(str(position["pair"]), field=field)
+            executable = float(
+                quote["bid"] if position["side"] == "LONG" else quote["ask"]
+            )
+            stop = position["sl_price"]
+            if stop is not None and (
+                executable <= float(stop)
+                if position["side"] == "LONG"
+                else executable >= float(stop)
+            ):
+                return "EXIT_SL"
+            target = position["tp_price"]
+            if target is not None and (
+                executable >= float(target)
+                if position["side"] == "LONG"
+                else executable <= float(target)
+            ):
+                return "EXIT_TP"
+            return None
+
+        def expected_concurrency_admission(
+            order: Mapping[str, Any], *, field: str
+        ) -> dict[str, Any] | None:
+            pair = str(order["pair"])
+            active_pair = sum(
+                1 for position in positions.values() if position["pair"] == pair
+            )
+            active_global = len(positions)
+            pair_cap = int(expected_max_concurrent_per_pair)
+            global_cap = int(expected_global_max_concurrent)
+            if active_pair >= pair_cap:
+                scope = "PAIR"
+                reason = "OWNER_PAIR_CONCURRENCY_CAP_REACHED"
+            elif active_global >= global_cap:
+                scope = "GLOBAL"
+                reason = "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED"
+            else:
+                return None
+            return {
+                "scope": scope,
+                "reason": reason,
+                "active_pair_positions": active_pair,
+                "max_concurrent_per_pair": pair_cap,
+                "active_global_positions": active_global,
+                "global_max_concurrent": global_cap,
+            }
+
+        def margin_headroom_ok(order: Mapping[str, Any], *, field: str) -> bool:
+            pair = str(order["pair"])
+            side = str(order["side"])
+            units = float(order["units"])
+            account = expected_account(field=f"{field}.account")
+            quote = current_quote(pair, field=f"{field}.quote")
+            mid = (float(quote["bid"]) + float(quote["ask"])) / 2.0
+            rate = conversion_rate(pair, field=field)
+            long_units = sum(
+                float(position["units"])
+                for position in positions.values()
+                if position["pair"] == pair and position["side"] == "LONG"
+            )
+            short_units = sum(
+                float(position["units"])
+                for position in positions.values()
+                if position["pair"] == pair and position["side"] == "SHORT"
+            )
+            old_pair_margin = max(long_units, short_units) * mid * rate / leverage
+            if side == "LONG":
+                long_units += units
+            else:
+                short_units += units
+            new_pair_margin = max(long_units, short_units) * mid * rate / leverage
+            new_total = (
+                float(account["margin_used_jpy"]) - old_pair_margin + new_pair_margin
+            )
+            return new_total <= float(account["equity_jpy"])
+
+        def resting_order_outcome(
+            order_id: str, *, field: str
+        ) -> tuple[str, Mapping[str, Any] | None]:
+            order = orders[order_id]
+            admission = expected_concurrency_admission(order, field=field)
+            if admission is not None:
+                return ("ORDER_CANCEL_CONCURRENCY_CAP", admission)
+            if not margin_headroom_ok(order, field=field):
+                return ("LIMIT_REJECTED_INSUFFICIENT_MARGIN", None)
+            return ("FILL_LIMIT", None)
+
+        def next_mandatory_broker_event(*, field: str) -> tuple[str, str] | None:
+            """Derive the next broker-owned consequence at the staged batch.
+
+            ``VirtualBroker.on_quote_batch`` processes canonical pairs, resting
+            orders in insertion order, attached exits in position insertion
+            order, and finally one portfolio margin closeout pass.  Replaying
+            that ordering here prevents a ledger from silently keeping a
+            touched loser or resting order alive until a favorable later bar.
+            Orders created by the O callback are deliberately ineligible until
+            the next quote batch; a market fill is added explicitly because its
+            attached exit is checked immediately by the broker.
+            """
+
+            if current_batch is None:
+                return None
+            if margin_closeout_sequence_active and positions:
+                return ("MARGIN_CLOSEOUT", next(iter(positions)))
+            for pair in feed_pairs:
+                for order_id, order in orders.items():
+                    if (
+                        order_id in batch_eligible_order_ids
+                        and order["pair"] == pair
+                        and touched_order(order, field=f"{field}.orders.{order_id}")
+                    ):
+                        expected_event, _ = resting_order_outcome(
+                            order_id, field=f"{field}.orders.{order_id}"
+                        )
+                        return (expected_event, order_id)
+                for trade_id, position in positions.items():
+                    if (
+                        trade_id not in batch_eligible_position_ids
+                        or position["pair"] != pair
+                    ):
+                        continue
+                    exit_event = touched_exit(
+                        position, field=f"{field}.positions.{trade_id}"
+                    )
+                    if exit_event is not None:
+                        return (exit_event, trade_id)
+            account = expected_account(field=f"{field}.margin")
+            if positions and float(account["margin_usage"]) >= 1.0:
+                return ("MARGIN_CLOSEOUT", next(iter(positions)))
+            return None
+
+        def require_mandatory_event_matches(
+            event: str, payload: Mapping[str, Any], *, field: str
+        ) -> None:
+            mandatory = next_mandatory_broker_event(field=field)
+            if mandatory is None:
+                _mtm_violation(f"{field} has no causally mandatory broker event")
+            expected_event, identity = mandatory
+            if expected_event in {
+                "FILL_LIMIT",
+                "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                "ORDER_CANCEL_CONCURRENCY_CAP",
+            }:
+                if event != expected_event or payload.get("order_id") != identity:
+                    _mtm_violation(
+                        f"{field} bypasses the next touched resting-order consequence"
+                    )
+                if expected_event == "ORDER_CANCEL_CONCURRENCY_CAP":
+                    _, expected_admission = resting_order_outcome(
+                        identity, field=f"{field}.admission"
+                    )
+                    if payload.get("admission") != expected_admission:
+                        _mtm_violation(
+                            f"{field}.admission does not match owner concurrency state"
+                        )
+                return
+            if event != expected_event or payload.get("trade_id") != identity:
+                _mtm_violation(
+                    f"{field} bypasses mandatory {expected_event} for {identity}"
+                )
+
+        def require_no_mandatory_event(*, field: str) -> None:
+            mandatory = next_mandatory_broker_event(field=field)
+            if mandatory is not None:
+                event, identity = mandatory
+                _mtm_violation(
+                    f"{field} omits mandatory broker consequence {event}:{identity}"
+                )
+
+        def validate_conversion(
+            payload: Mapping[str, Any], pair: str, *, field: str
+        ) -> None:
+            evidence = payload.get("conversion")
+            if not isinstance(evidence, Mapping):
+                _mtm_violation(f"{field}.conversion is missing")
+            observed = _number(
+                evidence.get("rate_jpy_per_quote_unit"),
+                field=f"{field}.conversion.rate_jpy_per_quote_unit",
+                positive=True,
+            )
+            expected = conversion_rate(pair, field=field)
+            if not math.isclose(observed, expected, rel_tol=0, abs_tol=1e-12):
+                _mtm_violation(f"{field} conversion rate is not quote-derived")
+
+        def validate_event_quote(
+            payload: Mapping[str, Any], pair: str, *, field: str
+        ) -> dict[str, Any]:
+            observed = payload.get("quote")
+            if not isinstance(observed, Mapping) or set(observed) != {
+                "bid",
+                "ask",
+                "ts",
+            }:
+                _mtm_violation(f"{field}.quote schema mismatch")
+            expected = current_quote(pair, field=field)
+            comparable = {key: expected[key] for key in ("bid", "ask", "ts")}
+            if dict(observed) != comparable:
+                _mtm_violation(f"{field}.quote is not the current batch quote")
+            return comparable
+
+        def add_order(event: str, payload: Mapping[str, Any], *, field: str) -> None:
+            order_id = _identity(payload.get("order_id"), field=f"{field}.order_id")
+            if order_id in seen_order_ids or order_id in orders:
+                _mtm_violation(f"{field} reuses an order id")
+            pair = _pair(payload.get("pair"), field=f"{field}.pair")
+            if pair not in feed_pairs:
+                _mtm_violation(f"{field}.pair is outside the sealed feed")
+            side = payload.get("side")
+            if side not in {"LONG", "SHORT"}:
+                _mtm_violation(f"{field}.side is invalid")
+            units = _number(payload.get("units"), field=f"{field}.units", positive=True)
+            price = _number(payload.get("price"), field=f"{field}.price", positive=True)
+            tp_pips = _mtm_optional_number(
+                payload.get("tp_pips"), field=f"{field}.tp_pips"
+            )
+            sl_pips = _mtm_optional_number(
+                payload.get("sl_pips"), field=f"{field}.sl_pips"
+            )
+            orders[order_id] = {
+                "order_id": order_id,
+                "pair": pair,
+                "side": side,
+                "units": units,
+                "limit_price": price,
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+                "kind": "STOP" if event == "ORDER_STOP" else "LIMIT",
+            }
+            seen_order_ids.add(order_id)
+
+        def add_fill(event: str, payload: Mapping[str, Any], *, field: str) -> None:
+            nonlocal reconstructed_balance
+            if (
+                _number(
+                    payload.get("slippage_pips"),
+                    field=f"{field}.slippage_pips",
+                    non_negative=True,
+                )
+                != expected_slippage
+            ):
+                _mtm_violation(f"{field}.slippage_pips drifted")
+            trade_id = _identity(payload.get("trade_id"), field=f"{field}.trade_id")
+            if trade_id in seen_trade_ids or trade_id in positions:
+                _mtm_violation(f"{field} reuses a trade id")
+            pair = _pair(payload.get("pair"), field=f"{field}.pair")
+            if pair not in trade_pairs:
+                _mtm_violation(f"{field}.pair is not a sealed trade pair")
+            side = payload.get("side")
+            if side not in {"LONG", "SHORT"}:
+                _mtm_violation(f"{field}.side is invalid")
+            units = _number(payload.get("units"), field=f"{field}.units", positive=True)
+            quote = validate_event_quote(payload, pair, field=field)
+            validate_conversion(payload, pair, field=field)
+            pip = _mtm_pip(pair)
+            if event == "FILL_MARKET":
+                proposed_entry = {"pair": pair, "side": side, "units": units}
+                if (
+                    expected_concurrency_admission(
+                        proposed_entry, field=f"{field}.admission"
+                    )
+                    is not None
+                ):
+                    _mtm_violation(f"{field} bypasses owner concurrency admission")
+                if not margin_headroom_ok(
+                    proposed_entry, field=f"{field}.margin_admission"
+                ):
+                    _mtm_violation(f"{field} bypasses market margin admission")
+                raw_entry = (
+                    float(quote["ask"]) + expected_slippage * pip
+                    if side == "LONG"
+                    else float(quote["bid"]) - expected_slippage * pip
+                )
+                expected_entry = _mtm_price(pair, raw_entry)
+                entry = _number(
+                    payload.get("entry"), field=f"{field}.entry", positive=True
+                )
+                if entry != expected_entry:
+                    _mtm_violation(f"{field}.entry is not the executable market fill")
+                tp = _mtm_optional_number(payload.get("tp"), field=f"{field}.tp")
+                sl = _mtm_optional_number(payload.get("sl"), field=f"{field}.sl")
+            else:
+                order_id = _identity(payload.get("order_id"), field=f"{field}.order_id")
+                pending = orders.get(order_id)
+                if pending is None:
+                    _mtm_violation(f"{field} has no causally prior resting order")
+                if (
+                    pending["pair"] != pair
+                    or pending["side"] != side
+                    or float(pending["units"]) != units
+                ):
+                    _mtm_violation(f"{field} does not match its resting order")
+                order_kind = payload.get("order_kind")
+                if order_kind != pending["kind"]:
+                    _mtm_violation(f"{field}.order_kind does not match the order")
+                protected = float(pending["limit_price"])
+                executable = float(quote["ask"] if side == "LONG" else quote["bid"])
+                if order_kind == "LIMIT":
+                    touched = (
+                        executable <= protected
+                        if side == "LONG"
+                        else executable >= protected
+                    )
+                    raw_entry = (
+                        min(protected, executable)
+                        if side == "LONG"
+                        else max(protected, executable)
+                    )
+                else:
+                    touched = (
+                        executable >= protected
+                        if side == "LONG"
+                        else executable <= protected
+                    )
+                    raw_entry = (
+                        max(protected, executable)
+                        if side == "LONG"
+                        else min(protected, executable)
+                    )
+                if not touched:
+                    _mtm_violation(f"{field} fills an untouched resting order")
+                if expected_slippage > 0:
+                    stressed = _mtm_price(
+                        pair,
+                        raw_entry + expected_slippage * pip
+                        if side == "LONG"
+                        else raw_entry - expected_slippage * pip,
+                    )
+                    expected_entry = (
+                        min(protected, stressed)
+                        if order_kind == "LIMIT" and side == "LONG"
+                        else max(protected, stressed)
+                        if order_kind == "LIMIT"
+                        else stressed
+                    )
+                else:
+                    expected_entry = raw_entry
+                entry = _number(
+                    payload.get("entry"), field=f"{field}.entry", positive=True
+                )
+                price_alias = _number(
+                    payload.get("price"), field=f"{field}.price", positive=True
+                )
+                if entry != expected_entry or price_alias != expected_entry:
+                    _mtm_violation(f"{field}.entry is not the resting-order fill")
+                expected_tp = (
+                    _mtm_price(
+                        pair,
+                        entry + float(pending["tp_pips"]) * pip
+                        if side == "LONG"
+                        else entry - float(pending["tp_pips"]) * pip,
+                    )
+                    if pending["tp_pips"] is not None
+                    else None
+                )
+                expected_sl = (
+                    _mtm_price(
+                        pair,
+                        entry - float(pending["sl_pips"]) * pip
+                        if side == "LONG"
+                        else entry + float(pending["sl_pips"]) * pip,
+                    )
+                    if pending["sl_pips"] is not None
+                    else None
+                )
+                tp = _mtm_optional_number(payload.get("tp"), field=f"{field}.tp")
+                sl = _mtm_optional_number(payload.get("sl"), field=f"{field}.sl")
+                if tp != expected_tp or sl != expected_sl:
+                    _mtm_violation(f"{field} attached exits drifted from the order")
+                del orders[order_id]
+            positions[trade_id] = {
+                "trade_id": trade_id,
+                "pair": pair,
+                "side": side,
+                "units": units,
+                "entry_price": entry,
+                "opened_ts": str(quote["ts"]),
+                "tp_price": tp,
+                "sl_price": sl,
+            }
+            seen_trade_ids.add(trade_id)
+
+        def resolve_exit(event: str, payload: Mapping[str, Any], *, field: str) -> None:
+            nonlocal reconstructed_balance, independently_resolved_exits
+            if (
+                _number(
+                    payload.get("slippage_pips"),
+                    field=f"{field}.slippage_pips",
+                    non_negative=True,
+                )
+                != expected_slippage
+            ):
+                _mtm_violation(f"{field}.slippage_pips drifted")
+            trade_id = _identity(payload.get("trade_id"), field=f"{field}.trade_id")
+            position = positions.get(trade_id)
+            if position is None:
+                _mtm_violation(f"{field} has no active trade")
+            pair = str(position["pair"])
+            quote = validate_event_quote(payload, pair, field=field)
+            validate_conversion(payload, pair, field=field)
+            close_units = (
+                _number(payload.get("units"), field=f"{field}.units", positive=True)
+                if event == "CLOSE"
+                else float(position["units"])
+            )
+            if close_units > float(position["units"]) + 1e-9:
+                _mtm_violation(f"{field} over-closes its trade")
+            pip = _mtm_pip(pair)
+            executable = float(
+                quote["bid"] if position["side"] == "LONG" else quote["ask"]
+            )
+            if event == "EXIT_SL":
+                stop = position["sl_price"]
+                if stop is None:
+                    _mtm_violation(f"{field} has no attached stop")
+                touched = (
+                    executable <= float(stop)
+                    if position["side"] == "LONG"
+                    else executable >= float(stop)
+                )
+                raw_price = (
+                    min(float(stop), executable)
+                    if position["side"] == "LONG"
+                    else max(float(stop), executable)
+                )
+                if not touched:
+                    _mtm_violation(f"{field} resolves an untouched stop")
+                expected_price = _mtm_price(
+                    pair,
+                    raw_price - expected_slippage * pip
+                    if position["side"] == "LONG"
+                    else raw_price + expected_slippage * pip,
+                )
+            elif event == "EXIT_TP":
+                target = position["tp_price"]
+                if target is None:
+                    _mtm_violation(f"{field} has no attached target")
+                stop = position["sl_price"]
+                if stop is not None and (
+                    executable <= float(stop)
+                    if position["side"] == "LONG"
+                    else executable >= float(stop)
+                ):
+                    _mtm_violation(f"{field} bypasses pessimistic SL-first ordering")
+                touched = (
+                    executable >= float(target)
+                    if position["side"] == "LONG"
+                    else executable <= float(target)
+                )
+                if not touched:
+                    _mtm_violation(f"{field} resolves an untouched target")
+                expected_price = _mtm_price(pair, float(target))
+            else:
+                expected_price = _mtm_price(
+                    pair,
+                    executable - expected_slippage * pip
+                    if position["side"] == "LONG"
+                    else executable + expected_slippage * pip,
+                )
+            observed_price = _number(
+                payload.get("price"), field=f"{field}.price", positive=True
+            )
+            if observed_price != expected_price:
+                _mtm_violation(f"{field}.price is not independently executable")
+            rate = conversion_rate(pair, field=field)
+            gross = (
+                (
+                    (expected_price - float(position["entry_price"]))
+                    if position["side"] == "LONG"
+                    else (float(position["entry_price"]) - expected_price)
+                )
+                * close_units
+                * rate
+            )
+            financing = financing_jpy(
+                position,
+                units=close_units,
+                mark_ts=str(quote["ts"]),
+                field=field,
+            )
+            expected_pl = gross - financing
+            observed_pl = _number(payload.get("pl_jpy"), field=f"{field}.pl_jpy")
+            if not math.isclose(
+                observed_pl, round(expected_pl, 2), rel_tol=0, abs_tol=0.01
+            ):
+                _mtm_violation(f"{field}.pl_jpy is not independently reconstructed")
+            if "gross_pl_jpy" in payload and not math.isclose(
+                _number(payload["gross_pl_jpy"], field=f"{field}.gross_pl_jpy"),
+                round(gross, 2),
+                rel_tol=0,
+                abs_tol=0.01,
+            ):
+                _mtm_violation(f"{field}.gross_pl_jpy is inconsistent")
+            if "financing_jpy" in payload and not math.isclose(
+                _number(
+                    payload["financing_jpy"],
+                    field=f"{field}.financing_jpy",
+                    non_negative=True,
+                ),
+                round(financing, 2),
+                rel_tol=0,
+                abs_tol=0.01,
+            ):
+                _mtm_violation(f"{field}.financing_jpy is inconsistent")
+            reconstructed_balance += expected_pl
+            position["units"] = float(position["units"]) - close_units
+            if float(position["units"]) <= 1e-9:
+                del positions[trade_id]
+            independently_resolved_exits += 1
+
+        def apply_action(event: str, payload: Mapping[str, Any], *, field: str) -> None:
+            if event in {"ORDER_LIMIT", "ORDER_STOP"}:
+                add_order(event, payload, field=field)
+            elif event in _FILL_EVENTS:
+                if event == "FILL_STOP":
+                    _mtm_violation(
+                        f"{field} uses a non-producer fill event; STOP orders emit FILL_LIMIT"
+                    )
+                add_fill(event, payload, field=field)
+            elif event in _EXIT_EVENTS:
+                resolve_exit(event, payload, field=field)
+            elif event in {
+                "ORDER_CANCEL",
+                "ORDER_CANCEL_CONCURRENCY_CAP",
+                "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+            }:
+                order_id = _identity(payload.get("order_id"), field=f"{field}.order_id")
+                if order_id not in orders:
+                    _mtm_violation(f"{field} does not target an active order")
+                pending = orders[order_id]
+                if event == "LIMIT_REJECTED_INSUFFICIENT_MARGIN":
+                    if payload.get("pair") != pending["pair"]:
+                        _mtm_violation(f"{field}.pair does not match its order")
+                elif event == "ORDER_CANCEL_CONCURRENCY_CAP":
+                    if (
+                        payload.get("pair") != pending["pair"]
+                        or payload.get("side") != pending["side"]
+                        or _number(
+                            payload.get("units"),
+                            field=f"{field}.units",
+                            positive=True,
+                        )
+                        != pending["units"]
+                    ):
+                        _mtm_violation(f"{field} does not match its order")
+                    validate_event_quote(payload, str(pending["pair"]), field=field)
+                del orders[order_id]
+            elif event == "SET_EXIT":
+                trade_id = _identity(payload.get("trade_id"), field=f"{field}.trade_id")
+                if trade_id not in positions:
+                    _mtm_violation(f"{field} does not target an active trade")
+                positions[trade_id]["tp_price"] = _mtm_optional_number(
+                    payload.get("tp"), field=f"{field}.tp"
+                )
+                positions[trade_id]["sl_price"] = _mtm_optional_number(
+                    payload.get("sl"), field=f"{field}.sl"
+                )
+            elif event in {
+                "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+                "ORDER_REJECTED_CONCURRENCY_CAP",
+            }:
+                pair = _pair(payload.get("pair"), field=f"{field}.pair")
+                if pair not in trade_pairs:
+                    _mtm_violation(f"{field}.pair is not a sealed trade pair")
+                side = payload.get("side")
+                if side not in {"LONG", "SHORT"}:
+                    _mtm_violation(f"{field}.side is invalid")
+                proposed_entry = {
+                    "pair": pair,
+                    "side": side,
+                    "units": _number(
+                        payload.get("units"), field=f"{field}.units", positive=True
+                    ),
+                }
+                admission = expected_concurrency_admission(
+                    proposed_entry, field=f"{field}.admission"
+                )
+                if event == "ORDER_REJECTED_CONCURRENCY_CAP":
+                    if admission is None or payload.get("admission") != admission:
+                        _mtm_violation(
+                            f"{field} concurrency rejection is not reconstructed"
+                        )
+                elif admission is not None or margin_headroom_ok(
+                    proposed_entry, field=f"{field}.margin_admission"
+                ):
+                    _mtm_violation(f"{field} margin rejection is not reconstructed")
+            else:
+                _mtm_violation(f"unexpected stateful event {event}")
+
+        mark_keys = {
+            "contract",
+            "mark_index",
+            "kind",
+            "coordinate",
+            "batch_index",
+            "batch_sha256",
+            "feed_cursor",
+            "account",
+            "account_sha256",
+            "positions",
+            "positions_sha256",
+            "orders",
+            "orders_sha256",
+            "quotes",
+            "quotes_sha256",
+            "previous_mark_sha256",
+            "mark_sha256",
+        }
+
+        def validate_feed_cursor(
+            value: Any,
+            *,
+            expected_coordinate: Mapping[str, Any],
+            completed: bool,
+            field: str,
+        ) -> dict[str, Any]:
+            cursor = dict(
+                _require_exact_keys(
+                    value,
+                    field=field,
+                    expected={
+                        "mode",
+                        "epoch",
+                        "phase",
+                        "bar_count",
+                        "completed",
+                        "replay_identity_sha256",
+                    },
+                )
+            )
+            epoch = int(expected_coordinate["epoch"])
+            if latest_epoch != epoch:
+                _mtm_violation(f"{field} is not bound to the latest replay epoch")
+            epoch_ordinal = epoch_count - 1
+            if (
+                cursor["mode"] != "replay"
+                or _integer(cursor["epoch"], field=f"{field}.epoch") != epoch
+                or cursor["phase"] != expected_coordinate["phase"]
+                or _integer(
+                    cursor["bar_count"], field=f"{field}.bar_count", non_negative=True
+                )
+                != epoch_ordinal
+                or cursor["completed"] is not completed
+                or _sha256(
+                    cursor["replay_identity_sha256"],
+                    field=f"{field}.replay_identity_sha256",
+                )
+                != replay_identity_sha
+            ):
+                _mtm_violation(f"{field} is not bound to the replay coordinate")
+            return cursor
+
+        def validate_mark(
+            payload: Mapping[str, Any],
+            *,
+            kind: str,
+            linked_batch: Mapping[str, Any] | None,
+            field: str,
+        ) -> Mapping[str, Any]:
+            nonlocal previous_mark_sha, mark_count, mtm_equity_peak, mtm_drawdown
+            nonlocal peak_margin_jpy, peak_margin_fraction
+            mark = dict(_require_exact_keys(payload, field=field, expected=mark_keys))
+            if mark["contract"] != _ACCOUNT_MARK_CONTRACT or mark["kind"] != kind:
+                _mtm_violation(f"{field} contract/kind mismatch")
+            if (
+                _integer(
+                    mark["mark_index"], field=f"{field}.mark_index", non_negative=True
+                )
+                != mark_count
+            ):
+                _mtm_violation(f"{field}.mark_index is not contiguous")
+            if mark["previous_mark_sha256"] != previous_mark_sha:
+                _mtm_violation(f"{field}.previous_mark_sha256 mismatch")
+            claimed_mark_sha = _sha256(
+                mark["mark_sha256"], field=f"{field}.mark_sha256"
+            )
+            if claimed_mark_sha != _canonical_sha256(
+                {key: value for key, value in mark.items() if key != "mark_sha256"}
+            ):
+                _mtm_violation(f"{field}.mark_sha256 mismatch")
+            for state_name, hash_name in (
+                ("account", "account_sha256"),
+                ("positions", "positions_sha256"),
+                ("orders", "orders_sha256"),
+                ("quotes", "quotes_sha256"),
+            ):
+                if _sha256(
+                    mark[hash_name], field=f"{field}.{hash_name}"
+                ) != _canonical_sha256(mark[state_name]):
+                    _mtm_violation(f"{field}.{hash_name} mismatch")
+            expected_positions = [positions[key] for key in sorted(positions)]
+            expected_orders = [orders[key] for key in sorted(orders)]
+            expected_quotes = [quotes[key] for key in sorted(quotes)]
+            if mark["positions"] != expected_positions:
+                _mtm_violation(f"{field}.positions do not match reconstructed state")
+            if mark["orders"] != expected_orders:
+                _mtm_violation(f"{field}.orders do not match reconstructed state")
+            if mark["quotes"] != expected_quotes:
+                _mtm_violation(f"{field}.quotes do not match reconstructed state")
+            account = mark["account"]
+            account_keys = {
+                "balance_jpy",
+                "equity_jpy",
+                "margin_used_jpy",
+                "margin_usage",
+                "accrued_financing_jpy",
+                "open_positions",
+                "resting_orders",
+            }
+            account = dict(
+                _require_exact_keys(
+                    account, field=f"{field}.account", expected=account_keys
+                )
+            )
+            expected = expected_account(field=f"{field}.account")
+            rounding_tolerance = max(0.01, independently_resolved_exits * 0.01)
+            for name in ("balance_jpy", "equity_jpy"):
+                if not math.isclose(
+                    _number(account[name], field=f"{field}.account.{name}"),
+                    float(expected[name]),
+                    rel_tol=0,
+                    abs_tol=rounding_tolerance,
+                ):
+                    _mtm_violation(f"{field}.account.{name} is not reconstructed")
+            for name in ("margin_used_jpy", "accrued_financing_jpy"):
+                if (
+                    _number(
+                        account[name],
+                        field=f"{field}.account.{name}",
+                        non_negative=True,
+                    )
+                    != expected[name]
+                ):
+                    _mtm_violation(f"{field}.account.{name} is not reconstructed")
+            if (
+                _number(
+                    account["margin_usage"],
+                    field=f"{field}.account.margin_usage",
+                    non_negative=True,
+                )
+                != expected["margin_usage"]
+            ):
+                _mtm_violation(f"{field}.account.margin_usage is not reconstructed")
+            if positions and float(expected["margin_usage"]) >= 1.0:
+                _mtm_violation(f"{field}.account retains exposure past margin closeout")
+            for name in ("open_positions", "resting_orders"):
+                if (
+                    _integer(
+                        account[name],
+                        field=f"{field}.account.{name}",
+                        non_negative=True,
+                    )
+                    != expected[name]
+                ):
+                    _mtm_violation(f"{field}.account.{name} is not reconstructed")
+            if kind == "START":
+                if any(
+                    mark[name] is not None
+                    for name in (
+                        "coordinate",
+                        "batch_index",
+                        "batch_sha256",
+                        "feed_cursor",
+                    )
+                ):
+                    _mtm_violation("START mark must not claim a replay coordinate")
+                if (
+                    positions
+                    or orders
+                    or quotes
+                    or account
+                    != {
+                        "balance_jpy": round(start_balance, 2),
+                        "equity_jpy": round(start_balance, 2),
+                        "margin_used_jpy": 0.0,
+                        "margin_usage": 0.0,
+                        "accrued_financing_jpy": 0.0,
+                        "open_positions": 0,
+                        "resting_orders": 0,
+                    }
+                ):
+                    _mtm_violation("START mark is not a pristine initial account")
+            elif kind == "PHASE":
+                if linked_batch is None:
+                    _mtm_violation("PHASE mark has no preceding quote batch")
+                if (
+                    mark["coordinate"] != linked_batch["coordinate"]
+                    or mark["batch_index"] != linked_batch["batch_index"]
+                    or mark["batch_sha256"] != linked_batch["batch_sha256"]
+                ):
+                    _mtm_violation("PHASE mark is not bound to its quote batch")
+                validate_feed_cursor(
+                    mark["feed_cursor"],
+                    expected_coordinate=linked_batch["coordinate"],
+                    completed=False,
+                    field=f"{field}.feed_cursor",
+                )
+            else:
+                if mark["coordinate"] is not None:
+                    _mtm_violation("TERMINAL mark coordinate must be null")
+                if linked_batch is None:
+                    _mtm_violation("TERMINAL mark has no terminal quote batch")
+                if (
+                    mark["batch_index"] != linked_batch["batch_index"]
+                    or mark["batch_sha256"] != linked_batch["batch_sha256"]
+                ):
+                    _mtm_violation("TERMINAL mark is not bound to the terminal batch")
+                validate_feed_cursor(
+                    mark["feed_cursor"],
+                    expected_coordinate=linked_batch["coordinate"],
+                    completed=True,
+                    field=f"{field}.feed_cursor",
+                )
+            equity = float(expected["equity_jpy"])
+            margin = float(expected["margin_used_jpy"])
+            mtm_equity_peak = max(mtm_equity_peak, equity)
+            if mtm_equity_peak > 0:
+                mtm_drawdown = max(
+                    mtm_drawdown, (mtm_equity_peak - equity) / mtm_equity_peak
+                )
+            peak_margin_jpy = max(peak_margin_jpy, margin)
+            if equity > 0:
+                peak_margin_fraction = max(peak_margin_fraction, margin / equity)
+            previous_mark_sha = claimed_mark_sha
+            mark_count += 1
+            return mark
+
+        record_iterator = iter(records)
+        try:
+            session_start_record = next(record_iterator)
+            bot_loaded_record = next(record_iterator)
+            start_mark_record = next(record_iterator)
+        except StopIteration:
+            _mtm_violation("continuous MTM ledger is truncated before START mark")
+        if session_start_record["event"] != "SESSION_START":
+            _mtm_violation("continuous MTM ledger does not begin with SESSION_START")
+        # A bot constructor must not mutate state and then bless it with START.
+        if bot_loaded_record["event"] != "BOT_LOADED":
+            _mtm_violation("BOT_LOADED must immediately follow SESSION_START")
+        if start_mark_record["event"] != "ACCOUNT_MARK":
+            _mtm_violation("START ACCOUNT_MARK must immediately follow BOT_LOADED")
+        validate_mark(
+            start_mark_record["payload"],
+            kind="START",
+            linked_batch=None,
+            field="ledger[3]",
+        )
+
+        batch_keys = {
+            "contract",
+            "batch_index",
+            "coordinate",
+            "feed_pairs",
+            "batch_pairs",
+            "coverage_complete",
+            "quotes",
+            "quotes_sha256",
+            "previous_batch_sha256",
+            "batch_sha256",
+        }
+        stateful_events = (
+            _FILL_EVENTS
+            | _EXIT_EVENTS
+            | _MARGIN_REJECTION_EVENTS
+            | {
+                "ORDER_LIMIT",
+                "ORDER_STOP",
+                "ORDER_CANCEL",
+                "ORDER_CANCEL_CONCURRENCY_CAP",
+                "ORDER_REJECTED_CONCURRENCY_CAP",
+                "SET_EXIT",
+            }
+        )
+        settlement_seen = False
+        terminal_seen = False
+        pre_settlement_orders: list[str] | None = None
+        pre_settlement_trades: list[str] | None = None
+        latest_batch: Mapping[str, Any] | None = None
+        stop: Mapping[str, Any] | None = None
+        for record_index, record in enumerate(record_iterator, start=4):
+            event = record["event"]
+            payload = record["payload"]
+            field = f"ledger[{record_index}]"
+            if event == "SESSION_STOP":
+                stop = payload
+                try:
+                    next(record_iterator)
+                except StopIteration:
+                    break
+                _mtm_violation("SESSION_STOP is not the final ledger record")
+            if event == "QUOTE_BATCH_BEGIN":
+                if current_batch is not None or settlement_seen or terminal_seen:
+                    _mtm_violation(f"{field} quote batch is out of sequence")
+                batch = dict(
+                    _require_exact_keys(payload, field=field, expected=batch_keys)
+                )
+                if batch["contract"] != _QUOTE_BATCH_CONTRACT:
+                    _mtm_violation(f"{field} quote batch contract mismatch")
+                if (
+                    _integer(
+                        batch["batch_index"],
+                        field=f"{field}.batch_index",
+                        non_negative=True,
+                    )
+                    != batch_count
+                ):
+                    _mtm_violation(f"{field}.batch_index is not contiguous")
+                batch_coordinate = coordinate(
+                    batch["coordinate"], field=f"{field}.coordinate"
+                )
+                phase_offset = batch_count % len(expected_phase_order)
+                if batch_coordinate["phase"] != expected_phase_order[phase_offset]:
+                    _mtm_violation(f"{field}.coordinate phase order is invalid")
+                if phase_offset == 0:
+                    if (
+                        latest_epoch is not None
+                        and batch_coordinate["epoch"] <= latest_epoch
+                    ):
+                        _mtm_violation(f"{field}.coordinate epoch is not increasing")
+                    latest_epoch = int(batch_coordinate["epoch"])
+                    epoch_count += 1
+                elif batch_coordinate["epoch"] != latest_epoch:
+                    _mtm_violation(f"{field}.coordinate skips an intrabar phase")
+                batch_quotes = batch["quotes"]
+                if not isinstance(batch_quotes, list):
+                    _mtm_violation(f"{field}.quotes must be a list")
+                if (
+                    batch["feed_pairs"] != list(feed_pairs)
+                    or batch["batch_pairs"] != list(feed_pairs)
+                    or batch["coverage_complete"] is not True
+                    or len(batch_quotes) != len(feed_pairs)
+                ):
+                    _mtm_violation(f"{field} does not cover every feed pair exactly")
+                normalized_batch_quotes: list[dict[str, Any]] = []
+                watermark = quote_sequence + len(feed_pairs)
+                for pair_index, (expected_pair, raw_quote) in enumerate(
+                    zip(feed_pairs, batch_quotes, strict=True), start=1
+                ):
+                    quote = dict(
+                        _require_exact_keys(
+                            raw_quote,
+                            field=f"{field}.quotes[{pair_index - 1}]",
+                            expected={"pair", "bid", "ask", "ts"},
+                        )
+                    )
+                    pair = _pair(quote["pair"], field=f"{field}.quotes.pair")
+                    bid = _number(
+                        quote["bid"], field=f"{field}.quotes.bid", positive=True
+                    )
+                    ask = _number(
+                        quote["ask"], field=f"{field}.quotes.ask", positive=True
+                    )
+                    if pair != expected_pair or bid > ask:
+                        _mtm_violation(
+                            f"{field}.quotes are not canonical executable quotes"
+                        )
+                    timestamp = quote["ts"]
+                    if not isinstance(timestamp, str) or not timestamp.endswith(
+                        f"#{batch_coordinate['phase']}"
+                    ):
+                        _mtm_violation(f"{field}.quote timestamp phase mismatch")
+                    parsed_timestamp = _parse_utc(
+                        timestamp, field=f"{field}.quotes.ts", allow_naive=True
+                    )
+                    if parsed_timestamp.timestamp() != batch_coordinate["epoch"]:
+                        _mtm_violation(f"{field}.quote timestamp epoch mismatch")
+                    quote_sequence += 1
+                    normalized = {"pair": pair, "bid": bid, "ask": ask, "ts": timestamp}
+                    normalized_batch_quotes.append(normalized)
+                    quotes[pair] = {
+                        **normalized,
+                        "sequence": quote_sequence,
+                        "watermark": watermark,
+                    }
+                if batch_quotes != normalized_batch_quotes:
+                    _mtm_violation(f"{field}.quotes use noncanonical numeric state")
+                if corpus_batches is not None:
+                    try:
+                        corpus_coordinate, corpus_quotes = next(corpus_batches)
+                    except StopIteration:
+                        _mtm_violation(
+                            f"{field} has no corresponding sealed corpus coordinate"
+                        )
+                    if (
+                        batch_coordinate != corpus_coordinate
+                        or normalized_batch_quotes != corpus_quotes
+                    ):
+                        _mtm_violation(
+                            f"{field} quote batch does not match sealed corpus bytes"
+                        )
+                if _sha256(
+                    batch["quotes_sha256"], field=f"{field}.quotes_sha256"
+                ) != _canonical_sha256(batch_quotes):
+                    _mtm_violation(f"{field}.quotes_sha256 mismatch")
+                if batch["previous_batch_sha256"] != previous_batch_sha:
+                    _mtm_violation(f"{field}.previous_batch_sha256 mismatch")
+                batch_sha = _sha256(
+                    batch["batch_sha256"], field=f"{field}.batch_sha256"
+                )
+                if batch_sha != _canonical_sha256(
+                    {
+                        key: value
+                        for key, value in batch.items()
+                        if key != "batch_sha256"
+                    }
+                ):
+                    _mtm_violation(f"{field}.batch_sha256 mismatch")
+                previous_batch_sha = batch_sha
+                batch["coordinate"] = batch_coordinate
+                current_batch = batch
+                current_batch_manual_started = False
+                current_market_consequence_trade_id = None
+                current_market_consequence_window = False
+                margin_closeout_sequence_active = False
+                batch_eligible_order_ids = set(orders)
+                batch_eligible_position_ids = set(positions)
+                latest_batch = batch
+                if first_observed_coordinate is None:
+                    first_observed_coordinate = batch_coordinate
+                last_observed_coordinate = batch_coordinate
+                batch_count += 1
+            elif event == "ACCOUNT_MARK":
+                kind = payload.get("kind")
+                if kind == "PHASE":
+                    if current_batch is None:
+                        _mtm_violation(f"{field} PHASE mark has no open batch")
+                    require_no_mandatory_event(field=f"{field}.pre_phase")
+                    validate_mark(
+                        payload,
+                        kind="PHASE",
+                        linked_batch=current_batch,
+                        field=field,
+                    )
+                    current_batch = None
+                    if batch_count == expected_batch_count:
+                        pre_settlement_orders = sorted(orders)
+                        pre_settlement_trades = sorted(positions)
+                elif kind == "TERMINAL":
+                    if (
+                        not settlement_seen
+                        or terminal_seen
+                        or current_batch is not None
+                    ):
+                        _mtm_violation(f"{field} TERMINAL mark is out of sequence")
+                    terminal_mark_payload = validate_mark(
+                        payload,
+                        kind="TERMINAL",
+                        linked_batch=latest_batch,
+                        field=field,
+                    )
+                    terminal_seen = True
+                else:
+                    _mtm_violation(f"{field} contains an unexpected ACCOUNT_MARK kind")
+            elif event in stateful_events:
+                if terminal_seen or settlement_seen:
+                    _mtm_violation(f"{field} mutates state after settlement")
+                if current_batch is None:
+                    if (
+                        batch_count != expected_batch_count
+                        or pre_settlement_orders is None
+                    ):
+                        _mtm_violation(f"{field} mutates state outside a quote batch")
+                    if event not in {"ORDER_CANCEL", "CLOSE"}:
+                        _mtm_violation(f"{field} is not a permitted settlement action")
+                else:
+                    bot_origin_events = {
+                        "ORDER_LIMIT",
+                        "ORDER_STOP",
+                        "ORDER_CANCEL",
+                        "FILL_MARKET",
+                        "SET_EXIT",
+                        "CLOSE",
+                        "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+                        "ORDER_REJECTED_CONCURRENCY_CAP",
+                    }
+                    if event in bot_origin_events:
+                        if (
+                            current_batch["coordinate"]["phase"] != "O"
+                            or epoch_count <= 1
+                        ):
+                            _mtm_violation(
+                                f"{field} bot-origin action is outside a causal O callback"
+                            )
+                        require_no_mandatory_event(field=f"{field}.pre_bot_action")
+                        batch_eligible_order_ids.clear()
+                        batch_eligible_position_ids.clear()
+                        current_batch_manual_started = True
+                        current_market_consequence_trade_id = None
+                        current_market_consequence_window = False
+                    elif current_batch_manual_started:
+                        trade_id = payload.get("trade_id")
+                        immediate_market_exit = (
+                            event in {"EXIT_TP", "EXIT_SL"}
+                            and trade_id == current_market_consequence_trade_id
+                        )
+                        immediate_market_closeout = (
+                            event == "MARGIN_CLOSEOUT"
+                            and current_market_consequence_window
+                        )
+                        if not immediate_market_exit and not immediate_market_closeout:
+                            _mtm_violation(
+                                f"{field} asynchronous broker event follows an O action"
+                            )
+                        require_mandatory_event_matches(event, payload, field=field)
+                    else:
+                        require_mandatory_event_matches(event, payload, field=field)
+                    if (
+                        margin_closeout_sequence_active
+                        and event != "MARGIN_CLOSEOUT"
+                        and event not in bot_origin_events
+                    ):
+                        _mtm_violation(
+                            f"{field} interrupts an atomic margin closeout sequence"
+                        )
+                    if event == "MARGIN_CLOSEOUT":
+                        if not margin_closeout_sequence_active:
+                            pre_close_account = expected_account(
+                                field=f"{field}.pre_margin_closeout"
+                            )
+                            if float(pre_close_account["margin_usage"]) < 1.0:
+                                _mtm_violation(
+                                    f"{field} margin closeout has no margin trigger"
+                                )
+                            margin_closeout_sequence_active = True
+                    else:
+                        margin_closeout_sequence_active = False
+                apply_action(event, payload, field=field)
+                if current_batch is not None:
+                    if event == "FILL_LIMIT":
+                        batch_eligible_order_ids.discard(str(payload.get("order_id")))
+                        batch_eligible_position_ids.add(str(payload.get("trade_id")))
+                    elif event in {
+                        "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                        "ORDER_CANCEL_CONCURRENCY_CAP",
+                    }:
+                        batch_eligible_order_ids.discard(str(payload.get("order_id")))
+                    elif event in {"EXIT_TP", "EXIT_SL", "MARGIN_CLOSEOUT"}:
+                        batch_eligible_position_ids.discard(
+                            str(payload.get("trade_id"))
+                        )
+                    if event == "FILL_MARKET":
+                        current_market_consequence_trade_id = str(
+                            payload.get("trade_id")
+                        )
+                        current_market_consequence_window = True
+                        batch_eligible_position_ids.add(
+                            current_market_consequence_trade_id
+                        )
+            elif event == "PERIOD_END_SETTLEMENT":
+                if (
+                    settlement_seen
+                    or terminal_seen
+                    or current_batch is not None
+                    or batch_count != expected_batch_count
+                    or pre_settlement_orders is None
+                    or pre_settlement_trades is None
+                ):
+                    _mtm_violation(f"{field} settlement is out of sequence")
+                requested_orders = payload.get("requested_order_ids")
+                requested_trades = payload.get("requested_trade_ids")
+                if (
+                    not isinstance(requested_orders, list)
+                    or not isinstance(requested_trades, list)
+                    or sorted(requested_orders) != pre_settlement_orders
+                    or sorted(requested_trades) != pre_settlement_trades
+                    or len(set(requested_orders)) != len(requested_orders)
+                    or len(set(requested_trades)) != len(requested_trades)
+                ):
+                    _mtm_violation(
+                        f"{field} settlement targets do not match phase state"
+                    )
+                if positions or orders:
+                    _mtm_violation(
+                        f"{field} claims complete settlement with live state"
+                    )
+                settlement_seen = True
+            else:
+                _mtm_violation(f"{field} unexpected event {event} in MTM contract")
+
+        if current_batch is not None:
+            _mtm_violation("terminal quote batch has no PHASE mark")
+        if batch_count != expected_batch_count:
+            _mtm_violation("observed quote batch count does not match the manifest")
+        if first_observed_coordinate != expected_first_coordinate:
+            _mtm_violation("first coordinate does not match the manifest")
+        if last_observed_coordinate != expected_last_coordinate:
+            _mtm_violation("last coordinate does not match the manifest")
+        if corpus_batches is not None:
+            try:
+                next(corpus_batches)
+            except StopIteration:
+                pass
+            else:
+                _mtm_violation("sealed corpus has unconsumed replay coordinates")
+        if previous_batch_sha != expected_batch_terminal:
+            _mtm_violation("terminal quote-batch chain does not match the manifest")
+        if cached_corpus_terminal is None:
+            _CORPUS_COMMITMENT_CACHE[corpus_cache_key] = previous_batch_sha
+            _CORPUS_COMMITMENT_CACHE.move_to_end(corpus_cache_key)
+            while len(_CORPUS_COMMITMENT_CACHE) > _MAX_CORPUS_COMMITMENT_CACHE:
+                _CORPUS_COMMITMENT_CACHE.popitem(last=False)
+        if not settlement_seen or not terminal_seen or terminal_mark_payload is None:
+            _mtm_violation("settlement and terminal mark are not complete")
+        if mark_count != expected_batch_count + 2:
+            _mtm_violation("START/PHASE/TERMINAL mark count is incomplete")
+        if stop is None:
+            _mtm_violation("continuous MTM ledger has no SESSION_STOP")
+        if (
+            stop.get("mtm_complete") is not True
+            or stop.get("mtm_mark_count") != mark_count
+            or stop.get("mtm_terminal_mark_sha256") != previous_mark_sha
+            or stop.get("account_error") is not None
+            or stop.get("account") != terminal_mark_payload["account"]
+        ):
+            _mtm_violation("SESSION_STOP does not bind the verified terminal mark")
+        return {
+            "mtm_complete": True,
+            "mtm_evidence_status": "VERIFIED_COORDINATE_COMPLETE_ACCOUNT_MARK_CHAIN",
+            "mtm_mark_count": mark_count,
+            "mtm_max_drawdown_fraction": mtm_drawdown,
+            "peak_margin_jpy": peak_margin_jpy,
+            "peak_margin_fraction": peak_margin_fraction,
+            "terminal_balance_jpy": reconstructed_balance,
+        }
+    except DojoBotTrainerError as exc:
+        if str(exc).startswith("MTM_CONTRACT_VIOLATION:"):
+            raise
+        _mtm_violation(str(exc))
+
+
+def _iter_verified_ledger_records(
+    handle: BinaryIO,
+    *,
+    expected_owner: str,
+    artifact_stats: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Replay a ledger with bounded memory from a seekable authenticated stream."""
+
+    try:
+        handle.seek(0)
+    except (AttributeError, OSError) as exc:
+        raise DojoBotTrainerError(
+            "ledger stream must be seekable for bounded multi-pass verification"
+        ) from exc
+    previous = _ZERO_SHA256
+    ledger_size = 0
+    record_count = 0
+    file_digest = hashlib.sha256() if artifact_stats is not None else None
+    for line_number, raw_line in enumerate(handle, start=1):
+        if not isinstance(raw_line, (bytes, bytearray)):
+            raise DojoBotTrainerError("ledger stream must yield binary rows")
+        raw_bytes = bytes(raw_line)
+        ledger_size += len(raw_bytes)
+        if ledger_size > _MAX_LEDGER_BYTES:
+            raise DojoBotTrainerError("ledger artifact exceeds the size limit")
+        if file_digest is not None:
+            file_digest.update(raw_bytes)
+        if not raw_bytes.strip():
+            raise DojoBotTrainerError(f"blank ledger row at line {line_number}")
+        if len(raw_bytes) > MAX_JSON_BYTES:
+            raise DojoBotTrainerError("ledger row exceeds the JSON size limit")
+        row = dict(
+            _require_exact_keys(
+                _load_jsonish(raw_bytes, field=f"ledger[{line_number}]"),
+                field=f"ledger[{line_number}]",
+                expected={"ts_utc", "event", "payload", "prev_sha", "sha"},
+            )
+        )
+        _parse_utc(row["ts_utc"], field=f"ledger[{line_number}].ts_utc")
+        if not isinstance(row["event"], str) or not isinstance(row["payload"], Mapping):
+            raise DojoBotTrainerError("ledger event/payload is malformed")
+        if row["prev_sha"] != previous:
+            raise DojoBotTrainerError("ledger hash chain predecessor mismatch")
+        claimed = _sha256(row["sha"], field=f"ledger[{line_number}].sha")
+        body = {key: item for key, item in row.items() if key != "sha"}
+        if claimed != _canonical_sha256(body):
+            raise DojoBotTrainerError("ledger row digest mismatch")
+        previous = claimed
+        if (
+            row["event"] in _OWNED_LEDGER_EVENTS
+            and row["payload"].get("strategy_owner_id") != expected_owner
+        ):
+            raise DojoBotTrainerError(
+                "owned ledger event has missing or mismatched strategy owner"
+            )
+        record_count += 1
+        yield row
+    if artifact_stats is not None:
+        artifact_stats.update(
+            {
+                "ledger_size": ledger_size,
+                "ledger_file_sha256": file_digest.hexdigest(),
+                "ledger_terminal_sha256": previous,
+                "ledger_record_count": record_count,
+            }
+        )
+
+
 def score_ledger_metrics(
     ledger_path: Path | BinaryIO,
     start_balance_jpy: float,
@@ -1666,6 +3647,8 @@ def score_ledger_metrics(
     expected_bot_dependency_sha256: Mapping[str, str],
     expected_feed_pairs: Sequence[str] | None = None,
     ledger_artifact_path: str | None = None,
+    expected_max_concurrent_per_pair: int | None = None,
+    expected_global_max_concurrent: int | None = None,
 ) -> dict[str, Any]:
     """Rebuild deterministic TRAIN diagnostics from a broker hash-chain ledger.
 
@@ -1723,16 +3706,23 @@ def score_ledger_metrics(
         expected_bot_module_sha256, field="expected_bot_module_sha256"
     )
     expected_dependencies = _normalize_source_digests(expected_bot_dependency_sha256)
+    if (expected_max_concurrent_per_pair is None) != (
+        expected_global_max_concurrent is None
+    ):
+        raise DojoBotTrainerError(
+            "expected owner concurrency caps must be supplied together"
+        )
+    for field, value in (
+        ("expected_max_concurrent_per_pair", expected_max_concurrent_per_pair),
+        ("expected_global_max_concurrent", expected_global_max_concurrent),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            raise DojoBotTrainerError(f"{field} must be a positive integer")
 
     supplied_handle = hasattr(ledger_path, "read")
-    path: Path | None = None
-    local_handle: BinaryIO | None = None
-    if supplied_handle:
-        handle = ledger_path
-        if not hasattr(handle, "readline"):
-            raise DojoBotTrainerError("ledger stream is not readable")
-        ledger_label = ledger_artifact_path or "<verified-ledger-stream>"
-    else:
+    if not supplied_handle:
         path = Path(ledger_path)
         try:
             info = path.lstat()
@@ -1742,70 +3732,93 @@ def score_ledger_metrics(
                 os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
             )
             descriptor = os.open(path, flags)
-            local_handle = os.fdopen(descriptor, "rb")
         except DojoBotTrainerError:
             raise
         except OSError as exc:
             raise DojoBotTrainerError("ledger file is missing") from exc
-        handle = local_handle
-        ledger_label = str(path.resolve())
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode) or (before.st_dev, before.st_ino) != (
+                info.st_dev,
+                info.st_ino,
+            ):
+                raise DojoBotTrainerError("ledger artifact changed before verification")
+            with os.fdopen(descriptor, "rb") as local_handle:
+                descriptor = -1
+                scored = score_ledger_metrics(
+                    local_handle,
+                    start_balance_jpy,
+                    expected_pairs,
+                    window_start,
+                    window_end,
+                    expected_intrabar=expected_intrabar,
+                    expected_slippage_pips_per_fill=expected_slippage_pips_per_fill,
+                    expected_financing_pips_per_day=expected_financing_pips_per_day,
+                    expected_corpus_sha256=expected_corpus_sha256,
+                    expected_bot_config_sha256=expected_bot_config_sha256,
+                    expected_strategy_owner_id=expected_strategy_owner_id,
+                    expected_bot_module_sha256=expected_bot_module_sha256,
+                    expected_bot_dependency_sha256=expected_bot_dependency_sha256,
+                    expected_feed_pairs=expected_feed_pairs,
+                    ledger_artifact_path=ledger_artifact_path or str(path.resolve()),
+                    expected_max_concurrent_per_pair=(expected_max_concurrent_per_pair),
+                    expected_global_max_concurrent=expected_global_max_concurrent,
+                )
+                after = os.fstat(local_handle.fileno())
+                if (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                ) != (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                ):
+                    raise DojoBotTrainerError(
+                        "ledger artifact changed during verification"
+                    )
+                return scored
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
-    records: list[dict[str, Any]] = []
-    previous = _ZERO_SHA256
-    ledger_file_digest = hashlib.sha256()
-    ledger_size = 0
-    try:
-        for line_number, raw_line in enumerate(handle, start=1):
-            ledger_size += len(raw_line)
-            if ledger_size > _MAX_LEDGER_BYTES:
-                raise DojoBotTrainerError("ledger artifact exceeds the size limit")
-            ledger_file_digest.update(raw_line)
-            if not raw_line.strip():
-                raise DojoBotTrainerError(f"blank ledger row at line {line_number}")
-            if len(raw_line) > MAX_JSON_BYTES:
-                raise DojoBotTrainerError("ledger row exceeds the JSON size limit")
-            row = _load_jsonish(raw_line, field=f"ledger[{line_number}]")
-            row = dict(
-                _require_exact_keys(
-                    row,
-                    field=f"ledger[{line_number}]",
-                    expected={"ts_utc", "event", "payload", "prev_sha", "sha"},
-                )
-            )
-            _parse_utc(row["ts_utc"], field=f"ledger[{line_number}].ts_utc")
-            if not isinstance(row["event"], str) or not isinstance(
-                row["payload"], Mapping
-            ):
-                raise DojoBotTrainerError("ledger event/payload is malformed")
-            if row["prev_sha"] != previous:
-                raise DojoBotTrainerError("ledger hash chain predecessor mismatch")
-            claimed = _sha256(row["sha"], field=f"ledger[{line_number}].sha")
-            body = {key: item for key, item in row.items() if key != "sha"}
-            if claimed != _canonical_sha256(body):
-                raise DojoBotTrainerError("ledger row digest mismatch")
-            previous = claimed
-            records.append(row)
-            if (
-                row["event"] in _OWNED_LEDGER_EVENTS
-                and row["payload"].get("strategy_owner_id") != expected_owner
-            ):
-                raise DojoBotTrainerError(
-                    "owned ledger event has missing or mismatched strategy owner"
-                )
-    finally:
-        if local_handle is not None:
-            local_handle.close()
-    if not records or records[0]["event"] != "SESSION_START":
-        raise DojoBotTrainerError("ledger must begin with SESSION_START")
-    if records[-1]["event"] != "SESSION_STOP":
-        raise DojoBotTrainerError("ledger must end with SESSION_STOP")
-    if (
-        sum(row["event"] == "SESSION_START" for row in records) != 1
-        or sum(row["event"] == "SESSION_STOP" for row in records) != 1
+    handle = ledger_path
+    if not hasattr(handle, "readline"):
+        raise DojoBotTrainerError("ledger stream is not readable")
+    ledger_label = ledger_artifact_path or "<verified-ledger-stream>"
+    artifact_stats: dict[str, Any] = {}
+    first_record: Mapping[str, Any] | None = None
+    last_record: Mapping[str, Any] | None = None
+    start_count = 0
+    stop_count = 0
+    loaded: list[Mapping[str, Any]] = []
+    settlements: list[Mapping[str, Any]] = []
+    for row in _iter_verified_ledger_records(
+        handle, expected_owner=expected_owner, artifact_stats=artifact_stats
     ):
+        if first_record is None:
+            first_record = row
+        last_record = row
+        if row["event"] == "SESSION_START":
+            start_count += 1
+        elif row["event"] == "SESSION_STOP":
+            stop_count += 1
+        elif row["event"] == "BOT_LOADED":
+            if len(loaded) < 2:
+                loaded.append(row)
+        elif row["event"] == "PERIOD_END_SETTLEMENT":
+            if len(settlements) < 2:
+                settlements.append(row)
+    if first_record is None or first_record["event"] != "SESSION_START":
+        raise DojoBotTrainerError("ledger must begin with SESSION_START")
+    if last_record is None or last_record["event"] != "SESSION_STOP":
+        raise DojoBotTrainerError("ledger must end with SESSION_STOP")
+    if start_count != 1 or stop_count != 1:
         raise DojoBotTrainerError("ledger session boundaries are not unique")
 
-    start_payload = records[0]["payload"]
+    start_payload = first_record["payload"]
     declared_pairs = sorted(
         item.strip()
         for item in str(start_payload.get("pairs", "")).split(",")
@@ -1971,7 +3984,6 @@ def score_ledger_metrics(
     )
     if not 0 < config_length <= MAX_JSON_BYTES:
         raise DojoBotTrainerError("manifest bot config length is unreasonable")
-    loaded = [row for row in records if row["event"] == "BOT_LOADED"]
     if len(loaded) != 1:
         raise DojoBotTrainerError("ledger requires exactly one BOT_LOADED receipt")
     loaded_payload = loaded[0]["payload"]
@@ -1981,7 +3993,6 @@ def score_ledger_metrics(
         or loaded_payload.get("module") != bot.get("module_path")
     ):
         raise DojoBotTrainerError("BOT_LOADED receipt does not match manifest bot")
-    settlements = [row for row in records if row["event"] == "PERIOD_END_SETTLEMENT"]
     if len(settlements) != 1:
         raise DojoBotTrainerError(
             "ledger requires exactly one PERIOD_END_SETTLEMENT receipt"
@@ -1993,6 +4004,22 @@ def score_ledger_metrics(
         or settlement.get("errors") != []
     ):
         raise DojoBotTrainerError("period-end settlement receipt is incomplete")
+
+    verified_mtm = _verify_coordinate_mtm_contract(
+        _iter_verified_ledger_records(handle, expected_owner=expected_owner),
+        manifest=manifest,
+        replay=replay,
+        feed_pairs=feed_pairs,
+        trade_pairs=pairs,
+        start_balance=start_balance,
+        expected_owner=expected_owner,
+        expected_intrabar=expected_intrabar,
+        expected_slippage=expected_slippage,
+        expected_financing=expected_financing,
+        leverage=leverage,
+        expected_max_concurrent_per_pair=expected_max_concurrent_per_pair,
+        expected_global_max_concurrent=expected_global_max_concurrent,
+    )
 
     active: dict[str, dict[str, Any]] = {}
     seen_trade_ids: set[str] = set()
@@ -2016,9 +4043,13 @@ def score_ledger_metrics(
     mtm_equity_peak = start_balance
     mtm_drawdown = 0.0
 
-    for index, row in enumerate(records[1:-1], start=2):
+    for index, row in enumerate(
+        _iter_verified_ledger_records(handle, expected_owner=expected_owner), start=1
+    ):
         event = row["event"]
         payload = row["payload"]
+        if event in {"SESSION_START", "SESSION_STOP"}:
+            continue
         if event in _MARGIN_REJECTION_EVENTS:
             margin_rejections += 1
         if event in _FILL_EVENTS:
@@ -2150,7 +4181,7 @@ def score_ledger_metrics(
                 peak_margin_fraction, margin_now / realized_balance
             )
 
-    terminal_payload = records[-1]["payload"]
+    terminal_payload = last_record["payload"]
     terminal_account = terminal_payload.get("account")
     if not isinstance(terminal_account, Mapping):
         raise DojoBotTrainerError("SESSION_STOP account is missing")
@@ -2172,7 +4203,7 @@ def score_ledger_metrics(
         terminal_balance,
         realized_balance,
         rel_tol=0,
-        abs_tol=max(0.05, fill_count * 0.01),
+        abs_tol=max(0.05, resolved_exit_slices * 0.01),
     ):
         raise DojoBotTrainerError("ledger realized balance does not reconcile terminal")
     terminal_net = terminal_balance - start_balance
@@ -2180,7 +4211,7 @@ def score_ledger_metrics(
         sum(pair_pnl.values()),
         terminal_net,
         rel_tol=0,
-        abs_tol=max(0.05, fill_count * 0.01),
+        abs_tol=max(0.05, resolved_exit_slices * 0.01),
     ):
         raise DojoBotTrainerError("ledger pair PnL does not reconcile terminal net")
 
@@ -2201,20 +4232,23 @@ def score_ledger_metrics(
         and terminal_payload.get("mtm_complete") is True
         and terminal_payload.get("mtm_mark_count") == account_marks
     )
-    # The current virtual-market runner does not yet emit the contracted,
-    # coordinate-complete ACCOUNT_MARK sequence.  A terminal self-claim plus
-    # one or more arbitrary marks is not enough to prove continuous MTM, so
-    # remain fail-closed until mark index/phase/pair coverage is verified.
-    mtm_complete = False
+    # Legacy rows remain diagnostic-only.  A declared V1 contract reaches this
+    # point only after independent coordinate/state/account reconstruction.
+    mtm_complete = verified_mtm is not None
+    if verified_mtm is not None:
+        account_marks = int(verified_mtm["mtm_mark_count"])
+        mtm_drawdown = float(verified_mtm["mtm_max_drawdown_fraction"])
+        peak_margin_jpy = float(verified_mtm["peak_margin_jpy"])
+        peak_margin_fraction = float(verified_mtm["peak_margin_fraction"])
     window_hours = (end - start).total_seconds() / 3600.0
     body = {
         "contract": LEDGER_METRICS_CONTRACT,
         "schema_version": 1,
         "ledger_path": ledger_label,
-        "ledger_size_bytes": ledger_size,
-        "ledger_file_sha256": ledger_file_digest.hexdigest(),
-        "ledger_terminal_sha256": previous,
-        "ledger_record_count": len(records),
+        "ledger_size_bytes": artifact_stats["ledger_size"],
+        "ledger_file_sha256": artifact_stats["ledger_file_sha256"],
+        "ledger_terminal_sha256": artifact_stats["ledger_terminal_sha256"],
+        "ledger_record_count": artifact_stats["ledger_record_count"],
         "reproducibility_manifest_sha256": manifest_sha,
         "corpus_sha256": corpus_sha,
         "intrabar": expected_intrabar,
@@ -2239,7 +4273,9 @@ def score_ledger_metrics(
         "realized_max_drawdown_fraction": round(realized_drawdown, 12),
         "mtm_complete": mtm_complete,
         "mtm_evidence_status": (
-            "UNVERIFIED_ACCOUNT_MARK_SEQUENCE"
+            str(verified_mtm["mtm_evidence_status"])
+            if verified_mtm is not None
+            else "UNVERIFIED_ACCOUNT_MARK_SEQUENCE"
             if account_marks or unverified_mtm_claim_present
             else "NO_ACCOUNT_MARK_SEQUENCE"
         ),

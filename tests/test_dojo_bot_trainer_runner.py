@@ -211,6 +211,7 @@ def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str
                     "intrabar": _option(command, "--intrabar"),
                     "bot_bar": "feed",
                     "period_end_settlement": True,
+                    "continuous_mtm": True,
                 },
                 "costs": {
                     "slippage_pips_per_fill": float(
@@ -385,6 +386,7 @@ def test_run_executes_fixed_denominator_and_true_lopo_replays(
     assert len(calls) == 24  # 8 main + 8 * 2 true leave-one-pair-out replays
     assert all(command[0] == runner.sys.executable for command in calls)
     assert all("--settle-at-end" in command for command in calls)
+    assert all("--continuous-mtm" in command for command in calls)
     assert all("--strategy-owner-id" in command for command in calls)
     assert all(
         _option(command, "--pairs").split(",") == FEED_PAIRS for command in calls

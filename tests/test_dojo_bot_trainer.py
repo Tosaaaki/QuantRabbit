@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import gzip
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1245,3 +1249,465 @@ def test_score_ledger_metrics_verifies_manifest_self_digest(tmp_path: Path) -> N
 
     with pytest.raises(DojoBotTrainerError, match="SESSION_START manifest digest"):
         _score_fixture_ledger(ledger, evidence)
+
+
+def _write_mtm_corpus(root: Path) -> None:
+    for pair_index, pair in enumerate(("CAD_JPY", "USD_JPY")):
+        shard = root / "fixture" / pair / f"{pair}_M1_BA_2026.jsonl.gz"
+        shard.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(shard, "wt", encoding="utf-8") as handle:
+            for minute in range(2):
+                base = 80.0 + pair_index * 70.0 + minute * 0.01
+                handle.write(
+                    json.dumps(
+                        {
+                            "time": f"2026-01-01T00:0{minute}:00Z",
+                            "bid": {
+                                "o": base,
+                                "h": base + 0.02,
+                                "l": base - 0.02,
+                                "c": base + 0.01,
+                            },
+                            "ask": {
+                                "o": base + 0.01,
+                                "h": base + 0.03,
+                                "l": base - 0.01,
+                                "c": base + 0.02,
+                            },
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+
+
+def _strict_mtm_fixture(
+    tmp_path: Path, *, vehicle: str = "MARKET"
+) -> tuple[Path, dict[str, object]]:
+    repository_root = Path(__file__).resolve().parents[1]
+    corpus = tmp_path / "corpus"
+    session = tmp_path / "session"
+    module = tmp_path / "one_trade_bot.py"
+    owner = "mtm:trainer-adversarial"
+    _write_mtm_corpus(corpus)
+    action = {
+        "MARKET": (
+            "            trade_id = self.broker.market_order(pair, 'LONG', 100)\n"
+            "            self.broker.set_exit(trade_id, tp_price=151.0, "
+            "sl_price=149.0)\n"
+        ),
+        "STOP_LOSS": (
+            "            trade_id = self.broker.market_order(pair, 'LONG', 100)\n"
+            "            self.broker.set_exit(trade_id, tp_price=151.0, "
+            "sl_price=150.0)\n"
+        ),
+        "LIMIT": (
+            "            self.broker.limit_order(pair, 'LONG', 100, "
+            "price=150.0, tp_pips=25, sl_pips=25)\n"
+        ),
+        "STOP": (
+            "            self.broker.stop_order(pair, 'LONG', 100, "
+            "price=150.04, tp_pips=25, sl_pips=25)\n"
+        ),
+        "CANCEL": (
+            "            order_id = self.broker.limit_order(pair, 'LONG', 100, "
+            "price=140.0, tp_pips=25, sl_pips=25)\n"
+            "            self.broker.cancel_order(order_id)\n"
+        ),
+    }[vehicle]
+    module.write_text(
+        "from quant_rabbit.dojo_lab_provenance import OwnedBrokerView\n"
+        "class Bot:\n"
+        "    def __init__(self, broker):\n"
+        f"        self.broker = OwnedBrokerView(broker, {owner!r}, "
+        "max_concurrent_per_pair=1, global_max_concurrent=2)\n"
+        "        self.entered = False\n"
+        "    def on_bar_closed(self, pair, bar, epoch):\n"
+        "        if pair == 'USD_JPY' and not self.entered:\n"
+        + action
+        + "            self.entered = True\n",
+        encoding="utf-8",
+    )
+    config_json = "{}"
+    command = [
+        sys.executable,
+        str(repository_root / "scripts" / "run-virtual-market-session.py"),
+        "--feed",
+        "replay",
+        "--session-dir",
+        str(session),
+        "--pairs",
+        "CAD_JPY,USD_JPY",
+        "--corpus-root",
+        str(corpus),
+        "--from",
+        "2026-01-01T00:00:00Z",
+        "--to",
+        "2026-01-01T00:02:00Z",
+        "--intrabar",
+        "OHLC",
+        "--bars-per-second",
+        "10000",
+        "--fast-ledger",
+        "--continuous-mtm",
+        "--bot-module",
+        f"{module}:Bot",
+        "--strategy-owner-id",
+        owner,
+        "--bot-dependency",
+        "src/quant_rabbit/dojo_lab_provenance.py",
+        "--bot-dependency",
+        "src/quant_rabbit/virtual_broker.py",
+        "--settle-at-end",
+    ]
+    environment = dict(os.environ)
+    environment["DOJO_BOT_CONFIG"] = config_json
+    completed = subprocess.run(
+        command,
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    ledger = session / "ledger.jsonl"
+    records = [json.loads(line) for line in ledger.read_text().splitlines()]
+    manifest = records[0]["payload"]["reproducibility_manifest"]
+    arguments: dict[str, object] = {
+        "start_balance_jpy": 200_000.0,
+        "expected_pairs": ["CAD_JPY", "USD_JPY"],
+        "window_start": "2026-01-01T00:00:00Z",
+        "window_end": "2026-01-01T00:02:00Z",
+        "expected_intrabar": "OHLC",
+        "expected_slippage_pips_per_fill": 0.0,
+        "expected_financing_pips_per_day": 0.0,
+        "expected_corpus_sha256": manifest["corpus"]["corpus_sha256"],
+        "expected_bot_config_sha256": hashlib.sha256(config_json.encode()).hexdigest(),
+        "expected_strategy_owner_id": owner,
+        "expected_bot_module_sha256": manifest["bot"]["module_sha256"],
+        "expected_bot_dependency_sha256": manifest["bot"]["dependency_sha256"],
+        "expected_feed_pairs": ["CAD_JPY", "USD_JPY"],
+        "expected_max_concurrent_per_pair": 1,
+        "expected_global_max_concurrent": 2,
+    }
+    return ledger, arguments
+
+
+def _score_strict_mtm(ledger: Path, arguments: dict[str, object]) -> dict:
+    return score_ledger_metrics(ledger, **arguments)  # type: ignore[arg-type]
+
+
+def _mtm_rows(ledger: Path) -> list[dict]:
+    return [json.loads(line) for line in ledger.read_text().splitlines()]
+
+
+def _reseal_mtm_marks(rows: list[dict]) -> None:
+    previous_mark_sha = "0" * 64
+    terminal_mark: dict | None = None
+    for row in rows:
+        if row["event"] != "ACCOUNT_MARK":
+            continue
+        mark = row["payload"]
+        for state_name in ("account", "positions", "orders", "quotes"):
+            mark[f"{state_name}_sha256"] = _canonical_sha(mark[state_name])
+        mark["previous_mark_sha256"] = previous_mark_sha
+        mark_body = {key: value for key, value in mark.items() if key != "mark_sha256"}
+        mark["mark_sha256"] = _canonical_sha(mark_body)
+        previous_mark_sha = mark["mark_sha256"]
+        if mark["kind"] == "TERMINAL":
+            terminal_mark = mark
+    assert terminal_mark is not None
+    stop = rows[-1]["payload"]
+    stop["mtm_terminal_mark_sha256"] = terminal_mark["mark_sha256"]
+    stop["account"] = json.loads(json.dumps(terminal_mark["account"]))
+
+
+def test_coordinate_complete_mtm_contract_is_verified(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+
+    result = _score_strict_mtm(ledger, arguments)
+
+    assert result["mtm_complete"] is True
+    assert result["mtm_evidence_status"] == (
+        "VERIFIED_COORDINATE_COMPLETE_ACCOUNT_MARK_CHAIN"
+    )
+    assert result["mtm_mark_count"] == 10
+    assert result["mtm_max_drawdown_fraction"] is not None
+
+
+@pytest.mark.parametrize(
+    ("vehicle", "required_events"),
+    [
+        ("MARKET", {"FILL_MARKET", "SET_EXIT", "CLOSE"}),
+        ("LIMIT", {"ORDER_LIMIT", "FILL_LIMIT", "CLOSE"}),
+        ("STOP", {"ORDER_STOP", "FILL_LIMIT", "CLOSE"}),
+        ("CANCEL", {"ORDER_LIMIT", "ORDER_CANCEL"}),
+    ],
+)
+def test_mtm_verifier_reconstructs_order_and_exit_action_paths(
+    tmp_path: Path, vehicle: str, required_events: set[str]
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle=vehicle)
+    observed_events = {row["event"] for row in _mtm_rows(ledger)}
+
+    result = _score_strict_mtm(ledger, arguments)
+
+    assert required_events.issubset(observed_events)
+    assert result["mtm_complete"] is True
+    assert result["terminal_flat"] is True
+
+
+def test_mtm_contract_rejects_missing_phase_mark(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    phase_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["event"] == "ACCOUNT_MARK" and row["payload"]["kind"] == "PHASE"
+    )
+    del rows[phase_index]
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="MTM_CONTRACT_VIOLATION"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_partial_pair_batch(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    batch = next(row for row in rows if row["event"] == "QUOTE_BATCH_BEGIN")
+    batch["payload"]["batch_pairs"] = ["CAD_JPY"]
+    batch["payload"]["coverage_complete"] = False
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="MTM_CONTRACT_VIOLATION"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_quote_coordinate_mismatch(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    batch = next(row for row in rows if row["event"] == "QUOTE_BATCH_BEGIN")
+    batch["payload"]["quotes"][0]["ts"] = "2026-01-01T00:01:00+00:00#O"
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="MTM_CONTRACT_VIOLATION"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_bot_actions_moved_to_high_phase(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle="CANCEL")
+    rows = _mtm_rows(ledger)
+    moved = []
+    for owned_event in ("ORDER_LIMIT", "ORDER_CANCEL"):
+        index = next(
+            index for index, row in enumerate(rows) if row["event"] == owned_event
+        )
+        moved.append(rows.pop(index))
+    high_batch_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["event"] == "QUOTE_BATCH_BEGIN"
+        and row["payload"]["coordinate"]["phase"] == "H"
+        and row["payload"]["coordinate"]["epoch"] == 1_767_225_660
+    )
+    rows[high_batch_index + 1 : high_batch_index + 1] = moved
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="outside a causal O callback"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_new_order_filled_in_same_quote_batch(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle="LIMIT")
+    rows = _mtm_rows(ledger)
+    fill_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "FILL_LIMIT"
+    )
+    fill = rows.pop(fill_index)
+    order_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "ORDER_LIMIT"
+    )
+    rows.insert(order_index + 1, fill)
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(
+        DojoBotTrainerError, match="asynchronous broker event follows an O action"
+    ):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_omitted_touched_resting_fill_after_reseal(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle="LIMIT")
+    rows = _mtm_rows(ledger)
+    fill_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "FILL_LIMIT"
+    )
+    fill = rows.pop(fill_index)
+    next_mark = next(
+        row
+        for row in rows[fill_index:]
+        if row["event"] == "ACCOUNT_MARK" and row["payload"]["kind"] == "PHASE"
+    )["payload"]
+    order_event = next(row for row in rows if row["event"] == "ORDER_LIMIT")["payload"]
+    next_mark["positions"] = []
+    next_mark["orders"] = [
+        {
+            "order_id": order_event["order_id"],
+            "pair": order_event["pair"],
+            "side": order_event["side"],
+            "units": order_event["units"],
+            "limit_price": order_event["price"],
+            "tp_pips": order_event["tp_pips"],
+            "sl_pips": order_event["sl_pips"],
+            "kind": "LIMIT",
+        }
+    ]
+    next_mark["account"] = {
+        "balance_jpy": 200_000.0,
+        "equity_jpy": 200_000.0,
+        "margin_used_jpy": 0.0,
+        "margin_usage": 0.0,
+        "accrued_financing_jpy": 0.0,
+        "open_positions": 0,
+        "resting_orders": 1,
+    }
+    assert fill["payload"]["order_id"] == order_event["order_id"]
+    _reseal_mtm_marks(rows)
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="omits mandatory broker consequence"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_omitted_touched_losing_stop_after_reseal(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle="STOP_LOSS")
+    rows = _mtm_rows(ledger)
+    exit_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "EXIT_SL"
+    )
+    exit_row = rows.pop(exit_index)
+    prior_mark = next(
+        row["payload"]
+        for row in reversed(rows[:exit_index])
+        if row["event"] == "ACCOUNT_MARK" and row["payload"]["kind"] == "PHASE"
+    )
+    next_mark = next(
+        row["payload"]
+        for row in rows[exit_index:]
+        if row["event"] == "ACCOUNT_MARK" and row["payload"]["kind"] == "PHASE"
+    )
+    position = json.loads(json.dumps(prior_mark["positions"][0]))
+    quote = next(item for item in next_mark["quotes"] if item["pair"] == "USD_JPY")
+    entry = float(position["entry_price"])
+    units = float(position["units"])
+    equity = 200_000.0 + (float(quote["bid"]) - entry) * units
+    margin = units * ((float(quote["bid"]) + float(quote["ask"])) / 2.0) / 25.0
+    next_mark["positions"] = [position]
+    next_mark["account"] = {
+        "balance_jpy": 200_000.0,
+        "equity_jpy": round(equity, 2),
+        "margin_used_jpy": round(margin, 2),
+        "margin_usage": round(margin / equity, 6),
+        "accrued_financing_jpy": 0.0,
+        "open_positions": 1,
+        "resting_orders": 0,
+    }
+    assert float(exit_row["payload"]["pl_jpy"]) < 0
+    _reseal_mtm_marks(rows)
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="omits mandatory broker consequence"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_quote_not_present_in_sealed_corpus(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    batch = next(row for row in rows if row["event"] == "QUOTE_BATCH_BEGIN")
+    batch["payload"]["quotes"][0]["bid"] += 0.001
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="sealed corpus bytes"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_missing_sealed_corpus_shard(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    manifest = rows[0]["payload"]["reproducibility_manifest"]
+    root = Path(manifest["corpus"]["root"])
+    shard = root / manifest["corpus"]["shards"][0]["path"]
+    shard.unlink()
+
+    with pytest.raises(DojoBotTrainerError, match="corpus shard is unavailable"):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_self_consistent_false_account_mark(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    mark = next(
+        row
+        for row in rows
+        if row["event"] == "ACCOUNT_MARK" and row["payload"]["kind"] == "TERMINAL"
+    )
+    mark["payload"]["account"]["balance_jpy"] += 1_000.0
+    mark["payload"]["account"]["equity_jpy"] += 1_000.0
+    mark["payload"]["account_sha256"] = _canonical_sha(mark["payload"]["account"])
+    mark_body = {
+        key: value for key, value in mark["payload"].items() if key != "mark_sha256"
+    }
+    mark["payload"]["mark_sha256"] = _canonical_sha(mark_body)
+    rows[-1]["payload"]["account"] = json.loads(json.dumps(mark["payload"]["account"]))
+    rows[-1]["payload"]["mtm_terminal_mark_sha256"] = mark["payload"]["mark_sha256"]
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(
+        DojoBotTrainerError, match=r"account\.balance_jpy is not reconstructed"
+    ):
+        _score_strict_mtm(ledger, arguments)
+
+
+def test_mtm_contract_rejects_fake_terminal_claim(tmp_path: Path) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path)
+    rows = _mtm_rows(ledger)
+    rows[-1]["payload"]["mtm_terminal_mark_sha256"] = "f" * 64
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="MTM_CONTRACT_VIOLATION"):
+        _score_strict_mtm(ledger, arguments)
+
+
+@pytest.mark.parametrize(
+    ("vehicle", "owned_event"),
+    [
+        ("MARKET", "FILL_MARKET"),
+        ("MARKET", "SET_EXIT"),
+        ("LIMIT", "ORDER_LIMIT"),
+        ("STOP", "ORDER_STOP"),
+        ("CANCEL", "ORDER_CANCEL"),
+    ],
+)
+def test_mtm_contract_rejects_owned_action_owner_rewrite(
+    tmp_path: Path, vehicle: str, owned_event: str
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, vehicle=vehicle)
+    rows = _mtm_rows(ledger)
+    action = next(row for row in rows if row["event"] == owned_event)
+    action["payload"]["strategy_owner_id"] = "mtm:wrong-owner"
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="strategy owner"):
+        _score_strict_mtm(ledger, arguments)
