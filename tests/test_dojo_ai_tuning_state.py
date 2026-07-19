@@ -103,7 +103,9 @@ def _raw_proposal(candidate_id: str, seed: int) -> dict:
     }
 
 
-def _study(attempt: int, proposals: list[dict], *, stress_slippage: float = 0.3) -> dict:
+def _study(
+    attempt: int, proposals: list[dict], *, stress_slippage: float = 0.3
+) -> dict:
     study = {
         "contract": STUDY_CONTRACT,
         "schema_version": 1,
@@ -260,9 +262,7 @@ def _previous_kwargs(snapshot: CandidateLineageSnapshot) -> dict[str, object]:
     result = snapshot.results[-1]
     return {
         "previous_evaluation_sha256": result["evaluation_sha256"],
-        "previous_evaluation_artifact_sha256": result[
-            "evaluation_artifact_sha256"
-        ],
+        "previous_evaluation_artifact_sha256": result["evaluation_artifact_sha256"],
         "previous_evaluation_artifact_size_bytes": result[
             "evaluation_artifact_size_bytes"
         ],
@@ -291,7 +291,9 @@ def _baseline(
         expected_tip_sha256=snapshot.latest_event_sha256,
         event_at_utc="2026-07-20T00:00:01Z",
     )
-    evaluation_path = _write_json(root, "artifacts/evaluation-1.json", _evaluation(sealed))
+    evaluation_path = _write_json(
+        root, "artifacts/evaluation-1.json", _evaluation(sealed)
+    )
     snapshot = bind_result(
         events,
         artifact_root=root,
@@ -380,7 +382,9 @@ def _reserve_second_dispatch(
 def test_initialize_freezes_train_envelope_and_has_no_authority(tmp_path: Path) -> None:
     events, _, baseline, _ = _baseline(tmp_path)
 
-    state = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    state = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     status = status_artifact(state)
 
     assert state["phase"] == "READY_FOR_MODEL"
@@ -408,7 +412,9 @@ def test_public_lineage_apis_reverify_paths_and_bound_artifacts(tmp_path: Path) 
             sealed_study=baseline,
         )
 
-    state = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    state = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     evaluation_path.write_bytes(evaluation_path.read_bytes() + b" ")
     with pytest.raises(DojoAITuningStateError, match="lineage verification failed"):
         reserve_model_invocation(
@@ -422,9 +428,13 @@ def test_public_lineage_apis_reverify_paths_and_bound_artifacts(tmp_path: Path) 
         )
 
 
-def test_invalid_duplicate_empty_and_malformed_calls_consume_budget(tmp_path: Path) -> None:
+def test_one_model_invocation_charges_all_rows_and_rejects_a_second_call(
+    tmp_path: Path,
+) -> None:
     events, _, baseline, _ = _baseline(tmp_path)
-    state = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    state = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     state = reserve_model_invocation(
         state,
         lineage_events_dir=events,
@@ -448,54 +458,133 @@ def test_invalid_duplicate_empty_and_malformed_calls_consume_budget(tmp_path: Pa
         submissions=submissions,
         event_at_utc="2026-07-20T00:02:00Z",
     )
-    assert record_model_response(
-        state,
-        expected_parent_state_sha256=parent,
-        invocation_id="model-a2-1",
-        response_sha256="2" * 64,
-        submissions=submissions,
-        event_at_utc="2026-07-20T00:02:00Z",
-    ) == state
+    assert (
+        record_model_response(
+            state,
+            expected_parent_state_sha256=parent,
+            invocation_id="model-a2-1",
+            response_sha256="2" * 64,
+            submissions=submissions,
+            event_at_utc="2026-07-20T00:02:00Z",
+        )
+        == state
+    )
 
-    for ordinal, output in ((2, []), (3, "not-an-array")):
-        state = reserve_model_invocation(
+    with pytest.raises(
+        DojoAITuningStateError,
+        match="model invocation is not allowed from phase COLLECTING_PROPOSALS",
+    ):
+        reserve_model_invocation(
             state,
             lineage_events_dir=events,
             artifact_root=tmp_path,
             expected_parent_state_sha256=state["state_sha256"],
-            invocation_id=f"model-a2-{ordinal}",
-            request_sha256=str(ordinal + 1) * 64,
-            event_at_utc=f"2026-07-20T00:0{ordinal + 1}:00Z",
-        )
-        state = record_model_response(
-            state,
-            expected_parent_state_sha256=state["state_sha256"],
-            invocation_id=f"model-a2-{ordinal}",
-            response_sha256=str(ordinal + 2) * 64,
-            submissions=output,
-            event_at_utc=f"2026-07-20T00:0{ordinal + 2}:00Z",
+            invocation_id="model-a2-2",
+            request_sha256="3" * 64,
+            event_at_utc="2026-07-20T00:03:00Z",
         )
     status = status_artifact(state)
     assert status["attempts_consumed"] == 2
-    assert status["model_invocation_count"] == 3
-    assert status["proposal_slots_consumed"] == 6
-    assert status["invalid_proposal_count"] == 3
+    assert status["model_invocation_count"] == 1
+    assert status["proposal_slots_consumed"] == 4
+    assert status["invalid_proposal_count"] == 1
     assert status["duplicate_proposal_count"] == 1
     assert status["current_accepted_candidate_ids"] == ["qr-a2-new"]
+
+    forged = json.loads(json.dumps(state))
+    extra_invocation = json.loads(json.dumps(forged["attempts"][-1]["invocations"][0]))
+    extra_invocation["invocation_id"] = "forged-second-invocation"
+    forged["attempts"][-1]["invocations"].append(extra_invocation)
+    _rehash(forged)
+    with pytest.raises(
+        DojoAITuningStateError,
+        match="exactly one model invocation",
+    ):
+        verify_tuning_state(forged)
+
+    with pytest.raises(
+        DojoAITuningStateError,
+        match="not the exact immediate first invocation",
+    ):
+        reserve_model_invocation(
+            state,
+            lineage_events_dir=events,
+            artifact_root=tmp_path,
+            expected_parent_state_sha256=state["state_sha256"],
+            invocation_id="model-a2-1",
+            request_sha256="1" * 64,
+            event_at_utc="2026-07-20T00:01:00Z",
+        )
+
+
+@pytest.mark.parametrize("output", [[], "not-an-array"])
+def test_empty_or_malformed_single_model_response_consumes_one_slot(
+    tmp_path: Path, output: object
+) -> None:
+    root = tmp_path / ("empty" if output == [] else "malformed")
+    events, _, baseline, _ = _baseline(root)
+    state = initialize_tuning_state(events, artifact_root=root, sealed_study=baseline)
+    parent = state["state_sha256"]
+    reserved = reserve_model_invocation(
+        state,
+        lineage_events_dir=events,
+        artifact_root=root,
+        expected_parent_state_sha256=parent,
+        invocation_id="single-model-a2",
+        request_sha256="1" * 64,
+        event_at_utc="2026-07-20T00:01:00Z",
+    )
+    assert (
+        reserve_model_invocation(
+            reserved,
+            lineage_events_dir=events,
+            artifact_root=root,
+            expected_parent_state_sha256=parent,
+            invocation_id="single-model-a2",
+            request_sha256="1" * 64,
+            event_at_utc="2026-07-20T00:01:00Z",
+        )
+        == reserved
+    )
+    state = record_model_response(
+        reserved,
+        expected_parent_state_sha256=reserved["state_sha256"],
+        invocation_id="single-model-a2",
+        response_sha256="2" * 64,
+        submissions=output,
+        event_at_utc="2026-07-20T00:02:00Z",
+    )
+    status = status_artifact(state)
+    assert status["model_invocation_count"] == 1
+    assert status["proposal_slots_consumed"] == 2
+    assert status["invalid_proposal_count"] == 1
+    with pytest.raises(DojoAITuningStateError, match="COLLECTING_PROPOSALS"):
+        reserve_model_invocation(
+            state,
+            lineage_events_dir=events,
+            artifact_root=root,
+            expected_parent_state_sha256=state["state_sha256"],
+            invocation_id="forbidden-second-model-a2",
+            request_sha256="3" * 64,
+            event_at_utc="2026-07-20T00:03:00Z",
+        )
 
 
 def test_dispatch_crosschecks_study_and_accepted_submissions(tmp_path: Path) -> None:
     state, events, _, second = _reserve_second_dispatch(tmp_path)
     assert state["phase"] == "RUN_DISPATCH_RESERVED"
-    assert reserve_run_dispatch(
-        state,
-        lineage_events_dir=events,
-        artifact_root=tmp_path,
-        expected_parent_state_sha256=state["previous_state_sha256"],
-        sealed_study=second,
-        dispatch_id="run-a2",
-        event_at_utc="2026-07-20T00:03:00Z",
-    ) == state
+    assert (
+        reserve_run_dispatch(
+            state,
+            lineage_events_dir=events,
+            artifact_root=tmp_path,
+            expected_parent_state_sha256=state["previous_state_sha256"],
+            sealed_study=second,
+            dispatch_id="run-a2",
+            event_at_utc="2026-07-20T00:03:00Z",
+        )
+        == state
+    )
 
     forged = json.loads(json.dumps(state))
     forged["attempts"][-1]["dispatch"]["candidate_ids"] = ["qr-forged"]
@@ -504,9 +593,9 @@ def test_dispatch_crosschecks_study_and_accepted_submissions(tmp_path: Path) -> 
         verify_tuning_state(forged)
 
     forged = json.loads(json.dumps(state))
-    forged["attempts"][-1]["dispatch"]["prior_result_binding"][
-        "evaluation_sha256"
-    ] = "9" * 64
+    forged["attempts"][-1]["dispatch"]["prior_result_binding"]["evaluation_sha256"] = (
+        "9" * 64
+    )
     _rehash(forged)
     with pytest.raises(DojoAITuningStateError, match="prior-result"):
         verify_tuning_state(forged)
@@ -524,7 +613,9 @@ def test_prior_result_chain_fork_is_rejected_after_rehash(tmp_path: Path) -> Non
 
 def test_terminal_bind_requires_dispatch_and_is_idempotent(tmp_path: Path) -> None:
     reserved, events, pending, second = _reserve_second_dispatch(tmp_path)
-    evaluation_path = _write_json(tmp_path, "artifacts/evaluation-2.json", _evaluation(second))
+    evaluation_path = _write_json(
+        tmp_path, "artifacts/evaluation-2.json", _evaluation(second)
+    )
     complete = bind_result(
         events,
         artifact_root=tmp_path,
@@ -575,21 +666,29 @@ def test_terminal_bind_requires_dispatch_and_is_idempotent(tmp_path: Path) -> No
         event_at_utc="2026-07-20T00:06:00Z",
     )
     assert bound["phase"] == "READY_FOR_MODEL"
-    assert bound["last_terminal_result_binding"]["result_event_sha256"] == (
-        complete.events[-1]["event_sha256"]
+    assert (
+        bound["last_terminal_result_binding"]["result_event_sha256"]
+        == (complete.events[-1]["event_sha256"])
     )
-    assert bind_terminal_evaluation(
-        bound,
-        lineage_events_dir=other_events,
-        artifact_root=other_root,
-        expected_parent_state_sha256=parent,
-        event_at_utc="2026-07-20T00:06:00Z",
-    ) == bound
+    assert (
+        bind_terminal_evaluation(
+            bound,
+            lineage_events_dir=other_events,
+            artifact_root=other_root,
+            expected_parent_state_sha256=parent,
+            event_at_utc="2026-07-20T00:06:00Z",
+        )
+        == bound
+    )
 
 
-def test_cas_and_backward_time_reject_parallel_or_reordered_transition(tmp_path: Path) -> None:
+def test_cas_and_backward_time_reject_parallel_or_reordered_transition(
+    tmp_path: Path,
+) -> None:
     events, _, baseline, _ = _baseline(tmp_path)
-    genesis = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    genesis = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     child = reserve_model_invocation(
         genesis,
         lineage_events_dir=events,
@@ -622,7 +721,9 @@ def test_cas_and_backward_time_reject_parallel_or_reordered_transition(tmp_path:
 
 def test_incomplete_run_consumes_attempt_and_review_transition(tmp_path: Path) -> None:
     events, _, baseline, _ = _baseline(tmp_path)
-    state = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    state = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     state = reserve_model_invocation(
         state,
         lineage_events_dir=events,
@@ -640,12 +741,15 @@ def test_incomplete_run_consumes_attempt_and_review_transition(tmp_path: Path) -
         event_at_utc="2026-07-20T00:02:00Z",
     )
     assert status_artifact(incomplete)["attempts_consumed"] == 2
-    assert mark_incomplete_run(
-        incomplete,
-        expected_parent_state_sha256=parent,
-        reason_code="MODEL_RESPONSE_LOST_AFTER_RESERVATION",
-        event_at_utc="2026-07-20T00:02:00Z",
-    ) == incomplete
+    assert (
+        mark_incomplete_run(
+            incomplete,
+            expected_parent_state_sha256=parent,
+            reason_code="MODEL_RESPONSE_LOST_AFTER_RESERVATION",
+            event_at_utc="2026-07-20T00:02:00Z",
+        )
+        == incomplete
+    )
     abandoned = abandon_incomplete_lineage(
         incomplete,
         expected_parent_state_sha256=incomplete["state_sha256"],
@@ -693,12 +797,15 @@ def test_append_only_store_cas_replay_and_corruption_detection(tmp_path: Path) -
         expected_tip_event_sha256=parent_tip,
         expected_parent_state_sha256=genesis["state_sha256"],
     )
-    assert append_state_transition(
-        store,
-        child_a,
-        expected_tip_event_sha256=parent_tip,
-        expected_parent_state_sha256=genesis["state_sha256"],
-    ) == stored
+    assert (
+        append_state_transition(
+            store,
+            child_a,
+            expected_tip_event_sha256=parent_tip,
+            expected_parent_state_sha256=genesis["state_sha256"],
+        )
+        == stored
+    )
     with pytest.raises(DojoAITuningStateError, match="stale or forked"):
         append_state_transition(
             store,
@@ -709,7 +816,9 @@ def test_append_only_store_cas_replay_and_corruption_detection(tmp_path: Path) -
 
     event_path = store / "000001.json"
     raw = event_path.read_text(encoding="utf-8")
-    event_path.write_text(raw.replace("model-child-a", "model-child-z"), encoding="utf-8")
+    event_path.write_text(
+        raw.replace("model-child-a", "model-child-z"), encoding="utf-8"
+    )
     with pytest.raises(DojoAITuningStateError, match="digest mismatch"):
         verify_state_store(store)
 
@@ -718,7 +827,9 @@ def test_self_signed_authority_upgrade_is_rejected_even_with_new_digest(
     tmp_path: Path,
 ) -> None:
     events, _, baseline, _ = _baseline(tmp_path)
-    state = initialize_tuning_state(events, artifact_root=tmp_path, sealed_study=baseline)
+    state = initialize_tuning_state(
+        events, artifact_root=tmp_path, sealed_study=baseline
+    )
     forged = json.loads(json.dumps(state))
     forged["live_permission"] = True
     _rehash(forged)

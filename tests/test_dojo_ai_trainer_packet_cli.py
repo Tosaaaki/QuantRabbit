@@ -12,13 +12,25 @@ from quant_rabbit.dojo_ai_trainer_packet import (
     canonical_packet_bytes,
     verify_trainer_packet,
 )
-from quant_rabbit.dojo_ai_tuning_state import initialize_state_store
-from quant_rabbit.dojo_candidate_lineage_registry import verify_registry
+from quant_rabbit.dojo_ai_tuning_state import (
+    initialize_state_store,
+    initialize_tuning_state,
+)
+from quant_rabbit.dojo_candidate_lineage_registry import (
+    initialize_registry,
+    seal_study_attempt,
+    verify_registry,
+)
+from quant_rabbit.dojo_terminal_handoff import (
+    ABSENT_CAS_TOKEN,
+    LINEAGE_PRESENT_AT_HANDOFF,
+    coordinate_terminal_handoff,
+)
 from tests.test_dojo_ai_trainer_packet import (
-    _bind_inputs,
     _canonical_sha,
     _cells,
     _evaluation,
+    _run,
     _sealed_study,
 )
 
@@ -86,15 +98,57 @@ def _fixture(root: Path) -> dict:
     sealed = _sealed_study()
     cells = _cells(sealed)
     evaluation = _evaluation(sealed)
-    inputs = _bind_inputs(root, sealed=sealed, evaluation=evaluation, cells=cells)
-    store = root / "tuning-state-events"
-    stored = initialize_state_store(store, inputs["tuning_state"])
-    lineage = verify_registry(inputs["lineage_events_dir"], artifact_root=root)
-    run_path = _write_json(root / "packet-inputs" / "run.json", inputs["run"])
+    run = _run(sealed, evaluation, cells)
+    study_path = _write_json(root / "artifacts" / "study.json", sealed)
+    run_path = _write_json(root / "packet-inputs" / "run.json", run)
     evaluation_path = _write_json(
         root / "packet-inputs" / "evaluation.json", evaluation
     )
     cells_path = _write_json(root / "packet-inputs" / "cells.json", cells)
+    lineage_events = root / "lineage-events"
+    snapshot = initialize_registry(
+        lineage_events,
+        artifact_root=root,
+        registry_id="qr-packet-cli-lineage",
+        lineage_prefix="qr-",
+        created_by="pytest",
+        event_at_utc="2026-07-20T00:00:00Z",
+    )
+    snapshot = seal_study_attempt(
+        lineage_events,
+        artifact_root=root,
+        sealed_study_path=study_path,
+        expected_tip_sha256=snapshot.latest_event_sha256,
+        event_at_utc="2026-07-20T00:00:01Z",
+    )
+    handoff_receipts = root / "handoff-receipts"
+    handoff = coordinate_terminal_handoff(
+        terminal_dir=run_path.parent,
+        sealed_study_path=study_path,
+        lineage_events_dir=lineage_events,
+        artifact_root=root,
+        receipt_events_dir=handoff_receipts,
+        expected_lineage_tip_sha256=snapshot.latest_event_sha256,
+        expected_receipt_tip_sha256=ABSENT_CAS_TOKEN,
+        binding_timing_classification=LINEAGE_PRESENT_AT_HANDOFF,
+        event_at_utc="2026-07-20T00:00:02Z",
+    )
+    lineage = verify_registry(lineage_events, artifact_root=root)
+    tuning_state = initialize_tuning_state(
+        lineage_events,
+        artifact_root=root,
+        sealed_study=sealed,
+    )
+    store = root / "tuning-state-events"
+    stored = initialize_state_store(store, tuning_state)
+    inputs = {
+        "run": run,
+        "evaluation": evaluation,
+        "cells": cells,
+        "lineage_events_dir": lineage_events,
+        "artifact_root": root,
+        "tuning_state": tuning_state,
+    }
     drive_refs = [
         {
             "artifact_kind": "REPORT",
@@ -112,6 +166,8 @@ def _fixture(root: Path) -> dict:
         "store": store,
         "store_snapshot": stored,
         "lineage": lineage,
+        "handoff_receipts": handoff_receipts,
+        "handoff": handoff,
         "run_path": run_path,
         "evaluation_path": evaluation_path,
         "cells_path": cells_path,
@@ -140,6 +196,10 @@ def _arguments(fixture: dict, output: Path) -> tuple[object, ...]:
         stored["latest_event_sha256"],
         "--expected-tuning-state-sha256",
         stored["latest_state"]["state_sha256"],
+        "--handoff-receipt-events",
+        fixture["handoff_receipts"],
+        "--expected-handoff-receipt-tip-sha256",
+        fixture["handoff"]["receipt_sha256"],
         "--drive-evidence-refs-artifact",
         fixture["drive_path"],
         "--output",
@@ -159,6 +219,10 @@ def test_cli_writes_exact_canonical_packet_exclusively(tmp_path: Path) -> None:
     assert receipt["output_sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
     assert receipt["output_size_bytes"] == output.stat().st_size
     assert receipt["classification"] == "WORN_HISTORICAL_TRAIN_DIAGNOSTIC_ONLY"
+    assert (
+        receipt["terminal_handoff_receipt_sha256"]
+        == fixture["handoff"]["receipt_sha256"]
+    )
     serialized = output.read_text(encoding="utf-8")
     assert "ledger.jsonl" not in serialized
     assert "cells_path" not in serialized
@@ -180,7 +244,7 @@ def test_partial_authority_and_unverified_drive_inputs_fail_before_output(
     )
     partial_output = fixture["root"] / "partial-packet.json"
     rejected = _rejected(_invoke(*_arguments(fixture, partial_output)))
-    assert "partial or best-only" in rejected["error"]
+    assert "does not bind exact cells artifact bytes" in rejected["error"]
     assert not partial_output.exists()
 
     fixture["cells_path"] = _write_json(
@@ -197,7 +261,7 @@ def test_partial_authority_and_unverified_drive_inputs_fail_before_output(
     )
     authority_output = fixture["root"] / "authority-packet.json"
     rejected = _rejected(_invoke(*_arguments(fixture, authority_output)))
-    assert "research authority" in rejected["error"]
+    assert "does not bind exact run artifact bytes" in rejected["error"]
     assert not authority_output.exists()
 
     fixture["run_path"] = _write_json(
@@ -250,3 +314,50 @@ def test_cli_rejects_stale_bindings_duplicate_json_and_symlink_output(
     rejected = _rejected(_invoke(*_arguments(fixture, output)))
     assert "already exists" in rejected["error"]
     assert outside.read_text(encoding="utf-8") == "do not overwrite"
+
+
+def test_result_bound_without_handoff_receipt_never_generates_packet(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path / "missing-handoff")
+    output = fixture["root"] / "forbidden-packet.json"
+    empty_store = fixture["root"] / "empty-handoff-store"
+    empty_store.mkdir()
+    args = list(_arguments(fixture, output))
+    events_index = args.index("--handoff-receipt-events") + 1
+    args[events_index] = empty_store
+
+    rejected = _rejected(_invoke(*args))
+
+    assert "has no full-bundle hand-off receipt" in rejected["error"]
+    assert not output.exists()
+    lineage = verify_registry(
+        fixture["inputs"]["lineage_events_dir"], artifact_root=fixture["root"]
+    )
+    assert lineage.events[-1]["event_type"] == "RESULT_BOUND"
+
+
+def test_cli_requires_current_handoff_tip_and_exact_evaluation_bytes(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path / "handoff-cas")
+    output = fixture["root"] / "handoff-cas-packet.json"
+    stale_args = list(_arguments(fixture, output))
+    tip_index = stale_args.index("--expected-handoff-receipt-tip-sha256") + 1
+    stale_args[tip_index] = "0" * 64
+    rejected = _rejected(_invoke(*stale_args))
+    assert "stale or forked terminal hand-off receipt tip" in rejected["error"]
+    assert not output.exists()
+
+    evaluation = json.loads(fixture["evaluation_path"].read_text(encoding="utf-8"))
+    alternate_evaluation = (
+        fixture["root"] / "packet-inputs" / "alternate-evaluation.json"
+    )
+    alternate_evaluation.write_text(
+        json.dumps(evaluation, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    fixture["evaluation_path"] = alternate_evaluation
+    rejected = _rejected(_invoke(*_arguments(fixture, output)))
+    assert "does not bind exact evaluation artifact bytes" in rejected["error"]
+    assert not output.exists()

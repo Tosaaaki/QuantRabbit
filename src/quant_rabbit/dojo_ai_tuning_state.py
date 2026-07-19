@@ -348,10 +348,11 @@ def reserve_model_invocation(
 ) -> dict[str, Any]:
     """Reserve one model call before external dispatch.
 
-    Replaying the same invocation id and request is an idempotent no-op.  A
-    reserved invocation must be completed or sent to incomplete-run review;
-    callers must never dispatch the model a second time merely because its
-    response was lost.
+    Each tuning attempt permits exactly one model invocation.  Replaying that
+    first reservation from its exact parent with the same invocation id and
+    request is an idempotent no-op.  Once a response is recorded, callers must
+    dispatch its accepted candidates or send the attempt to review; they cannot
+    buy another model search inside the same attempt.
     """
 
     value = verify_tuning_state(state)
@@ -368,40 +369,41 @@ def reserve_model_invocation(
             raise DojoAITuningStateError(
                 "invocation id replay changed the model request"
             )
+        if (
+            cas_mode != "REPLAY_LAST"
+            or value["phase"] != "MODEL_INVOCATION_RESERVED"
+            or existing["response_sha256"] is not None
+        ):
+            raise DojoAITuningStateError(
+                "model reservation replay is not the exact immediate first invocation"
+            )
         return value
     _require_current_cas(cas_mode)
-    if value["phase"] not in {"READY_FOR_MODEL", "COLLECTING_PROPOSALS"}:
+    if value["phase"] != "READY_FOR_MODEL":
         raise DojoAITuningStateError(
             f"model invocation is not allowed from phase {value['phase']}"
+        )
+    if _current_attempt(value) is not None:
+        raise DojoAITuningStateError(
+            "model invocation requires no active AI tuning attempt"
         )
     if _proposal_slots_used(value) >= MAX_PROPOSAL_SLOTS:
         raise DojoAITuningStateError("proposal budget is exhausted")
 
     updated = _clone(value)
-    attempt = _current_attempt(updated)
-    if attempt is None:
-        ordinal = _attempts_used(updated) + 1
-        if ordinal > MAX_ATTEMPTS:
-            raise DojoAITuningStateError("attempt budget is exhausted")
-        attempt = {
-            "attempt_ordinal": ordinal,
-            "prior_result_binding": _clone(
-                updated["last_terminal_result_binding"]
-            ),
-            "envelope_sha256": updated["fixed_envelope_sha256"],
-            "phase": "MODEL_INVOCATION_RESERVED",
-            "invocations": [],
-            "dispatch": None,
-            "terminal": None,
-        }
-        updated["attempts"].append(attempt)
-    elif any(
-        invocation["response_sha256"] is None
-        for invocation in attempt["invocations"]
-    ):
-        raise DojoAITuningStateError(
-            "an earlier model invocation remains reserved without a response"
-        )
+    ordinal = _attempts_used(updated) + 1
+    if ordinal > MAX_ATTEMPTS:
+        raise DojoAITuningStateError("attempt budget is exhausted")
+    attempt = {
+        "attempt_ordinal": ordinal,
+        "prior_result_binding": _clone(updated["last_terminal_result_binding"]),
+        "envelope_sha256": updated["fixed_envelope_sha256"],
+        "phase": "MODEL_INVOCATION_RESERVED",
+        "invocations": [],
+        "dispatch": None,
+        "terminal": None,
+    }
+    updated["attempts"].append(attempt)
     attempt["invocations"].append(
         {
             "invocation_id": invocation_key,
@@ -780,7 +782,10 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
     body = {key: value for key, value in row.items() if key != "state_sha256"}
     if _canonical_sha(body) != claimed:
         raise DojoAITuningStateError("tuning state digest mismatch")
-    if row["max_attempts"] != MAX_ATTEMPTS or row["max_proposal_slots"] != MAX_PROPOSAL_SLOTS:
+    if (
+        row["max_attempts"] != MAX_ATTEMPTS
+        or row["max_proposal_slots"] != MAX_PROPOSAL_SLOTS
+    ):
         raise DojoAITuningStateError("tuning search budget drifted")
     for key, expected in _AUTHORITY.items():
         if row[key] != expected:
@@ -797,9 +802,7 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
     else:
         _sha(row["previous_state_sha256"], "previous_state_sha256")
     initialized_at = _utc(row["initialized_at_utc"], "initialized_at_utc")
-    last_transition_at = _utc(
-        row["last_transition_at_utc"], "last_transition_at_utc"
-    )
+    last_transition_at = _utc(row["last_transition_at_utc"], "last_transition_at_utc")
     if _parse_utc_value(last_transition_at) < _parse_utc_value(initialized_at):
         raise DojoAITuningStateError("state transition clock predates initialization")
     initial_attempts = _integer(
@@ -814,7 +817,10 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
     if not 1 <= initial_slots <= MAX_PROPOSAL_SLOTS:
         raise DojoAITuningStateError("initial proposal count is out of range")
     binding = _verify_result_binding(row["last_terminal_result_binding"])
-    if binding["registry_id"] != row["registry_id"] or binding["lineage_prefix"] != row["lineage_prefix"]:
+    if (
+        binding["registry_id"] != row["registry_id"]
+        or binding["lineage_prefix"] != row["lineage_prefix"]
+    ):
         raise DojoAITuningStateError("terminal result registry identity drifted")
 
     attempts_raw = row["attempts"]
@@ -870,8 +876,7 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
                 or result_binding["attempt_ordinal"] != attempt["attempt_ordinal"]
                 or attempt["dispatch"] is None
                 or attempt["dispatch"]["status"] != "DISPATCHED"
-                or result_binding["study_sha256"]
-                != attempt["dispatch"]["study_sha256"]
+                or result_binding["study_sha256"] != attempt["dispatch"]["study_sha256"]
             ):
                 raise DojoAITuningStateError(
                     "attempt terminal result does not bind its dispatched study"
@@ -890,7 +895,9 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
             "initial result binding does not match consumed attempts"
         )
     if revision != _expected_revision(row):
-        raise DojoAITuningStateError("state revision diverges from recorded transitions")
+        raise DojoAITuningStateError(
+            "state revision diverges from recorded transitions"
+        )
     if _attempts_used(row) > MAX_ATTEMPTS:
         raise DojoAITuningStateError("attempt budget exceeded")
     global_identities = _sha_list(
@@ -900,7 +907,9 @@ def verify_tuning_state(state: Mapping[str, Any]) -> dict[str, Any]:
     if global_identities != sorted(global_identities):
         raise DojoAITuningStateError("global executable identities are not sorted")
     if not accepted_identities.issubset(set(global_identities)):
-        raise DojoAITuningStateError("accepted proposal identity is not globally burned")
+        raise DojoAITuningStateError(
+            "accepted proposal identity is not globally burned"
+        )
     if len(global_identities) != initial_slots + len(accepted_identities):
         raise DojoAITuningStateError(
             "accepted executable identity repeats a pre-existing lineage identity"
@@ -999,12 +1008,8 @@ def append_state_transition(
     """
 
     value = verify_tuning_state(state)
-    expected_tip = _sha(
-        expected_tip_event_sha256, "expected_tip_event_sha256"
-    )
-    expected_parent = _sha(
-        expected_parent_state_sha256, "expected_parent_state_sha256"
-    )
+    expected_tip = _sha(expected_tip_event_sha256, "expected_tip_event_sha256")
+    expected_parent = _sha(expected_parent_state_sha256, "expected_parent_state_sha256")
     snapshot = verify_state_store(Path(events_dir))
     latest_event = snapshot["latest_event"]
     latest_state = snapshot["latest_state"]
@@ -1046,9 +1051,7 @@ def append_state_transition(
     )
     directory_fd = _open_state_store_directory(Path(events_dir), create=False)
     try:
-        _write_store_event_exclusive(
-            directory_fd, f"{sequence:06d}.json", event
-        )
+        _write_store_event_exclusive(directory_fd, f"{sequence:06d}.json", event)
     finally:
         os.close(directory_fd)
     return verify_state_store(Path(events_dir))
@@ -1104,7 +1107,9 @@ def verify_state_store(events_dir: Path) -> dict[str, Any]:
             if _parse_utc_value(
                 current_state["last_transition_at_utc"]
             ) < _parse_utc_value(previous_state["last_transition_at_utc"]):
-                raise DojoAITuningStateError("state-store transition clock moved backward")
+                raise DojoAITuningStateError(
+                    "state-store transition clock moved backward"
+                )
         verified_events.append(event)
         previous_event_sha = event["event_sha256"]
         previous_state = current_state
@@ -1172,11 +1177,15 @@ def _derive_dispatch(
         raise DojoAITuningStateError("dispatch has no valid unique AI proposal")
     by_candidate = {row["candidate_id"]: row for row in accepted}
     candidate_ids = list(latest_study["candidate_ids"])
-    if set(candidate_ids) != set(by_candidate) or len(candidate_ids) != len(by_candidate):
+    if set(candidate_ids) != set(by_candidate) or len(candidate_ids) != len(
+        by_candidate
+    ):
         raise DojoAITuningStateError(
             "lineage study candidate denominator differs from accepted AI proposals"
         )
-    proposal_sha256s = [by_candidate[candidate]["proposal_sha256"] for candidate in candidate_ids]
+    proposal_sha256s = [
+        by_candidate[candidate]["proposal_sha256"] for candidate in candidate_ids
+    ]
     identities = [
         by_candidate[candidate]["executable_identity_sha256"]
         for candidate in candidate_ids
@@ -1248,8 +1257,7 @@ def _require_reserved_dispatch_lineage(
         or study["previous_attempt_evaluation_binding"]
         != _previous_triple(attempt["prior_result_binding"])
         or dispatch["candidate_ids"] != list(study["candidate_ids"])
-        or sorted(dispatch["proposal_sha256s"])
-        != list(study["proposal_sha256s"])
+        or sorted(dispatch["proposal_sha256s"]) != list(study["proposal_sha256s"])
         or sorted(dispatch["executable_identity_sha256s"])
         != list(study["config_sha256s"])
     ):
@@ -1277,7 +1285,9 @@ def _verify_attempt_dispatch_crosscheck(
         or dispatch["envelope_sha256"] != attempt["envelope_sha256"]
         or dispatch["envelope_sha256"] != envelope_sha256
     ):
-        raise DojoAITuningStateError("dispatch prior-result or envelope binding drifted")
+        raise DojoAITuningStateError(
+            "dispatch prior-result or envelope binding drifted"
+        )
     accepted = _accepted_rows(attempt)
     candidate_ids = [row["candidate_id"] for row in accepted]
     if any(candidate is None for candidate in candidate_ids) or len(
@@ -1285,10 +1295,9 @@ def _verify_attempt_dispatch_crosscheck(
     ) != len(candidate_ids):
         raise DojoAITuningStateError("accepted candidate identity is ambiguous")
     by_candidate = {row["candidate_id"]: row for row in accepted}
-    if (
-        len(dispatch["candidate_ids"]) != len(by_candidate)
-        or set(dispatch["candidate_ids"]) != set(by_candidate)
-    ):
+    if len(dispatch["candidate_ids"]) != len(by_candidate) or set(
+        dispatch["candidate_ids"]
+    ) != set(by_candidate):
         raise DojoAITuningStateError(
             "dispatch candidate set differs from accepted submissions"
         )
@@ -1392,9 +1401,7 @@ def _normalize_submission_input(value: Any) -> dict[str, Any]:
     proposal = _json_value(row["proposal"], "proposal")
     return {
         "submission_id": _identifier(row["submission_id"], "submission_id"),
-        "raw_proposal_sha256": _sha(
-            row["raw_proposal_sha256"], "raw_proposal_sha256"
-        ),
+        "raw_proposal_sha256": _sha(row["raw_proposal_sha256"], "raw_proposal_sha256"),
         "proposal": proposal,
         "validation_errors": errors,
     }
@@ -1409,9 +1416,7 @@ def _chargeable_submission_inputs(
 ) -> list[dict[str, Any]]:
     """Turn malformed model output into durable, budget-consuming records."""
 
-    if not isinstance(value, Sequence) or isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return [
             _malformed_submission(
                 value,
@@ -1564,9 +1569,7 @@ def _load_verified_lineage(
 
 def _verified_lineage_identity(lineage: CandidateLineageSnapshot) -> None:
     if not isinstance(lineage, CandidateLineageSnapshot):
-        raise DojoAITuningStateError(
-            "a verified CandidateLineageSnapshot is required"
-        )
+        raise DojoAITuningStateError("a verified CandidateLineageSnapshot is required")
     _identifier(lineage.registry_id, "registry_id")
     _identifier(lineage.lineage_prefix, "lineage_prefix")
     _sha(lineage.latest_event_sha256, "latest_event_sha256")
@@ -1585,9 +1588,7 @@ def _previous_triple(binding: Mapping[str, Any]) -> dict[str, Any]:
         "attempt_ordinal": binding["attempt_ordinal"],
         "evaluation_sha256": binding["evaluation_sha256"],
         "evaluation_artifact_sha256": binding["evaluation_artifact_sha256"],
-        "evaluation_artifact_size_bytes": binding[
-            "evaluation_artifact_size_bytes"
-        ],
+        "evaluation_artifact_size_bytes": binding["evaluation_artifact_size_bytes"],
     }
 
 
@@ -1628,13 +1629,9 @@ def _verify_result_binding(value: Any) -> dict[str, Any]:
     normalized = {
         "registry_id": _identifier(row["registry_id"], "registry_id"),
         "lineage_prefix": _identifier(row["lineage_prefix"], "lineage_prefix"),
-        "attempt_ordinal": _positive_integer(
-            row["attempt_ordinal"], "attempt_ordinal"
-        ),
+        "attempt_ordinal": _positive_integer(row["attempt_ordinal"], "attempt_ordinal"),
         "study_sha256": _sha(row["study_sha256"], "study_sha256"),
-        "evaluation_sha256": _sha(
-            row["evaluation_sha256"], "evaluation_sha256"
-        ),
+        "evaluation_sha256": _sha(row["evaluation_sha256"], "evaluation_sha256"),
         "evaluation_artifact_sha256": _sha(
             row["evaluation_artifact_sha256"],
             "evaluation_artifact_sha256",
@@ -1643,15 +1640,11 @@ def _verify_result_binding(value: Any) -> dict[str, Any]:
             row["evaluation_artifact_size_bytes"],
             "evaluation_artifact_size_bytes",
         ),
-        "result_event_sha256": _sha(
-            row["result_event_sha256"], "result_event_sha256"
-        ),
+        "result_event_sha256": _sha(row["result_event_sha256"], "result_event_sha256"),
         "result_event_sequence": _integer(
             row["result_event_sequence"], "result_event_sequence"
         ),
-        "lineage_tip_sha256": _sha(
-            row["lineage_tip_sha256"], "lineage_tip_sha256"
-        ),
+        "lineage_tip_sha256": _sha(row["lineage_tip_sha256"], "lineage_tip_sha256"),
     }
     if normalized != row:
         raise DojoAITuningStateError("result binding is not canonical")
@@ -1663,8 +1656,10 @@ def _verify_attempt(value: Any) -> dict[str, Any]:
     _positive_integer(row["attempt_ordinal"], "attempt_ordinal")
     _verify_result_binding(row["prior_result_binding"])
     _sha(row["envelope_sha256"], "envelope_sha256")
-    if not isinstance(row["invocations"], list) or not row["invocations"]:
-        raise DojoAITuningStateError("AI attempt must contain a model invocation")
+    if not isinstance(row["invocations"], list) or len(row["invocations"]) != 1:
+        raise DojoAITuningStateError(
+            "AI attempt must contain exactly one model invocation"
+        )
     for invocation in row["invocations"]:
         _verify_invocation(invocation)
     if row["dispatch"] is not None:
@@ -1680,8 +1675,7 @@ def _verify_attempt_phase(attempt: Mapping[str, Any]) -> None:
     dispatch = attempt["dispatch"]
     terminal = attempt["terminal"]
     incomplete_invocation = any(
-        invocation["response_sha256"] is None
-        for invocation in attempt["invocations"]
+        invocation["response_sha256"] is None for invocation in attempt["invocations"]
     )
     if phase == "MODEL_INVOCATION_RESERVED":
         valid = incomplete_invocation and dispatch is None and terminal is None
@@ -1705,13 +1699,8 @@ def _verify_attempt_phase(attempt: Mapping[str, Any]) -> None:
         valid = terminal is not None and terminal["status"] == "LINEAGE_RESULT_BOUND"
     elif phase == "REVIEW_REQUIRED":
         valid = (
-            terminal is not None
-            and terminal["status"] == "INCOMPLETE_REVIEW_REQUIRED"
-        ) or (
-            terminal is None
-            and not incomplete_invocation
-            and dispatch is None
-        )
+            terminal is not None and terminal["status"] == "INCOMPLETE_REVIEW_REQUIRED"
+        ) or (terminal is None and not incomplete_invocation and dispatch is None)
     elif phase == "ABANDONED_AFTER_REVIEW":
         valid = terminal is not None and terminal["status"] == "ABANDONED_AFTER_REVIEW"
     else:
@@ -1728,8 +1717,7 @@ def _verify_invocation(value: Any) -> dict[str, Any]:
     if row["response_sha256"] is None:
         if (
             row["response_input_sha256"] is not None
-            or
-            row["response_recorded_at_utc"] is not None
+            or row["response_recorded_at_utc"] is not None
             or row["proposal_slot_charge"] != 0
             or row["submissions"] != []
         ):
@@ -1860,11 +1848,13 @@ def _verify_top_phase(state: Mapping[str, Any]) -> None:
     elif attempt is None:
         raise DojoAITuningStateError("active phase lacks an active attempt")
     elif state["phase"] != attempt["phase"] and not (
-        state["phase"] == "TERMINATED"
-        and attempt["phase"] == "ABANDONED_AFTER_REVIEW"
+        state["phase"] == "TERMINATED" and attempt["phase"] == "ABANDONED_AFTER_REVIEW"
     ):
         raise DojoAITuningStateError("top and attempt phases diverged")
-    if state["phase"] not in {"REVIEW_REQUIRED", "TERMINATED"} and state["terminal_reason"] is not None:
+    if (
+        state["phase"] not in {"REVIEW_REQUIRED", "TERMINATED"}
+        and state["terminal_reason"] is not None
+    ):
         raise DojoAITuningStateError("non-review state carries a terminal reason")
     if state["phase"] == "REVIEW_REQUIRED":
         assert attempt is not None
@@ -1880,9 +1870,8 @@ def _verify_top_phase(state: Mapping[str, Any]) -> None:
                     "proposal-budget review lacks an actual budget breach"
                 )
         elif state["terminal_reason"] == "PROPOSAL_BUDGET_EXHAUSTED_WITHOUT_CANDIDATE":
-            if (
-                _proposal_slots_used(state) < MAX_PROPOSAL_SLOTS
-                or _accepted_rows(attempt)
+            if _proposal_slots_used(state) < MAX_PROPOSAL_SLOTS or _accepted_rows(
+                attempt
             ):
                 raise DojoAITuningStateError(
                     "exhaustion review does not match proposal outcomes"
@@ -1905,12 +1894,12 @@ def _verify_transition_timestamps(state: Mapping[str, Any]) -> None:
         for invocation in attempt["invocations"]:
             reserved = _parse_utc_value(invocation["reserved_at_utc"])
             if reserved < cursor:
-                raise DojoAITuningStateError("model reservation timestamp moved backward")
+                raise DojoAITuningStateError(
+                    "model reservation timestamp moved backward"
+                )
             cursor = reserved
             if invocation["response_recorded_at_utc"] is not None:
-                response = _parse_utc_value(
-                    invocation["response_recorded_at_utc"]
-                )
+                response = _parse_utc_value(invocation["response_recorded_at_utc"])
                 if response < cursor:
                     raise DojoAITuningStateError(
                         "model response timestamp moved backward"
@@ -1925,13 +1914,17 @@ def _verify_transition_timestamps(state: Mapping[str, Any]) -> None:
             if dispatch["dispatched_at_utc"] is not None:
                 dispatched = _parse_utc_value(dispatch["dispatched_at_utc"])
                 if dispatched < cursor:
-                    raise DojoAITuningStateError("run dispatch timestamp moved backward")
+                    raise DojoAITuningStateError(
+                        "run dispatch timestamp moved backward"
+                    )
                 cursor = dispatched
         terminal = attempt["terminal"]
         if terminal is not None:
             recorded = _parse_utc_value(terminal["recorded_at_utc"])
             if recorded < cursor:
-                raise DojoAITuningStateError("attempt terminal timestamp moved backward")
+                raise DojoAITuningStateError(
+                    "attempt terminal timestamp moved backward"
+                )
             cursor = recorded
     if cursor != _parse_utc_value(state["last_transition_at_utc"]):
         raise DojoAITuningStateError(
@@ -2004,11 +1997,7 @@ def _expected_revision(state: Mapping[str, Any]) -> int:
 
 
 def _seal_state(value: Mapping[str, Any]) -> dict[str, Any]:
-    body = {
-        key: _clone(item)
-        for key, item in value.items()
-        if key != "state_sha256"
-    }
+    body = {key: _clone(item) for key, item in value.items() if key != "state_sha256"}
     return {**body, "state_sha256": _canonical_sha(body)}
 
 
@@ -2030,9 +2019,7 @@ def _seal_next_state(
 
 
 def _cas_mode(state: Mapping[str, Any], expected_parent_state_sha256: Any) -> str:
-    expected = _sha(
-        expected_parent_state_sha256, "expected_parent_state_sha256"
-    )
+    expected = _sha(expected_parent_state_sha256, "expected_parent_state_sha256")
     if expected == state["state_sha256"]:
         return "CURRENT"
     if expected == state["previous_state_sha256"]:
@@ -2093,7 +2080,9 @@ def _verify_store_event(value: Any) -> dict[str, Any]:
 def _open_state_store_directory(path: Path, *, create: bool) -> int:
     candidate = path.absolute()
     if candidate == candidate.parent:
-        raise DojoAITuningStateError("state-store directory cannot be a filesystem root")
+        raise DojoAITuningStateError(
+            "state-store directory cannot be a filesystem root"
+        )
     try:
         state = candidate.lstat()
     except FileNotFoundError:
@@ -2173,9 +2162,13 @@ def _read_store_event(directory_fd: int, name: str) -> dict[str, Any]:
     try:
         state = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
     except OSError as exc:
-        raise DojoAITuningStateError(f"cannot stat state-store event {name}: {exc}") from exc
+        raise DojoAITuningStateError(
+            f"cannot stat state-store event {name}: {exc}"
+        ) from exc
     if not stat.S_ISREG(state.st_mode) or state.st_size <= 0:
-        raise DojoAITuningStateError("state-store event must be a nonempty regular file")
+        raise DojoAITuningStateError(
+            "state-store event must be a nonempty regular file"
+        )
     if state.st_size > MAX_STATE_STORE_EVENT_BYTES:
         raise DojoAITuningStateError("state-store event byte limit exceeded")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
@@ -2236,7 +2229,9 @@ def _write_store_event_exclusive(
 
 def _strict_store_json(raw: bytes) -> dict[str, Any]:
     def reject_constant(token: str) -> None:
-        raise DojoAITuningStateError(f"non-finite state-store JSON is forbidden: {token}")
+        raise DojoAITuningStateError(
+            f"non-finite state-store JSON is forbidden: {token}"
+        )
 
     def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -2291,7 +2286,9 @@ def _json_value(value: Any, label: str) -> Any:
         raise DojoAITuningStateError(f"{label} is not strict JSON") from exc
 
 
-def _exact_mapping(value: Any, keys: set[str] | frozenset[str], label: str) -> dict[str, Any]:
+def _exact_mapping(
+    value: Any, keys: set[str] | frozenset[str], label: str
+) -> dict[str, Any]:
     if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
         raise DojoAITuningStateError(f"{label} must be a JSON object")
     if set(value) != set(keys):
@@ -2376,9 +2373,7 @@ def _utc(value: datetime | str, label: str) -> str:
 
 
 def _parse_utc_value(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
-        timezone.utc
-    )
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 __all__ = [

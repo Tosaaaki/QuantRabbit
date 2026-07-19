@@ -252,6 +252,48 @@ def canonical_packet_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_packet_bytes(value)).hexdigest()
 
 
+def validate_terminal_result_bundle(
+    *,
+    run: Mapping[str, Any],
+    evaluation: Mapping[str, Any],
+    cells: Sequence[Mapping[str, Any]],
+    sealed_study: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """Validate one complete terminal trainer bundle without lineage side effects.
+
+    This is the public hand-off boundary used before a ``RESULT_BOUND`` event is
+    appended.  In particular, an evaluation cannot be admitted by itself: the
+    terminal run receipt, the complete fixed-denominator cell array, and the
+    exact sealed study are all mandatory.  The evaluation is rebuilt from the
+    normalized cells and must match byte-for-byte at the JSON value level.
+
+    The function is deliberately pure.  It reads no paths, writes no lineage,
+    and grants no proof, promotion, model, runner, broker, or live authority.
+    """
+
+    try:
+        verified_study = verify_sealed_study(
+            sealed_study, sealed_study["source_digests"]
+        )
+    except (KeyError, ValueError) as exc:
+        raise DojoAITrainerPacketError("terminal sealed study is invalid") from exc
+    normalized_run, normalized_cells = _validate_terminal_inputs(
+        run=run,
+        evaluation=evaluation,
+        cells=cells,
+        sealed_study=verified_study,
+    )
+    normalized_evaluation = _json_copy(evaluation)
+    rebuilt_evaluation = _rebuild_evaluation_from_cells(
+        verified_study, normalized_cells
+    )
+    if rebuilt_evaluation != normalized_evaluation:
+        raise DojoAITrainerPacketError(
+            "cells do not reconstruct the exact lineage-bound evaluation"
+        )
+    return normalized_run, normalized_evaluation, normalized_cells
+
+
 def build_trainer_packet(
     *,
     run: Mapping[str, Any],
@@ -344,17 +386,14 @@ def build_trainer_packet(
             "tuning state does not bind the latest exact result"
         )
 
-    normalized_run, normalized_cells = _validate_terminal_inputs(
-        run=run,
-        evaluation=current_evaluation,
-        cells=cells,
-        sealed_study=current_study,
-    )
-    rebuilt_evaluation = _rebuild_evaluation_from_cells(current_study, normalized_cells)
-    if rebuilt_evaluation != current_evaluation:
-        raise DojoAITrainerPacketError(
-            "cells do not reconstruct the exact lineage-bound evaluation"
+    normalized_run, current_evaluation, normalized_cells = (
+        validate_terminal_result_bundle(
+            run=run,
+            evaluation=current_evaluation,
+            cells=cells,
+            sealed_study=current_study,
         )
+    )
     normalized_drive_refs = _normalize_drive_refs(drive_evidence_refs)
     candidate_rows = _current_candidate_rows(
         current_study, current_evaluation, normalized_cells
@@ -1338,5 +1377,6 @@ __all__ = [
     "build_trainer_packet",
     "canonical_packet_bytes",
     "canonical_packet_sha256",
+    "validate_terminal_result_bundle",
     "verify_trainer_packet",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -8,8 +9,19 @@ import sys
 from pathlib import Path
 
 from quant_rabbit.dojo_ai_tuning_state import verify_state_store
-from quant_rabbit.dojo_candidate_lineage_registry import bind_result
-from tests.test_dojo_ai_tuning_state import (
+from quant_rabbit.dojo_ai_trainer_packet import (
+    build_trainer_packet,
+    canonical_packet_bytes,
+    canonical_packet_sha256,
+)
+from quant_rabbit.dojo_candidate_lineage_registry import bind_result, verify_registry
+from test_dojo_ai_trainer_packet import (
+    _bind_inputs as _packet_bind_inputs,
+    _cells as _packet_cells,
+    _evaluation as _packet_evaluation,
+    _sealed_study as _packet_sealed_study,
+)
+from test_dojo_ai_tuning_state import (
     _baseline,
     _evaluation,
     _raw_proposal,
@@ -99,13 +111,77 @@ def _init_cli(root: Path) -> tuple[Path, object, dict, Path, dict]:
     return events, lineage, baseline, store, initialized
 
 
+def _bound_trainer_packet(
+    root: Path,
+    events: Path,
+    store: Path,
+    *,
+    name: str = "trainer-packet.json",
+) -> Path:
+    """Write canonical packet bytes bound to this test's current state/lineage.
+
+    The packet body comes from the packet builder's complete-grid fixture.  Its
+    source binding is then resealed against this CLI fixture so these tests can
+    isolate the reserve boundary from replay-cell construction details.
+    """
+
+    template_root = root / f"packet-template-{name.replace('.', '-')}"
+    template_root.mkdir()
+    sealed = _packet_sealed_study()
+    inputs = _packet_bind_inputs(
+        template_root,
+        sealed=sealed,
+        evaluation=_packet_evaluation(sealed),
+        cells=_packet_cells(sealed),
+    )
+    packet = build_trainer_packet(**inputs)
+    snapshot = verify_state_store(store)
+    state = snapshot["latest_state"]
+    lineage = verify_registry(events, artifact_root=root)
+    binding = state["last_terminal_result_binding"]
+    packet = copy.deepcopy(packet)
+    envelope = state["fixed_envelope"]
+    packet["fixed_environment"].update(
+        {
+            "window_role": envelope["window_role"],
+            "window": envelope["window"],
+            "initial_balance_jpy": envelope["initial_balance_jpy"],
+            "trade_pairs": envelope["trade_pairs"],
+            "feed_pairs": envelope["feed_pairs"],
+            "intrabar_paths": envelope["intrabar_paths"],
+            "cost_arms": envelope["cost_arms"],
+            "thresholds": envelope["thresholds"],
+        }
+    )
+    packet["source_bindings"].update(
+        {
+            "registry_id": lineage.registry_id,
+            "lineage_prefix": lineage.lineage_prefix,
+            "attempt_ordinal": binding["attempt_ordinal"],
+            "study_sha256": binding["study_sha256"],
+            "evaluation_sha256": binding["evaluation_sha256"],
+            "evaluation_artifact_sha256": binding["evaluation_artifact_sha256"],
+            "lineage_result_event_sha256": binding["result_event_sha256"],
+            "lineage_tip_sha256": binding["lineage_tip_sha256"],
+            "tuning_state_sha256": state["state_sha256"],
+            "fixed_envelope_sha256": state["fixed_envelope_sha256"],
+            "external_witness_status": lineage.external_witness_status,
+            "exact_result_binding_verified": True,
+        }
+    )
+    body = {key: value for key, value in packet.items() if key != "packet_sha256"}
+    packet["packet_sha256"] = canonical_packet_sha256(body)
+    path = root / "artifacts" / name
+    path.write_bytes(canonical_packet_bytes(packet) + b"\n")
+    return path
+
+
 def test_cli_full_valid_transition_path_is_cas_bound_and_research_only(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "lineage-root"
     events, lineage, _, store, current = _init_cli(root)
-    request = root / "artifacts" / "request-2.json"
-    request.write_text('{"prompt":"bounded TRAIN proposal"}\n', encoding="utf-8")
+    request = _bound_trainer_packet(root, events, store, name="request-2.json")
     tip, parent = _cas(current)
     current = _accepted(
         _run(
@@ -129,6 +205,37 @@ def test_cli_full_valid_transition_path_is_cas_bound_and_research_only(
         )
     )
     assert current["tuning_status"]["phase"] == "MODEL_INVOCATION_RESERVED"
+    request_receipt = current["artifact_receipt"]
+    durable_request = Path(request_receipt["path"])
+    assert durable_request.parent.name == "ai-trainer-model-requests"
+    assert durable_request.read_bytes() == request.read_bytes()
+    assert request_receipt["created_exclusively"] is True
+    assert request_receipt["reservation_cas_mode"] == "CURRENT"
+
+    replayed = _accepted(
+        _run(
+            "reserve-model",
+            "--state-events",
+            store,
+            "--expected-tip-event-sha256",
+            tip,
+            "--expected-parent-state-sha256",
+            parent,
+            "--lineage-events",
+            events,
+            "--artifact-root",
+            root,
+            "--invocation-id",
+            "cli-model-a2",
+            "--request-artifact",
+            request,
+            "--event-at-utc",
+            "2026-07-20T00:01:00Z",
+        )
+    )
+    assert replayed["state_store"]["event_count"] == 2
+    assert replayed["artifact_receipt"]["created_exclusively"] is False
+    assert replayed["artifact_receipt"]["reservation_cas_mode"] == "REPLAY_LAST"
 
     proposal = _raw_proposal("qr-a2-cli", 2)
     raw_response = json.dumps(
@@ -270,8 +377,7 @@ def test_invalid_response_is_saved_first_charged_and_exact_retry_is_idempotent(
 ) -> None:
     root = tmp_path / "invalid-root"
     events, _, _, store, current = _init_cli(root)
-    request = root / "artifacts" / "request.json"
-    request.write_text("{}\n", encoding="utf-8")
+    request = _bound_trainer_packet(root, events, store)
     tip, parent = _cas(current)
     current = _accepted(
         _run(
@@ -337,6 +443,35 @@ def test_invalid_response_is_saved_first_charged_and_exact_retry_is_idempotent(
     assert retried["state_store"]["event_count"] == 3
     assert retried["artifact_receipt"]["created_exclusively"] is False
 
+    second_request = _bound_trainer_packet(
+        root, events, store, name="forbidden-second-request.json"
+    )
+    current_tip, current_parent = _cas(recorded)
+    second = _rejected(
+        _run(
+            "reserve-model",
+            "--state-events",
+            store,
+            "--expected-tip-event-sha256",
+            current_tip,
+            "--expected-parent-state-sha256",
+            current_parent,
+            "--lineage-events",
+            events,
+            "--artifact-root",
+            root,
+            "--invocation-id",
+            "forbidden-second-model-a2",
+            "--request-artifact",
+            second_request,
+            "--event-at-utc",
+            "2026-07-20T00:03:00Z",
+        )
+    )
+    assert "requires READY_FOR_MODEL with no active AI attempt" in second["error"]
+    assert len(list((root / "ai-trainer-model-requests").iterdir())) == 1
+    assert verify_state_store(store)["event_count"] == 3
+
     response_input.write_bytes(b"different invalid output")
     rejected = _rejected(_run(*args))
     assert "different bytes" in rejected["error"]
@@ -374,8 +509,34 @@ def test_request_json_cas_and_incomplete_review_fail_closed(tmp_path: Path) -> N
     assert "duplicate key" in rejected["error"]
     assert verify_state_store(store)["event_count"] == 1
 
-    request = root / "artifacts" / "request.json"
-    request.write_text("{}\n", encoding="utf-8")
+    arbitrary_json = root / "artifacts" / "arbitrary-request.json"
+    arbitrary_json.write_text("{}\n", encoding="utf-8")
+    rejected = _rejected(
+        _run(
+            "reserve-model",
+            "--state-events",
+            store,
+            "--expected-tip-event-sha256",
+            tip,
+            "--expected-parent-state-sha256",
+            parent,
+            "--lineage-events",
+            events,
+            "--artifact-root",
+            root,
+            "--invocation-id",
+            "arbitrary-request",
+            "--request-artifact",
+            arbitrary_json,
+            "--event-at-utc",
+            "2026-07-20T00:01:00Z",
+        )
+    )
+    assert "trainer packet schema mismatch" in rejected["error"]
+    assert not (root / "ai-trainer-model-requests").exists()
+    assert verify_state_store(store)["event_count"] == 1
+
+    request = _bound_trainer_packet(root, events, store)
     stale = _rejected(
         _run(
             "reserve-model",
@@ -397,7 +558,7 @@ def test_request_json_cas_and_incomplete_review_fail_closed(tmp_path: Path) -> N
             "2026-07-20T00:01:00Z",
         )
     )
-    assert "stale or forked state-store event tip" in stale["error"]
+    assert "stale or forked model-reservation CAS tokens" in stale["error"]
     assert verify_state_store(store)["event_count"] == 1
 
     current = _accepted(
@@ -499,8 +660,7 @@ def test_init_rejects_stale_lineage_tip_and_response_symlink(tmp_path: Path) -> 
             lineage.latest_event_sha256,
         )
     )
-    request = root / "artifacts" / "request.json"
-    request.write_text("{}\n", encoding="utf-8")
+    request = _bound_trainer_packet(root, events, store)
     tip, parent = _cas(current)
     current = _accepted(
         _run(
@@ -556,3 +716,153 @@ def test_init_rejects_stale_lineage_tip_and_response_symlink(tmp_path: Path) -> 
     assert "regular file" in rejected["error"]
     assert outside.read_text(encoding="utf-8") == "do not overwrite"
     assert verify_state_store(store)["event_count"] == 2
+
+
+def test_reserve_model_rejects_every_stale_or_foreign_packet_binding(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "binding-root"
+    events, _, _, store, current = _init_cli(root)
+    request = _bound_trainer_packet(root, events, store)
+    packet = json.loads(request.read_text(encoding="utf-8"))
+    tip, parent = _cas(current)
+    mutations = {
+        "registry_id": "foreign-registry",
+        "lineage_prefix": "foreign-",
+        "attempt_ordinal": 2,
+        "study_sha256": "0" * 64,
+        "evaluation_sha256": "1" * 64,
+        "evaluation_artifact_sha256": "2" * 64,
+        "lineage_result_event_sha256": "3" * 64,
+        "lineage_tip_sha256": "4" * 64,
+        "tuning_state_sha256": "5" * 64,
+        "fixed_envelope_sha256": "6" * 64,
+        "external_witness_status": "FORGED",
+        "exact_result_binding_verified": False,
+    }
+    for index, (field, value) in enumerate(mutations.items()):
+        attacked = copy.deepcopy(packet)
+        attacked["source_bindings"][field] = value
+        body = {key: item for key, item in attacked.items() if key != "packet_sha256"}
+        attacked["packet_sha256"] = canonical_packet_sha256(body)
+        attacked_path = root / "artifacts" / f"attacked-{index}.json"
+        attacked_path.write_bytes(canonical_packet_bytes(attacked) + b"\n")
+        rejected = _rejected(
+            _run(
+                "reserve-model",
+                "--state-events",
+                store,
+                "--expected-tip-event-sha256",
+                tip,
+                "--expected-parent-state-sha256",
+                parent,
+                "--lineage-events",
+                events,
+                "--artifact-root",
+                root,
+                "--invocation-id",
+                f"binding-attack-{index}",
+                "--request-artifact",
+                attacked_path,
+                "--event-at-utc",
+                "2026-07-20T00:01:00Z",
+            )
+        )
+        assert field in rejected["error"]
+    assert not (root / "ai-trainer-model-requests").exists()
+    assert verify_state_store(store)["event_count"] == 1
+
+
+def test_request_is_durable_before_reservation_and_different_retry_is_rejected(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "durability-root"
+    events, _, _, store, current = _init_cli(root)
+    request = _bound_trainer_packet(root, events, store)
+    tip, parent = _cas(current)
+    bad_time_args = (
+        "reserve-model",
+        "--state-events",
+        store,
+        "--expected-tip-event-sha256",
+        tip,
+        "--expected-parent-state-sha256",
+        parent,
+        "--lineage-events",
+        events,
+        "--artifact-root",
+        root,
+        "--invocation-id",
+        "durable-before-state",
+        "--request-artifact",
+        request,
+        "--event-at-utc",
+        "2026-07-20T00:00:01Z",
+    )
+    rejected = _rejected(_run(*bad_time_args))
+    assert "timestamp moved backward" in rejected["error"]
+    durable_files = list((root / "ai-trainer-model-requests").iterdir())
+    assert len(durable_files) == 1
+    assert durable_files[0].read_bytes() == request.read_bytes()
+    assert verify_state_store(store)["event_count"] == 1
+
+    accepted_args = (*bad_time_args[:-1], "2026-07-20T00:01:00Z")
+    reserved = _accepted(_run(*accepted_args))
+    assert reserved["state_store"]["event_count"] == 2
+    assert reserved["artifact_receipt"]["created_exclusively"] is False
+
+    changed = json.loads(request.read_text(encoding="utf-8"))
+    changed["drive_evidence_refs"] = [
+        {
+            "artifact_kind": "REPORT",
+            "drive_file_id": "driveFile123",
+            "content_sha256": "7" * 64,
+            "content_size_bytes": 123,
+            "remote_verified": True,
+            "metadata_receipt_sha256": "8" * 64,
+        }
+    ]
+    body = {key: value for key, value in changed.items() if key != "packet_sha256"}
+    changed["packet_sha256"] = canonical_packet_sha256(body)
+    changed_path = root / "artifacts" / "changed-request.json"
+    changed_path.write_bytes(canonical_packet_bytes(changed) + b"\n")
+    changed_args = list(accepted_args)
+    changed_args[changed_args.index(request)] = changed_path
+    rejected = _rejected(_run(*changed_args))
+    assert "exact immediate transition" in rejected["error"]
+    assert durable_files[0].read_bytes() == request.read_bytes()
+    assert verify_state_store(store)["event_count"] == 2
+
+
+def test_dedicated_request_directory_cannot_be_a_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "request-path-root"
+    events, _, _, store, current = _init_cli(root)
+    request = _bound_trainer_packet(root, events, store)
+    outside = tmp_path / "outside-requests"
+    outside.mkdir()
+    (root / "ai-trainer-model-requests").symlink_to(outside, target_is_directory=True)
+    tip, parent = _cas(current)
+    rejected = _rejected(
+        _run(
+            "reserve-model",
+            "--state-events",
+            store,
+            "--expected-tip-event-sha256",
+            tip,
+            "--expected-parent-state-sha256",
+            parent,
+            "--lineage-events",
+            events,
+            "--artifact-root",
+            root,
+            "--invocation-id",
+            "symlink-request",
+            "--request-artifact",
+            request,
+            "--event-at-utc",
+            "2026-07-20T00:01:00Z",
+        )
+    )
+    assert "must be a real directory" in rejected["error"]
+    assert list(outside.iterdir()) == []
+    assert verify_state_store(store)["event_count"] == 1
