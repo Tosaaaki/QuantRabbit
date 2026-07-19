@@ -1176,13 +1176,20 @@ def test_same_bar_opposite_resting_orders_cannot_exceed_owner_pair_cap(
 
     assert len(broker.positions) == 1
     assert not broker.orders
-    assert [event["event"] for event in events] == [
+    assert events == []
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    consequences = [
+        record["payload"]
+        for record in records
+        if record["event"] in {"FILL_LIMIT", "ORDER_CANCEL_CONCURRENCY_CAP"}
+    ]
+    assert [payload["event"] for payload in consequences] == [
         "FILL_LIMIT",
         "ORDER_CANCEL_CONCURRENCY_CAP",
     ]
-    assert events[0]["order_id"] == first_order
-    assert events[1]["order_id"] == second_order
-    assert events[1]["admission"] == {
+    assert consequences[0]["order_id"] == first_order
+    assert consequences[1]["order_id"] == second_order
+    assert consequences[1]["admission"] == {
         "scope": "PAIR",
         "reason": "OWNER_PAIR_CONCURRENCY_CAP_REACHED",
         "active_pair_positions": 1,
@@ -1237,14 +1244,18 @@ def test_same_phase_cross_pair_fills_cannot_exceed_owner_global_cap(
 
     assert len(broker.positions) == 4
     assert not broker.orders
-    assert sum(event["event"] == "FILL_LIMIT" for event in events) == 4
+    assert events == []
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    assert sum(record["event"] == "FILL_LIMIT" for record in records) == 4
     rejected = [
-        event for event in events if event["event"] == "ORDER_CANCEL_CONCURRENCY_CAP"
+        record["payload"]
+        for record in records
+        if record["event"] == "ORDER_CANCEL_CONCURRENCY_CAP"
     ]
     assert len(rejected) == 1
-    # Simultaneous capital competition uses the broker's canonical pair
-    # tie-break, never caller list order. USD_JPY is last lexicographically.
-    assert rejected[0]["order_id"] == order_ids[0]
+    # Each order is marketable at submission and must resolve atomically at
+    # that already-staged quote; the fifth submission sees the four live fills.
+    assert rejected[0]["order_id"] == order_ids[-1]
     assert rejected[0]["admission"] == {
         "scope": "GLOBAL",
         "reason": "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED",

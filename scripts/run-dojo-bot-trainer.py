@@ -16,10 +16,11 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -42,6 +43,10 @@ from quant_rabbit.dojo_bot_catalog import (  # noqa: E402
     DojoBotCatalogError,
     validate_bot_config,
 )
+from quant_rabbit.dojo_market_calendar import (  # noqa: E402
+    OANDA_FX_HOURS_POLICY,
+    expected_oanda_fx_slots,
+)
 
 
 RUN_CONTRACT = "QR_DOJO_BOT_TRAINER_RUN_V1"
@@ -55,6 +60,7 @@ MANDATORY_SOURCE_PATHS = frozenset(
         "src/quant_rabbit/dojo_bot_catalog.py",
         "src/quant_rabbit/dojo_bot_trainer.py",
         "src/quant_rabbit/dojo_lab_provenance.py",
+        "src/quant_rabbit/dojo_market_calendar.py",
         "src/quant_rabbit/virtual_broker.py",
     }
 )
@@ -64,6 +70,10 @@ _ZERO_SHA256 = "0" * 64
 # from hanging the denominator forever; replace it with a measured high-percentile
 # runtime bound if the corpus or host class changes materially.
 REPLAY_TIMEOUT_SECONDS = 2 * 60 * 60
+FULL_DAY_COVERAGE_FLOOR = 0.98
+PARTIAL_DAY_COVERAGE_FLOOR = 0.80
+FULL_DAY_MINIMUM_EXPECTED_SLOTS = 1000
+MAX_OPEN_SLOT_GAP_SECONDS = 900
 
 
 class TrainerRunnerError(ValueError):
@@ -292,7 +302,19 @@ def _m1_epoch(value: Any, *, pair: str, shard: Path, line_number: int) -> int:
         raise TrainerRunnerError(
             f"corpus timestamp is missing for {pair} at {shard.name}:{line_number}"
         )
-    text_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+    match = re.fullmatch(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?" r"(Z|[+-]\d{2}:\d{2})",
+        value,
+    )
+    if match is None:
+        raise TrainerRunnerError(
+            f"corpus timestamp is invalid for {pair} at {shard.name}:{line_number}"
+        )
+    head, fraction, zone = match.groups()
+    text_value = head
+    if fraction:
+        text_value += "." + fraction[:6]
+    text_value += "+00:00" if zone == "Z" else zone
     try:
         stamp = datetime.fromisoformat(text_value)
     except (TypeError, ValueError) as exc:
@@ -313,18 +335,13 @@ def _m1_epoch(value: Any, *, pair: str, shard: Path, line_number: int) -> int:
     return int(stamp.timestamp())
 
 
-def _validate_synchronized_m1_corpus(
+def _validate_sparse_m1_corpus(
     shards: Sequence[Path],
     feed_pairs: Sequence[str],
     start_utc: str,
     end_utc: str,
 ) -> dict[str, Any]:
-    """Require an identical, non-trivial M1 epoch grid for every feed pair.
-
-    Missing minutes are admitted only when every feed pair is absent at that
-    epoch.  This covers the canonical weekend/market-closed holes without ever
-    allowing a partially stale conversion or trade feed into a replay batch.
-    """
+    """Seal bounded OANDA sparse coverage without inventing carry quotes."""
 
     start, end = _window_bounds(start_utc, end_utc)
     start_epoch = int(start.timestamp())
@@ -377,39 +394,118 @@ def _validate_synchronized_m1_corpus(
                     f"selected corpus shard is corrupt: {shard.name}"
                 ) from exc
 
-    short_pairs = sorted(pair for pair, epochs in by_pair.items() if len(epochs) < 2)
-    if short_pairs:
+    expected_slots = expected_oanda_fx_slots(start, end, step=timedelta(minutes=1))
+    expected_epochs = [int(stamp.timestamp()) for stamp in expected_slots]
+    if not expected_epochs:
+        raise TrainerRunnerError("selected M1 period has no OANDA open-market slots")
+    expected_set = set(expected_epochs)
+    unexpected = {
+        pair: sorted(epochs - expected_set) for pair, epochs in by_pair.items()
+    }
+    unexpected = {pair: rows for pair, rows in unexpected.items() if rows}
+    if unexpected:
+        summary = ",".join(f"{pair}:{len(rows)}" for pair, rows in unexpected.items())
         raise TrainerRunnerError(
-            "selected M1 period requires at least two rows for every feed pair: "
-            + ",".join(short_pairs)
+            "selected M1 corpus contains rows outside the canonical OANDA calendar: "
+            + summary
         )
-    reference_pair = feed_pairs[0]
-    reference = by_pair[reference_pair]
-    mismatches: list[str] = []
-    for pair in feed_pairs[1:]:
-        missing = len(reference - by_pair[pair])
-        unexpected = len(by_pair[pair] - reference)
-        if missing or unexpected:
-            mismatches.append(f"{pair}(missing={missing},unexpected={unexpected})")
-    if mismatches:
-        raise TrainerRunnerError(
-            "M1 corpus has partial-pair epoch coverage: " + ",".join(mismatches)
+
+    expected_by_day: dict[str, list[int]] = {}
+    for epoch in expected_epochs:
+        day = datetime.fromtimestamp(epoch, tz=timezone.utc).date().isoformat()
+        expected_by_day.setdefault(day, []).append(epoch)
+    window_start_day = start.date()
+    window_end_day = (end - timedelta(microseconds=1)).date()
+    day_receipts: list[dict[str, Any]] = []
+    expected_index = {epoch: index for index, epoch in enumerate(expected_epochs)}
+    for day, day_epochs in sorted(expected_by_day.items()):
+        day_value = datetime.fromisoformat(day).date()
+        day_start = datetime.combine(day_value, time.min, tzinfo=timezone.utc)
+        day_end = day_start + timedelta(days=1)
+        partial_window_day = (day_value == window_start_day and start > day_start) or (
+            day_value == window_end_day and end < day_end
         )
-    epochs = sorted(reference)
-    simultaneous_missing_minutes = sum(
-        max(0, (right - left) // 60 - 1)
-        for left, right in zip(epochs, epochs[1:], strict=False)
+        partial_day = (
+            partial_window_day or len(day_epochs) < FULL_DAY_MINIMUM_EXPECTED_SLOTS
+        )
+        floor = PARTIAL_DAY_COVERAGE_FLOOR if partial_day else FULL_DAY_COVERAGE_FLOOR
+        counts: dict[str, int] = {}
+        ratios: dict[str, float] = {}
+        for pair in feed_pairs:
+            count = len(by_pair[pair].intersection(day_epochs))
+            ratio = count / len(day_epochs)
+            counts[pair] = count
+            ratios[pair] = ratio
+            if ratio < floor:
+                raise TrainerRunnerError(
+                    f"OANDA sparse M1 coverage below {floor:.0%} for "
+                    f"{pair} on {day}: {count}/{len(day_epochs)}"
+                )
+        day_receipts.append(
+            {
+                "utc_date": day,
+                "partial_day": partial_day,
+                "partial_window_day": partial_window_day,
+                "expected_slot_count": len(day_epochs),
+                "coverage_floor": floor,
+                "pair_row_counts": counts,
+                "pair_coverage_ratios": ratios,
+            }
+        )
+
+    for pair, observed in by_pair.items():
+        indices = sorted(expected_index[epoch] for epoch in observed)
+        if len(indices) < 2:
+            raise TrainerRunnerError(
+                f"selected M1 period requires at least two rows for {pair}"
+            )
+        boundary_missing = max(indices[0], len(expected_epochs) - indices[-1] - 1)
+        interior_open_slot_age = max(
+            (right - left) for left, right in zip(indices, indices[1:], strict=False)
+        )
+        if (
+            max(boundary_missing * 60, interior_open_slot_age * 60)
+            > MAX_OPEN_SLOT_GAP_SECONDS
+        ):
+            raise TrainerRunnerError(
+                f"OANDA sparse M1 boundary/gap exceeds "
+                f"{MAX_OPEN_SLOT_GAP_SECONDS}s for {pair}"
+            )
+
+    union_epochs = sorted(set().union(*by_pair.values()))
+    availability_rows = [
+        {
+            "epoch": epoch,
+            "batch_pairs": [pair for pair in feed_pairs if epoch in by_pair[pair]],
+        }
+        for epoch in union_epochs
+    ]
+    partial_epoch_count = sum(
+        row["batch_pairs"] != list(feed_pairs) for row in availability_rows
     )
-    epoch_bytes = ",".join(str(epoch) for epoch in epochs).encode("ascii")
+    pair_row_counts = {pair: len(by_pair[pair]) for pair in feed_pairs}
     return {
-        "contract": "QR_DOJO_SYNCHRONIZED_M1_COVERAGE_V1",
+        "contract": "QR_DOJO_OANDA_SPARSE_M1_COVERAGE_V2",
+        "calendar_policy": OANDA_FX_HOURS_POLICY,
+        "coordinate_schedule": "SEALED_CORPUS_EPOCH_UNION",
+        "quote_policy": "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES",
         "feed_pairs": list(feed_pairs),
-        "row_count_per_pair": len(epochs),
-        "first_epoch": epochs[0],
-        "last_epoch": epochs[-1],
-        "shared_epoch_sha256": hashlib.sha256(epoch_bytes).hexdigest(),
-        "simultaneous_missing_minutes_between_rows": simultaneous_missing_minutes,
-        "partial_pair_missing_epochs": 0,
+        "expected_calendar_slot_count": len(expected_epochs),
+        "expected_union_epoch_count": len(union_epochs),
+        "expected_full_epoch_count": len(union_epochs) - partial_epoch_count,
+        "expected_partial_epoch_count": partial_epoch_count,
+        "expected_partial_phase_count": partial_epoch_count * 4,
+        "pair_row_counts": pair_row_counts,
+        "availability_mask_sha256": _canonical_sha256(availability_rows),
+        "expected_quote_count": sum(pair_row_counts.values()) * 4,
+        "max_carried_quote_age_seconds": MAX_OPEN_SLOT_GAP_SECONDS,
+        "synthetic_quote_count": 0,
+        "full_day_coverage_floor": FULL_DAY_COVERAGE_FLOOR,
+        "partial_day_coverage_floor": PARTIAL_DAY_COVERAGE_FLOOR,
+        "full_day_minimum_expected_slots": FULL_DAY_MINIMUM_EXPECTED_SLOTS,
+        "daily_coverage": day_receipts,
+        "first_epoch": union_epochs[0],
+        "last_epoch": union_epochs[-1],
     }
 
 
@@ -426,7 +522,7 @@ def _corpus_manifest(
     if not feed_pairs or len(feed_pairs) != len(set(feed_pairs)):
         raise TrainerRunnerError("feed pairs must be non-empty and unique")
     shards = _selected_shards(root, feed_pairs, start_utc, end_utc)
-    coverage = _validate_synchronized_m1_corpus(shards, feed_pairs, start_utc, end_utc)
+    coverage = _validate_sparse_m1_corpus(shards, feed_pairs, start_utc, end_utc)
     body = {
         "root": str(root),
         "shards": [
@@ -441,7 +537,7 @@ def _corpus_manifest(
     return {
         **body,
         "corpus_sha256": _canonical_sha256(body),
-        "synchronized_m1_coverage": coverage,
+        "sparse_m1_coverage": coverage,
     }
 
 
@@ -586,6 +682,7 @@ def _verify_replay_manifest(
     owner_id: str,
     config_json: str,
     expected_corpus_sha256: str,
+    expected_sparse_coverage: Mapping[str, Any],
     source_digests: Mapping[str, str],
 ) -> None:
     payload = _ledger_start(ledger_path)
@@ -617,12 +714,47 @@ def _verify_replay_manifest(
     }
     if any(replay.get(key) != value for key, value in expected_replay.items()):
         raise TrainerRunnerError("ledger replay coordinate drift detected")
+    expected_mtm = {
+        "mtm_coordinate_contract": "QR_REPLAY_ASYNC_MTM_COORDINATES_V2",
+        "coordinate_schedule": "SEALED_CORPUS_EPOCH_UNION",
+        "quote_policy": "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES",
+        "feed_pairs": list(pairs),
+        "expected_union_epoch_count": expected_sparse_coverage[
+            "expected_union_epoch_count"
+        ],
+        "expected_full_epoch_count": expected_sparse_coverage[
+            "expected_full_epoch_count"
+        ],
+        "expected_partial_epoch_count": expected_sparse_coverage[
+            "expected_partial_epoch_count"
+        ],
+        "expected_phase_mark_count": expected_sparse_coverage[
+            "expected_union_epoch_count"
+        ]
+        * 4,
+        "expected_partial_phase_count": expected_sparse_coverage[
+            "expected_partial_phase_count"
+        ],
+        "pair_row_counts": expected_sparse_coverage["pair_row_counts"],
+        "availability_mask_sha256": expected_sparse_coverage[
+            "availability_mask_sha256"
+        ],
+        "expected_quote_count": expected_sparse_coverage["expected_quote_count"],
+        "max_carried_quote_age_seconds": expected_sparse_coverage[
+            "max_carried_quote_age_seconds"
+        ],
+        "synthetic_quote_count": 0,
+    }
+    if any(replay.get(key) != value for key, value in expected_mtm.items()):
+        raise TrainerRunnerError("ledger sparse MTM commitment drift detected")
     if float(recorded_costs.get("slippage_pips_per_fill", -1)) != float(
         cost["slippage_pips_per_fill"]
     ) or float(recorded_costs.get("financing_pips_per_day", -1)) != float(
         cost["financing_pips_per_day"]
     ):
         raise TrainerRunnerError("ledger cost arm drift detected")
+    if float(recorded_costs.get("leverage", -1)) != 25.0:
+        raise TrainerRunnerError("ledger leverage must equal the sealed 25.0")
     if corpus.get("corpus_sha256") != expected_corpus_sha256:
         raise TrainerRunnerError("ledger corpus identity drift detected")
     if (
@@ -661,6 +793,7 @@ def _run_replay(
     corpus_root: Path,
     session_dir: Path,
     expected_corpus_sha256: str,
+    expected_sparse_coverage: Mapping[str, Any],
 ) -> dict[str, Any]:
     session_dir.mkdir(parents=True, exist_ok=False)
     study = sealed["study"]
@@ -672,7 +805,7 @@ def _run_replay(
         cost_arm,
         held_out_pair,
     )
-    _, config_json = _runtime_config(
+    runtime_config, config_json = _runtime_config(
         candidate["config"], pairs=trade_pairs, owner_id=owner
     )
     command = [
@@ -742,6 +875,7 @@ def _run_replay(
         owner_id=owner,
         config_json=config_json,
         expected_corpus_sha256=expected_corpus_sha256,
+        expected_sparse_coverage=expected_sparse_coverage,
         source_digests=sealed["source_digests"],
     )
     metrics = score_ledger_metrics(
@@ -761,6 +895,8 @@ def _run_replay(
         expected_bot_module_sha256=sealed["source_digests"]["bots/lab_bot.py"],
         expected_bot_dependency_sha256=sealed["source_digests"],
         expected_feed_pairs=feed_pairs,
+        expected_max_concurrent_per_pair=runtime_config["max_concurrent_per_pair"],
+        expected_global_max_concurrent=runtime_config["global_max_concurrent"],
     )
     return {
         "owner_id": owner,
@@ -921,6 +1057,7 @@ def _execute_study(
                 corpus_root=corpus_root,
                 session_dir=main_dir,
                 expected_corpus_sha256=full_corpus["corpus_sha256"],
+                expected_sparse_coverage=full_corpus["sparse_m1_coverage"],
             )
         except Exception as exc:  # each denominator coordinate must survive
             main_error = _safe_error(exc)
@@ -971,6 +1108,7 @@ def _execute_study(
                         corpus_root=corpus_root,
                         session_dir=lopo_dir,
                         expected_corpus_sha256=full_corpus["corpus_sha256"],
+                        expected_sparse_coverage=full_corpus["sparse_m1_coverage"],
                     )
                     metrics = result["metrics"]
                     if metrics.get("terminal_flat") is not True:

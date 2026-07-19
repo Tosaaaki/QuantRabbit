@@ -55,7 +55,12 @@ MIN_STRESS_FINANCING_PIPS_PER_DAY = 0.8
 _ZERO_SHA256 = "0" * 64
 _SHA256_LENGTH = 64
 _MAX_LEDGER_BYTES = 4 * 1024 * 1024 * 1024
-_MTM_COORDINATE_CONTRACT = "QR_REPLAY_MTM_COORDINATES_V1"
+_MTM_COORDINATE_CONTRACT_V1 = "QR_REPLAY_MTM_COORDINATES_V1"
+_MTM_COORDINATE_CONTRACT_V2 = "QR_REPLAY_ASYNC_MTM_COORDINATES_V2"
+_MTM_COORDINATE_SCHEDULE_V2 = "SEALED_CORPUS_EPOCH_UNION"
+_MTM_QUOTE_POLICY_V2 = "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES"
+_MTM_MAX_CARRIED_QUOTE_AGE_SECONDS = 900
+_EXPECTED_VIRTUAL_BROKER_LEVERAGE = 25.0
 _QUOTE_BATCH_CONTRACT = "QR_VIRTUAL_QUOTE_BATCH_V1"
 _ACCOUNT_MARK_CONTRACT = "QR_VIRTUAL_ACCOUNT_MARK_V1"
 _FILL_EVENTS = {"FILL_MARKET", "FILL_LIMIT", "FILL_STOP"}
@@ -1795,6 +1800,20 @@ def _verified_corpus_commitment_cache_key(
             "intrabar": replay.get("intrabar"),
             "feed_pairs": list(feed_pairs),
             "expected_batch_count": expected_batch_count,
+            "mtm_coordinate_contract": replay.get("mtm_coordinate_contract"),
+            "coordinate_schedule": replay.get("coordinate_schedule"),
+            "quote_policy": replay.get("quote_policy"),
+            "expected_union_epoch_count": replay.get("expected_union_epoch_count"),
+            "expected_full_epoch_count": replay.get("expected_full_epoch_count"),
+            "expected_partial_epoch_count": replay.get("expected_partial_epoch_count"),
+            "expected_partial_phase_count": replay.get("expected_partial_phase_count"),
+            "pair_row_counts": replay.get("pair_row_counts"),
+            "availability_mask_sha256": replay.get("availability_mask_sha256"),
+            "expected_quote_count": replay.get("expected_quote_count"),
+            "max_carried_quote_age_seconds": replay.get(
+                "max_carried_quote_age_seconds"
+            ),
+            "synthetic_quote_count": replay.get("synthetic_quote_count"),
         }
     )
 
@@ -1994,6 +2013,7 @@ def _iter_verified_corpus_batches(
         else (("O", "o"), ("L", "l"), ("H", "h"), ("C", "c"))
     )
     expected_epoch_count = expected_batch_count // len(phase_keys)
+    sparse_union = replay.get("mtm_coordinate_contract") == _MTM_COORDINATE_CONTRACT_V2
     iterators = {
         pair: _iter_verified_pair_corpus_rows(
             root=root,
@@ -2012,12 +2032,23 @@ def _iter_verified_corpus_batches(
     }
     epoch_count = 0
     while any(value is not sentinel for value in current.values()):
-        if any(value is sentinel for value in current.values()):
-            _mtm_violation("sealed corpus feed pairs have partial epoch coverage")
-        epochs = {int(value[0]) for value in current.values()}
-        if len(epochs) != 1:
-            _mtm_violation("sealed corpus feed pairs are not epoch-synchronized")
-        epoch = epochs.pop()
+        if sparse_union:
+            epoch = min(
+                int(value[0]) for value in current.values() if value is not sentinel
+            )
+            batch_pairs = [
+                pair
+                for pair in feed_pairs
+                if current[pair] is not sentinel and int(current[pair][0]) == epoch
+            ]
+        else:
+            if any(value is sentinel for value in current.values()):
+                _mtm_violation("sealed corpus feed pairs have partial epoch coverage")
+            epochs = {int(value[0]) for value in current.values()}
+            if len(epochs) != 1:
+                _mtm_violation("sealed corpus feed pairs are not epoch-synchronized")
+            epoch = epochs.pop()
+            batch_pairs = list(feed_pairs)
         epoch_count += 1
         if epoch_count > expected_epoch_count:
             _mtm_violation("sealed corpus exceeds the committed coordinate count")
@@ -2039,12 +2070,16 @@ def _iter_verified_corpus_batches(
                     "ask": current[pair][1]["ask"][price_key],
                     "ts": timestamp,
                 }
-                for pair in feed_pairs
+                for pair in batch_pairs
             ]
             yield coordinate, batch_quotes
-        current = {
-            pair: next(iterator, sentinel) for pair, iterator in iterators.items()
-        }
+        if sparse_union:
+            for pair in batch_pairs:
+                current[pair] = next(iterators[pair], sentinel)
+        else:
+            current = {
+                pair: next(iterator, sentinel) for pair, iterator in iterators.items()
+            }
     if epoch_count != expected_epoch_count:
         _mtm_violation("sealed corpus has fewer rows than the MTM commitment")
 
@@ -2083,8 +2118,13 @@ def _verify_coordinate_mtm_contract(
             _mtm_violation(
                 "owner concurrency caps are required for mandatory fill admission"
             )
-        if replay.get("mtm_coordinate_contract") != _MTM_COORDINATE_CONTRACT:
+        mtm_coordinate_contract = replay.get("mtm_coordinate_contract")
+        if mtm_coordinate_contract not in {
+            _MTM_COORDINATE_CONTRACT_V1,
+            _MTM_COORDINATE_CONTRACT_V2,
+        }:
             _mtm_violation("unknown replay MTM coordinate contract")
+        sparse_union = mtm_coordinate_contract == _MTM_COORDINATE_CONTRACT_V2
         phase_order = replay.get("phase_order")
         expected_phase_order = (
             ["O", "H", "L", "C"]
@@ -2104,7 +2144,99 @@ def _verify_coordinate_mtm_contract(
             _mtm_violation("manifest expected phase mark count must be positive")
         if expected_batch_count % len(expected_phase_order) != 0:
             _mtm_violation("manifest phase mark count does not contain full bars")
-        if (
+        expected_union_epoch_count = expected_batch_count // len(expected_phase_order)
+        expected_full_epoch_count = expected_union_epoch_count
+        expected_partial_epoch_count = 0
+        expected_partial_phase_count = 0
+        expected_pair_row_counts = {
+            pair: expected_union_epoch_count for pair in feed_pairs
+        }
+        expected_availability_mask_sha: str | None = None
+        expected_quote_count = expected_batch_count * len(feed_pairs)
+        max_carried_quote_age_seconds: int | None = None
+        if sparse_union:
+            if (
+                replay.get("coordinate_schedule") != _MTM_COORDINATE_SCHEDULE_V2
+                or replay.get("quote_policy") != _MTM_QUOTE_POLICY_V2
+            ):
+                _mtm_violation("manifest sparse coordinate/quote policy drifted")
+            expected_union_epoch_count = _integer(
+                replay.get("expected_union_epoch_count"),
+                field="manifest.replay.expected_union_epoch_count",
+                non_negative=True,
+            )
+            expected_full_epoch_count = _integer(
+                replay.get("expected_full_epoch_count"),
+                field="manifest.replay.expected_full_epoch_count",
+                non_negative=True,
+            )
+            expected_partial_epoch_count = _integer(
+                replay.get("expected_partial_epoch_count"),
+                field="manifest.replay.expected_partial_epoch_count",
+                non_negative=True,
+            )
+            expected_partial_phase_count = _integer(
+                replay.get("expected_partial_phase_count"),
+                field="manifest.replay.expected_partial_phase_count",
+                non_negative=True,
+            )
+            if (
+                expected_union_epoch_count <= 0
+                or expected_union_epoch_count * len(expected_phase_order)
+                != expected_batch_count
+                or expected_full_epoch_count + expected_partial_epoch_count
+                != expected_union_epoch_count
+                or expected_partial_phase_count
+                != expected_partial_epoch_count * len(expected_phase_order)
+            ):
+                _mtm_violation("manifest sparse coordinate counts are inconsistent")
+            raw_pair_row_counts = replay.get("pair_row_counts")
+            if not isinstance(raw_pair_row_counts, Mapping) or list(
+                raw_pair_row_counts
+            ) != list(feed_pairs):
+                _mtm_violation("manifest sparse pair_row_counts are not exact/sorted")
+            expected_pair_row_counts = {
+                pair: _integer(
+                    raw_pair_row_counts[pair],
+                    field=f"manifest.replay.pair_row_counts.{pair}",
+                    non_negative=True,
+                )
+                for pair in feed_pairs
+            }
+            if any(
+                count <= 0 or count > expected_union_epoch_count
+                for count in expected_pair_row_counts.values()
+            ):
+                _mtm_violation("manifest sparse pair row count is outside the union")
+            expected_availability_mask_sha = _sha256(
+                replay.get("availability_mask_sha256"),
+                field="manifest.replay.availability_mask_sha256",
+            )
+            expected_quote_count = _integer(
+                replay.get("expected_quote_count"),
+                field="manifest.replay.expected_quote_count",
+                non_negative=True,
+            )
+            if expected_quote_count != sum(expected_pair_row_counts.values()) * len(
+                expected_phase_order
+            ):
+                _mtm_violation("manifest sparse expected_quote_count is inconsistent")
+            max_carried_quote_age_seconds = _integer(
+                replay.get("max_carried_quote_age_seconds"),
+                field="manifest.replay.max_carried_quote_age_seconds",
+                non_negative=True,
+            )
+            if (
+                max_carried_quote_age_seconds != _MTM_MAX_CARRIED_QUOTE_AGE_SECONDS
+                or _integer(
+                    replay.get("synthetic_quote_count"),
+                    field="manifest.replay.synthetic_quote_count",
+                    non_negative=True,
+                )
+                != 0
+            ):
+                _mtm_violation("manifest sparse carry/synthetic quote policy drifted")
+        elif (
             replay.get("full_pair_phase_coverage") is not True
             or _integer(
                 replay.get("partial_phase_count"),
@@ -2201,6 +2333,7 @@ def _verify_coordinate_mtm_contract(
         positions: dict[str, dict[str, Any]] = {}
         orders: dict[str, dict[str, Any]] = {}
         quotes: dict[str, dict[str, Any]] = {}
+        quote_history: dict[str, list[dict[str, Any]]] = {}
         seen_trade_ids: set[str] = set()
         seen_order_ids: set[str] = set()
         reconstructed_balance = start_balance
@@ -2216,11 +2349,18 @@ def _verify_coordinate_mtm_contract(
         current_batch_manual_started = False
         current_market_consequence_trade_id: str | None = None
         current_market_consequence_window = False
+        current_order_consequence_order_id: str | None = None
+        current_order_consequence_window = False
         margin_closeout_sequence_active = False
         batch_eligible_order_ids: set[str] = set()
         batch_eligible_position_ids: set[str] = set()
         latest_epoch: int | None = None
         epoch_count = 0
+        current_epoch_batch_pairs: list[str] | None = None
+        observed_availability_mask: list[dict[str, Any]] = []
+        observed_pair_row_counts = {pair: 0 for pair in feed_pairs}
+        observed_full_epoch_count = 0
+        observed_partial_epoch_count = 0
         mtm_equity_peak = start_balance
         mtm_drawdown = 0.0
         peak_margin_jpy = 0.0
@@ -2232,23 +2372,135 @@ def _verify_coordinate_mtm_contract(
                 _mtm_violation(f"{field} has no causally prior executable quote")
             return quotes[pair]
 
-        def conversion_rate(pair: str, *, field: str) -> float:
+        def current_valuation_ts(*, field: str) -> str:
+            batch = current_batch if current_batch is not None else latest_batch
+            if batch is None:
+                if not quotes:
+                    _mtm_violation(f"{field} has no causal valuation timestamp")
+                return str(
+                    max(
+                        quotes.values(),
+                        key=lambda quote: _parse_utc(
+                            quote["ts"],
+                            field=f"{field}.quote.ts",
+                            allow_naive=True,
+                        ),
+                    )["ts"]
+                )
+            coordinate_value = batch["coordinate"]
+            return (
+                datetime.fromtimestamp(
+                    int(coordinate_value["epoch"]), tz=timezone.utc
+                ).isoformat()
+                + f"#{coordinate_value['phase']}"
+            )
+
+        def quote_as_of(
+            pair: str, *, as_of_sequence: int, field: str
+        ) -> dict[str, Any]:
+            for quote in reversed(quote_history.get(pair, [])):
+                if int(quote["sequence"]) <= as_of_sequence:
+                    return quote
+            _mtm_violation(f"{field} has no conversion quote at the causal watermark")
+
+        def conversion_evidence(
+            pair: str, *, reference_quote: Mapping[str, Any], field: str
+        ) -> dict[str, Any]:
+            as_of_sequence = _integer(
+                reference_quote.get("watermark"),
+                field=f"{field}.reference_quote.watermark",
+                non_negative=True,
+            )
             quote_currency = pair.split("_")[1]
+            sources: list[tuple[str, dict[str, Any]]] = []
             if quote_currency == "JPY":
-                return 1.0
-            if quote_currency == "USD":
-                source = current_quote("USD_JPY", field=field)
-                return (float(source["bid"]) + float(source["ask"])) / 2.0
-            direct_pair = f"{quote_currency}_JPY"
-            if direct_pair in quotes:
-                source = quotes[direct_pair]
-                return (float(source["bid"]) + float(source["ask"])) / 2.0
-            usd_jpy = current_quote("USD_JPY", field=field)
-            via_usd = current_quote(f"USD_{quote_currency}", field=field)
-            via_mid = (float(via_usd["bid"]) + float(via_usd["ask"])) / 2.0
-            if via_mid <= 0:
-                _mtm_violation(f"{field} conversion denominator is non-positive")
-            return ((float(usd_jpy["bid"]) + float(usd_jpy["ask"])) / 2.0) / via_mid
+                rate = 1.0
+            elif quote_currency == "USD":
+                source = quote_as_of(
+                    "USD_JPY", as_of_sequence=as_of_sequence, field=field
+                )
+                sources.append(("USD_JPY", source))
+                rate = (float(source["bid"]) + float(source["ask"])) / 2.0
+            else:
+                direct_pair = f"{quote_currency}_JPY"
+                try:
+                    direct = quote_as_of(
+                        direct_pair, as_of_sequence=as_of_sequence, field=field
+                    )
+                except DojoBotTrainerError as exc:
+                    if not str(exc).startswith("MTM_CONTRACT_VIOLATION:"):
+                        raise
+                    direct = None
+                if direct is not None:
+                    sources.append((direct_pair, direct))
+                    rate = (float(direct["bid"]) + float(direct["ask"])) / 2.0
+                else:
+                    usd_jpy = quote_as_of(
+                        "USD_JPY", as_of_sequence=as_of_sequence, field=field
+                    )
+                    via_pair = f"USD_{quote_currency}"
+                    via_usd = quote_as_of(
+                        via_pair, as_of_sequence=as_of_sequence, field=field
+                    )
+                    via_mid = (float(via_usd["bid"]) + float(via_usd["ask"])) / 2.0
+                    if via_mid <= 0:
+                        _mtm_violation(
+                            f"{field} conversion denominator is non-positive"
+                        )
+                    sources.extend((("USD_JPY", usd_jpy), (via_pair, via_usd)))
+                    rate = (
+                        (float(usd_jpy["bid"]) + float(usd_jpy["ask"])) / 2.0
+                    ) / via_mid
+            reference_time = _parse_utc(
+                reference_quote.get("ts"),
+                field=f"{field}.reference_quote.ts",
+                allow_naive=True,
+            )
+            for source_pair, source in sources:
+                source_time = _parse_utc(
+                    source["ts"],
+                    field=f"{field}.conversion_source.{source_pair}.ts",
+                    allow_naive=True,
+                )
+                age_seconds = (reference_time - source_time).total_seconds()
+                if age_seconds < 0:
+                    _mtm_violation(f"{field} conversion quote is from the future")
+                if (
+                    max_carried_quote_age_seconds is not None
+                    and age_seconds > max_carried_quote_age_seconds
+                ):
+                    _mtm_violation(f"{field} conversion quote exceeds sparse carry age")
+            return {
+                "quote_currency": quote_currency,
+                "rate_jpy_per_quote_unit": rate,
+                "as_of_quote_sequence": as_of_sequence,
+                "source_quote_sequences": [
+                    int(source["sequence"]) for _, source in sources
+                ],
+                "source_quotes": [
+                    {
+                        "pair": source_pair,
+                        "bid": source["bid"],
+                        "ask": source["ask"],
+                        "ts": source["ts"],
+                        "phase": (
+                            str(source["ts"]).rsplit("#", 1)[1]
+                            if "#" in str(source["ts"])
+                            else None
+                        ),
+                    }
+                    for source_pair, source in sources
+                ],
+            }
+
+        def conversion_rate(
+            pair: str, *, reference_quote: Mapping[str, Any], field: str
+        ) -> float:
+            return float(
+                conversion_evidence(pair, reference_quote=reference_quote, field=field)[
+                    "rate_jpy_per_quote_unit"
+                ]
+            )
 
         def financing_jpy(
             position: Mapping[str, Any], *, units: float, mark_ts: str, field: str
@@ -2264,7 +2516,11 @@ def _verify_coordinate_mtm_contract(
                 expected_financing
                 * _mtm_pip(str(position["pair"]))
                 * units
-                * conversion_rate(str(position["pair"]), field=field)
+                * conversion_rate(
+                    str(position["pair"]),
+                    reference_quote=current_quote(str(position["pair"]), field=field),
+                    field=field,
+                )
                 * held_days
             )
 
@@ -2272,6 +2528,7 @@ def _verify_coordinate_mtm_contract(
             equity = reconstructed_balance
             accrued_financing = 0.0
             hedge_units: dict[str, dict[str, float]] = {}
+            valuation_ts = current_valuation_ts(field=field) if positions else None
             for trade_id, position in positions.items():
                 pair = str(position["pair"])
                 quote = current_quote(pair, field=f"{field}.positions.{trade_id}")
@@ -2285,12 +2542,16 @@ def _verify_coordinate_mtm_contract(
                     if position["side"] == "LONG"
                     else float(position["entry_price"]) - mark
                 )
-                rate = conversion_rate(pair, field=f"{field}.positions.{trade_id}")
+                rate = conversion_rate(
+                    pair,
+                    reference_quote=quote,
+                    field=f"{field}.positions.{trade_id}",
+                )
                 gross = direction_diff * float(position["units"]) * rate
                 financing = financing_jpy(
                     position,
                     units=float(position["units"]),
-                    mark_ts=str(quote["ts"]),
+                    mark_ts=str(valuation_ts),
                     field=f"{field}.positions.{trade_id}",
                 )
                 equity += gross - financing
@@ -2301,7 +2562,9 @@ def _verify_coordinate_mtm_contract(
             for pair, sides in hedge_units.items():
                 quote = current_quote(pair, field=f"{field}.margin.{pair}")
                 mid = (float(quote["bid"]) + float(quote["ask"])) / 2.0
-                rate = conversion_rate(pair, field=f"{field}.margin.{pair}")
+                rate = conversion_rate(
+                    pair, reference_quote=quote, field=f"{field}.margin.{pair}"
+                )
                 margin += max(sides["LONG"], sides["SHORT"]) * mid * rate / leverage
             usage = margin / equity if equity > 0 else 999.0
             return {
@@ -2384,10 +2647,28 @@ def _verify_coordinate_mtm_contract(
             pair = str(order["pair"])
             side = str(order["side"])
             units = float(order["units"])
+            if sparse_union and positions:
+                valuation_time = _parse_utc(
+                    current_valuation_ts(field=field),
+                    field=f"{field}.valuation_ts",
+                    allow_naive=True,
+                )
+                for trade_id, position in positions.items():
+                    position_quote = current_quote(
+                        str(position["pair"]), field=f"{field}.positions.{trade_id}"
+                    )
+                    quote_time = _parse_utc(
+                        position_quote["ts"],
+                        field=f"{field}.positions.{trade_id}.quote.ts",
+                        allow_naive=True,
+                    )
+                    age_seconds = (valuation_time - quote_time).total_seconds()
+                    if not 0 <= age_seconds <= _MTM_MAX_CARRIED_QUOTE_AGE_SECONDS:
+                        return False
             account = expected_account(field=f"{field}.account")
             quote = current_quote(pair, field=f"{field}.quote")
             mid = (float(quote["bid"]) + float(quote["ask"])) / 2.0
-            rate = conversion_rate(pair, field=field)
+            rate = conversion_rate(pair, reference_quote=quote, field=field)
             long_units = sum(
                 float(position["units"])
                 for position in positions.values()
@@ -2428,9 +2709,11 @@ def _verify_coordinate_mtm_contract(
             order, and finally one portfolio margin closeout pass.  Replaying
             that ordering here prevents a ledger from silently keeping a
             touched loser or resting order alive until a favorable later bar.
-            Orders created by the O callback are deliberately ineligible until
-            the next quote batch; a market fill is added explicitly because its
-            attached exit is checked immediately by the broker.
+            A nonmarketable order created by the O callback remains ineligible
+            until the next quote batch.  An order already marketable at the
+            staged O is made immediately eligible because the broker must
+            resolve it atomically at that executable quote.  Market and resting
+            fills are also made eligible for an immediate attached exit.
             """
 
             if current_batch is None:
@@ -2461,6 +2744,12 @@ def _verify_coordinate_mtm_contract(
                         return (exit_event, trade_id)
             account = expected_account(field=f"{field}.margin")
             if positions and float(account["margin_usage"]) >= 1.0:
+                if sparse_union and not {
+                    str(position["pair"]) for position in positions.values()
+                }.issubset(set(current_batch["batch_pairs"])):
+                    _mtm_violation(
+                        f"{field} margin closeout lacks fresh position quotes"
+                    )
                 return ("MARGIN_CLOSEOUT", next(iter(positions)))
             return None
 
@@ -2503,19 +2792,20 @@ def _verify_coordinate_mtm_contract(
                 )
 
         def validate_conversion(
-            payload: Mapping[str, Any], pair: str, *, field: str
+            payload: Mapping[str, Any],
+            pair: str,
+            *,
+            reference_quote: Mapping[str, Any],
+            field: str,
         ) -> None:
             evidence = payload.get("conversion")
             if not isinstance(evidence, Mapping):
                 _mtm_violation(f"{field}.conversion is missing")
-            observed = _number(
-                evidence.get("rate_jpy_per_quote_unit"),
-                field=f"{field}.conversion.rate_jpy_per_quote_unit",
-                positive=True,
+            expected = conversion_evidence(
+                pair, reference_quote=reference_quote, field=field
             )
-            expected = conversion_rate(pair, field=field)
-            if not math.isclose(observed, expected, rel_tol=0, abs_tol=1e-12):
-                _mtm_violation(f"{field} conversion rate is not quote-derived")
+            if dict(evidence) != expected:
+                _mtm_violation(f"{field} conversion evidence is not quote-derived")
 
         def validate_event_quote(
             payload: Mapping[str, Any], pair: str, *, field: str
@@ -2531,7 +2821,7 @@ def _verify_coordinate_mtm_contract(
             comparable = {key: expected[key] for key in ("bid", "ask", "ts")}
             if dict(observed) != comparable:
                 _mtm_violation(f"{field}.quote is not the current batch quote")
-            return comparable
+            return expected
 
         def add_order(event: str, payload: Mapping[str, Any], *, field: str) -> None:
             order_id = _identity(payload.get("order_id"), field=f"{field}.order_id")
@@ -2585,7 +2875,7 @@ def _verify_coordinate_mtm_contract(
                 _mtm_violation(f"{field}.side is invalid")
             units = _number(payload.get("units"), field=f"{field}.units", positive=True)
             quote = validate_event_quote(payload, pair, field=field)
-            validate_conversion(payload, pair, field=field)
+            validate_conversion(payload, pair, reference_quote=quote, field=field)
             pip = _mtm_pip(pair)
             if event == "FILL_MARKET":
                 proposed_entry = {"pair": pair, "side": side, "units": units}
@@ -2731,7 +3021,7 @@ def _verify_coordinate_mtm_contract(
                 _mtm_violation(f"{field} has no active trade")
             pair = str(position["pair"])
             quote = validate_event_quote(payload, pair, field=field)
-            validate_conversion(payload, pair, field=field)
+            validate_conversion(payload, pair, reference_quote=quote, field=field)
             close_units = (
                 _number(payload.get("units"), field=f"{field}.units", positive=True)
                 if event == "CLOSE"
@@ -2796,7 +3086,7 @@ def _verify_coordinate_mtm_contract(
             )
             if observed_price != expected_price:
                 _mtm_violation(f"{field}.price is not independently executable")
-            rate = conversion_rate(pair, field=field)
+            rate = conversion_rate(pair, reference_quote=quote, field=field)
             gross = (
                 (
                     (expected_price - float(position["entry_price"]))
@@ -2809,7 +3099,11 @@ def _verify_coordinate_mtm_contract(
             financing = financing_jpy(
                 position,
                 units=close_units,
-                mark_ts=str(quote["ts"]),
+                mark_ts=(
+                    current_valuation_ts(field=field)
+                    if event == "MARGIN_CLOSEOUT"
+                    else str(quote["ts"])
+                ),
                 field=field,
             )
             expected_pl = gross - financing
@@ -3258,17 +3552,49 @@ def _verify_coordinate_mtm_contract(
                 batch_quotes = batch["quotes"]
                 if not isinstance(batch_quotes, list):
                     _mtm_violation(f"{field}.quotes must be a list")
-                if (
-                    batch["feed_pairs"] != list(feed_pairs)
-                    or batch["batch_pairs"] != list(feed_pairs)
+                batch_pairs = batch["batch_pairs"]
+                if batch["feed_pairs"] != list(feed_pairs):
+                    _mtm_violation(f"{field} feed_pairs drifted")
+                if sparse_union:
+                    if (
+                        not isinstance(batch_pairs, list)
+                        or not batch_pairs
+                        or batch_pairs != sorted(set(batch_pairs))
+                        or any(pair not in feed_pairs for pair in batch_pairs)
+                        or len(batch_quotes) != len(batch_pairs)
+                        or not isinstance(batch["coverage_complete"], bool)
+                        or batch["coverage_complete"]
+                        != (batch_pairs == list(feed_pairs))
+                    ):
+                        _mtm_violation(f"{field} sparse batch presence is invalid")
+                    if phase_offset == 0:
+                        current_epoch_batch_pairs = list(batch_pairs)
+                        observed_availability_mask.append(
+                            {
+                                "epoch": int(batch_coordinate["epoch"]),
+                                "batch_pairs": list(batch_pairs),
+                            }
+                        )
+                        if batch_pairs == list(feed_pairs):
+                            observed_full_epoch_count += 1
+                        else:
+                            observed_partial_epoch_count += 1
+                        for pair in batch_pairs:
+                            observed_pair_row_counts[pair] += 1
+                    elif batch_pairs != current_epoch_batch_pairs:
+                        _mtm_violation(
+                            f"{field} sparse availability changes within one bar"
+                        )
+                elif (
+                    batch_pairs != list(feed_pairs)
                     or batch["coverage_complete"] is not True
                     or len(batch_quotes) != len(feed_pairs)
                 ):
                     _mtm_violation(f"{field} does not cover every feed pair exactly")
                 normalized_batch_quotes: list[dict[str, Any]] = []
-                watermark = quote_sequence + len(feed_pairs)
+                watermark = quote_sequence + len(batch_quotes)
                 for pair_index, (expected_pair, raw_quote) in enumerate(
-                    zip(feed_pairs, batch_quotes, strict=True), start=1
+                    zip(batch_pairs, batch_quotes, strict=True), start=1
                 ):
                     quote = dict(
                         _require_exact_keys(
@@ -3306,6 +3632,10 @@ def _verify_coordinate_mtm_contract(
                         "sequence": quote_sequence,
                         "watermark": watermark,
                     }
+                    history = quote_history.setdefault(pair, [])
+                    history.append(dict(quotes[pair]))
+                    if len(history) > 128:
+                        del history[:-128]
                 if batch_quotes != normalized_batch_quotes:
                     _mtm_violation(f"{field}.quotes use noncanonical numeric state")
                 if corpus_batches is not None:
@@ -3345,9 +3675,20 @@ def _verify_coordinate_mtm_contract(
                 current_batch_manual_started = False
                 current_market_consequence_trade_id = None
                 current_market_consequence_window = False
+                current_order_consequence_order_id = None
+                current_order_consequence_window = False
                 margin_closeout_sequence_active = False
-                batch_eligible_order_ids = set(orders)
-                batch_eligible_position_ids = set(positions)
+                batch_pair_set = set(batch_pairs)
+                batch_eligible_order_ids = {
+                    order_id
+                    for order_id, order in orders.items()
+                    if order["pair"] in batch_pair_set
+                }
+                batch_eligible_position_ids = {
+                    trade_id
+                    for trade_id, position in positions.items()
+                    if position["pair"] in batch_pair_set
+                }
                 latest_batch = batch
                 if first_observed_coordinate is None:
                     first_observed_coordinate = batch_coordinate
@@ -3396,6 +3737,31 @@ def _verify_coordinate_mtm_contract(
                         _mtm_violation(f"{field} mutates state outside a quote batch")
                     if event not in {"ORDER_CANCEL", "CLOSE"}:
                         _mtm_violation(f"{field} is not a permitted settlement action")
+                    if event == "CLOSE" and sparse_union:
+                        position = positions.get(str(payload.get("trade_id")))
+                        if position is None or latest_batch is None:
+                            _mtm_violation(
+                                f"{field} settlement close has no terminal position/batch"
+                            )
+                        pair = str(position["pair"])
+                        terminal_coordinate = latest_batch["coordinate"]
+                        quote = current_quote(pair, field=field)
+                        quote_epoch = int(
+                            _parse_utc(
+                                quote["ts"],
+                                field=f"{field}.quote.ts",
+                                allow_naive=True,
+                            ).timestamp()
+                        )
+                        if (
+                            terminal_coordinate["phase"] != "C"
+                            or pair not in latest_batch["batch_pairs"]
+                            or quote_epoch != int(terminal_coordinate["epoch"])
+                            or not str(quote["ts"]).endswith("#C")
+                        ):
+                            _mtm_violation(
+                                f"{field} settlement close lacks a fresh terminal quote"
+                            )
                 else:
                     bot_origin_events = {
                         "ORDER_LIMIT",
@@ -3415,14 +3781,50 @@ def _verify_coordinate_mtm_contract(
                             _mtm_violation(
                                 f"{field} bot-origin action is outside a causal O callback"
                             )
+                        if sparse_union:
+                            if set(quotes) != set(feed_pairs):
+                                _mtm_violation(
+                                    f"{field} bot-origin action precedes feed priming"
+                                )
+                            if event in {
+                                "ORDER_LIMIT",
+                                "ORDER_STOP",
+                                "FILL_MARKET",
+                                "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+                                "ORDER_REJECTED_CONCURRENCY_CAP",
+                            }:
+                                target_pair = payload.get("pair")
+                            elif event == "ORDER_CANCEL":
+                                target = orders.get(str(payload.get("order_id")))
+                                target_pair = target.get("pair") if target else None
+                            else:
+                                target = positions.get(str(payload.get("trade_id")))
+                                target_pair = target.get("pair") if target else None
+                            if target_pair not in current_batch["batch_pairs"]:
+                                _mtm_violation(
+                                    f"{field} bot-origin action targets an absent pair"
+                                )
                         require_no_mandatory_event(field=f"{field}.pre_bot_action")
                         batch_eligible_order_ids.clear()
                         batch_eligible_position_ids.clear()
                         current_batch_manual_started = True
                         current_market_consequence_trade_id = None
                         current_market_consequence_window = False
+                        current_order_consequence_order_id = None
+                        current_order_consequence_window = False
                     elif current_batch_manual_started:
                         trade_id = payload.get("trade_id")
+                        order_id = payload.get("order_id")
+                        immediate_order_consequence = (
+                            event
+                            in {
+                                "FILL_LIMIT",
+                                "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                                "ORDER_CANCEL_CONCURRENCY_CAP",
+                            }
+                            and current_order_consequence_window
+                            and order_id == current_order_consequence_order_id
+                        )
                         immediate_market_exit = (
                             event in {"EXIT_TP", "EXIT_SL"}
                             and trade_id == current_market_consequence_trade_id
@@ -3431,7 +3833,11 @@ def _verify_coordinate_mtm_contract(
                             event == "MARGIN_CLOSEOUT"
                             and current_market_consequence_window
                         )
-                        if not immediate_market_exit and not immediate_market_closeout:
+                        if (
+                            not immediate_order_consequence
+                            and not immediate_market_exit
+                            and not immediate_market_closeout
+                        ):
                             _mtm_violation(
                                 f"{field} asynchronous broker event follows an O action"
                             )
@@ -3460,14 +3866,39 @@ def _verify_coordinate_mtm_contract(
                         margin_closeout_sequence_active = False
                 apply_action(event, payload, field=field)
                 if current_batch is not None:
-                    if event == "FILL_LIMIT":
+                    if event in {"ORDER_LIMIT", "ORDER_STOP"}:
+                        order_id = str(payload.get("order_id"))
+                        if touched_order(
+                            orders[order_id], field=f"{field}.submission_marketability"
+                        ):
+                            batch_eligible_order_ids.add(order_id)
+                            current_order_consequence_order_id = order_id
+                            current_order_consequence_window = True
+                    elif event == "FILL_LIMIT":
                         batch_eligible_order_ids.discard(str(payload.get("order_id")))
-                        batch_eligible_position_ids.add(str(payload.get("trade_id")))
+                        current_order_consequence_window = False
+                        current_market_consequence_trade_id = str(
+                            payload.get("trade_id")
+                        )
+                        current_market_consequence_window = True
+                        batch_eligible_position_ids.add(
+                            current_market_consequence_trade_id
+                        )
                     elif event in {
                         "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
                         "ORDER_CANCEL_CONCURRENCY_CAP",
                     }:
                         batch_eligible_order_ids.discard(str(payload.get("order_id")))
+                        current_order_consequence_window = False
+                    elif event == "SET_EXIT":
+                        trade_id = str(payload.get("trade_id"))
+                        if touched_exit(
+                            positions[trade_id],
+                            field=f"{field}.submission_exit_marketability",
+                        ):
+                            current_market_consequence_trade_id = trade_id
+                            current_market_consequence_window = True
+                            batch_eligible_position_ids.add(trade_id)
                     elif event in {"EXIT_TP", "EXIT_SL", "MARGIN_CLOSEOUT"}:
                         batch_eligible_position_ids.discard(
                             str(payload.get("trade_id"))
@@ -3515,6 +3946,19 @@ def _verify_coordinate_mtm_contract(
             _mtm_violation("terminal quote batch has no PHASE mark")
         if batch_count != expected_batch_count:
             _mtm_violation("observed quote batch count does not match the manifest")
+        if sparse_union:
+            if (
+                epoch_count != expected_union_epoch_count
+                or observed_full_epoch_count != expected_full_epoch_count
+                or observed_partial_epoch_count != expected_partial_epoch_count
+                or observed_pair_row_counts != expected_pair_row_counts
+                or quote_sequence != expected_quote_count
+                or _canonical_sha256(observed_availability_mask)
+                != expected_availability_mask_sha
+            ):
+                _mtm_violation(
+                    "observed sparse availability/counts do not match the manifest"
+                )
         if first_observed_coordinate != expected_first_coordinate:
             _mtm_violation("first coordinate does not match the manifest")
         if last_observed_coordinate != expected_last_coordinate:
@@ -3933,6 +4377,8 @@ def score_ledger_metrics(
     leverage = _number(
         costs.get("leverage"), field="manifest.costs.leverage", positive=True
     )
+    if leverage != _EXPECTED_VIRTUAL_BROKER_LEVERAGE:
+        raise DojoBotTrainerError("manifest leverage is not the fixed broker leverage")
     if not math.isclose(
         _number(
             manifest.get("initial_balance_jpy"),
@@ -4260,6 +4706,9 @@ def score_ledger_metrics(
         "bot_module_sha256": expected_module_sha,
         "bot_dependency_sha256": expected_dependencies,
         "bot_config_sha256": expected_config_sha,
+        "strategy_execution_trace_status": (
+            "SOURCE_BOUND_TRUSTED_RUNNER_NOT_INDEPENDENTLY_REEXECUTED"
+        ),
         "expected_pairs": pairs,
         "window_start_utc": start.isoformat(),
         "window_end_utc": end.isoformat(),

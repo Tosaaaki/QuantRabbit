@@ -35,8 +35,14 @@ def _write_bar(root: Path, pair: str, stamp: str, offset: float) -> None:
         handle.write(json.dumps(row) + "\n")
 
 
-def _write_bars(root: Path, pair: str, rows: list[tuple[str, float]]) -> None:
-    shard = root / "fixture" / pair / f"{pair}_M1_BA_2026.jsonl.gz"
+def _write_bars(
+    root: Path,
+    pair: str,
+    rows: list[tuple[str, float]],
+    *,
+    granularity: str = "M1",
+) -> None:
+    shard = root / "fixture" / pair / f"{pair}_{granularity}_BA_2026.jsonl.gz"
     shard.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(shard, "wt", encoding="utf-8") as handle:
         for stamp, offset in rows:
@@ -166,13 +172,23 @@ def test_reproducibility_manifest_binds_sources_costs_and_bot(tmp_path):
     assert len(manifest["source"]["git_head"]) == 40
     assert len(manifest["manifest_sha256"]) == 64
     assert (
-        manifest["replay"]["mtm_coordinate_contract"] == "QR_REPLAY_MTM_COORDINATES_V1"
+        manifest["replay"]["mtm_coordinate_contract"]
+        == "QR_REPLAY_ASYNC_MTM_COORDINATES_V2"
+    )
+    assert manifest["replay"]["coordinate_schedule"] == "SEALED_CORPUS_EPOCH_UNION"
+    assert (
+        manifest["replay"]["quote_policy"] == "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES"
     )
     assert manifest["replay"]["phase_order"] == ["O", "H", "L", "C"]
     assert manifest["replay"]["feed_pairs"] == ["USD_JPY"]
+    assert manifest["replay"]["expected_union_epoch_count"] == 1
+    assert manifest["replay"]["expected_partial_epoch_count"] == 0
     assert manifest["replay"]["expected_phase_mark_count"] == 4
-    assert manifest["replay"]["full_pair_phase_coverage"] is True
-    assert manifest["replay"]["partial_phase_count"] == 0
+    assert manifest["replay"]["expected_partial_phase_count"] == 0
+    assert manifest["replay"]["pair_row_counts"] == {"USD_JPY": 1}
+    assert manifest["replay"]["expected_quote_count"] == 4
+    assert manifest["replay"]["max_carried_quote_age_seconds"] == 900
+    assert manifest["replay"]["synthetic_quote_count"] == 0
     assert len(manifest["replay"]["expected_batch_chain_terminal_sha256"]) == 64
 
     body = dict(manifest)
@@ -194,12 +210,16 @@ def test_manifest_precommits_full_two_pair_mtm_coordinate_and_batch_chain(tmp_pa
     )
     replay = manifest["replay"]
 
-    assert replay["mtm_coordinate_contract"] == "QR_REPLAY_MTM_COORDINATES_V1"
+    assert replay["mtm_coordinate_contract"] == "QR_REPLAY_ASYNC_MTM_COORDINATES_V2"
     assert replay["phase_order"] == ["O", "H", "L", "C"]
     assert replay["feed_pairs"] == ["EUR_USD", "USD_JPY"]
     assert replay["expected_phase_mark_count"] == 8
-    assert replay["full_pair_phase_coverage"] is True
-    assert replay["partial_phase_count"] == 0
+    assert replay["expected_union_epoch_count"] == 2
+    assert replay["expected_full_epoch_count"] == 2
+    assert replay["expected_partial_epoch_count"] == 0
+    assert replay["expected_partial_phase_count"] == 0
+    assert replay["pair_row_counts"] == {"EUR_USD": 2, "USD_JPY": 2}
+    assert replay["expected_quote_count"] == 16
     assert replay["first_coordinate"]["phase"] == "O"
     assert replay["last_coordinate"]["phase"] == "C"
 
@@ -219,7 +239,7 @@ def test_manifest_precommits_full_two_pair_mtm_coordinate_and_batch_chain(tmp_pa
     )
 
 
-def test_manifest_rejects_partial_feed_pair_phase_coverage(tmp_path):
+def test_manifest_seals_sparse_observed_pair_phase_coverage(tmp_path):
     corpus = tmp_path / "corpus"
     _write_bars(
         corpus,
@@ -235,12 +255,17 @@ def test_manifest_rejects_partial_feed_pair_phase_coverage(tmp_path):
         [("2026-01-01T00:00:00.000000000Z", 200.0)],
     )
 
-    with pytest.raises(ValueError, match="full feed-pair coverage"):
-        SESSION._build_reproducibility_manifest(
-            _manifest_args(
-                corpus, pairs="USD_JPY,EUR_USD", continuous_mtm=True
-            )
-        )
+    replay = SESSION._build_reproducibility_manifest(
+        _manifest_args(corpus, pairs="USD_JPY,EUR_USD", continuous_mtm=True)
+    )["replay"]
+
+    assert replay["expected_union_epoch_count"] == 2
+    assert replay["expected_full_epoch_count"] == 1
+    assert replay["expected_partial_epoch_count"] == 1
+    assert replay["expected_partial_phase_count"] == 4
+    assert replay["pair_row_counts"] == {"EUR_USD": 1, "USD_JPY": 2}
+    assert replay["expected_quote_count"] == 12
+    assert len(replay["availability_mask_sha256"]) == 64
 
 
 def test_manifest_rejects_resume_snapshot_as_fresh_mtm_evidence(tmp_path):
@@ -468,14 +493,22 @@ def test_two_pair_replay_emits_complete_continuous_mtm_evidence(tmp_path):
 
 def test_period_end_settlement_resolves_only_declared_owner(tmp_path: Path) -> None:
     broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0)
-    broker.on_quote("USD_JPY", 150.0, 150.02, "2026-01-01T00:00:00+00:00")
+    terminal_ts = "2026-01-01T00:00:00+00:00#C"
+    broker.on_quote("USD_JPY", 150.0, 150.02, terminal_ts)
     owner = OwnedBrokerView(broker, "dojo:settle")
     sibling = OwnedBrokerView(broker, "dojo:sibling")
     own_trade = owner.market_order("USD_JPY", "LONG", 100)
     own_order = owner.limit_order("USD_JPY", "LONG", 100, price=149.0)
     sibling_trade = sibling.market_order("USD_JPY", "SHORT", 100)
 
-    SESSION._settle_custom_bot_at_end(broker, "dojo:settle")
+    SESSION._settle_custom_bot_at_end(
+        broker,
+        "dojo:settle",
+        {
+            "coordinate": {"epoch": 1767225600, "phase": "C"},
+            "batch_pairs": ["USD_JPY"],
+        },
+    )
 
     assert own_trade not in broker.positions
     assert own_order not in broker.orders
@@ -487,6 +520,34 @@ def test_period_end_settlement_resolves_only_declared_owner(tmp_path: Path) -> N
     assert settlement["strategy_owner_id"] == "dojo:settle"
     assert settlement["complete"] is True
     assert settlement["errors"] == []
+
+
+def test_period_end_settlement_refuses_stale_pair_absent_from_terminal_batch(
+    tmp_path: Path,
+) -> None:
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0)
+    broker.on_quote("USD_JPY", 150.0, 150.02, "2026-01-02T21:59:00+00:00#C")
+    owner = OwnedBrokerView(broker, "dojo:stale-settle")
+    trade_id = owner.market_order("USD_JPY", "LONG", 100)
+    broker.on_quote("EUR_USD", 1.10, 1.1002, "2026-01-04T22:05:00+00:00#C")
+
+    SESSION._settle_custom_bot_at_end(
+        broker,
+        "dojo:stale-settle",
+        {
+            "coordinate": {"epoch": 1767564300, "phase": "C"},
+            "batch_pairs": ["EUR_USD"],
+        },
+    )
+
+    assert trade_id in broker.positions
+    settlement = next(
+        json.loads(line)["payload"]
+        for line in broker.ledger_path.read_text().splitlines()
+        if json.loads(line)["event"] == "PERIOD_END_SETTLEMENT"
+    )
+    assert settlement["complete"] is False
+    assert settlement["errors"] == [f"close:{trade_id}:TERMINAL_PAIR_QUOTE_UNAVAILABLE"]
 
 
 def _replay_args(corpus: Path, **overrides):
@@ -538,6 +599,332 @@ def test_closed_bar_bot_market_order_executes_at_next_open_quote(tmp_path):
     )
     assert fill["quote"]["ts"].endswith("00:01:00+00:00#O")
     assert fill["entry"] == pytest.approx(111.02)
+
+
+def test_stale_gap_skips_actions_and_clock_uses_current_observed_open_epoch(tmp_path):
+    corpus = tmp_path / "corpus"
+    _write_bars(
+        corpus,
+        "USD_JPY",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 100.0),
+            ("2026-01-01T02:00:00.000000000Z", 110.0),
+            ("2026-01-01T02:01:00.000000000Z", 111.0),
+            ("2026-01-01T03:00:00.000000000Z", 112.0),
+            ("2026-01-01T03:01:00.000000000Z", 113.0),
+        ],
+    )
+    session = tmp_path / "session"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    broker = VirtualBroker(session / "ledger.jsonl", balance_jpy=2_000_000.0)
+
+    class Bot:
+        def __init__(self):
+            self.trade_id = None
+            self.entry_decision_epoch = None
+            self.decisions = []
+
+        def on_bar_closed(self, pair, bar, epoch):
+            self.decisions.append((bar["epoch"], epoch))
+            if self.trade_id is None:
+                self.trade_id = broker.market_order(pair, "LONG", 1)
+                self.entry_decision_epoch = epoch
+            elif (
+                self.trade_id in broker.positions
+                and epoch - self.entry_decision_epoch >= 3600
+            ):
+                broker.close_trade(self.trade_id)
+
+    bot = Bot()
+    SESSION.run_replay(
+        _replay_args(corpus, time_to="2026-01-01T03:02:00"),
+        broker,
+        session,
+        bot=bot,
+    )
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    fill = next(row["payload"] for row in records if row["event"] == "FILL_MARKET")
+    close = next(row["payload"] for row in records if row["event"] == "CLOSE")
+
+    assert bot.decisions == [
+        (1767225600, 1767232800),
+        (1767232800, 1767232860),
+        (1767232860, 1767236400),
+        (1767236400, 1767236460),
+    ]
+    assert bot.entry_decision_epoch == 1767232860
+    assert fill["quote"]["ts"] == "2026-01-01T02:01:00+00:00#O"
+    assert close["quote"]["ts"] == "2026-01-01T03:01:00+00:00#O"
+
+
+def test_sparse_pair_callbacks_close_once_at_pair_local_next_open(tmp_path):
+    corpus = tmp_path / "corpus"
+    _write_bars(
+        corpus,
+        "USD_JPY",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 100.0),
+            ("2026-01-01T00:01:00.000000000Z", 101.0),
+            ("2026-01-01T00:03:00.000000000Z", 103.0),
+        ],
+    )
+    _write_bars(
+        corpus,
+        "EUR_USD",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 200.0),
+            ("2026-01-01T00:02:00.000000000Z", 202.0),
+            ("2026-01-01T00:03:00.000000000Z", 203.0),
+        ],
+    )
+    session = tmp_path / "session"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    broker = VirtualBroker(session / "ledger.jsonl", balance_jpy=2_000_000.0)
+
+    class Bot:
+        def __init__(self):
+            self.closed = []
+
+        def on_bar_closed(self, pair, bar, epoch):
+            self.closed.append((pair, bar["epoch"], epoch, broker.last_quotes[pair][2]))
+
+    bot = Bot()
+    SESSION.run_replay(
+        _replay_args(
+            corpus,
+            pairs="USD_JPY,EUR_USD",
+            time_to="2026-01-01T00:04:00",
+        ),
+        broker,
+        session,
+        bot=bot,
+    )
+
+    assert bot.closed == [
+        ("USD_JPY", 1767225600, 1767225660, "2026-01-01T00:01:00+00:00#O"),
+        ("EUR_USD", 1767225600, 1767225720, "2026-01-01T00:02:00+00:00#O"),
+        ("EUR_USD", 1767225720, 1767225780, "2026-01-01T00:03:00+00:00#O"),
+        ("USD_JPY", 1767225660, 1767225780, "2026-01-01T00:03:00+00:00#O"),
+    ]
+
+
+def test_bot_callback_feed_gate_requires_each_pair_to_initialize_once(tmp_path):
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0)
+    broker.on_quote("USD_JPY", 150.0, 150.02, "2026-01-01T00:15:00+00:00#O")
+    assert (
+        SESSION._bot_callbacks_have_initialized_feed(broker, ["EUR_USD", "USD_JPY"])
+        is False
+    )
+    broker.on_quote("EUR_USD", 1.1, 1.1002, "2026-01-01T00:00:00+00:00#O")
+    assert SESSION._bot_callbacks_have_initialized_feed(broker, ["EUR_USD", "USD_JPY"])
+
+
+@pytest.mark.parametrize(
+    ("decision_epoch", "expected"),
+    [
+        (60, True),
+        (900, True),
+        (901, False),
+    ],
+)
+def test_bot_callback_causal_gap_boundary(decision_epoch, expected):
+    assert (
+        SESSION._bot_callback_is_within_causal_gap({"epoch": 0}, decision_epoch)
+        is expected
+    )
+
+
+def test_sunday_stale_bars_update_state_without_new_risk_and_callbacks_continue(
+    tmp_path,
+):
+    corpus = tmp_path / "corpus"
+    _write_bars(
+        corpus,
+        "USD_JPY",
+        [
+            ("2026-01-02T21:59:00.000000000Z", 100.0),
+            ("2026-01-04T22:05:00.000000000Z", 101.0),
+            ("2026-01-04T22:10:00.000000000Z", 102.0),
+            ("2026-01-04T22:11:00.000000000Z", 103.0),
+        ],
+    )
+    _write_bars(
+        corpus,
+        "EUR_USD",
+        [
+            ("2026-01-02T21:59:00.000000000Z", 200.0),
+            ("2026-01-04T22:10:00.000000000Z", 202.0),
+            ("2026-01-04T22:11:00.000000000Z", 203.0),
+        ],
+    )
+    session = tmp_path / "session"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    broker = VirtualBroker(session / "ledger.jsonl", balance_jpy=2_000_000.0)
+
+    class Bot:
+        def __init__(self):
+            self.closed = []
+
+        def on_bar_closed(self, pair, bar, epoch):
+            self.closed.append((pair, bar["epoch"], epoch))
+
+    bot = Bot()
+    SESSION.run_replay(
+        _replay_args(
+            corpus,
+            pairs="USD_JPY,EUR_USD",
+            time_from="2026-01-02T21:59:00",
+            time_to="2026-01-04T22:12:00",
+        ),
+        broker,
+        session,
+        bot=bot,
+    )
+
+    assert bot.closed == [
+        ("USD_JPY", 1767391140, 1767564300),
+        ("EUR_USD", 1767391140, 1767564600),
+        ("USD_JPY", 1767564300, 1767564600),
+        ("EUR_USD", 1767564600, 1767564660),
+        ("USD_JPY", 1767564600, 1767564660),
+    ]
+
+
+def test_sparse_s5_m1_aggregate_closes_on_pair_local_next_minute(tmp_path):
+    corpus = tmp_path / "corpus"
+    _write_bars(
+        corpus,
+        "USD_JPY",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 100.0),
+            ("2026-01-01T00:00:05.000000000Z", 101.0),
+            ("2026-01-01T00:01:00.000000000Z", 102.0),
+        ],
+        granularity="S5",
+    )
+    _write_bars(
+        corpus,
+        "EUR_USD",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 200.0),
+            ("2026-01-01T00:00:10.000000000Z", 201.0),
+            ("2026-01-01T00:01:05.000000000Z", 202.0),
+        ],
+        granularity="S5",
+    )
+    session = tmp_path / "session"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    broker = VirtualBroker(session / "ledger.jsonl", balance_jpy=2_000_000.0)
+
+    class Bot:
+        def __init__(self):
+            self.closed = []
+
+        def on_bar_closed(self, pair, bar, epoch):
+            self.closed.append((pair, bar["epoch"], epoch, broker.last_quotes[pair][2]))
+
+    bot = Bot()
+    SESSION.run_replay(
+        _replay_args(
+            corpus,
+            pairs="USD_JPY,EUR_USD",
+            granularity="S5",
+            bot_bar="M1",
+            time_to="2026-01-01T00:02:00",
+        ),
+        broker,
+        session,
+        bot=bot,
+    )
+
+    assert bot.closed == [
+        ("USD_JPY", 1767225600, 1767225660, "2026-01-01T00:01:00+00:00#O"),
+        ("EUR_USD", 1767225600, 1767225665, "2026-01-01T00:01:05+00:00#O"),
+    ]
+
+
+def test_sparse_mtm_runtime_matches_union_commitment_and_detects_tamper(tmp_path):
+    corpus = tmp_path / "corpus"
+    _write_bars(
+        corpus,
+        "USD_JPY",
+        [
+            ("2026-01-01T00:00:00.000000000Z", 100.0),
+            ("2026-01-01T00:01:00.000000000Z", 101.0),
+        ],
+    )
+    _write_bars(
+        corpus,
+        "EUR_USD",
+        [("2026-01-01T00:01:00.000000000Z", 200.0)],
+    )
+    args = _replay_args(
+        corpus,
+        pairs="USD_JPY,EUR_USD",
+        time_to="2026-01-01T00:02:00",
+    )
+    shards = SESSION._selected_corpus_shards(
+        corpus,
+        ["EUR_USD", "USD_JPY"],
+        args.time_from,
+        args.time_to,
+        "M1",
+    )
+    shard_rows = [
+        {
+            "path": path.relative_to(corpus).as_posix(),
+            "size_bytes": path.stat().st_size,
+            "sha256": SESSION._file_sha256(path),
+        }
+        for path in shards
+    ]
+    commitment = SESSION._build_replay_mtm_commitment(
+        root=corpus,
+        pairs=["EUR_USD", "USD_JPY"],
+        time_from=args.time_from,
+        time_to=args.time_to,
+        intrabar="OHLC",
+        granularity="M1",
+        expected_shards=shard_rows,
+    )
+
+    session = tmp_path / "valid"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    broker = VirtualBroker(session / "ledger.jsonl", balance_jpy=2_000_000.0)
+    broker.account_mark("START")
+    runtime = SESSION.run_replay(
+        args,
+        broker,
+        session,
+        expected_shards=shard_rows,
+        mtm_contract=commitment,
+    )
+    assert runtime["phase_mark_count"] == 8
+    assert commitment["expected_partial_epoch_count"] == 1
+    assert commitment["expected_partial_phase_count"] == 4
+    batches = [
+        json.loads(line)["payload"]
+        for line in (session / "ledger.jsonl").read_text().splitlines()
+        if json.loads(line)["event"] == "QUOTE_BATCH_BEGIN"
+    ]
+    assert [row["batch_pairs"] for row in batches[:4]] == [["USD_JPY"]] * 4
+    assert [row["batch_pairs"] for row in batches[4:]] == [["EUR_USD", "USD_JPY"]] * 4
+
+    tampered_session = tmp_path / "tampered"
+    (tampered_session / "inbox" / "processed").mkdir(parents=True)
+    tampered_broker = VirtualBroker(
+        tampered_session / "ledger.jsonl", balance_jpy=2_000_000.0
+    )
+    tampered_broker.account_mark("START")
+    tampered = {**commitment, "availability_mask_sha256": "0" * 64}
+    with pytest.raises(VirtualBrokerError, match="availability_mask_sha256"):
+        SESSION.run_replay(
+            args,
+            tampered_broker,
+            tampered_session,
+            expected_shards=shard_rows,
+            mtm_contract=tampered,
+        )
 
 
 def test_replay_resume_skips_all_quotes_at_or_before_cursor(tmp_path):

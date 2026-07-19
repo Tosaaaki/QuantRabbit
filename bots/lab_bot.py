@@ -472,16 +472,38 @@ class Bot:
         st: "_PairState",
         trade_id: str,
         pair: str,
-        epoch: int,
+        opened_epoch: float,
         entry_atr: float | None,
     ) -> None:
-        st.my_trades[trade_id] = epoch
+        st.my_trades[trade_id] = opened_epoch
         self._owner[trade_id] = pair
         if entry_atr is not None and entry_atr > 0:
             st.trade_entry_atr[trade_id] = entry_atr
         position = self.broker.position(trade_id)
         if position is not None:
             st.trade_overlay_extreme[trade_id] = position.entry_price
+
+    @staticmethod
+    def _position_opened_epoch(opened_ts: str) -> float | None:
+        """Parse the broker-authored fill clock without trusting local time.
+
+        Replay quotes append an intrabar phase (``#H``/``#L``/``#C``) to an
+        aware ISO-8601 timestamp.  A missing timezone or non-finite epoch
+        cannot safely start the hard-hold cage.
+        """
+
+        if not isinstance(opened_ts, str) or not opened_ts:
+            return None
+        try:
+            opened_at = datetime.fromisoformat(opened_ts.split("#", 1)[0])
+            if opened_at.tzinfo is None or opened_at.utcoffset() is None:
+                return None
+            opened_epoch = opened_at.timestamp()
+        except (OverflowError, TypeError, ValueError):
+            return None
+        if not math.isfinite(opened_epoch):
+            return None
+        return opened_epoch
 
     def _forget_trade(self, st: "_PairState", trade_id: str) -> None:
         st.my_trades.pop(trade_id, None)
@@ -640,7 +662,17 @@ class Bot:
         newly_promoted: set[str] = set()
         for trade_id in self.broker.active_trade_ids(pair=pair):
             if trade_id not in self._owner:
-                self._register_trade(st, trade_id, pair, epoch, prior_atr)
+                position = self.broker.position(trade_id)
+                if position is None:
+                    continue
+                opened_epoch = self._position_opened_epoch(position.opened_ts)
+                if opened_epoch is None:
+                    # Unknown age must not reset or extend a mandatory cage.
+                    # Register at the expiry boundary so the normal owned-close
+                    # path attempts an immediate fail-closed release and keeps
+                    # retry ownership intact if that close itself fails.
+                    opened_epoch = float(epoch - self.ceiling_s)
+                self._register_trade(st, trade_id, pair, opened_epoch, prior_atr)
                 newly_promoted.add(trade_id)
         for trade_id in list(st.my_trades):
             if trade_id not in self.broker.active_trade_ids(pair=pair):

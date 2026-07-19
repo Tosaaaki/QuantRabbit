@@ -553,6 +553,67 @@ def test_weekend_position_obeys_existing_terminal_ceiling(tmp_path: Path) -> Non
     assert broker.positions == {}
 
 
+@pytest.mark.parametrize("fill_phase", ["H", "L", "C"])
+def test_resting_friday_fill_is_overdue_when_first_discovered_sunday(
+    tmp_path: Path, fill_phase: str
+) -> None:
+    ledger_path = tmp_path / f"ledger-{fill_phase}.jsonl"
+    broker = VirtualBroker(ledger_path, balance_jpy=200_000.0, fast_ledger=True)
+    bot = LAB_BOT.Bot(
+        broker,
+        _config("weekend_gap_recovery", ceiling_min=60),
+    )
+    friday = datetime(2025, 1, 10, 21, 59, tzinfo=UTC)
+    broker.on_quote("USD_JPY", 149.99, 150.01, friday.isoformat() + "#O")
+    bot.broker.limit_order("USD_JPY", "LONG", 100, price=149.95)
+    fill_ts = friday.isoformat() + f"#{fill_phase}"
+    broker.on_quote("USD_JPY", 149.92, 149.94, fill_ts)
+    trade_id = next(iter(broker.positions))
+    assert broker.positions[trade_id].opened_ts == fill_ts
+
+    # The final Friday bar is stale and is not decision-eligible at Sunday O.
+    # The first ordinary Sunday callback must still discover the owned fill and
+    # apply the 60-minute cage from Friday's exact fill time.
+    sunday_callback = datetime(2025, 1, 12, 22, 1, tzinfo=UTC)
+    broker.on_quote("USD_JPY", 149.89, 149.91, sunday_callback.isoformat() + "#O")
+    bot.on_bar_closed(
+        "USD_JPY",
+        _flat_bar(sunday_callback - timedelta(minutes=1), mid=149.90),
+        int(sunday_callback.timestamp()),
+    )
+
+    assert broker.positions == {}
+    assert trade_id not in bot.state["USD_JPY"].my_trades
+    events = _trade_ledger_events(ledger_path, trade_id)
+    assert [event["event"] for event in events] == ["FILL_LIMIT", "CLOSE"]
+
+
+def test_invalid_owned_fill_timestamp_fails_closed_at_discovery(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "invalid-opened-ts.jsonl"
+    broker = VirtualBroker(ledger_path, balance_jpy=200_000.0, fast_ledger=True)
+    bot = LAB_BOT.Bot(
+        broker,
+        _config("weekend_gap_recovery", ceiling_min=60),
+    )
+    stamp = datetime(2025, 1, 12, 22, 0, tzinfo=UTC)
+    broker.on_quote("USD_JPY", 149.99, 150.01, stamp.isoformat() + "#O")
+    trade_id = bot.broker.market_order("USD_JPY", "LONG", 100)
+    broker.positions[trade_id].opened_ts = "not-a-timestamp"
+
+    callback = stamp + timedelta(minutes=1)
+    broker.on_quote("USD_JPY", 149.98, 150.00, callback.isoformat() + "#O")
+    bot.on_bar_closed(
+        "USD_JPY",
+        _flat_bar(stamp),
+        int(callback.timestamp()),
+    )
+
+    assert broker.positions == {}
+    assert trade_id not in bot.state["USD_JPY"].my_trades
+    events = _trade_ledger_events(ledger_path, trade_id)
+    assert [event["event"] for event in events] == ["FILL_MARKET", "CLOSE"]
+
+
 def _prime_overlay(bot, broker: VirtualBroker) -> datetime:
     start = datetime(2025, 1, 8, 12, 0, tzinfo=UTC)
     for minute in range(20):

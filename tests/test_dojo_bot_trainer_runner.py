@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,8 @@ SPEC.loader.exec_module(runner)
 
 PAIRS = ["EUR_USD", "GBP_USD"]
 FEED_PAIRS = ["EUR_USD", "GBP_USD", "USD_JPY"]
+WINDOW_START = "2025-03-01T00:00:00Z"
+WINDOW_END = "2025-04-01T00:00:00Z"
 
 
 def _write(path: Path, data: bytes = b"source-v1\n") -> None:
@@ -45,20 +48,32 @@ def _repo(tmp_path: Path, monkeypatch) -> Path:
 
 def _corpus(tmp_path: Path) -> Path:
     root = tmp_path / "corpus"
+    epochs = _expected_epochs()
     for pair in FEED_PAIRS:
-        _write_pair_rows(root, pair, (0, 1))
+        _write_pair_epochs(root, pair, epochs)
     return root
 
 
-def _write_pair_rows(root: Path, pair: str, minutes: tuple[int, ...]) -> None:
+def _expected_epochs() -> list[int]:
+    start, end = runner._window_bounds(WINDOW_START, WINDOW_END)
+    return [
+        int(stamp.timestamp())
+        for stamp in runner.expected_oanda_fx_slots(
+            start, end, step=timedelta(minutes=1)
+        )
+    ]
+
+
+def _write_pair_epochs(root: Path, pair: str, epochs: list[int]) -> None:
     path = root / "archive" / pair / f"{pair}_M1_BA_2025.jsonl.gz"
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt", encoding="utf-8") as handle:
-        for minute in minutes:
+        for epoch in epochs:
+            stamp = runner.datetime.fromtimestamp(epoch, tz=runner.timezone.utc)
             handle.write(
                 json.dumps(
                     {
-                        "time": f"2025-03-01T00:{minute:02d}:00Z",
+                        "time": stamp.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
                         "bid": {"o": 1, "h": 1, "l": 1, "c": 1},
                         "ask": {"o": 2, "h": 2, "l": 2, "c": 2},
                     }
@@ -109,8 +124,8 @@ def _study(corpus_sha256: str, *, two_candidates: bool = False) -> dict:
         "feed_pairs": FEED_PAIRS,
         "candidates": candidates,
         "window": {
-            "start_utc": "2025-03-01T00:00:00Z",
-            "end_utc": "2025-04-01T00:00:00Z",
+            "start_utc": WINDOW_START,
+            "end_utc": WINDOW_END,
             "corpus_id": "runner_fixture_m1",
             "corpus_sha256": corpus_sha256,
             "evidence_tier": "WORN_TRAIN",
@@ -162,8 +177,8 @@ def _sealed(
     corpus_manifest = runner._corpus_manifest(
         corpus,
         FEED_PAIRS,
-        "2025-03-01T00:00:00+00:00",
-        "2025-04-01T00:00:00+00:00",
+        WINDOW_START,
+        WINDOW_END,
     )
     study = _study(corpus_manifest["corpus_sha256"], two_candidates=two_candidates)
     study["cost_arms"]["STRESS"]["recorded_spread_multiplier"] = (
@@ -182,8 +197,11 @@ def _option(command: list[str], name: str) -> str:
     return command[command.index(name) + 1]
 
 
-def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str]]:
+def _install_successful_replay_mocks(
+    monkeypatch, sealed: dict, *, manifest_leverage: float = 25.0
+) -> list[list[str]]:
     calls: list[list[str]] = []
+    corpus_cache: dict[tuple[str, tuple[str, ...], str, str], dict] = {}
 
     def fake_run(command, **kwargs):
         command = list(command)
@@ -192,13 +210,23 @@ def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str
         session_dir = Path(_option(command, "--session-dir"))
         session_dir.mkdir(parents=True, exist_ok=True)
         feed_pairs = _option(command, "--pairs").split(",")
-        corpus = runner._corpus_manifest(
-            Path(_option(command, "--corpus-root")),
-            feed_pairs,
+        cache_key = (
+            _option(command, "--corpus-root"),
+            tuple(feed_pairs),
             _option(command, "--from"),
             _option(command, "--to"),
         )
+        corpus = corpus_cache.get(cache_key)
+        if corpus is None:
+            corpus = runner._corpus_manifest(
+                Path(cache_key[0]),
+                feed_pairs,
+                cache_key[2],
+                cache_key[3],
+            )
+            corpus_cache[cache_key] = corpus
         config_json = kwargs["env"]["DOJO_BOT_CONFIG"]
+        coverage = corpus["sparse_m1_coverage"]
         payload = {
             "order_authority": "NONE",
             "reproducibility_manifest": {
@@ -212,6 +240,27 @@ def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str
                     "bot_bar": "feed",
                     "period_end_settlement": True,
                     "continuous_mtm": True,
+                    "mtm_coordinate_contract": ("QR_REPLAY_ASYNC_MTM_COORDINATES_V2"),
+                    "coordinate_schedule": "SEALED_CORPUS_EPOCH_UNION",
+                    "quote_policy": "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES",
+                    "feed_pairs": feed_pairs,
+                    "expected_union_epoch_count": coverage[
+                        "expected_union_epoch_count"
+                    ],
+                    "expected_full_epoch_count": coverage["expected_full_epoch_count"],
+                    "expected_partial_epoch_count": coverage[
+                        "expected_partial_epoch_count"
+                    ],
+                    "expected_phase_mark_count": coverage["expected_union_epoch_count"]
+                    * 4,
+                    "expected_partial_phase_count": coverage[
+                        "expected_partial_phase_count"
+                    ],
+                    "pair_row_counts": coverage["pair_row_counts"],
+                    "availability_mask_sha256": coverage["availability_mask_sha256"],
+                    "expected_quote_count": coverage["expected_quote_count"],
+                    "max_carried_quote_age_seconds": 900,
+                    "synthetic_quote_count": 0,
                 },
                 "costs": {
                     "slippage_pips_per_fill": float(
@@ -220,7 +269,7 @@ def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str
                     "financing_pips_per_day": float(
                         _option(command, "--financing-pips-day")
                     ),
-                    "leverage": 25.0,
+                    "leverage": manifest_leverage,
                 },
                 "corpus": corpus,
                 "bot": {
@@ -256,6 +305,8 @@ def _install_successful_replay_mocks(monkeypatch, sealed: dict) -> list[list[str
         else:
             raw = Path(ledger_path).read_bytes()
         pairs = list(expected_pairs)
+        assert kwargs["expected_max_concurrent_per_pair"] == 1
+        assert kwargs["expected_global_max_concurrent"] == len(pairs)
         net = 100.0 if len(pairs) == len(PAIRS) else 60.0
         terminal = hashlib.sha256(b"terminal:" + raw).hexdigest()
         metrics_body = {
@@ -302,8 +353,8 @@ def test_seal_hashes_mandatory_sources_and_exclusive_creates_output(
     corpus_sha = runner._corpus_manifest(
         corpus,
         FEED_PAIRS,
-        "2025-03-01T00:00:00Z",
-        "2025-04-01T00:00:00Z",
+        WINDOW_START,
+        WINDOW_END,
     )["corpus_sha256"]
     study_path = tmp_path / "study.json"
     study_path.write_text(json.dumps(_study(corpus_sha), allow_nan=False))
@@ -394,6 +445,30 @@ def test_run_executes_fixed_denominator_and_true_lopo_replays(
     assert all(cell["metrics"]["lopo_replay_complete"] for cell in cells)
 
 
+def test_run_rejects_self_consistent_manifest_leverage_tamper(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _repo(tmp_path, monkeypatch)
+    corpus = _corpus(tmp_path)
+    sealed = _sealed(repo, corpus)
+    sealed_path = _write_sealed(tmp_path, sealed)
+    calls = _install_successful_replay_mocks(
+        monkeypatch, sealed, manifest_leverage=30.0
+    )
+
+    output = tmp_path / "out"
+    assert runner._run_command(_run_args(sealed_path, corpus, output)) == 2
+    receipt = json.loads((output / "run.json").read_text())
+    assert len(calls) == 4
+    assert all(
+        row["status"] == "MAIN_REPLAY_FAILED_SENTINEL" for row in receipt["coordinates"]
+    )
+    assert all(
+        "ledger leverage must equal the sealed 25.0" in row["main_error"]
+        for row in receipt["coordinates"]
+    )
+
+
 def test_lopo_removes_only_trade_pair_and_preserves_conversion_feed(
     tmp_path, monkeypatch
 ) -> None:
@@ -422,50 +497,111 @@ def test_lopo_removes_only_trade_pair_and_preserves_conversion_feed(
     assert observed_trade_pairs.count(["GBP_USD"]) == 4
 
 
-def test_preflight_rejects_partial_pair_epoch_coverage_before_replay(
+def test_preflight_accepts_sealed_sparse_pair_coverage_and_rejects_tamper(
     tmp_path, monkeypatch
 ) -> None:
     repo = _repo(tmp_path, monkeypatch)
     corpus = _corpus(tmp_path)
+    epochs = _expected_epochs()
+    _write_pair_epochs(corpus, "USD_JPY", epochs[:100] + epochs[101:])
     sealed = _sealed(repo, corpus)
     sealed_path = _write_sealed(tmp_path, sealed)
-    _write_pair_rows(corpus, "USD_JPY", (0, 2))
-    calls: list = []
-    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **k: calls.append(a))
+    normalized, manifest = runner._preflight_run(sealed_path, corpus)
+    assert normalized["study"]["feed_pairs"] == FEED_PAIRS
+    coverage = manifest["sparse_m1_coverage"]
+    assert coverage["expected_partial_epoch_count"] == 1
+    assert coverage["expected_partial_phase_count"] == 4
+    assert coverage["pair_row_counts"]["USD_JPY"] == len(epochs) - 1
+    assert len(coverage["availability_mask_sha256"]) == 64
 
-    output = tmp_path / "out"
-    assert runner._run_command(_run_args(sealed_path, corpus, output)) == 2
-    failure = json.loads((output / "run_failure.json").read_text())
-    assert "partial-pair epoch coverage" in failure["error"]
-    assert calls == []
+    _write_pair_epochs(corpus, "USD_JPY", epochs[:200] + epochs[201:])
+    with pytest.raises(runner.TrainerRunnerError, match="identity drift"):
+        runner._preflight_run(sealed_path, corpus)
 
 
-def test_corpus_rejects_single_shared_row_and_admits_simultaneous_gap(
-    tmp_path,
-) -> None:
+def test_corpus_rejects_coverage_floor_and_open_slot_gap(tmp_path) -> None:
     corpus = _corpus(tmp_path)
-    for pair in FEED_PAIRS:
-        _write_pair_rows(corpus, pair, (0,))
-    with pytest.raises(runner.TrainerRunnerError, match="at least two rows"):
+    epochs = _expected_epochs()
+    below_floor = [epoch for index, epoch in enumerate(epochs) if index % 25]
+    _write_pair_epochs(corpus, "USD_JPY", below_floor)
+    with pytest.raises(runner.TrainerRunnerError, match="coverage below 98%"):
         runner._corpus_manifest(
             corpus,
             FEED_PAIRS,
-            "2025-03-01T00:00:00Z",
-            "2025-04-01T00:00:00Z",
+            WINDOW_START,
+            WINDOW_END,
         )
 
-    for pair in FEED_PAIRS:
-        _write_pair_rows(corpus, pair, (0, 2))
-    manifest = runner._corpus_manifest(
+    gap_start = 500
+    allowed_gap_epochs = epochs[:gap_start] + epochs[gap_start + 14 :]
+    _write_pair_epochs(corpus, "USD_JPY", allowed_gap_epochs)
+    allowed = runner._corpus_manifest(
         corpus,
         FEED_PAIRS,
-        "2025-03-01T00:00:00Z",
-        "2025-04-01T00:00:00Z",
+        WINDOW_START,
+        WINDOW_END,
+    )["sparse_m1_coverage"]
+    assert allowed["pair_row_counts"]["USD_JPY"] == len(epochs) - 14
+
+    gap_epochs = epochs[:gap_start] + epochs[gap_start + 15 :]
+    _write_pair_epochs(corpus, "USD_JPY", gap_epochs)
+    with pytest.raises(runner.TrainerRunnerError, match="gap exceeds 900s"):
+        runner._corpus_manifest(
+            corpus,
+            FEED_PAIRS,
+            WINDOW_START,
+            WINDOW_END,
+        )
+
+    _write_pair_epochs(corpus, "USD_JPY", epochs[:1])
+    with pytest.raises(runner.TrainerRunnerError, match="coverage below"):
+        runner._corpus_manifest(
+            corpus,
+            FEED_PAIRS,
+            WINDOW_START,
+            WINDOW_END,
+        )
+
+
+def test_short_open_market_day_uses_eighty_percent_floor(tmp_path) -> None:
+    corpus = _corpus(tmp_path)
+    epochs = _expected_epochs()
+    by_day: dict[str, list[int]] = {}
+    for epoch in epochs:
+        day = (
+            runner.datetime.fromtimestamp(epoch, tz=runner.timezone.utc)
+            .date()
+            .isoformat()
+        )
+        by_day.setdefault(day, []).append(epoch)
+    short_day, short_epochs = next(
+        (day, rows) for day, rows in by_day.items() if 100 < len(rows) < 1000
     )
-    coverage = manifest["synchronized_m1_coverage"]
-    assert coverage["row_count_per_pair"] == 2
-    assert coverage["simultaneous_missing_minutes_between_rows"] == 1
-    assert coverage["partial_pair_missing_epochs"] == 0
+
+    sparse_short_day = set(short_epochs[::10])
+    _write_pair_epochs(
+        corpus,
+        "USD_JPY",
+        [epoch for epoch in epochs if epoch not in sparse_short_day],
+    )
+    coverage = runner._corpus_manifest(corpus, FEED_PAIRS, WINDOW_START, WINDOW_END)[
+        "sparse_m1_coverage"
+    ]
+    receipt = next(
+        row for row in coverage["daily_coverage"] if row["utc_date"] == short_day
+    )
+    assert receipt["partial_day"] is True
+    assert receipt["coverage_floor"] == 0.80
+    assert receipt["pair_coverage_ratios"]["USD_JPY"] >= 0.80
+
+    below_floor = set(short_epochs[::4])
+    _write_pair_epochs(
+        corpus,
+        "USD_JPY",
+        [epoch for epoch in epochs if epoch not in below_floor],
+    )
+    with pytest.raises(runner.TrainerRunnerError, match="coverage below 80%"):
+        runner._corpus_manifest(corpus, FEED_PAIRS, WINDOW_START, WINDOW_END)
 
 
 def test_lopo_failure_is_explicit_and_never_uses_additive_substitute(

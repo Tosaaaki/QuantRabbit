@@ -90,6 +90,152 @@ def test_limit_fill_at_level_or_better_never_synthesized(broker):
     assert oid not in broker.orders
 
 
+@pytest.mark.parametrize(
+    ("kind", "side", "price", "expected_entry", "order_event"),
+    [
+        ("LIMIT", "LONG", 150.05, 150.02, "ORDER_LIMIT"),
+        ("LIMIT", "SHORT", 149.95, 150.00, "ORDER_LIMIT"),
+        ("STOP", "LONG", 150.01, 150.02, "ORDER_STOP"),
+        ("STOP", "SHORT", 150.01, 150.00, "ORDER_STOP"),
+    ],
+)
+def test_marketable_entry_order_fills_on_submission_quote(
+    tmp_path, kind, side, price, expected_entry, order_event
+):
+    b = VirtualBroker(
+        ledger_path=tmp_path / f"{kind}-{side}.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    stamp = "2026-01-01T00:00:00+00:00#O"
+    b.on_quote("USD_JPY", 150.00, 150.02, stamp)
+
+    submit = b.limit_order if kind == "LIMIT" else b.stop_order
+    order_id = submit("USD_JPY", side, 1_000, price=price)
+
+    assert order_id not in b.orders
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [order_event, "FILL_LIMIT"]
+    fill = records[1]["payload"]
+    assert fill["order_id"] == order_id
+    assert fill["order_kind"] == kind
+    assert fill["entry"] == expected_entry
+    assert fill["quote"] == {"bid": 150.00, "ask": 150.02, "ts": stamp}
+    assert fill["trade_id"] in b.positions
+
+
+@pytest.mark.parametrize(
+    ("kind", "side", "price", "order_event"),
+    [
+        ("LIMIT", "LONG", 149.95, "ORDER_LIMIT"),
+        ("LIMIT", "SHORT", 150.05, "ORDER_LIMIT"),
+        ("STOP", "LONG", 150.10, "ORDER_STOP"),
+        ("STOP", "SHORT", 149.90, "ORDER_STOP"),
+    ],
+)
+def test_nonmarketable_entry_order_remains_resting(
+    tmp_path, kind, side, price, order_event
+):
+    b = VirtualBroker(
+        ledger_path=tmp_path / f"{kind}-{side}.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O")
+
+    submit = b.limit_order if kind == "LIMIT" else b.stop_order
+    order_id = submit("USD_JPY", side, 1_000, price=price)
+
+    assert order_id in b.orders
+    assert not b.positions
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [order_event]
+
+
+def test_stale_bar_gate_blocks_new_risk_but_permits_risk_reduction(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O")
+    trade_id = b.market_order("USD_JPY", "LONG", 1_000)
+    order_id = b.limit_order("USD_JPY", "LONG", 1_000, price=149.90)
+
+    with b.suspend_new_risk():
+        with pytest.raises(VirtualBrokerError, match="new risk is suspended"):
+            b.market_order("USD_JPY", "LONG", 1_000)
+        with pytest.raises(VirtualBrokerError, match="new risk is suspended"):
+            b.limit_order("USD_JPY", "LONG", 1_000, price=149.80)
+        with pytest.raises(VirtualBrokerError, match="new risk is suspended"):
+            b.stop_order("USD_JPY", "LONG", 1_000, price=150.10)
+        b.cancel_order(order_id)
+        b.close_trade(trade_id)
+
+    assert not b.orders
+    assert not b.positions
+
+
+def test_marketable_entry_order_rejects_atomically_on_submission_quote(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=200_000.0,
+    )
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O")
+
+    order_id = b.limit_order("USD_JPY", "LONG", 1_000_000, price=150.05)
+
+    assert order_id not in b.orders
+    assert not b.positions
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [
+        "ORDER_LIMIT",
+        "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+    ]
+    assert records[1]["payload"]["order_id"] == order_id
+
+
+def test_submission_fill_resolves_attached_exit_on_same_quote(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    stamp = "2026-01-01T00:00:00+00:00#O"
+    b.on_quote("USD_JPY", 100.00, 102.00, stamp)
+
+    order_id = b.limit_order("USD_JPY", "LONG", 100, price=102.00, sl_pips=10)
+
+    assert order_id not in b.orders
+    assert not b.positions
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [
+        "ORDER_LIMIT",
+        "FILL_LIMIT",
+        "EXIT_SL",
+    ]
+    assert records[1]["payload"]["quote"]["ts"] == stamp
+    assert records[2]["payload"]["quote"]["ts"] == stamp
+
+
+def test_set_exit_resolves_already_crossed_stop_on_current_quote(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    stamp = "2026-01-01T00:00:00+00:00#O"
+    b.on_quote("USD_JPY", 150.00, 150.02, stamp)
+    trade_id = b.market_order("USD_JPY", "LONG", 1_000)
+
+    b.set_exit(trade_id, sl_price=150.01)
+
+    assert trade_id not in b.positions
+    records = [json.loads(line) for line in b.ledger_path.read_text().splitlines()]
+    assert [record["event"] for record in records] == [
+        "FILL_MARKET",
+        "SET_EXIT",
+        "EXIT_SL",
+    ]
+    assert records[-1]["payload"]["quote"]["ts"] == stamp
+    assert records[-1]["payload"]["price"] == 150.00
+
+
 def test_hedge_netting_margin(broker):
     broker.market_order("USD_JPY", "LONG", 10_000)
     acct_one = broker.account()
@@ -97,7 +243,8 @@ def test_hedge_netting_margin(broker):
     acct_hedged = broker.account()
     # opposite position adds no margin (max of sides unchanged)
     assert acct_hedged["margin_used_jpy"] == pytest.approx(
-        acct_one["margin_used_jpy"], rel=1e-6)
+        acct_one["margin_used_jpy"], rel=1e-6
+    )
 
 
 def test_margin_closeout_liquidates_everything(tmp_path):
@@ -116,7 +263,9 @@ def test_eurusd_pl_converts_via_usdjpy(broker):
     events = broker.on_quote("EUR_USD", 1.1012, 1.1014, "2026-01-01T00:01:00+00:00")
     assert events[0]["event"] == "EXIT_TP"
     # 10 pips * 10k units = 10 USD -> ~1500 JPY at USDJPY mid 150.01
-    assert broker.balance_jpy - 200_000 == pytest.approx(0.001 * 10_000 * 150.01, rel=1e-3)
+    assert broker.balance_jpy - 200_000 == pytest.approx(
+        0.001 * 10_000 * 150.01, rel=1e-3
+    )
 
 
 def test_partial_close_and_manual_close(broker):
@@ -212,9 +361,7 @@ def test_slippage_is_adverse_on_tp_sl_and_manual_close(tmp_path):
 
     tp_trade = b.market_order("USD_JPY", "LONG", 1_000, tp_pips=5)
     assert b.positions[tp_trade].entry_price == 150.03
-    tp_events = b.on_quote(
-        "USD_JPY", 150.08, 150.10, "2026-01-01T00:01:00+00:00#O"
-    )
+    tp_events = b.on_quote("USD_JPY", 150.08, 150.10, "2026-01-01T00:01:00+00:00#O")
     assert tp_events[0]["event"] == "EXIT_TP"
     assert tp_events[0]["price"] == 150.08
     assert tp_events[0]["price_protection"] is True
@@ -222,9 +369,7 @@ def test_slippage_is_adverse_on_tp_sl_and_manual_close(tmp_path):
 
     sl_trade = b.market_order("USD_JPY", "SHORT", 1_000, sl_pips=5)
     assert b.positions[sl_trade].entry_price == 150.07
-    sl_events = b.on_quote(
-        "USD_JPY", 150.12, 150.14, "2026-01-01T00:02:00+00:00#O"
-    )
+    sl_events = b.on_quote("USD_JPY", 150.12, 150.14, "2026-01-01T00:02:00+00:00#O")
     assert sl_events[0]["event"] == "EXIT_SL"
     assert sl_events[0]["price"] == 150.15
 
@@ -248,9 +393,7 @@ def test_margin_closeout_applies_slippage_and_financing(tmp_path):
     )
     b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O")
     b.market_order("USD_JPY", "LONG", 30_000)
-    events = b.on_quote(
-        "USD_JPY", 145.50, 145.52, "2026-01-02T00:00:00+00:00#O"
-    )
+    events = b.on_quote("USD_JPY", 145.50, 145.52, "2026-01-02T00:00:00+00:00#O")
     closeout = next(event for event in events if event["event"] == "MARGIN_CLOSEOUT")
     assert closeout["price"] == 145.49
     assert closeout["financing_jpy"] == pytest.approx(300.0)
@@ -276,13 +419,15 @@ def test_fill_ledger_binds_conversion_quote_and_never_uses_future_quote(tmp_path
     for rec in fills:
         conversion = rec["payload"]["conversion"]
         assert conversion["rate_jpy_per_quote_unit"] == pytest.approx(150.01)
-        assert conversion["source_quotes"] == [{
-            "pair": "USD_JPY",
-            "bid": 150.00,
-            "ask": 150.02,
-            "ts": "2026-01-01T00:00:00+00:00#O",
-            "phase": "O",
-        }]
+        assert conversion["source_quotes"] == [
+            {
+                "pair": "USD_JPY",
+                "bid": 150.00,
+                "ask": 150.02,
+                "ts": "2026-01-01T00:00:00+00:00#O",
+                "phase": "O",
+            }
+        ]
 
 
 def test_accrued_financing_reduces_open_equity_and_margin_headroom(tmp_path):
@@ -298,6 +443,24 @@ def test_accrued_financing_reduces_open_equity_and_margin_headroom(tmp_path):
     account = b.account()
     assert account["accrued_financing_jpy"] == pytest.approx(100.0)
     assert account["equity_jpy"] == pytest.approx(2_000_000 - 20 - 100)
+
+
+def test_sparse_other_pair_quote_advances_weekend_financing_clock(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+        financing_pips_per_day=10.0,
+    )
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-02T21:00:00+00:00")
+    b.market_order("USD_JPY", "LONG", 1_000)
+
+    # USD/JPY remains sparse across the weekend; an observed quote for another
+    # pair still advances the causal account-valuation clock to Sunday open.
+    b.on_quote("EUR_JPY", 175.00, 175.02, "2026-01-04T21:00:00+00:00")
+
+    account = b.account()
+    assert account["accrued_financing_jpy"] == pytest.approx(200.0)
+    assert account["equity_jpy"] == pytest.approx(2_000_000 - 20 - 200)
 
 
 def test_non_finite_actions_and_snapshot_fail_closed(tmp_path):
@@ -332,9 +495,7 @@ def test_stress_slippage_cannot_execute_through_limit_price(tmp_path):
     )
     b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00")
     b.limit_order("USD_JPY", "LONG", 1_000, price=149.95)
-    event = b.on_quote(
-        "USD_JPY", 149.92, 149.94, "2026-01-01T00:01:00+00:00"
-    )[0]
+    event = b.on_quote("USD_JPY", 149.92, 149.94, "2026-01-01T00:01:00+00:00")[0]
     assert event["price"] == 149.95
     assert event["price"] <= 149.95
     assert event["price_protection"] is True
@@ -344,15 +505,19 @@ def test_quote_batch_uses_current_same_phase_conversion_independent_of_pair_orde
     tmp_path,
 ):
     b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
-    b.on_quote_batch([
-        ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
-        ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
-    ])
+    b.on_quote_batch(
+        [
+            ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
+            ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
+        ]
+    )
     trade_id = b.market_order("EUR_USD", "LONG", 1_000)
-    b.on_quote_batch([
-        ("EUR_USD", 1.1010, 1.1012, "2026-01-01T00:01:00+00:00#C"),
-        ("USD_JPY", 160.00, 160.02, "2026-01-01T00:01:00+00:00#C"),
-    ])
+    b.on_quote_batch(
+        [
+            ("EUR_USD", 1.1010, 1.1012, "2026-01-01T00:01:00+00:00#C"),
+            ("USD_JPY", 160.00, 160.02, "2026-01-01T00:01:00+00:00#C"),
+        ]
+    )
     b.close_trade(trade_id)
 
     close = next(
@@ -370,20 +535,93 @@ def test_quote_batch_defers_portfolio_margin_check_until_every_pair_is_processed
     calls = 0
     original = VirtualBroker._enforce_margin_after_action
 
-    def counted(self):
+    def counted(self, **kwargs):
         nonlocal calls
         calls += 1
-        return original(self)
+        return original(self, **kwargs)
 
     monkeypatch.setattr(VirtualBroker, "_enforce_margin_after_action", counted)
     b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
 
-    b.on_quote_batch([
-        ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
-        ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
-    ])
+    b.on_quote_batch(
+        [
+            ("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00#O"),
+            ("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00#O"),
+        ]
+    )
 
     assert calls == 1
+
+
+def test_sparse_batch_refuses_margin_closeout_at_stale_position_quote(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=200_000.0,
+    )
+    friday = "2026-01-02T21:00:00+00:00"
+    b.on_quote_batch(
+        [
+            ("USD_JPY", 150.00, 150.02, friday),
+            ("EUR_JPY", 175.00, 175.02, friday),
+        ]
+    )
+    usd_trade = b.market_order("USD_JPY", "LONG", 10_000)
+    eur_trade = b.market_order("EUR_JPY", "LONG", 10_000)
+
+    # Only EUR/JPY reopens and moves adversely.  The resulting portfolio
+    # closeout must not liquidate USD/JPY at its stale Friday quote.
+    with pytest.raises(
+        VirtualBrokerError,
+        match="margin closeout requires current batch quotes.*USD_JPY",
+    ):
+        b.on_quote_batch(
+            [
+                (
+                    "EUR_JPY",
+                    160.00,
+                    160.02,
+                    "2026-01-04T21:00:00+00:00",
+                )
+            ]
+        )
+
+    assert set(b.positions) == {usd_trade, eur_trade}
+    events = [
+        json.loads(line)["event"] for line in b.ledger_path.read_text().splitlines()
+    ]
+    assert "MARGIN_CLOSEOUT" not in events
+
+
+def test_stale_existing_position_quote_rejects_other_pair_market_entry(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    b.on_quote_batch([("USD_JPY", 150.00, 150.02, "2026-01-02T21:00:00+00:00")])
+    existing_trade = b.market_order("USD_JPY", "LONG", 1_000)
+
+    b.on_quote_batch([("EUR_JPY", 175.00, 175.02, "2026-01-04T21:00:00+00:00")])
+    with pytest.raises(VirtualBrokerError, match="insufficient margin"):
+        b.market_order("EUR_JPY", "LONG", 1_000)
+
+    assert set(b.positions) == {existing_trade}
+
+
+def test_future_existing_position_quote_rejects_other_pair_market_entry(tmp_path):
+    b = VirtualBroker(
+        ledger_path=tmp_path / "l.jsonl",
+        balance_jpy=2_000_000.0,
+    )
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:01:00+00:00")
+    existing_trade = b.market_order("USD_JPY", "LONG", 1_000)
+
+    # Observation order alone cannot make a wall-clock-future position mark
+    # valid for an earlier action quote.
+    b.on_quote("EUR_JPY", 175.00, 175.02, "2026-01-01T00:00:00+00:00")
+    with pytest.raises(VirtualBrokerError, match="insufficient margin"):
+        b.market_order("EUR_JPY", "LONG", 1_000)
+
+    assert set(b.positions) == {existing_trade}
 
 
 def test_quote_batch_has_canonical_pair_tie_break_independent_of_input_order(tmp_path):
@@ -406,13 +644,33 @@ def test_quote_batch_has_canonical_pair_tie_break_independent_of_input_order(tmp
     ]
 
 
-def test_stale_conversion_and_unpriceable_margin_fail_closed(tmp_path):
+def test_conversion_freshness_accepts_fixed_sparse_900_second_boundary(tmp_path):
     b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
     b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00")
-    b.on_quote("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:02:00+00:00")
+    b.on_quote("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:15:00+00:00")
+
+    trade_id = b.market_order("EUR_USD", "LONG", 1_000)
+
+    assert trade_id in b.positions
+
+
+def test_conversion_freshness_rejects_901_seconds_and_future_quotes(tmp_path):
+    b = VirtualBroker(ledger_path=tmp_path / "l.jsonl", balance_jpy=2_000_000.0)
+    b.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00")
+    b.on_quote("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:15:01+00:00")
     with pytest.raises(VirtualBrokerError, match="stale conversion"):
         b.market_order("EUR_USD", "LONG", 1_000)
 
+    future = VirtualBroker(
+        ledger_path=tmp_path / "future.jsonl", balance_jpy=2_000_000.0
+    )
+    future.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:01+00:00")
+    future.on_quote("EUR_USD", 1.1000, 1.1002, "2026-01-01T00:00:00+00:00")
+    with pytest.raises(VirtualBrokerError, match="future conversion"):
+        future.market_order("EUR_USD", "LONG", 1_000)
+
+
+def test_unpriceable_margin_fails_closed(tmp_path):
     healthy = VirtualBroker(
         ledger_path=tmp_path / "healthy.jsonl", balance_jpy=2_000_000.0
     )
@@ -421,9 +679,7 @@ def test_stale_conversion_and_unpriceable_margin_fail_closed(tmp_path):
     del healthy.last_quotes["EUR_JPY"]
     before = set(healthy.positions)
     with pytest.raises(VirtualBrokerError, match="no quote for open position"):
-        healthy.on_quote(
-            "USD_JPY", 150.00, 150.02, "2026-01-01T00:00:01+00:00"
-        )
+        healthy.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:01+00:00")
     assert set(healthy.positions) == before
 
 
@@ -662,9 +918,7 @@ def test_terminal_freezes_every_public_broker_state_mutation(tmp_path):
     frozen_snapshot = b.snapshot()
 
     mutations = [
-        lambda: b.on_quote(
-            "USD_JPY", 150.01, 150.03, "2025-01-01T00:01:00+00:00"
-        ),
+        lambda: b.on_quote("USD_JPY", 150.01, 150.03, "2025-01-01T00:01:00+00:00"),
         lambda: b.on_quote_batch(
             [("USD_JPY", 150.01, 150.03, "2025-01-01T00:01:00+00:00")]
         ),

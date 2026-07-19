@@ -58,6 +58,7 @@ from quant_rabbit.dojo_lab_provenance import (  # noqa: E402
     strategy_ownership_registry,
 )
 from quant_rabbit.virtual_broker import (  # noqa: E402
+    NEW_RISK_SUSPENDED_ERROR,
     VirtualBroker,
     VirtualBrokerError,
 )
@@ -67,6 +68,11 @@ PHASE_ORDERS = {
     "OHLC": {"O": 0, "H": 1, "L": 2, "C": 3},
     "OLHC": {"O": 0, "L": 1, "H": 2, "C": 3},
 }
+
+# Fifteen minutes is the sealed DOJO causal-age ceiling for observed quotes and
+# closed-bar callbacks.  It is fixed so trainer candidates share one comparable
+# evidence contract; changing it requires a versioned replay/scorer contract.
+MAX_CAUSAL_AGE_SECONDS = 900
 
 
 def _reject_json_constant(value: str):
@@ -204,7 +210,11 @@ def _verify_custom_bot_seal(bot_manifest: dict) -> bytes:
     return module_bytes
 
 
-def _settle_custom_bot_at_end(broker: VirtualBroker, owner_id: str) -> None:
+def _settle_custom_bot_at_end(
+    broker: VirtualBroker,
+    owner_id: str,
+    terminal_batch_receipt: dict | None,
+) -> None:
     """Resolve only the declared custom worker's orders and positions."""
 
     ownership = strategy_ownership_registry(broker)
@@ -217,6 +227,39 @@ def _settle_custom_bot_at_end(broker: VirtualBroker, owner_id: str) -> None:
         except VirtualBrokerError as exc:
             errors.append(f"cancel:{order_id}:{str(exc)[:120]}")
     for trade_id in trade_ids:
+        position = broker.positions.get(trade_id)
+        coordinate = (
+            terminal_batch_receipt.get("coordinate")
+            if isinstance(terminal_batch_receipt, dict)
+            else None
+        )
+        batch_pairs = (
+            terminal_batch_receipt.get("batch_pairs")
+            if isinstance(terminal_batch_receipt, dict)
+            else None
+        )
+        terminal_epoch = (
+            coordinate.get("epoch") if isinstance(coordinate, dict) else None
+        )
+        terminal_phase = (
+            coordinate.get("phase") if isinstance(coordinate, dict) else None
+        )
+        terminal_ts = (
+            datetime.fromtimestamp(terminal_epoch, tz=UTC).isoformat() + "#C"
+            if isinstance(terminal_epoch, int) and terminal_phase == "C"
+            else None
+        )
+        quote = broker.last_quotes.get(position.pair) if position is not None else None
+        if (
+            position is None
+            or not isinstance(batch_pairs, list)
+            or position.pair not in batch_pairs
+            or terminal_ts is None
+            or quote is None
+            or quote[2] != terminal_ts
+        ):
+            errors.append(f"close:{trade_id}:TERMINAL_PAIR_QUOTE_UNAVAILABLE")
+            continue
         try:
             broker.close_trade(trade_id)
         except VirtualBrokerError as exc:
@@ -408,9 +451,17 @@ def _build_replay_mtm_commitment(
         phase
         for phase, _ in sorted(PHASE_ORDERS[intrabar].items(), key=lambda item: item[1])
     ]
+    canonical_pairs = sorted(pairs)
     previous_batch_sha256 = "0" * 64
     phase_mark_count = 0
-    partial_coordinates: list[dict] = []
+    expected_quote_count = 0
+    availability_rows: list[dict] = []
+    pair_row_counts = {pair: 0 for pair in canonical_pairs}
+    expected_partial_epoch_count = 0
+    expected_partial_phase_count = 0
+    current_epoch: int | None = None
+    current_epoch_pairs: list[str] | None = None
+    current_epoch_phase_count = 0
     first_coordinate = None
     last_coordinate = None
     for epoch, phase, quote_batch in _iter_replay_quote_batches(
@@ -435,32 +486,58 @@ def _build_replay_mtm_commitment(
             batch_index=phase_mark_count,
             previous_batch_sha256=previous_batch_sha256,
         )
+        batch_pairs = list(receipt["batch_pairs"])
+        if phase == "O":
+            if current_epoch is not None and current_epoch_phase_count != len(
+                phase_order
+            ):
+                raise ValueError("replay epoch does not contain all four phases")
+            current_epoch = epoch
+            current_epoch_pairs = batch_pairs
+            current_epoch_phase_count = 0
+            availability_rows.append({"epoch": epoch, "batch_pairs": list(batch_pairs)})
+            for pair in batch_pairs:
+                pair_row_counts[pair] += 1
+            if batch_pairs != canonical_pairs:
+                expected_partial_epoch_count += 1
+        elif epoch != current_epoch or batch_pairs != current_epoch_pairs:
+            raise ValueError(
+                "replay epoch availability mask changed between intrabar phases"
+            )
+        current_epoch_phase_count += 1
         if not receipt["coverage_complete"]:
-            partial_coordinates.append(coordinate)
+            expected_partial_phase_count += 1
         if first_coordinate is None:
             first_coordinate = coordinate
         last_coordinate = coordinate
         previous_batch_sha256 = receipt["batch_sha256"]
         phase_mark_count += 1
+        expected_quote_count += len(batch_pairs)
 
     if phase_mark_count == 0 or first_coordinate is None or last_coordinate is None:
         raise ValueError("replay MTM coordinate set is empty")
-    if partial_coordinates:
-        sample = ",".join(
-            f"{row['epoch']}#{row['phase']}" for row in partial_coordinates[:3]
-        )
-        raise ValueError(
-            "replay MTM requires full feed-pair coverage at every epoch/phase; "
-            f"partial_phase_count={len(partial_coordinates)} sample={sample}"
-        )
+    if current_epoch_phase_count != len(phase_order):
+        raise ValueError("replay terminal epoch does not contain all four phases")
+    expected_union_epoch_count = len(availability_rows)
     return {
-        "mtm_coordinate_contract": "QR_REPLAY_MTM_COORDINATES_V1",
+        "mtm_coordinate_contract": "QR_REPLAY_ASYNC_MTM_COORDINATES_V2",
+        "coordinate_schedule": "SEALED_CORPUS_EPOCH_UNION",
+        "quote_policy": "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES",
         "phase_order": phase_order,
-        "feed_pairs": sorted(pairs),
+        "feed_pairs": canonical_pairs,
+        "expected_union_epoch_count": expected_union_epoch_count,
+        "expected_full_epoch_count": (
+            expected_union_epoch_count - expected_partial_epoch_count
+        ),
+        "expected_partial_epoch_count": expected_partial_epoch_count,
         "expected_phase_mark_count": phase_mark_count,
+        "expected_partial_phase_count": expected_partial_phase_count,
         "expected_batch_chain_terminal_sha256": previous_batch_sha256,
-        "full_pair_phase_coverage": True,
-        "partial_phase_count": 0,
+        "pair_row_counts": pair_row_counts,
+        "availability_mask_sha256": _canonical_sha256(availability_rows),
+        "expected_quote_count": expected_quote_count,
+        "max_carried_quote_age_seconds": MAX_CAUSAL_AGE_SECONDS,
+        "synthetic_quote_count": 0,
         "first_coordinate": first_coordinate,
         "last_coordinate": last_coordinate,
     }
@@ -604,7 +681,7 @@ def _build_reproducibility_manifest(args) -> dict:
     )
     if continuous_mtm and resume_snapshot is not None:
         raise ValueError(
-            "resumed replay cannot attest QR_REPLAY_MTM_COORDINATES_V1; "
+            "resumed replay cannot attest QR_REPLAY_ASYNC_MTM_COORDINATES_V2; "
             "start a fresh session for trainer evidence"
         )
 
@@ -1131,6 +1208,44 @@ def _cursor_key(epoch: int, phase: str, intrabar: str) -> tuple[int, int]:
         raise ValueError("invalid replay cursor phase") from exc
 
 
+def _bot_callbacks_have_initialized_feed(
+    broker: VirtualBroker, feed_pairs: list[str]
+) -> bool:
+    """Require every configured feed to have supplied at least one quote."""
+
+    return all(pair in broker.last_quotes for pair in feed_pairs)
+
+
+def _bot_callback_is_within_causal_gap(bar: dict, decision_epoch: int) -> bool:
+    """Admit only a closed bar whose pair-local next O arrives within 15m."""
+
+    bar_epoch = bar.get("epoch")
+    if isinstance(bar_epoch, bool) or not isinstance(bar_epoch, int):
+        return False
+    gap_seconds = decision_epoch - bar_epoch
+    return 0 < gap_seconds <= MAX_CAUSAL_AGE_SECONDS
+
+
+def _deliver_bot_callback(
+    bot: object,
+    broker: VirtualBroker,
+    pair: str,
+    bar: dict,
+    decision_epoch: int,
+) -> None:
+    """Update stale-bar state while preventing it from opening fresh risk."""
+
+    if _bot_callback_is_within_causal_gap(bar, decision_epoch):
+        bot.on_bar_closed(pair, bar, decision_epoch)
+        return
+    try:
+        with broker.suspend_new_risk():
+            bot.on_bar_closed(pair, bar, decision_epoch)
+    except VirtualBrokerError as exc:
+        if str(exc) != NEW_RISK_SUSPENDED_ERROR:
+            raise
+
+
 def run_replay(
     args,
     broker: VirtualBroker,
@@ -1195,10 +1310,30 @@ def run_replay(
         raise VirtualBrokerError(
             "replay snapshot with exposure has no causal feed cursor"
         )
+    if mtm_contract is not None:
+        required_static = {
+            "mtm_coordinate_contract": "QR_REPLAY_ASYNC_MTM_COORDINATES_V2",
+            "coordinate_schedule": "SEALED_CORPUS_EPOCH_UNION",
+            "quote_policy": "OBSERVED_ONLY_NO_SYNTHETIC_CARRY_QUOTES",
+            "feed_pairs": pairs,
+            "max_carried_quote_age_seconds": MAX_CAUSAL_AGE_SECONDS,
+            "synthetic_quote_count": 0,
+        }
+        for field, expected in required_static.items():
+            if mtm_contract.get(field) != expected:
+                raise VirtualBrokerError(
+                    f"runtime MTM coordinate commitment mismatch: {field}"
+                )
 
     bar_seconds = 5 if args.granularity == "S5" else 60
     processed_any = False
     phase_mark_count = 0
+    expected_quote_count = 0
+    availability_rows: list[dict] = []
+    pair_row_counts = {pair: 0 for pair in pairs}
+    partial_epoch_count = 0
+    partial_phase_count = 0
+    epoch_batch_pairs: dict[int, list[str]] = {}
     first_coordinate = None
     last_coordinate = None
     last_batch_receipt = None
@@ -1226,6 +1361,21 @@ def run_replay(
         publish_state = False
         closed_bars: list[tuple[str, dict]] = []
         closed_minutes: list[tuple[str, dict]] = []
+        if phase == "O" and bot is not None:
+            observed_pairs = [pair for pair, _, _, _ in quote_batch]
+            if not aggregate_bot_bars:
+                closed_bars = [
+                    (pair, pending_bars[pair])
+                    for pair in observed_pairs
+                    if pair in pending_bars
+                ]
+            else:
+                minute = epoch // 60 * 60
+                closed_minutes = [
+                    (pair, bot_minute[pair])
+                    for pair in observed_pairs
+                    if pair in bot_minute and bot_minute[pair]["epoch"] != minute
+                ]
         if boundary and current_epoch is not None:
             bar_count += 1
             publish_state = bar_count % state_every == 0
@@ -1250,20 +1400,6 @@ def run_replay(
                 )
             elif not no_sleep:
                 time_mod.sleep(bar_sleep)
-            if bot is not None and not aggregate_bot_bars:
-                closed_bars = [
-                    (bpair, bbar)
-                    for bpair, bbar in pending_bars.items()
-                    if bbar["epoch"] == current_epoch
-                ]
-            if aggregate_bot_bars:
-                minute = epoch // 60 * 60
-                closed_minutes = [
-                    (bpair, bbar)
-                    for bpair, bbar in bot_minute.items()
-                    if bbar["epoch"] != minute
-                ]
-
         # Existing orders/exits see the next executable phase first.  Only
         # after the new O is staged may a closed-bar decision submit MARKET.
         batch_receipt = None
@@ -1284,10 +1420,6 @@ def run_replay(
                 raise VirtualBrokerError(
                     "runtime quote-batch receipt differs from sealed commitment"
                 )
-            if not batch_receipt["coverage_complete"]:
-                raise VirtualBrokerError(
-                    "runtime quote batch lacks complete feed-pair coverage"
-                )
             expected_previous_batch_sha256 = batch_receipt["batch_sha256"]
         broker.on_quote_batch(quote_batch)
         processed_any = True
@@ -1300,11 +1432,6 @@ def run_replay(
             "replay_identity_sha256": replay_identity_sha256,
         }
         if boundary:
-            for bpair, bbar in closed_bars:
-                bot.on_bar_closed(bpair, bbar, bbar["epoch"])
-            for bpair, bbar in closed_minutes:
-                bot.on_bar_closed(bpair, bbar, bbar["epoch"])
-                del bot_minute[bpair]
             if publish_state or args.step:
                 _process_inbox(session_dir, broker, allowed_pairs=set(pairs))
             current_epoch = epoch
@@ -1334,7 +1461,7 @@ def run_replay(
             if aggregate_bot_bars:
                 minute = epoch // 60 * 60
                 mb = bot_minute.get(pair)
-                if mb is None:
+                if mb is None or mb["epoch"] != minute:
                     bot_minute[pair] = {
                         "epoch": minute,
                         "bid_o": bid,
@@ -1354,7 +1481,46 @@ def run_replay(
                     mb["bid_c"] = bid
                     mb["ask_c"] = ask
 
+        # A bar is closed only by that same pair's next observed O.  Sparse
+        # epochs therefore cannot strand a bar behind another pair's global
+        # boundary.  The callback follows application/staging of the new O so
+        # any resulting MARKET action executes at that pair's causal next O.
+        # No bot decision is admitted before every feed pair has supplied an
+        # initial quote, which keeps conversion/accounting inputs initialized.
+        # A pair-local next O more than 15 minutes later still delivers the
+        # closed bar so indicators/Friday-close state remain truthful.  The
+        # broker gate permits risk reduction but rejects fresh exposure.
+        if (
+            phase == "O"
+            and bot is not None
+            and _bot_callbacks_have_initialized_feed(broker, pairs)
+        ):
+            for bpair, bbar in closed_bars:
+                _deliver_bot_callback(bot, broker, bpair, bbar, epoch)
+            for bpair, bbar in closed_minutes:
+                _deliver_bot_callback(bot, broker, bpair, bbar, epoch)
+
         if mtm_contract is not None:
+            assert batch_receipt is not None
+            batch_pairs = list(batch_receipt["batch_pairs"])
+            if phase == "O":
+                if epoch in epoch_batch_pairs:
+                    raise VirtualBrokerError("runtime replay epoch O is duplicated")
+                epoch_batch_pairs[epoch] = batch_pairs
+                availability_rows.append(
+                    {"epoch": epoch, "batch_pairs": list(batch_pairs)}
+                )
+                for pair in batch_pairs:
+                    pair_row_counts[pair] += 1
+                if batch_pairs != pairs:
+                    partial_epoch_count += 1
+            elif epoch_batch_pairs.get(epoch) != batch_pairs:
+                raise VirtualBrokerError(
+                    "runtime epoch availability mask changed between phases"
+                )
+            if batch_pairs != pairs:
+                partial_phase_count += 1
+            expected_quote_count += len(batch_pairs)
             last_phase_mark = broker.account_mark(
                 "PHASE",
                 coordinate=coordinate,
@@ -1382,12 +1548,19 @@ def run_replay(
     }
     if mtm_contract is not None:
         actual = {
+            "expected_union_epoch_count": len(availability_rows),
+            "expected_full_epoch_count": len(availability_rows) - partial_epoch_count,
+            "expected_partial_epoch_count": partial_epoch_count,
             "expected_phase_mark_count": phase_mark_count,
+            "expected_partial_phase_count": partial_phase_count,
             "expected_batch_chain_terminal_sha256": (
                 last_batch_receipt["batch_sha256"]
                 if last_batch_receipt is not None
                 else None
             ),
+            "pair_row_counts": pair_row_counts,
+            "availability_mask_sha256": _canonical_sha256(availability_rows),
+            "expected_quote_count": expected_quote_count,
             "first_coordinate": first_coordinate,
             "last_coordinate": last_coordinate,
         }
@@ -1589,7 +1762,15 @@ def main() -> int:
                 mtm_contract=mtm_contract,
             )
             if args.settle_at_end:
-                _settle_custom_bot_at_end(broker, args.strategy_owner_id)
+                _settle_custom_bot_at_end(
+                    broker,
+                    args.strategy_owner_id,
+                    (
+                        replay_runtime["last_batch_receipt"]
+                        if replay_runtime is not None
+                        else None
+                    ),
+                )
             replay_completed = True
     finally:
         terminal_failure = None

@@ -1251,12 +1251,32 @@ def test_score_ledger_metrics_verifies_manifest_self_digest(tmp_path: Path) -> N
         _score_fixture_ledger(ledger, evidence)
 
 
-def _write_mtm_corpus(root: Path) -> None:
+def test_score_ledger_metrics_rejects_self_consistent_leverage_override(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "leverage.jsonl"
+    evidence = _write_ledger(ledger)
+    rows = _mtm_rows(ledger)
+    start = rows[0]["payload"]
+    manifest = start["reproducibility_manifest"]
+    manifest["costs"]["leverage"] = 100.0
+    body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    manifest["manifest_sha256"] = _canonical_sha(body)
+    start["reproducibility_manifest_sha256"] = manifest["manifest_sha256"]
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="fixed broker leverage"):
+        _score_fixture_ledger(ledger, evidence)
+
+
+def _write_mtm_corpus(root: Path, *, sparse: bool = False) -> None:
     for pair_index, pair in enumerate(("CAD_JPY", "USD_JPY")):
         shard = root / "fixture" / pair / f"{pair}_M1_BA_2026.jsonl.gz"
         shard.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(shard, "wt", encoding="utf-8") as handle:
             for minute in range(2):
+                if sparse and pair == "CAD_JPY" and minute == 1:
+                    continue
                 base = 80.0 + pair_index * 70.0 + minute * 0.01
                 handle.write(
                     json.dumps(
@@ -1282,14 +1302,14 @@ def _write_mtm_corpus(root: Path) -> None:
 
 
 def _strict_mtm_fixture(
-    tmp_path: Path, *, vehicle: str = "MARKET"
+    tmp_path: Path, *, vehicle: str = "MARKET", sparse: bool = False
 ) -> tuple[Path, dict[str, object]]:
     repository_root = Path(__file__).resolve().parents[1]
     corpus = tmp_path / "corpus"
     session = tmp_path / "session"
     module = tmp_path / "one_trade_bot.py"
     owner = "mtm:trainer-adversarial"
-    _write_mtm_corpus(corpus)
+    _write_mtm_corpus(corpus, sparse=sparse)
     action = {
         "MARKET": (
             "            trade_id = self.broker.market_order(pair, 'LONG', 100)\n"
@@ -1434,6 +1454,48 @@ def test_coordinate_complete_mtm_contract_is_verified(tmp_path: Path) -> None:
     )
     assert result["mtm_mark_count"] == 10
     assert result["mtm_max_drawdown_fraction"] is not None
+
+
+def test_coordinate_complete_mtm_contract_verifies_exact_sparse_union(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, sparse=True)
+    rows = _mtm_rows(ledger)
+    manifest = rows[0]["payload"]["reproducibility_manifest"]
+    replay = manifest["replay"]
+    partial_batches = [
+        row["payload"]
+        for row in rows
+        if row["event"] == "QUOTE_BATCH_BEGIN"
+        and row["payload"]["coverage_complete"] is False
+    ]
+
+    result = _score_strict_mtm(ledger, arguments)
+
+    assert replay["mtm_coordinate_contract"] == "QR_REPLAY_ASYNC_MTM_COORDINATES_V2"
+    assert replay["expected_union_epoch_count"] == 2
+    assert replay["expected_partial_epoch_count"] == 1
+    assert replay["pair_row_counts"] == {"CAD_JPY": 1, "USD_JPY": 2}
+    assert len(partial_batches) == 4
+    assert all(batch["batch_pairs"] == ["USD_JPY"] for batch in partial_batches)
+    assert result["mtm_complete"] is True
+
+
+def test_sparse_mtm_contract_rejects_falsified_availability_commitment(
+    tmp_path: Path,
+) -> None:
+    ledger, arguments = _strict_mtm_fixture(tmp_path, sparse=True)
+    rows = _mtm_rows(ledger)
+    start = rows[0]["payload"]
+    manifest = start["reproducibility_manifest"]
+    manifest["replay"]["availability_mask_sha256"] = "0" * 64
+    body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    manifest["manifest_sha256"] = _canonical_sha(body)
+    start["reproducibility_manifest_sha256"] = manifest["manifest_sha256"]
+    _rewrite_ledger_chain(ledger, rows)
+
+    with pytest.raises(DojoBotTrainerError, match="MTM_CONTRACT_VIOLATION"):
+        _score_strict_mtm(ledger, arguments)
 
 
 @pytest.mark.parametrize(

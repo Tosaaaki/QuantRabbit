@@ -27,16 +27,23 @@ import hashlib
 import json
 import math
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 UTC = timezone.utc
 
 LEVERAGE_DEFAULT = 25.0
 CLOSEOUT_USAGE = 1.0
-MAX_CONVERSION_QUOTE_AGE_S = 90.0
+# OANDA's fixed sparse M1 source contract permits a bounded observed-quote
+# carry across short feed gaps.  Conversion and capital-allocation evidence
+# must still be causal: a source timestamp may be at most 15 minutes old and
+# may never be newer than the valuation reference.
+MAX_CAUSAL_QUOTE_CARRY_AGE_S = 900.0
+MAX_CONVERSION_QUOTE_AGE_S = MAX_CAUSAL_QUOTE_CARRY_AGE_S
+NEW_RISK_SUSPENDED_ERROR = "new risk is suspended for a stale closed bar"
 SNAPSHOT_SCHEMA = "QR_VIRTUAL_BROKER_SNAPSHOT_V2"
 QUOTE_BATCH_CONTRACT = "QR_VIRTUAL_QUOTE_BATCH_V1"
 ACCOUNT_MARK_CONTRACT = "QR_VIRTUAL_ACCOUNT_MARK_V1"
@@ -279,6 +286,7 @@ class VirtualBroker:
     _last_phase_batch_index: int = field(default=-1, init=False, repr=False)
     _account_mark_chain_started: bool = field(default=False, init=False, repr=False)
     _mtm_terminal_emitted: bool = field(default=False, init=False, repr=False)
+    _new_risk_suspension_depth: int = field(default=0, init=False, repr=False)
     _last_batch_quote_seq_before: Optional[int] = field(
         default=None, init=False, repr=False
     )
@@ -380,6 +388,22 @@ class VirtualBroker:
 
         if self._mtm_terminal_emitted:
             raise VirtualBrokerError("broker state mutation cannot follow TERMINAL")
+
+    def _require_new_risk_allowed(self) -> None:
+        self._require_state_mutation_allowed()
+        if self._new_risk_suspension_depth:
+            raise VirtualBrokerError(NEW_RISK_SUSPENDED_ERROR)
+
+    @contextmanager
+    def suspend_new_risk(self) -> Iterator[None]:
+        """Allow state learning/risk reduction while rejecting fresh exposure."""
+
+        self._require_state_mutation_allowed()
+        self._new_risk_suspension_depth += 1
+        try:
+            yield
+        finally:
+            self._new_risk_suspension_depth -= 1
 
     # ---- continuous replay evidence ------------------------------------
     @staticmethod
@@ -881,7 +905,11 @@ class VirtualBroker:
                 )
             if reference_epoch is not None and source_epoch is not None:
                 age_s = reference_epoch - source_epoch
-                if abs(age_s) > MAX_CONVERSION_QUOTE_AGE_S:
+                if age_s < 0:
+                    raise VirtualBrokerError(
+                        f"future conversion quote for {source_pair}: {age_s:.3f}s"
+                    )
+                if age_s > MAX_CONVERSION_QUOTE_AGE_S:
                     raise VirtualBrokerError(
                         f"stale conversion quote for {source_pair}: {age_s:.3f}s"
                     )
@@ -923,6 +951,48 @@ class VirtualBroker:
             return datetime.fromisoformat(ts.split("#")[0]).timestamp()
         except Exception:
             return None
+
+    def _current_causal_valuation_ts(self) -> str:
+        """Return the timestamp of the newest quote observation.
+
+        Sparse feeds may leave an open position's own price unchanged while a
+        different pair advances the market clock.  The per-pair quote and its
+        conversion watermark remain the price evidence, but financing accrues
+        through this broker-observed clock.  Deriving it from quote sequence
+        preserves snapshot compatibility without adding mutable clock state.
+        """
+
+        if not self._last_quote_sequences:
+            raise VirtualBrokerError("valuation timestamp requires a quote")
+        current_pair = max(
+            self._last_quote_sequences,
+            key=lambda pair: self._last_quote_sequences[pair],
+        )
+        current_quote = self.last_quotes.get(current_pair)
+        if current_quote is None:
+            raise VirtualBrokerError(
+                f"valuation timestamp quote is missing for {current_pair}"
+            )
+        return current_quote[2]
+
+    def _open_position_quotes_are_fresh_for_entry(self, valuation_ts: str) -> bool:
+        """Require causal, bounded marks before allocating more capital."""
+
+        valuation_epoch = self._ts_epoch(valuation_ts)
+        for pair in {pos.pair for pos in self.positions.values()}:
+            quote = self.last_quotes.get(pair)
+            if quote is None:
+                return False
+            quote_ts = quote[2]
+            if quote_ts == valuation_ts:
+                continue
+            quote_epoch = self._ts_epoch(quote_ts)
+            if valuation_epoch is None or quote_epoch is None:
+                return False
+            age_s = valuation_epoch - quote_epoch
+            if age_s < 0 or age_s > MAX_CAUSAL_QUOTE_CARRY_AGE_S:
+                return False
+        return True
 
     def _financing_jpy(
         self, pos: VBPosition, exit_ts: str, conversion_rate: Optional[float] = None
@@ -991,6 +1061,7 @@ class VirtualBroker:
         margin = 0.0
         accrued_financing = 0.0
         by_pair: dict[str, dict[str, float]] = {}
+        valuation_ts = self._current_causal_valuation_ts() if self.positions else None
         for pos in self.positions.values():
             q = self.last_quotes.get(pos.pair)
             if q is None:
@@ -1007,7 +1078,7 @@ class VirtualBroker:
                 as_of_sequence=watermark,
                 reference_ts=q[2],
             )
-            financing = self._financing_jpy(pos, q[2], conversion_rate)
+            financing = self._financing_jpy(pos, valuation_ts, conversion_rate)
             equity += unrealized - financing
             accrued_financing += financing
             side_units = by_pair.setdefault(pos.pair, {"LONG": 0.0, "SHORT": 0.0})
@@ -1039,6 +1110,9 @@ class VirtualBroker:
     def _margin_headroom_ok(self, pair: str, side: str, units: float) -> bool:
         """OANDA-faithful: refuse orders whose margin would not fit."""
 
+        valuation_ts = self._current_causal_valuation_ts()
+        if not self._open_position_quotes_are_fresh_for_entry(valuation_ts):
+            return False
         acct = self.account()
         q = self.last_quotes.get(pair)
         if q is None:
@@ -1144,7 +1218,7 @@ class VirtualBroker:
         tp_pips: Optional[float] = None,
         sl_pips: Optional[float] = None,
     ) -> str:
-        self._require_state_mutation_allowed()
+        self._require_new_risk_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -1233,6 +1307,58 @@ class VirtualBroker:
         self._enforce_margin_after_action()
         return trade_id
 
+    def _evaluate_submitted_order_at_current_quote(self, order_id: str) -> None:
+        """Resolve a newly submitted marketable order on the staged quote."""
+
+        order = self.orders.get(order_id)
+        if order is None:
+            return
+        quote = self.last_quotes.get(order.pair)
+        if quote is None:
+            return
+        bid, ask, ts = quote
+        marketable = (
+            (
+                order.kind == "LIMIT"
+                and order.side == "LONG"
+                and ask <= order.limit_price
+            )
+            or (
+                order.kind == "LIMIT"
+                and order.side == "SHORT"
+                and bid >= order.limit_price
+            )
+            or (
+                order.kind == "STOP"
+                and order.side == "LONG"
+                and ask >= order.limit_price
+            )
+            or (
+                order.kind == "STOP"
+                and order.side == "SHORT"
+                and bid <= order.limit_price
+            )
+        )
+        if not marketable:
+            return
+        quote_sequence = self._last_quote_watermarks.get(order.pair)
+        if quote_sequence is None:
+            raise VirtualBrokerError(f"no accounting watermark for {order.pair}")
+        self._process_current_quote(
+            order.pair,
+            bid,
+            ask,
+            ts,
+            quote_sequence,
+            enforce_margin=False,
+        )
+        current_batch_pairs = {
+            pair
+            for pair, watermark in self._last_quote_watermarks.items()
+            if watermark == quote_sequence
+        }
+        self._enforce_margin_after_action(current_batch_pairs=current_batch_pairs)
+
     def limit_order(
         self,
         pair: str,
@@ -1242,7 +1368,7 @@ class VirtualBroker:
         tp_pips: Optional[float] = None,
         sl_pips: Optional[float] = None,
     ) -> str:
-        self._require_state_mutation_allowed()
+        self._require_new_risk_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -1274,6 +1400,7 @@ class VirtualBroker:
                 "sl_pips": sl_pips,
             },
         )
+        self._evaluate_submitted_order_at_current_quote(order_id)
         return order_id
 
     def stop_order(
@@ -1288,7 +1415,7 @@ class VirtualBroker:
         """Breakout entry: LONG fills once the real ask reaches price (at
         the level or WORSE when gapped); SHORT once the real bid does."""
 
-        self._require_state_mutation_allowed()
+        self._require_new_risk_allowed()
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -1321,6 +1448,7 @@ class VirtualBroker:
                 "sl_pips": sl_pips,
             },
         )
+        self._evaluate_submitted_order_at_current_quote(order_id)
         return order_id
 
     def cancel_order(self, order_id: str) -> None:
@@ -1359,9 +1487,9 @@ class VirtualBroker:
             else (pos.entry_price - price)
         )
         gross_pl = diff * close_units * conversion_rate
-        financing = self._financing_jpy(pos, ts, conversion_rate) * (
-            close_units / pos.units
-        )
+        financing = self._financing_jpy(
+            pos, self._current_causal_valuation_ts(), conversion_rate
+        ) * (close_units / pos.units)
         pl = gross_pl - financing
         self.balance_jpy += pl
         if close_units >= pos.units:
@@ -1401,6 +1529,18 @@ class VirtualBroker:
         pos.tp_price = tp_price
         pos.sl_price = sl_price
         self._log("SET_EXIT", {"trade_id": trade_id, "tp": tp_price, "sl": sl_price})
+        quote = self.last_quotes.get(pos.pair)
+        quote_sequence = self._last_quote_watermarks.get(pos.pair)
+        if quote is None or quote_sequence is None:
+            return
+        bid, ask, ts = quote
+        self._resolve_attached_exit_at_quote(trade_id, bid, ask, ts, quote_sequence)
+        current_batch_pairs = {
+            pair
+            for pair, watermark in self._last_quote_watermarks.items()
+            if watermark == quote_sequence
+        }
+        self._enforce_margin_after_action(current_batch_pairs=current_batch_pairs)
 
     # ---- feed ------------------------------------------------------------
     def on_quote(
@@ -1486,7 +1626,11 @@ class VirtualBroker:
         # visible before deciding a portfolio-level margin closeout.  Running
         # this per pair makes a TP on one pair rescue (or fail to rescue) the
         # account solely according to iteration order.
-        events.extend(self._enforce_margin_after_action())
+        events.extend(
+            self._enforce_margin_after_action(
+                current_batch_pairs={pair for pair, _, _, _ in normalized}
+            )
+        )
         if self._account_mark_chain_started:
             self._last_batch_applied = True
         return events
@@ -1560,7 +1704,9 @@ class VirtualBroker:
             else (pos.entry_price - exit_price)
         )
         gross_pl = diff * pos.units * conversion_rate
-        financing = self._financing_jpy(pos, ts, conversion_rate)
+        financing = self._financing_jpy(
+            pos, self._current_causal_valuation_ts(), conversion_rate
+        )
         pl = gross_pl - financing
         self.balance_jpy += pl
         del self.positions[trade_id]
@@ -1727,10 +1873,21 @@ class VirtualBroker:
             events.extend(self._enforce_margin_after_action())
         return events
 
-    def _enforce_margin_after_action(self) -> list[dict[str, Any]]:
+    def _enforce_margin_after_action(
+        self, *, current_batch_pairs: Optional[set[str]] = None
+    ) -> list[dict[str, Any]]:
         acct = self.account()
         if acct["margin_usage"] < CLOSEOUT_USAGE or not self.positions:
             return []
+        if current_batch_pairs is not None:
+            position_pairs = {pos.pair for pos in self.positions.values()}
+            missing_pairs = sorted(position_pairs - current_batch_pairs)
+            if missing_pairs:
+                raise VirtualBrokerError(
+                    "margin closeout requires current batch quotes for every "
+                    f"open position pair; missing: {','.join(missing_pairs)}"
+                )
+        valuation_ts = self._current_causal_valuation_ts()
         events = []
         for trade_id in list(self.positions):
             pos = self.positions[trade_id]
@@ -1751,7 +1908,7 @@ class VirtualBroker:
                 else (pos.entry_price - price)
             )
             gross_pl = diff * pos.units * conversion_rate
-            financing = self._financing_jpy(pos, q[2], conversion_rate)
+            financing = self._financing_jpy(pos, valuation_ts, conversion_rate)
             pl = gross_pl - financing
             self.balance_jpy += pl
             del self.positions[trade_id]
