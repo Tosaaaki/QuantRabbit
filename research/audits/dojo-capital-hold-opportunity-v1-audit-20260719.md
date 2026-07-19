@@ -16,6 +16,8 @@ bit-for-bit再実行可能性ではない。
 | corpusに対する保存約定・決済quote | `VERIFIED` |
 | 保存eventからのslippage・financing・P/L再計算 | `VERIFIED` |
 | exact source closureによる再実行 | `UNPROVABLE_MISSING_SOURCE_BYTES` |
+| 60分解放の実市場忠実性 | `FAILED_ARCHIVE_EXECUTED_AT_61_MINUTES` |
+| 注文時点でmarketableな指値の即時約定 | `FAILED_1_OF_305_ORDERS_PER_PATH_DELAYED` |
 | 連続MTM drawdown・margin | `UNPROVEN_NO_ACCOUNT_MARKS` |
 | 未使用holdout / prospective再現性 | `UNPROVEN_WORN_TRAIN` |
 | 月次3倍 | `UNPROVEN_NOT_A_MONTH_AND_EXTRAPOLATED` |
@@ -45,6 +47,20 @@ bit-for-bit再実行可能性ではない。
 - `QUOTE_BATCH_BEGIN`、`ACCOUNT_MARK`、terminal MTM markはすべて0件だった。
 - CAD_JPYの `+¥110,084.08` が悲観側利益の65.9%を占めた。
 - 同じ設定のOHLCは `+¥283,770.99` で、悲観OLHCとの差が大きくM1内経路依存も強い。
+- 旧botはresting fillの60分時計を約定時ではなく次のOでの発見時から開始していた。
+  OLHCでは68取引中11件、OHLCでは71取引中10件のtimeout CLOSEが実約定から
+  `3,660秒` 後だった。両経路とも`3,600秒`ちょうどのtimeout CLOSEは0件だった。
+- この旧artifactで週末を跨ぐ長時間overholdはなく、観測できる直接影響は21取引の
+  1分延長である。ただし価格差を含む修正後損益はexact旧sourceがないため再実行不能である。
+- OLHCの11 timeout取引を、同一entry/unitsのまま正しい60分Oへ直接repricingすると、合計は
+  `-¥38,103.74` から約 `-¥39,219.52` となり、旧headlineは直接差分で約 `¥1,115.78`
+  過大だった。ただし早い資金解放が後続の受付・sizeを変えるため、これはexact rerunではない。
+- 旧VirtualBrokerは注文時のOですでにmarketableなLIMIT/STOPも即時処理せず、後続H/Lまで
+  待たせる挙動だった。decision epochと封印corpusの次Oから、両経路とも305注文中1件、
+  USD_JPY SHORT limit 149.647が21:20 O bid 149.649ですでにmarketableだったことを確認した。
+- 悲観OLHCは後続Lでも149.647約定だったため、この1件の直接fill価格利益は0だった。
+  OHLCは後続Hの149.795まで待って14.8 pips有利に約定し、同じtimeout CLOSEでの孤立差分は
+  約 `+¥7,977.72`。したがってOHLC側 `+¥283,770.99` もその分を含む過大表示である。
 
 主要digest:
 
@@ -58,6 +74,11 @@ bit-for-bit再実行可能性ではない。
 60分解放は、すでに観測したTRAIN baselineの勝敗時間から選択された。期間も12日弱であり、
 scoreboardの30日換算 `x4.61010409` は機械的な複利外挿にすぎない。realized-event DD
 `9.30253%` は連続MTM DDではない。
+
+また、旧台帳の算術が正しいことと実市場メカニクスが正しいことは別である。保存台帳上の
+実現損益は再計算一致したが、60分解放は実際には61分で、注文時点ですでにmarketableな
+指値・逆指値を次のH/Lまで遅延させ得た。よって `+¥166,990.89` は旧simulator規則の下での
+自己整合TRAIN損益であり、「60分解放を備えた実市場忠実な損益」としては証明されない。
 
 さらに実行manifestの `git_head=30c047f8d8fc47b41f806a63e33ad3cfefc57184` に対し、
 実行時はdirty intermediate sourceを使っていた。`virtual_broker.py` のexact bytesは後のcommit
