@@ -5,7 +5,8 @@ Samples mechanical burst entries (same declared trigger as the MomentumBurst
 replica: 24h trend side, 3-bar M5 break, next-open entry, TP +3 pips
 pessimistic) that are still open 60 minutes later — the exact moment the
 mechanical time-stop acted in the protected arm.  Each scenario shows the
-anonymized trailing structure (120 H1 closes + 36 M5 bars, normalized to
+anonymized trailing structure (120 completed H1 closes + 36 completed M5 bars,
+normalized to
 100, dates/pairs/levels stripped) plus the entry marker and current
 unrealized pips, and asks one binary decision: CUT now or HOLD (keep the
 TP, hard exit 4h later if unfilled).  The sealed answer key carries both
@@ -29,7 +30,16 @@ from typing import Any
 from quant_rabbit.analysis.market_status import compute_market_status
 
 UTC = timezone.utc
-PAIRS = ("EUR_USD", "USD_JPY", "GBP_USD", "AUD_USD", "USD_CHF", "USD_CAD", "EUR_JPY", "GBP_JPY")
+PAIRS = (
+    "EUR_USD",
+    "USD_JPY",
+    "GBP_USD",
+    "AUD_USD",
+    "USD_CHF",
+    "USD_CAD",
+    "EUR_JPY",
+    "GBP_JPY",
+)
 FROM = datetime(2020, 3, 1, tzinfo=UTC)
 TO = datetime(2025, 12, 1, tzinfo=UTC)
 N_SCENARIOS = 40
@@ -41,11 +51,17 @@ BREAK_BARS = 3
 TP_PIPS = 3.0
 DECISION_DELAY_S = 60 * 60
 HOLD_HORIZON_S = 4 * 3600
+SCENARIO_CONTRACT = "QR_BLIND_EXIT_SCENARIOS_V2"
+ANSWER_KEY_CONTRACT = "QR_BLIND_EXIT_ANSWER_KEY_V2"
 
 
 def _canonical_sha(value: Any) -> str:
     payload = json.dumps(
-        value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -60,18 +76,91 @@ def _load_pair(root: Path, pair: str):
         with gzip.open(shard_file, "rt", encoding="utf-8") as handle:
             for line in handle:
                 row = json.loads(line)
-                epoch = int(datetime.fromisoformat(row["time"][:19] + "+00:00").timestamp())
+                epoch = int(
+                    datetime.fromisoformat(row["time"][:19] + "+00:00").timestamp()
+                )
                 rows.append(
                     (
                         epoch,
-                        float(row["bid"]["o"]), float(row["bid"]["h"]),
-                        float(row["bid"]["l"]), float(row["bid"]["c"]),
-                        float(row["ask"]["o"]), float(row["ask"]["h"]),
-                        float(row["ask"]["l"]), float(row["ask"]["c"]),
+                        float(row["bid"]["o"]),
+                        float(row["bid"]["h"]),
+                        float(row["bid"]["l"]),
+                        float(row["bid"]["c"]),
+                        float(row["ask"]["o"]),
+                        float(row["ask"]["h"]),
+                        float(row["ask"]["l"]),
+                        float(row["ask"]["c"]),
                     )
                 )
     rows.sort()
     return rows
+
+
+def _completed_m5_window(rows: list[tuple[Any, ...]], decision_bar: int):
+    """Return only bars that were complete before the decision-bar open.
+
+    The decision executes at ``rows[decision_bar]`` open. Including that row's
+    high, low, or close would reveal prices from the next five minutes.
+    """
+
+    if decision_bar < M5_BARS or decision_bar >= len(rows):
+        raise ValueError("insufficient completed M5 history before decision")
+    decision_epoch = rows[decision_bar][0]
+    window = rows[decision_bar - M5_BARS : decision_bar]
+    if len(window) != M5_BARS or any(row[0] >= decision_epoch for row in window):
+        raise ValueError("M5 context is not strictly before the decision bar")
+    return window
+
+
+def _hold_branch_pips(
+    rows: list[tuple[Any, ...]],
+    decision_bar: int,
+    *,
+    trend: str,
+    entry: float,
+    tp: float,
+    pip: float,
+) -> float | None:
+    """Score HOLD from the decision open, including that bar's later TP touch."""
+
+    hold_end = rows[decision_bar][0] + HOLD_HORIZON_S
+    cursor = decision_bar
+    expected_epoch = rows[decision_bar][0]
+    while expected_epoch < hold_end:
+        if cursor >= len(rows) or rows[cursor][0] != expected_epoch:
+            return None
+        row = rows[cursor]
+        if (trend == "LONG" and row[2] >= tp) or (trend == "SHORT" and row[7] <= tp):
+            return TP_PIPS
+        cursor += 1
+        expected_epoch += 300
+    if cursor >= len(rows) or rows[cursor][0] != hold_end:
+        return None
+    end_price = rows[cursor][1] if trend == "LONG" else rows[cursor][5]
+    return (end_price - entry) / pip if trend == "LONG" else (entry - end_price) / pip
+
+
+def _tp_fills_before_decision(
+    rows: list[tuple[Any, ...]],
+    entry_bar: int,
+    decision_epoch_target: int,
+    *,
+    trend: str,
+    tp: float,
+) -> bool | None:
+    """Return whether the working TP touches after entry-open and before decision."""
+
+    cursor = entry_bar
+    expected_epoch = rows[entry_bar][0]
+    while expected_epoch < decision_epoch_target:
+        if cursor >= len(rows) or rows[cursor][0] != expected_epoch:
+            return None
+        row = rows[cursor]
+        if (trend == "LONG" and row[2] >= tp) or (trend == "SHORT" and row[7] <= tp):
+            return True
+        cursor += 1
+        expected_epoch += 300
+    return False
 
 
 def main() -> int:
@@ -93,14 +182,22 @@ def main() -> int:
         pair = rng.choice(PAIRS)
         rows = data[pair]
         pip = _pip(pair)
-        k = rng.randrange(H1_BARS * 12 + M5_BARS + 10, len(rows) - (DECISION_DELAY_S + HOLD_HORIZON_S) // 300 - 20)
+        k = rng.randrange(
+            H1_BARS * 12 + M5_BARS + 10,
+            len(rows) - (DECISION_DELAY_S + HOLD_HORIZON_S) // 300 - 20,
+        )
         epoch = rows[k][0]
         stamp = datetime.fromtimestamp(epoch, tz=UTC)
         if not (FROM <= stamp < TO):
             continue
         status = compute_market_status(stamp)
-        if not status.is_fx_open or status.minutes_to_next_close is None or (
-            status.minutes_to_next_close <= (DECISION_DELAY_S + HOLD_HORIZON_S) / 60 + 30
+        if (
+            not status.is_fx_open
+            or status.minutes_to_next_close is None
+            or (
+                status.minutes_to_next_close
+                <= (DECISION_DELAY_S + HOLD_HORIZON_S) / 60 + 30
+            )
         ):
             continue
         # Mechanical burst trigger at bar k (closed) — same as replica.
@@ -111,12 +208,11 @@ def main() -> int:
             continue
         past_mid = (data[pair][past_i][4] + data[pair][past_i][8]) / 2.0
         trend = "LONG" if mid_close > past_mid else "SHORT"
-        window = rows[k - BREAK_BARS: k]
+        window = rows[k - BREAK_BARS : k]
         mids_h = [(r[2] + r[6]) / 2.0 for r in window]
         mids_l = [(r[3] + r[7]) / 2.0 for r in window]
-        triggered = (
-            (trend == "LONG" and mid_close > max(mids_h))
-            or (trend == "SHORT" and mid_close < min(mids_l))
+        triggered = (trend == "LONG" and mid_close > max(mids_h)) or (
+            trend == "SHORT" and mid_close < min(mids_l)
         )
         if not triggered:
             continue
@@ -127,18 +223,20 @@ def main() -> int:
         entry = rows[entry_bar][5] if trend == "LONG" else rows[entry_bar][1]
         tp = entry + TP_PIPS * pip if trend == "LONG" else entry - TP_PIPS * pip
 
-        # Walk to the decision point; drop the scenario if TP fills first
-        # (pessimistic: no earlier than the bar after entry).
+        # Walk from the entry open to the decision point and drop the scenario
+        # if the working TP touches at any later point, including entry bar.
         decision_epoch_target = entry_epoch + DECISION_DELAY_S
+        tp_before_decision = _tp_fills_before_decision(
+            rows,
+            entry_bar,
+            decision_epoch_target,
+            trend=trend,
+            tp=tp,
+        )
         j = entry_bar + 1
-        tp_before_decision = False
         while j < len(rows) and rows[j][0] < decision_epoch_target:
-            _, b_o, b_h, b_l, b_c, a_o, a_h, a_l, a_c = rows[j]
-            if (trend == "LONG" and b_h >= tp) or (trend == "SHORT" and a_l <= tp):
-                tp_before_decision = True
-                break
             j += 1
-        if tp_before_decision or j >= len(rows):
+        if tp_before_decision is not False or j >= len(rows):
             continue
         decision_bar = j
         d_epoch = rows[decision_bar][0]
@@ -147,24 +245,20 @@ def main() -> int:
 
         # Branch A: CUT at the decision bar open.
         cut_price = rows[decision_bar][1] if trend == "LONG" else rows[decision_bar][5]
-        cut_pips = (cut_price - entry) / pip if trend == "LONG" else (entry - cut_price) / pip
+        cut_pips = (
+            (cut_price - entry) / pip if trend == "LONG" else (entry - cut_price) / pip
+        )
         # Branch B: HOLD — TP stays working, hard exit at decision+4h open.
-        hold_end = d_epoch + HOLD_HORIZON_S
-        m = decision_bar
-        hold_pips = None
-        while m < len(rows) and rows[m][0] < hold_end:
-            _, b_o, b_h, b_l, b_c, a_o, a_h, a_l, a_c = rows[m]
-            if m > decision_bar and (
-                (trend == "LONG" and b_h >= tp) or (trend == "SHORT" and a_l <= tp)
-            ):
-                hold_pips = TP_PIPS
-                break
-            m += 1
+        hold_pips = _hold_branch_pips(
+            rows,
+            decision_bar,
+            trend=trend,
+            entry=entry,
+            tp=tp,
+            pip=pip,
+        )
         if hold_pips is None:
-            if m >= len(rows):
-                continue
-            end_price = rows[m][1] if trend == "LONG" else rows[m][5]
-            hold_pips = (end_price - entry) / pip if trend == "LONG" else (entry - end_price) / pip
+            continue
 
         # Anonymized context: last 120 traded-hour H1 closes + last 36 M5 bars.
         h1_rev: list[float] = []
@@ -185,7 +279,7 @@ def main() -> int:
         if len(h1_rev) < H1_BARS:
             continue
         h1_closes = list(reversed(h1_rev))
-        m5_window = rows[decision_bar - M5_BARS + 1: decision_bar + 1]
+        m5_window = _completed_m5_window(rows, decision_bar)
         base = h1_closes[0]
         if base <= 0:
             continue
@@ -203,10 +297,16 @@ def main() -> int:
                 "current_norm": norm(cut_price),
                 "unrealized_pips": round(cut_pips, 1),
                 "minutes_held": int((d_epoch - entry_epoch) / 60),
+                "decision_price_basis": "DECISION_BAR_OPEN",
+                "m5_context_cutoff": "STRICTLY_BEFORE_DECISION_BAR",
                 "h1_closes_norm": [norm(c) for c in h1_closes],
                 "m5_ohlc_norm": [
-                    [norm((r[1] + r[5]) / 2), norm((r[2] + r[6]) / 2),
-                     norm((r[3] + r[7]) / 2), norm((r[4] + r[8]) / 2)]
+                    [
+                        norm((r[1] + r[5]) / 2),
+                        norm((r[2] + r[6]) / 2),
+                        norm((r[3] + r[7]) / 2),
+                        norm((r[4] + r[8]) / 2),
+                    ]
                     for r in m5_window
                 ],
             }
@@ -223,26 +323,45 @@ def main() -> int:
         )
 
     if len(scenarios) < N_SCENARIOS:
-        raise ValueError(f"only {len(scenarios)} scenarios sampled after {attempts} attempts")
+        raise ValueError(
+            f"only {len(scenarios)} scenarios sampled after {attempts} attempts"
+        )
 
     for path, payload in (
-        (args.scenarios_out, {"contract": "QR_BLIND_EXIT_SCENARIOS_V1", "seed": SEED,
-                              "decision": "CUT_NOW_or_HOLD(TP working, hard exit +4h)",
-                              "scenarios": scenarios}),
-        (args.answer_key_out, {"contract": "QR_BLIND_EXIT_ANSWER_KEY_V1", "seed": SEED,
-                               "answers": answers}),
+        (
+            args.scenarios_out,
+            {
+                "contract": SCENARIO_CONTRACT,
+                "seed": SEED,
+                "decision": "CUT_NOW_or_HOLD(TP working, hard exit +4h)",
+                "scenarios": scenarios,
+            },
+        ),
+        (
+            args.answer_key_out,
+            {"contract": ANSWER_KEY_CONTRACT, "seed": SEED, "answers": answers},
+        ),
     ):
         sealed = {**payload, "sha256": _canonical_sha(payload)}
         text = json.dumps(sealed, ensure_ascii=False, sort_keys=True) + "\n"
-        descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", dir=path.parent
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(temp_name, path)
     cut_mean = sum(a["cut_pips"] for a in answers) / len(answers)
     hold_mean = sum(a["hold_pips"] for a in answers) / len(answers)
-    print(json.dumps({"status": "EXIT_SCENARIOS_SEALED", "count": len(scenarios),
-                      "baseline_always_cut_mean_pips": round(cut_mean, 3),
-                      "baseline_always_hold_mean_pips": round(hold_mean, 3)}))
+    print(
+        json.dumps(
+            {
+                "status": "EXIT_SCENARIOS_SEALED",
+                "count": len(scenarios),
+                "baseline_always_cut_mean_pips": round(cut_mean, 3),
+                "baseline_always_hold_mean_pips": round(hold_mean, 3),
+            }
+        )
+    )
     return 0
 
 

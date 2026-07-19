@@ -1,0 +1,377 @@
+{
+  "contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1",
+  "schema_version": 1,
+  "recorded_at_utc": "2026-07-19T01:06:26Z",
+  "classification": "WORN_HISTORICAL_TRAIN_ONLY",
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE",
+  "trainer_loop": {
+    "ai_diagnoses_sealed_ledger": true,
+    "ai_changes_bounded_parameters_or_strategy_family": true,
+    "candidate_replays_actual_historical_market": true,
+    "results_may_be_rejected": true,
+    "goal_backsolving_allowed": false
+  },
+  "common_mechanics": {
+    "source": "OANDA_M1_BID_ASK_REPLAY",
+    "intrabar_paths_required": ["OHLC", "OLHC"],
+    "adverse_slippage_pips_per_fill": 0.3,
+    "financing_pips_per_day": 0.8,
+    "leverage": 25.0,
+    "strategy_owner_isolation_required": true,
+    "period_end_settlement_required": true,
+    "historical_window_role": "TRAIN"
+  },
+  "batches": [
+    {
+      "batch_id": "SPIKE_FADE_TAILGUARD_V1",
+      "trainer_diagnosis": "NO_STOP_AND_480_MINUTE_CEILING_LEFT_WEEKEND_GAP_TAIL_LOSSES",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-spikefade-tailguard-train-v1/runs/20260719T004454.677444Z-f085c4a3/portfolio_scoreboard.json",
+      "artifact_file_sha256": "7fb256995adc1e3b6e4da1d8eb365f78c2985c175577a2e3b85484ac7f7ef052",
+      "artifact_canonical_sha256": "ca2aa0007532b426c55860b243b2a2127bcde28d372b1fa50b05d4dc16e2e5fe",
+      "pairs": ["USD_JPY", "CAD_JPY", "EUR_USD", "GBP_USD"],
+      "candidate_count": 2,
+      "train_survivor_count": 2,
+      "fill_time_concurrency_audit": {
+        "audited_ledgers": 4,
+        "configured_max_concurrent_per_pair": 1,
+        "configured_global_max_concurrent": 4,
+        "observed_max_concurrent_per_pair": 1,
+        "observed_max_global_concurrent": 4,
+        "breach_count": 0
+      },
+      "candidates": [
+        {
+          "candidate_id": "tailguard_sl25",
+          "change": "ADD_SL_25_PIPS",
+          "pessimistic_intrabar": "OLHC",
+          "pessimistic_trade_count": 105,
+          "pessimistic_pnl_jpy": 37174.62,
+          "pessimistic_final_nav_multiple": 1.1858731,
+          "pessimistic_calendar_30d_multiple": 1.53603383,
+          "pessimistic_realized_drawdown_fraction": 0.03379571,
+          "pessimistic_max_configured_margin_fraction": 0.688,
+          "margin_closeouts": 0,
+          "classification": "TRAIN_SURVIVOR"
+        },
+        {
+          "candidate_id": "tailguard_sl25_lowlev_4h",
+          "change": "ADD_SL_25_PIPS_REDUCE_CEILING_TO_240_MIN_AND_PER_POSITION_LEVERAGE_TO_2",
+          "pessimistic_intrabar": "OLHC",
+          "pessimistic_trade_count": 106,
+          "pessimistic_pnl_jpy": 17351.15,
+          "pessimistic_final_nav_multiple": 1.08675575,
+          "pessimistic_calendar_30d_multiple": 1.2330107,
+          "pessimistic_realized_drawdown_fraction": 0.01581251,
+          "pessimistic_max_configured_margin_fraction": 0.32,
+          "margin_closeouts": 0,
+          "classification": "TRAIN_SURVIVOR"
+        }
+      ]
+    },
+    {
+      "batch_id": "LOW_FREQUENCY_PULLBACK_A2",
+      "trainer_diagnosis": "REDUCE_FREQUENCY_AND_REQUIRE_PASSIVE_RETEST_AFTER_DAILY_BREAK",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-pullback-tune-v1.lxhMap/scoreboard.json",
+      "artifact_file_sha256": "22392a1388aa7f23ac6cdefe0a373ca583d6c87f69b525352930d4dac291b62d",
+      "artifact_canonical_sha256": "2c21c1c71989cff90aee3de2069826991e27398850e295a4a23c31d3008e4d39",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "candidate_count": 3,
+      "completed_candidate_count": 1,
+      "failed_closed_candidate_count": 2,
+      "train_survivor_count": 1,
+      "pessimistic_intrabar": "OHLC",
+      "pessimistic_trade_count": 93,
+      "pessimistic_pnl_jpy": 170.24,
+      "pessimistic_final_nav_multiple": 1.0008512,
+      "pessimistic_calendar_30d_multiple": 1.00091203,
+      "pessimistic_realized_drawdown_fraction": 0.00079425,
+      "pessimistic_peak_margin_fraction": 0.02000744,
+      "margin_closeouts": 0,
+      "classification": "TRAIN_HYPOTHESIS_SURVIVOR",
+      "failure_note": "B_AND_C_ABORTED_ON_EXACT_120_SECOND_STALE_CONVERSION_QUOTE"
+    },
+    {
+      "batch_id": "MOMENTUM_SELECTIVITY_V1",
+      "trainer_diagnosis": "FILTER_BURST_ENTRIES_AND_TEST_SELECTIVE_RETEST",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-momentum-tuned-train-v1.EK6Cyx/result.json",
+      "artifact_file_sha256": "a8f669e7af0ed4d6eb88444e5d61d5f3b2ceddfc7f13ae2282fa7fa9a0fd43de",
+      "artifact_canonical_sha256": "6c08a8648cd07ded6c43b06fee56db0e6f1625a957228a7963f98659c96d8fee",
+      "pairs": ["USD_JPY", "AUD_JPY", "EUR_JPY", "AUD_USD", "EUR_USD", "GBP_USD"],
+      "candidate_count": 2,
+      "train_survivor_count": 0,
+      "candidates": [
+        {
+          "candidate_id": "selective",
+          "pessimistic_trade_count": 40,
+          "pessimistic_pnl_jpy": -1069.04,
+          "pessimistic_final_nav_multiple": 0.9946548,
+          "pessimistic_realized_drawdown_fraction": 0.0053452,
+          "classification": "REJECT"
+        },
+        {
+          "candidate_id": "retest",
+          "pessimistic_trade_count": 18,
+          "pessimistic_pnl_jpy": -301.70,
+          "pessimistic_final_nav_multiple": 0.9984915,
+          "pessimistic_realized_drawdown_fraction": 0.0027182,
+          "classification": "REJECT"
+        }
+      ]
+    },
+    {
+      "batch_id": "BOT_DIVERSITY_V1_PRE_CAP_FIX",
+      "trainer_diagnosis": "ADD_COMPRESSION_BREAK_ROUND_NUMBER_FADE_FADE_LADDER_AND_TRAILING_BURST",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-diversity-train-v1/scoreboard.json",
+      "artifact_file_sha256": "dd33588821a98d7d13204fdd5897781475cf91db8d7553363df2509e0a96ef66",
+      "artifact_canonical_sha256": "b49cf7bd7422f9c09d8ff6adb2c6e4e6da8c2bb4c4d52e394a982acc3989d178",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "candidate_count": 4,
+      "train_survivor_count": 0,
+      "classification": "INVALIDATED_FILL_TIME_CONCURRENCY_CAP_NOT_ENFORCED",
+      "invalid_reasons": [
+        "COMPRESSION_BREAK_PAIR_CAP_BREACH",
+        "FADE_LADDER_PAIR_AND_GLOBAL_CAP_BREACH",
+        "AUTHORITATIVE_FILL_BOUNDARY_DID_NOT_RECHECK_CAPS"
+      ],
+      "rerun_required": false,
+      "rerun_completed_by_batch_id": "BOT_DIVERSITY_V1_CAPS_FIXED"
+    },
+    {
+      "batch_id": "BOT_DIVERSITY_V1_CAPS_FIXED",
+      "trainer_diagnosis": "REPLAY_ADDED_FAMILIES_WITH_OWNER_CAPS_RECHECKED_AT_THE_AUTHORITATIVE_FILL_BOUNDARY",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-diversity-capsfixed-train-v2/scoreboard.json",
+      "artifact_file_sha256": "690af01b4beb19a4e4c40982638b1c7a14f495e5ada34b5a3be3effd46d7a075",
+      "artifact_canonical_sha256": "4bf0bfa20b53fce54f8ab72924b9d535918ec893564e73bddfe33973e8a7dcf1",
+      "preregistration_file_sha256": "947ba62aee7094ab554a4dce61b5d72f93175a289b568edf0c0c69366cfd640b",
+      "preregistration_canonical_sha256": "ecdca542bc8b5908c81d3d3e059d03047e40a709af015c6983cc6c3a483023df",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "candidate_count": 4,
+      "train_survivor_count": 0,
+      "classification": "WORN_TRAIN_DIAGNOSTIC",
+      "fill_time_concurrency_audit": {
+        "run_count": 8,
+        "configured_max_concurrent_per_pair": 1,
+        "configured_global_max_concurrent": 4,
+        "observed_max_concurrent_per_pair": 1,
+        "observed_max_global_concurrent": 4,
+        "breach_count": 0,
+        "pair_cap_rejections": 213,
+        "global_cap_rejections": 0,
+        "owner_event_count": 71782,
+        "owner_mismatch_count": 0
+      },
+      "candidates": [
+        {
+          "candidate_id": "compression_break",
+          "pessimistic_intrabar": "OHLC",
+          "pessimistic_trade_count": 29,
+          "pessimistic_pnl_jpy": -845.73,
+          "pessimistic_final_nav_multiple": 0.99577135,
+          "pessimistic_realized_drawdown_fraction": 0.00437625,
+          "pessimistic_peak_margin_fraction": 0.04000980,
+          "margin_closeouts": 0,
+          "pair_cap_rejections": 6,
+          "classification": "REJECT"
+        },
+        {
+          "candidate_id": "round_number_fade",
+          "pessimistic_intrabar": "OLHC",
+          "pessimistic_trade_count": 81,
+          "pessimistic_pnl_jpy": -411.63,
+          "pessimistic_final_nav_multiple": 0.99794185,
+          "pessimistic_realized_drawdown_fraction": 0.00399980,
+          "pessimistic_peak_margin_fraction": 0.04002948,
+          "margin_closeouts": 0,
+          "pair_cap_rejections": 0,
+          "classification": "REJECT"
+        },
+        {
+          "candidate_id": "fade_ladder",
+          "pessimistic_intrabar": "OLHC",
+          "pessimistic_trade_count": 471,
+          "pessimistic_pnl_jpy": -2904.78,
+          "pessimistic_final_nav_multiple": 0.98547610,
+          "pessimistic_realized_drawdown_fraction": 0.01765755,
+          "pessimistic_peak_margin_fraction": 0.08001559,
+          "margin_closeouts": 0,
+          "pair_cap_rejections": 207,
+          "classification": "REJECT"
+        },
+        {
+          "candidate_id": "trailing_burst",
+          "pessimistic_intrabar": "OHLC",
+          "pessimistic_trade_count": 271,
+          "pessimistic_pnl_jpy": -5557.26,
+          "pessimistic_final_nav_multiple": 0.97221370,
+          "pessimistic_realized_drawdown_fraction": 0.02930110,
+          "pessimistic_peak_margin_fraction": 0.08008897,
+          "margin_closeouts": 0,
+          "pair_cap_rejections": 0,
+          "classification": "REJECT"
+        }
+      ]
+    },
+    {
+      "batch_id": "ROUND_NUMBER_FADE_TP3_FOLLOWUP",
+      "trainer_diagnosis": "TEST_PAYOFF_NOT_RISK_BY_WIDENING_ONLY_TP_FROM_2_TO_3_ATR_ON_A_DIFFERENT_TRAIN_WINDOW",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-diversity-followup-train-v1/scoreboard.json",
+      "artifact_file_sha256": "2e0c07176cab8a76132113054005b66d3e46b5aaeff465fe799a4c51f3e72426",
+      "artifact_canonical_sha256": "c8934511af1d3866edddabfd871cee79e5e4bc8b51252a2fafef7cc567bf7552",
+      "preregistration_file_sha256": "82e956ee54a96dd87fc4075aea76d0234720e166970d9cf7d4926dcd01e33bfd",
+      "preregistration_canonical_sha256": "e8d554a0b03634331711f5bc4cc895518c4681e0d010e5ee5d6e24613af07d79",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "candidate_count": 1,
+      "train_survivor_count": 0,
+      "classification": "REJECTED_TRAIN_HYPOTHESIS",
+      "parameter_diff": {
+        "tp_atr_from": 2.0,
+        "tp_atr_to": 3.0,
+        "risk_increase": false,
+        "all_other_strategy_and_risk_parameters_unchanged": true
+      },
+      "fill_time_concurrency_audit": {
+        "run_count": 2,
+        "configured_max_concurrent_per_pair": 1,
+        "configured_global_max_concurrent": 4,
+        "observed_max_concurrent_per_pair": 1,
+        "observed_max_global_concurrent": 3,
+        "breach_count": 0,
+        "pair_cap_rejections": 0,
+        "global_cap_rejections": 0
+      },
+      "intrabar_results": [
+        {
+          "intrabar": "OHLC",
+          "trade_count": 134,
+          "win_count": 65,
+          "pnl_jpy": -1719.70,
+          "final_nav_multiple": 0.99140150,
+          "realized_drawdown_fraction": 0.01043630,
+          "peak_margin_fraction": 0.06006349,
+          "margin_closeouts": 0
+        },
+        {
+          "intrabar": "OLHC",
+          "trade_count": 136,
+          "win_count": 68,
+          "pnl_jpy": -1244.79,
+          "final_nav_multiple": 0.99377605,
+          "realized_drawdown_fraction": 0.00778310,
+          "peak_margin_fraction": 0.06006349,
+          "margin_closeouts": 0
+        }
+      ],
+      "verdict": "PAYOFF_WIDENING_DID_NOT_CREATE_POST_COST_EDGE"
+    },
+    {
+      "batch_id": "CAPITAL_HOLD_OPPORTUNITY_V1",
+      "trainer_diagnosis": "COMPARE_FULL_HOLD_SPLIT_RESERVE_AND_STALE_CAPITAL_RELEASE_ON_THE_SAME_MULTIPAIR_SIGNAL_STREAM",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-capital-hold-opportunity-train-v1/scoreboard.json",
+      "artifact_file_sha256": "dc00742fe594ae66539f7246d06cb73e14bb352dec45a87d2cd70b30505eda2a",
+      "artifact_canonical_sha256": "faf61fe2cdd42cb094041bbec9b5057e2f55dbe0f250e5342e49e3259ec6fd93",
+      "preregistration_file_sha256": "1692d1e4b2d0178ece35318a1236dce6906d774bcf52c644fa617ae5fab81fc1",
+      "preregistration_canonical_sha256": "1fa114ea2aafef7bc83f46482d42d7754eb2c8cf5a790e6f1cedb2a5d9674d11",
+      "supplementary_margin_audit_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-capital-hold-opportunity-train-v1/postrun_margin_audit.json",
+      "supplementary_margin_audit_file_sha256": "aeda2d32f80e4491044f35d541e381c3a5b04b208de58d0eab2b70870b4bc25b",
+      "supplementary_margin_audit_canonical_sha256": "1ac8c28222cbba1b1e8653db9aec096cceaa55b166bed5f541b3ceb3b3fc9ba4",
+      "pairs": ["USD_JPY", "CAD_JPY", "EUR_USD", "GBP_USD"],
+      "window_from_utc": "2025-03-03T00:00:00Z",
+      "window_to_utc": "2025-03-14T00:00:00Z",
+      "candidate_count": 3,
+      "train_survivor_count": 3,
+      "classification": "WORN_TRAIN_CAPITAL_POLICY_DIAGNOSTIC",
+      "diagnostic_winner": "full_time_release",
+      "common_strategy": {
+        "family": "SPIKE_FADE",
+        "tp_atr": 3.0,
+        "sl_pips": 25,
+        "owner_max_concurrent_per_pair": 1,
+        "owner_global_max_concurrent": 4
+      },
+      "pessimistic_intrabar": "OLHC",
+      "policies": [
+        {
+          "candidate_id": "full_hold",
+          "per_position_notional_multiple": 20.0,
+          "time_ceiling_minutes": 480,
+          "trade_count": 60,
+          "pnl_jpy": 90671.91,
+          "final_nav_multiple": 1.45335955,
+          "calendar_30d_multiple": 2.56327490,
+          "realized_drawdown_fraction": 0.10467520,
+          "direction_win_rate": 0.76666667,
+          "unit_weighted_hold_minutes": 44.64787124,
+          "insufficient_margin_rejections": 48,
+          "profitable_rejected_signal_lower_bound": 35,
+          "peak_entry_notional_to_realized_nav_fraction": 0.80364365,
+          "classification": "TRAIN_SURVIVOR"
+        },
+        {
+          "candidate_id": "split_reserve_hold",
+          "per_position_notional_multiple": 5.0,
+          "time_ceiling_minutes": 480,
+          "trade_count": 105,
+          "pnl_jpy": 43704.45,
+          "final_nav_multiple": 1.21852225,
+          "calendar_30d_multiple": 1.64473842,
+          "realized_drawdown_fraction": 0.04245115,
+          "direction_win_rate": 0.77142857,
+          "unit_weighted_hold_minutes": 39.83127466,
+          "insufficient_margin_rejections": 0,
+          "profitable_rejected_signal_lower_bound": 0,
+          "peak_entry_notional_to_realized_nav_fraction": 0.80107500,
+          "classification": "TRAIN_SURVIVOR"
+        },
+        {
+          "candidate_id": "full_time_release",
+          "per_position_notional_multiple": 20.0,
+          "time_ceiling_minutes": 60,
+          "trade_count": 68,
+          "pnl_jpy": 166990.89,
+          "final_nav_multiple": 1.83495445,
+          "calendar_30d_multiple": 4.61010409,
+          "realized_drawdown_fraction": 0.09302530,
+          "direction_win_rate": 0.75000000,
+          "unit_weighted_hold_minutes": 22.66156980,
+          "insufficient_margin_rejections": 43,
+          "profitable_rejected_signal_lower_bound": 30,
+          "peak_entry_notional_to_realized_nav_fraction": 0.80364372,
+          "classification": "TRAIN_SURVIVOR"
+        }
+      ],
+      "audit_gates": {
+        "intrabar_path_count": 2,
+        "ledger_hash_chain_verified": true,
+        "point_in_time_jpy_conversion_verified": true,
+        "owner_pair_or_global_cap_breaches": 0,
+        "margin_closeouts": 0,
+        "all_terminal_flat": true
+      },
+      "margin_measurement_note": "ENTRY_NOTIONAL_DIVIDED_BY_REALIZED_NAV_AT_LEDGER_EVENTS_NOT_CONTINUOUS_MTM_USAGE",
+      "verdict": "STALE_60_MINUTE_RELEASE_BEATS_FULL_HOLD_AND_SPLIT_RESERVE_ON_BOTH_TRAIN_PATHS"
+    }
+  ],
+  "aggregate": {
+    "valid_batch_count": 6,
+    "invalidated_batch_count": 1,
+    "train_survivor_count": 6,
+    "proof_survivor_count": 0,
+    "monthly_3x_reached": false,
+    "worn_train_monthly_3x_diagnostic_reached": true,
+    "monthly_3x_proof_reached": false,
+    "best_pessimistic_calendar_30d_multiple": 4.61010409,
+    "verdict": "TRAIN_SURVIVORS_EXIST_BUT_PROOF_AND_PROMOTION_REMAIN_ZERO"
+  },
+  "limitations": [
+    "ALL_HISTORICAL_WINDOWS_ARE_WORN_TRAIN",
+    "NO_GLOBAL_UNTOUCHED_HOLDOUT_REMAINS",
+    "REALIZED_LEDGER_DRAWDOWN_IS_NOT_FULL_TICK_MTM_DRAWDOWN",
+    "M1_OHLC_AND_OLHC_ARE_SYNTHETIC_INTRABAR_BRACKETS",
+    "FIXED_COSTS_DO_NOT_PROVE_STATE_DEPENDENT_EXECUTION_TAILS",
+    "WORN_TRAIN_30D_ANNUALIZATION_IS_NOT_MONTHLY_PROOF",
+    "TRAIN_SURVIVOR_DOES_NOT_IMPLY_FORWARD_PROFIT"
+  ]
+}

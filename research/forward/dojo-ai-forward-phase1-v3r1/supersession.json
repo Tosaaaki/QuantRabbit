@@ -1,0 +1,36 @@
+{
+  "allocated_cell_count": 90,
+  "authority": {
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false
+  },
+  "contract": "QR_DOJO_AI_FORWARD_SUPERSESSION_V1",
+  "evidence": [
+    {
+      "artifact_sha256": "168244261ce247ac223c49f5d0d8c67745c66483dc5b7557e6d0572acb8a84d5",
+      "path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/research-data/blind_ai_read_pilot_v1.json",
+      "result": "STRUCTURAL_CHART_READING_ALONE_HAS_NO_EDGE"
+    },
+    {
+      "artifact_sha256": "ef08bbcdd8debf054faf091fb8e2c72577daffc7e052258e4009aa39ea1c9729",
+      "path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/research-data/blind_exit_pilot_v1.json",
+      "result": "AI_EXIT_JUDGMENT_BEATS_BLUNT_TIME_STOP_BY_APPROX_0_6_PIPS"
+    }
+  ],
+  "executed_cell_count": 0,
+  "market_source_acquisition_count": 0,
+  "precommit_sha256": "d1c8e7d6c1c39b655154da21a05f9d4d7503c62cdc55b08d30addd43347251a3",
+  "reason_code": "REDUNDANT_CANDLE_ONLY_INPUT_CLASS",
+  "schema_version": 1,
+  "start_receipt_sha256": "b1bb63e67fce62168bb4f0db487c0a1a984df8f69eff4b45d944406c0e9dd198",
+  "state": "SUPERSEDED_BEFORE_SOURCE",
+  "successor_policy": {
+    "entry_full_context_requires_causal_multisource_contract": true,
+    "next_experiment_class": "AI_EXIT_JUDGMENT",
+    "one_judgment_per_fresh_context": true
+  },
+  "supersession_sha256": "d665e0ea61d24ad59fc304b60ec8c65a109b9ad3849c861e88bc8eadd80eebd3",
+  "superseded_at_utc": "2026-07-19T00:10:44.990437Z"
+}

@@ -23,6 +23,7 @@ from quant_rabbit.dojo_lab_provenance import (
     DojoLabProvenanceError,
     canonical_strategy_owner_id,
     combine_intrabar_results,
+    owner_concurrency_caps_from_config,
     score_session_ledger,
 )
 from quant_rabbit.dojo_worker_forward import (
@@ -89,7 +90,9 @@ def evaluate_derived_run(
         precommit, start, days = _load_lifecycle(run_dir)
         end = _parse_utc(precommit["window"]["end_utc"], "window.end_utc")
         if now < end:
-            raise DojoWorkerExecutionError("worker evaluation is before window maturity")
+            raise DojoWorkerExecutionError(
+                "worker evaluation is before window maturity"
+            )
         _verify_pinned_sources(precommit, repo_root)
         source_rows = _verify_all_source_bundles(run_dir, precommit, start, days)
         source_bundle_sha = canonical_sha256(source_rows)
@@ -284,9 +287,7 @@ def _verify_all_source_bundles(
             {
                 "ordinal": ordinal,
                 "day_seal_sha256": day["day_seal_sha256"],
-                "acquisition_receipt_sha256": verified[
-                    "acquisition_receipt_sha256"
-                ],
+                "acquisition_receipt_sha256": verified["acquisition_receipt_sha256"],
                 "source_manifest_sha256": verified["source_manifest_sha256"],
                 "response_sha256": receipt["response_sha256"],
                 "source_content_sha256": receipt["source_content_sha256"],
@@ -349,9 +350,7 @@ def _expected_corpus_manifest(
     return expected
 
 
-def _verify_exact_corpus(
-    corpus_root: Path, expected_corpus: Mapping[str, Any]
-) -> None:
+def _verify_exact_corpus(corpus_root: Path, expected_corpus: Mapping[str, Any]) -> None:
     corpus_root = _real_directory(corpus_root, "corpus root")
     expected_shards = expected_corpus.get("shards")
     if expected_corpus.get("root") != str(corpus_root) or not isinstance(
@@ -433,9 +432,7 @@ def _cell_command(
         str(config["strategy_owner_id"]),
         "--settle-at-end",
     ]
-    for dependency in sorted(
-        precommit["source_bindings"]["bot_dependency_sha256"]
-    ):
+    for dependency in sorted(precommit["source_bindings"]["bot_dependency_sha256"]):
         command.extend(["--bot-dependency", dependency])
     return command
 
@@ -473,7 +470,11 @@ def _run_or_verify_cell(
         ),
     }
     config_text = json.dumps(
-        config, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     )
     config_sha = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
     command = _cell_command(
@@ -671,7 +672,9 @@ def _verify_cell_terminal(
     _verify_exact_corpus(run_dir / "corpus", expected_corpus)
     cell_dir = _cell_dir(run_dir, candidate["candidate_id"], intrabar)
     terminal = _strict_json(cell_dir / "terminal.json")
-    body = {key: value for key, value in terminal.items() if key != "score_receipt_sha256"}
+    body = {
+        key: value for key, value in terminal.items() if key != "score_receipt_sha256"
+    }
     if (
         terminal.get("contract") != CELL_TERMINAL_CONTRACT
         or terminal.get("schema_version") != 1
@@ -720,8 +723,13 @@ def _verify_cell_terminal(
         raise DojoWorkerExecutionError("cell terminal attempt parent drifted")
     ledger_relpath = terminal["ledger_relpath"]
     if ledger_relpath is None:
-        if terminal["outcome"] != "RUNNER_FAILURE" or terminal["ledger_sha256"] != EMPTY_SHA256:
-            raise DojoWorkerExecutionError("ledger-free terminal is not a runner failure")
+        if (
+            terminal["outcome"] != "RUNNER_FAILURE"
+            or terminal["ledger_sha256"] != EMPTY_SHA256
+        ):
+            raise DojoWorkerExecutionError(
+                "ledger-free terminal is not a runner failure"
+            )
         return terminal
     ledger = _safe_file(run_dir, ledger_relpath)
     if (
@@ -765,7 +773,31 @@ def _score_cell(
 ) -> dict[str, Any]:
     mechanics = precommit["mechanics"]
     bindings = precommit["source_bindings"]
+    expected_owner_id = canonical_strategy_owner_id(
+        candidate["config"], namespace="dojo-worker-forward"
+    )
+    expected_config = {
+        **candidate["config"],
+        "strategy_owner_id": expected_owner_id,
+    }
+    expected_config_text = json.dumps(
+        expected_config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    if (
+        owner_id != expected_owner_id
+        or config_sha256
+        != hashlib.sha256(expected_config_text.encode("utf-8")).hexdigest()
+        or config_length != len(expected_config_text)
+    ):
+        raise DojoWorkerExecutionError(
+            "score inputs differ from the sealed candidate config"
+        )
     try:
+        pair_cap, global_cap = owner_concurrency_caps_from_config(expected_config)
         score = score_session_ledger(
             ledger,
             start_balance_jpy=mechanics["initial_balance_jpy"],
@@ -789,17 +821,29 @@ def _score_cell(
             expected_bot_config_sha256=config_sha256,
             expected_bot_config_length=config_length,
             reservation_evidence=None,
+            expected_max_concurrent_per_pair=pair_cap,
+            expected_global_max_concurrent=global_cap,
         )
     except DojoLabProvenanceError as exc:
         raise DojoWorkerExecutionError(f"ledger scoring failed: {exc}") from exc
+    owner_concurrency = score.get("owner_concurrency")
+    if (
+        not isinstance(owner_concurrency, Mapping)
+        or owner_concurrency.get("status") != "VERIFIED_FROM_FILL_EXIT_LEDGER"
+        or owner_concurrency.get("strategy_owner_id") != expected_owner_id
+        or owner_concurrency.get("max_concurrent_per_pair") != pair_cap
+        or owner_concurrency.get("global_max_concurrent") != global_cap
+    ):
+        raise DojoWorkerExecutionError(
+            "ledger score did not verify the sealed owner concurrency caps"
+        )
     manifest = _ledger_reproducibility_manifest(ledger)
     runtime = manifest.get("source")
     bindings = precommit["source_bindings"]
     if (
         manifest.get("corpus") != expected_corpus
         or not isinstance(runtime, Mapping)
-        or runtime.get("python_executable")
-        != bindings["python_executable_path"]
+        or runtime.get("python_executable") != bindings["python_executable_path"]
         or runtime.get("python_version") != bindings["python_version"]
     ):
         raise DojoWorkerExecutionError(
@@ -807,10 +851,9 @@ def _score_cell(
         )
     if score["hardened_costs"]["leverage"] != mechanics["leverage"]:
         raise DojoWorkerExecutionError("ledger leverage differs from precommit")
-    if (
-        score["corpus_manifest_sha256"] != canonical_sha256(expected_corpus)
-        or score["corpus_shard_count"] != len(expected_corpus["shards"])
-    ):
+    if score["corpus_manifest_sha256"] != canonical_sha256(expected_corpus) or score[
+        "corpus_shard_count"
+    ] != len(expected_corpus["shards"]):
         raise DojoWorkerExecutionError(
             "ledger corpus manifest differs from sealed source receipts"
         )
@@ -851,7 +894,11 @@ def _ledger_reproducibility_manifest(ledger: Path) -> dict[str, Any]:
     if not isinstance(record, Mapping) or record.get("event") != "SESSION_START":
         raise DojoWorkerExecutionError("ledger does not begin with SESSION_START")
     payload = record.get("payload")
-    manifest = payload.get("reproducibility_manifest") if isinstance(payload, Mapping) else None
+    manifest = (
+        payload.get("reproducibility_manifest")
+        if isinstance(payload, Mapping)
+        else None
+    )
     if not isinstance(manifest, dict):
         raise DojoWorkerExecutionError("ledger SESSION_START manifest is absent")
     return manifest
@@ -951,16 +998,16 @@ def _verify_pinned_sources(precommit: Mapping[str, Any], repo_root: Path) -> Non
         "bots/lab_bot.py": bindings["bot_module_sha256"],
         "scripts/run-virtual-market-session.py": bindings["runner_sha256"],
         "src/quant_rabbit/dojo_lab_provenance.py": bindings["scorer_sha256"],
-        "src/quant_rabbit/dojo_worker_forward.py": bindings[
-            "precommit_builder_sha256"
-        ],
+        "src/quant_rabbit/dojo_worker_forward.py": bindings["precommit_builder_sha256"],
         **dependencies,
     }
     commit = bindings["git_commit"]
     for relative, expected in sorted(checks.items()):
         path = _safe_file(repo_root, relative)
         if _file_sha256(path) != expected:
-            raise DojoWorkerExecutionError(f"current source binding drifted: {relative}")
+            raise DojoWorkerExecutionError(
+                f"current source binding drifted: {relative}"
+            )
         completed = subprocess.run(
             ["git", "show", f"{commit}:{relative}"],
             cwd=repo_root,
@@ -968,7 +1015,10 @@ def _verify_pinned_sources(precommit: Mapping[str, Any], repo_root: Path) -> Non
             stderr=subprocess.PIPE,
             check=False,
         )
-        if completed.returncode != 0 or hashlib.sha256(completed.stdout).hexdigest() != expected:
+        if (
+            completed.returncode != 0
+            or hashlib.sha256(completed.stdout).hexdigest() != expected
+        ):
             raise DojoWorkerExecutionError(f"commit source binding drifted: {relative}")
 
 
@@ -1047,14 +1097,10 @@ def _verify_execution_directory_set(
         root = _real_directory(root, "worker execution cells")
         for candidate_dir in root.iterdir():
             if candidate_dir.is_symlink() or not candidate_dir.is_dir():
-                raise DojoWorkerExecutionError(
-                    "execution contains an unsafe candidate"
-                )
+                raise DojoWorkerExecutionError("execution contains an unsafe candidate")
             for intrabar_dir in candidate_dir.iterdir():
                 if intrabar_dir.is_symlink() or not intrabar_dir.is_dir():
-                    raise DojoWorkerExecutionError(
-                        "execution contains an unsafe cell"
-                    )
+                    raise DojoWorkerExecutionError("execution contains an unsafe cell")
                 actual.add((candidate_dir.name, intrabar_dir.name))
     if not actual.issubset(expected) or (require_all and actual != expected):
         raise DojoWorkerExecutionError("execution cell directory set is not exact")
@@ -1065,7 +1111,11 @@ def _safe_file(root: Path, relative: str | Path) -> Path:
     if rel.is_absolute() or ".." in rel.parts:
         raise DojoWorkerExecutionError("artifact path is unsafe")
     path = root / rel
-    if not path.is_file() or path.is_symlink() or root.resolve() not in path.resolve().parents:
+    if (
+        not path.is_file()
+        or path.is_symlink()
+        or root.resolve() not in path.resolve().parents
+    ):
         raise DojoWorkerExecutionError(f"artifact is missing or unsafe: {rel}")
     return path
 

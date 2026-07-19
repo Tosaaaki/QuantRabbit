@@ -208,6 +208,194 @@
       }
     },
     {
+      "lane_id": "worker_spikefade_tailguard_sl25_train_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": 0.688,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTIPAIR_SPIKE_FADE_TAILGUARD_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 10,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_spikefade_tailguard_lowlev_train_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": 0.32,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTIPAIR_SPIKE_FADE_TAILGUARD_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 10,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_pullback_a2_train_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": 0.02000744,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTIPAIR_DAILY_BREAK_PULLBACK_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 20,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_capital_time_release_train_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "ae253fdb4d1e67e3c5add22a91264fe71db528d4b94c82c6036cd25b558479a5",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-worker-ai-tuning-20260719/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_SUPERVISED_WORKER_TUNING_INDEX_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTIPAIR_SPIKE_FADE_CAPITAL_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 10,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
       "lane_id": "ai_prompt_phase_v1_registered_zero_cells",
       "lane_type": "AI",
       "status": "HYPOTHESIS",
@@ -329,8 +517,8 @@
         "usd_jpy_mean_reversion_strategy_ideas_v1"
       ],
       "lifecycle": {
-        "state": "IMPLEMENTATION_ONLY",
-        "superseded_by_lane_id": null,
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "ai_prompt_phase_v3_startup_incomplete",
         "supersedes_lane_ids": [
           "ai_prompt_phase_v2_started_superseded"
         ]
@@ -376,6 +564,384 @@
       },
       "sizing": {
         "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_prompt_phase_v3_startup_incomplete",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "lifecycle": {
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "ai_prompt_phase_v3r1_started",
+        "supersedes_lane_ids": [
+          "ai_prompt_phase_v3_implementation_no_run"
+        ]
+      },
+      "provenance": {
+        "valid": false,
+        "prospective": true,
+        "lookahead_free": true,
+        "content_sha256": "9ce06974a50794ec23fe45b1a2a2dcce0683b36be4e96839dde303a5202363d6",
+        "invalid_reasons": [
+          "VALIDITY_GENESIS_INITIALIZATION_FAILED"
+        ],
+        "parent_digests": {
+          "usd_jpy_mean_reversion_strategy_ideas_v1": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c"
+        },
+        "evidence_path": "research/forward/dojo-ai-forward-phase1-v3/precommit.json",
+        "evidence_contract": "QR_DOJO_AI_FORWARD_PRECOMMIT_V3"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_RETEST_REQUIRED"
+      },
+      "distribution_30d": {
+        "method": "PROSPECTIVE_FORWARD",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_prompt_phase_v3r1_started",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "usd_jpy_mean_reversion_strategy_ideas_v1"
+      ],
+      "lifecycle": {
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "ai_exit_train_v1_diagnostic",
+        "supersedes_lane_ids": [
+          "ai_prompt_phase_v3_startup_incomplete"
+        ]
+      },
+      "provenance": {
+        "valid": false,
+        "prospective": true,
+        "lookahead_free": true,
+        "content_sha256": "ca4d7b1662c129a5cf598210d3d20b453db6368a97b7f14e61db6bf88ef673bf",
+        "invalid_reasons": [
+          "SUPERSEDED_BEFORE_SOURCE",
+          "REDUNDANT_CANDLE_ONLY_INPUT_CLASS"
+        ],
+        "parent_digests": {
+          "usd_jpy_mean_reversion_strategy_ideas_v1": "a90cdb603a86b92172d25da0a8dc06d0bf0b246db186d0d5e56e11222471da7c"
+        },
+        "evidence_path": "research/corrections/dojo-ai-forward-v3r1-supersession-v1.json",
+        "evidence_contract": "QR_DOJO_EVIDENCE_CORRECTION_V1"
+      },
+      "risk": {
+        "mark_to_market": true,
+        "bounded": true,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "USDJPY_MEAN_REVERSION",
+      "dependence": {
+        "instrument": "USD_JPY",
+        "strategy_family": "MEAN_REVERSION",
+        "cohort_id": "USDJPY_AI_FORWARD_V3R1_20260722_20260910"
+      },
+      "distribution_30d": {
+        "method": "PROSPECTIVE_FORWARD",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_ai_exit_entry_policy_train_v2",
+      "lane_type": "WORKER",
+      "status": "INVALID",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "46c15577555b1cb16b3dcc00ba144c057b83f7fddd8468370086a08cac9ebddf",
+        "invalid_reasons": [
+          "SOURCE_GAP_INVALIDATED_X05_AND_SHIFTED_X06_X08"
+        ],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-ai-exit-train-v2/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_EXIT_TRAIN_EVIDENCE_V2"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTI_PAIR_EXIT_TRAIN_DIAGNOSTIC",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_exit_train_v1_diagnostic",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "worker_forward_smoke_v2_started"
+      ],
+      "lifecycle": {
+        "state": "SUPERSEDED",
+        "superseded_by_lane_id": "ai_exit_train_v2_diagnostic",
+        "supersedes_lane_ids": [
+          "ai_prompt_phase_v3r1_started"
+        ]
+      },
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": false,
+        "content_sha256": "eedd9493b040731cd2e8e03f72afcad80a44b4b115e25adc1d3a4348c3951bf2",
+        "invalid_reasons": [
+          "DECISION_BAR_HIGH_LOW_CLOSE_EXPOSED_AT_DECISION_BAR_OPEN"
+        ],
+        "parent_digests": {
+          "worker_forward_smoke_v2_started": "b3bfcb39061c1ed6a25a02e7eb980e6bd7de8f337db7007445c3a46ad047aac9"
+        },
+        "evidence_path": "research/training/dojo-ai-exit-train-v1/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_EXIT_TRAIN_EVIDENCE_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTI_PAIR_EXIT_TRAIN_DIAGNOSTIC",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_exit_train_v2_diagnostic",
+      "lane_type": "AI",
+      "status": "INVALID",
+      "parent_lane_ids": [
+        "worker_ai_exit_entry_policy_train_v2"
+      ],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": [
+          "ai_exit_train_v1_diagnostic"
+        ]
+      },
+      "provenance": {
+        "valid": false,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "46c15577555b1cb16b3dcc00ba144c057b83f7fddd8468370086a08cac9ebddf",
+        "invalid_reasons": [
+          "SOURCE_GAP_INVALIDATED_X05_AND_SHIFTED_X06_X08"
+        ],
+        "parent_digests": {
+          "worker_ai_exit_entry_policy_train_v2": "46c15577555b1cb16b3dcc00ba144c057b83f7fddd8468370086a08cac9ebddf"
+        },
+        "evidence_path": "research/training/dojo-ai-exit-train-v2/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_EXIT_TRAIN_EVIDENCE_V2"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTI_PAIR_EXIT_TRAIN_DIAGNOSTIC",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": false,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "worker_ai_capital_recycle_substrate_train_v1",
+      "lane_type": "WORKER",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "36bd984da220ce8ec8bdd40c09bf23f8453be3cffd44391754e6628474f9b57c",
+        "invalid_reasons": [],
+        "parent_digests": {},
+        "evidence_path": "research/training/dojo-ai-capital-recycle-train-v1/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_CAPITAL_RECYCLE_TRAIN_EVIDENCE_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTI_PAIR_AI_CAPITAL_RECYCLE_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
+        "reverse_engineered_from_goal": false
+      }
+    },
+    {
+      "lane_id": "ai_capital_recycle_train_v1",
+      "lane_type": "AI",
+      "status": "HYPOTHESIS",
+      "parent_lane_ids": [
+        "worker_ai_capital_recycle_substrate_train_v1"
+      ],
+      "lifecycle": {
+        "state": "CURRENT",
+        "superseded_by_lane_id": null,
+        "supersedes_lane_ids": []
+      },
+      "provenance": {
+        "valid": true,
+        "prospective": false,
+        "lookahead_free": true,
+        "content_sha256": "36bd984da220ce8ec8bdd40c09bf23f8453be3cffd44391754e6628474f9b57c",
+        "invalid_reasons": [],
+        "parent_digests": {
+          "worker_ai_capital_recycle_substrate_train_v1": "36bd984da220ce8ec8bdd40c09bf23f8453be3cffd44391754e6628474f9b57c"
+        },
+        "evidence_path": "research/training/dojo-ai-capital-recycle-train-v1/evidence.json",
+        "evidence_contract": "QR_DOJO_AI_CAPITAL_RECYCLE_TRAIN_EVIDENCE_V1"
+      },
+      "risk": {
+        "mark_to_market": false,
+        "bounded": false,
+        "normal_mtm_max_drawdown_fraction": null,
+        "stressed_mtm_max_drawdown_fraction": null
+      },
+      "margin": {
+        "peak_usage_fraction": null,
+        "cap_fraction": 0.45
+      },
+      "correlation_cluster": "MULTI_PAIR_AI_CAPITAL_RECYCLE_TRAIN",
+      "distribution_30d": {
+        "method": "BOOTSTRAP_DIAGNOSTIC",
+        "sample_months": 0,
+        "active_days": 0,
+        "stressed_median_multiple": null,
+        "post_cost_edge_lcb": null,
+        "probability_3x_lcb": null,
+        "probability_losing_month": null,
+        "probability_drawdown_20pct": null,
+        "probability_ruin_12m": null
+      },
+      "sizing": {
+        "observed_at_declared_size": true,
         "reverse_engineered_from_goal": false
       }
     },

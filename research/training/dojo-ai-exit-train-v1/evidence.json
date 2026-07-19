@@ -1,0 +1,203 @@
+{
+  "contract": "QR_DOJO_AI_EXIT_TRAIN_EVIDENCE_V1",
+  "schema_version": 1,
+  "experiment_id": "dojo-ai-exit-train-v1",
+  "recorded_at_utc": "2026-07-19T00:36:56Z",
+  "classification": "INVALIDATED_SAME_BAR_LOOKAHEAD",
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE",
+  "fresh_context_contract": {
+    "one_judgment_per_context": true,
+    "context_count": 8,
+    "orchestrator_transcript_attested": true,
+    "provider_context_nonreuse_attested": false,
+    "tools_allowed_by_prompt": false,
+    "answer_key_supplied_before_decision": false,
+    "lookahead_free": false
+  },
+  "source": {
+    "manifest_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/research-data/exact28_m5_history_manifest_2020_2026.json",
+    "manifest_file_sha256": "c250b75178e08359b1421ec38fbc62baf9d2e068eee483c9340b719e9d1e5ff0",
+    "manifest_canonical_sha256": "de981dfb3b434e2338dace280ebc9f903966f333a84a77ff0f85db39972fc3fc",
+    "period_from_utc": "2020-01-01T00:00:00Z",
+    "period_to_utc": "2026-07-10T00:00:00Z",
+    "granularity": "M5",
+    "price_component": "BA",
+    "generator_path": "scripts/build-blind-exit-scenarios.py",
+    "generator_file_sha256": "1676efc71a672e690f0fc89ac72e62648271cc41c6f73071468317002db49a7a",
+    "seed": 20260719,
+    "scenario_set_raw_file_sha256": "7278d49bc0e1e1ae78d30bcfc9164877794a6fa5f0189c031e3740687125111f",
+    "scenario_set_canonical_sha256": "6647836698ed8901ddfde4051a57a7f644818569d1aaf8be81d1ad39ec0e422b",
+    "answer_key_raw_file_sha256": "65fe740557dfe01cbb11ec8f6da6f5a885584f072103163c93d4a61dac55b0fe",
+    "answer_key_canonical_sha256": "c1b314f0a44464e358bb71dff099ab192ddb1a9d99723f22e1690c332883a2ad",
+    "answer_key_reveal": "AFTER_EACH_RECORDED_BATCH_DECISION",
+    "cost_model": {
+      "bid_ask_spread_embedded": true,
+      "tp_fill_pessimistic": true,
+      "additional_slippage_pips": 0.0,
+      "financing_charge_pips": 0.0,
+      "all_cost_proved": false
+    }
+  },
+  "prompt_families": [
+    {
+      "prompt_family_id": "EXIT_FULL_V1",
+      "cells": ["X01", "X02", "X03"],
+      "h1_close_count": 120,
+      "m5_ohlc_count": 36,
+      "decision_space": ["CUT_NOW", "HOLD"],
+      "policy": "TP remains working; HOLD has a hard exit four hours after the decision",
+      "prompt_lock_status": "SELF_ATTESTED_FROM_ORCHESTRATOR_TRANSCRIPT"
+    },
+    {
+      "prompt_family_id": "EXIT_COMPACT_V1",
+      "cells": ["X04", "X05", "X06"],
+      "h1_close_count": 24,
+      "m5_ohlc_count": 12,
+      "decision_space": ["CUT_NOW", "HOLD"],
+      "policy": "TP remains working; HOLD has a hard exit four hours after the decision",
+      "prompt_lock_status": "SELF_ATTESTED_FROM_ORCHESTRATOR_TRANSCRIPT"
+    },
+    {
+      "prompt_family_id": "EXIT_RISK_AWARE_V1",
+      "cells": ["X07", "X08"],
+      "h1_close_count": 24,
+      "m5_ohlc_count": 12,
+      "decision_space": ["CUT_NOW", "HOLD"],
+      "policy": "Optimize pips while treating a large adverse tail as worse than a missed small TP; HOLD hard-exits after four hours",
+      "prompt_lock_status": "SELF_ATTESTED_FROM_ORCHESTRATOR_TRANSCRIPT"
+    }
+  ],
+  "cells": [
+    {
+      "id": "X01",
+      "prompt_family_id": "EXIT_FULL_V1",
+      "packet_canonical_sha256": "5c4cb3286dd8d70e9fb3df3e43ea0d63edc3886baf89504d93f8373f7d76aac9",
+      "decision": "HOLD",
+      "conviction": 2,
+      "pair_revealed_after_decision": "AUD_USD",
+      "side": "LONG",
+      "cut_pips": 2.3,
+      "hold_pips": 3.0,
+      "ai_pips": 3.0,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X02",
+      "prompt_family_id": "EXIT_FULL_V1",
+      "packet_canonical_sha256": "d090399c7ad097aae6f8ea59036c37bf0de4b8bea8734be688d4c9cb23391bf3",
+      "decision": "HOLD",
+      "conviction": 2,
+      "pair_revealed_after_decision": "USD_JPY",
+      "side": "LONG",
+      "cut_pips": -4.0,
+      "hold_pips": 3.0,
+      "ai_pips": 3.0,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X03",
+      "prompt_family_id": "EXIT_FULL_V1",
+      "packet_canonical_sha256": "b0ad159263f9792256b09ee8d0f9f080526eae187e1c2a9d24375d8d6efc2f35",
+      "decision": "HOLD",
+      "conviction": 2,
+      "pair_revealed_after_decision": "EUR_USD",
+      "side": "SHORT",
+      "cut_pips": -1.2,
+      "hold_pips": 3.0,
+      "ai_pips": 3.0,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X04",
+      "prompt_family_id": "EXIT_COMPACT_V1",
+      "packet_canonical_sha256": "c3a385435333d6fc7e901dc4c7f6f96055e64371877ffe8fa43e5208b084a063",
+      "decision": "CUT_NOW",
+      "conviction": 2,
+      "pair_revealed_after_decision": "USD_CHF",
+      "side": "SHORT",
+      "cut_pips": -7.1,
+      "hold_pips": 3.0,
+      "ai_pips": -7.1,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X05",
+      "prompt_family_id": "EXIT_COMPACT_V1",
+      "packet_canonical_sha256": "083607ac92c970b5b8b43abc77cc6239420ea7226fdb25d4f75362e05a43bb21",
+      "decision": "CUT_NOW",
+      "conviction": 2,
+      "pair_revealed_after_decision": "USD_CHF",
+      "side": "SHORT",
+      "cut_pips": -10.9,
+      "hold_pips": -10.5,
+      "ai_pips": -10.9,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X06",
+      "prompt_family_id": "EXIT_COMPACT_V1",
+      "packet_canonical_sha256": "d665e1b74425df043e05806f096f790bf67e3f59772a6b52669b132bf5af5bf5",
+      "decision": "CUT_NOW",
+      "conviction": 3,
+      "pair_revealed_after_decision": "GBP_USD",
+      "side": "LONG",
+      "cut_pips": -11.1,
+      "hold_pips": -37.1,
+      "ai_pips": -11.1,
+      "oracle_decision": "CUT_NOW"
+    },
+    {
+      "id": "X07",
+      "prompt_family_id": "EXIT_RISK_AWARE_V1",
+      "packet_canonical_sha256": "a671267031780d2e1c9d9274a4dfcb08613226c4999739ff371ea840484ff9ac",
+      "decision": "CUT_NOW",
+      "conviction": 3,
+      "pair_revealed_after_decision": "EUR_USD",
+      "side": "LONG",
+      "cut_pips": -2.9,
+      "hold_pips": 3.0,
+      "ai_pips": -2.9,
+      "oracle_decision": "HOLD"
+    },
+    {
+      "id": "X08",
+      "prompt_family_id": "EXIT_RISK_AWARE_V1",
+      "packet_canonical_sha256": "cf002fee801179c6859b782d6c187b8ca8c163a9201cf182bcdf6affc8bde484",
+      "decision": "CUT_NOW",
+      "conviction": 3,
+      "pair_revealed_after_decision": "GBP_JPY",
+      "side": "SHORT",
+      "cut_pips": -28.9,
+      "hold_pips": 3.0,
+      "ai_pips": -28.9,
+      "oracle_decision": "HOLD"
+    }
+  ],
+  "score": {
+    "cell_count": 8,
+    "unique_pair_count": 6,
+    "oracle_choice_hits": 4,
+    "oracle_choice_hit_rate": 0.5,
+    "ai_total_pips": -51.9,
+    "always_cut_total_pips": -63.8,
+    "always_hold_total_pips": -29.6,
+    "delta_vs_always_cut_pips": 11.9,
+    "delta_vs_always_hold_pips": -22.3,
+    "absolute_profit_positive": false,
+    "valid_for_policy_comparison": false,
+    "verdict": "INVALIDATED_DECISION_BAR_HIGH_LOW_CLOSE_EXPOSED"
+  },
+  "limitations": [
+    "HISTORICAL_WINDOW_ALREADY_WORN_BY_PRIOR_RESEARCH",
+    "NO_GLOBAL_UNTOUCHED_HOLDOUT",
+    "EIGHT_CELL_SMALL_SAMPLE",
+    "DECISION_BAR_HIGH_LOW_CLOSE_EXPOSED_AT_DECISION_BAR_OPEN",
+    "MODEL_PROVIDER_IDENTITY_AND_CONTEXT_NONREUSE_NOT_EXTERNALLY_ATTESTED",
+    "PROMPT_LOCK_SELF_ATTESTED_FROM_ORCHESTRATOR_TRANSCRIPT",
+    "ADDITIONAL_SLIPPAGE_AND_FINANCING_NOT_CHARGED",
+    "RESULT_CANNOT_PROMOTE_OR_AUTHORIZE_LIVE_TRADING"
+  ]
+}

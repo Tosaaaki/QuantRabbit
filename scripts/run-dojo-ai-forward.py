@@ -39,6 +39,7 @@ from quant_rabbit.dojo_ai_forward import (  # noqa: E402
     validate_start_receipt,
     validate_source_capture,
     validate_source_request,
+    validate_supersession,
     verify_source_bindings_against_repo,
 )
 from quant_rabbit.dojo_ai_truth import (  # noqa: E402
@@ -56,11 +57,13 @@ from quant_rabbit.dojo_ai_truth import (  # noqa: E402
     validate_truth_request,
 )
 from quant_rabbit.dojo_ai_validity import (  # noqa: E402
+    REGISTRY_DIRNAME,
     append_artifact_commit,
     append_invalidation,
     assert_artifacts_valid,
     initialize_registry,
     status_artifact as validity_status_artifact,
+    verify_registry,
 )
 from quant_rabbit.dojo_prompt_phase import assert_locked_preregistration  # noqa: E402
 
@@ -82,6 +85,8 @@ def _parse_utc_text(value: Any) -> datetime:
 
 
 def _load_parents(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    if _superseded_status(run_dir) is not None:
+        raise RuntimeError("AI forward run is terminally superseded")
     precommit = validate_precommit(_strict_json(run_dir / "precommit.json"))
     verify_source_bindings_against_repo(precommit["source_bindings"], REPO)
     start = validate_start_receipt(_strict_json(run_dir / "start.json"), precommit)
@@ -97,11 +102,11 @@ def _previous_day(run_dir: Path, ordinal: int) -> dict[str, Any] | None:
 
 def _precommit(args: argparse.Namespace) -> dict[str, Any]:
     with _run_lock(args.run_dir):
+        if _superseded_status(args.run_dir) is not None:
+            raise RuntimeError("AI forward run is terminally superseded")
         registry = assert_locked_preregistration(_strict_json(args.registry))
         prompt_texts = {
-            row["variant_id"]: (REPO / row["prompt_path"]).read_text(
-                encoding="utf-8"
-            )
+            row["variant_id"]: (REPO / row["prompt_path"]).read_text(encoding="utf-8")
             for row in registry["variants"]
         }
         artifact = build_precommit(
@@ -119,11 +124,11 @@ def _precommit(args: argparse.Namespace) -> dict[str, Any]:
 
 def _start(args: argparse.Namespace) -> dict[str, Any]:
     with _run_lock(args.run_dir):
+        if _superseded_status(args.run_dir) is not None:
+            raise RuntimeError("AI forward run is terminally superseded")
         precommit = validate_precommit(_strict_json(args.run_dir / "precommit.json"))
         receipt = build_start_receipt(precommit, now_utc=_now())
-        _write_json_new_or_same(
-            args.run_dir / "start.json", receipt, root=args.run_dir
-        )
+        _write_json_new_or_same(args.run_dir / "start.json", receipt, root=args.run_dir)
         initialize_registry(
             args.run_dir,
             precommit_path=args.run_dir / "precommit.json",
@@ -302,12 +307,8 @@ def _collect_day(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError("AI source collection ordinal is not the next chain day")
         previous = days[args.ordinal - 2] if args.ordinal > 1 else None
         day_path = args.run_dir / "days" / f"day-{args.ordinal:03d}.json"
-        capture_path = (
-            args.run_dir / "source-captures" / f"day-{args.ordinal:03d}.json"
-        )
-        request_path = (
-            args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
-        )
+        capture_path = args.run_dir / "source-captures" / f"day-{args.ordinal:03d}.json"
+        request_path = args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
         if day_path.is_file():
             day = validate_day_seal(
                 _strict_json(day_path),
@@ -401,9 +402,7 @@ def _seal_missing(args: argparse.Namespace) -> dict[str, Any]:
         if args.ordinal != len(days) + 1:
             raise RuntimeError("AI missing source ordinal is not the next chain day")
         previous = days[-1] if days else None
-        capture_path = (
-            args.run_dir / "source-captures" / f"day-{args.ordinal:03d}.json"
-        )
+        capture_path = args.run_dir / "source-captures" / f"day-{args.ordinal:03d}.json"
         failed_capture_sha: str | None = None
         if capture_path.is_file():
             request_path = (
@@ -446,9 +445,7 @@ def _seal_missing(args: argparse.Namespace) -> dict[str, Any]:
             receipt,
             root=args.run_dir,
         )
-        request_path = (
-            args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
-        )
+        request_path = args.run_dir / "source-requests" / f"day-{args.ordinal:03d}.json"
         if request_path.is_file() and not request_path.is_symlink():
             _commit_source_request(args.run_dir, args.ordinal)
         _commit_day(args.run_dir, args.ordinal, receipt)
@@ -656,7 +653,9 @@ def _validated_terminals(
     response_root = run_dir / "responses"
     if response_root.is_symlink():
         raise RuntimeError("AI response directory cannot be a symlink")
-    actual_paths = set(response_root.rglob("*.json")) if response_root.exists() else set()
+    actual_paths = (
+        set(response_root.rglob("*.json")) if response_root.exists() else set()
+    )
     unexpected = actual_paths - expected_paths
     if unexpected:
         raise RuntimeError("unexpected AI cell terminal artifact is present")
@@ -668,9 +667,7 @@ def _seal_phase_index(args: argparse.Namespace) -> dict[str, Any]:
         registry = assert_locked_preregistration(_strict_json(args.registry))
         precommit, start = _load_parents(args.run_dir)
         days = _validated_days(args.run_dir, registry, precommit, start)
-        terminals = _validated_terminals(
-            args.run_dir, registry, precommit, start, days
-        )
+        terminals = _validated_terminals(args.run_dir, registry, precommit, start, days)
         path = args.run_dir / "phase-index.json"
         if path.is_file():
             existing = validate_phase_index(
@@ -696,9 +693,10 @@ def _terminals_for_day(
 ) -> list[dict[str, Any]]:
     expected = {cell["cell_id"] for cell in day["schedule"]["cells"]}
     selected = [row for row in terminals if row["cell_id"] in expected]
-    if day["state"] == "REQUESTS_SEALED" and {
-        row["cell_id"] for row in selected
-    } != expected:
+    if (
+        day["state"] == "REQUESTS_SEALED"
+        and {row["cell_id"] for row in selected} != expected
+    ):
         raise RuntimeError("AI truth requires all three immutable cell terminals")
     return sorted(selected, key=lambda row: row["variant_id"])
 
@@ -765,9 +763,7 @@ def _collect_truth(args: argparse.Namespace) -> dict[str, Any]:
                 request["query"],
                 attempts=args.attempts,
             )
-            capture = build_truth_capture(
-                request, response, acquired_at_utc=_now()
-            )
+            capture = build_truth_capture(request, response, acquired_at_utc=_now())
             _write_json_new_or_same(capture_path, capture, root=args.run_dir)
         _commit_truth_stage(args.run_dir, day, "capture")
         bundle_capability = _issue_truth_capability(
@@ -829,9 +825,7 @@ def _seal_phase_score(args: argparse.Namespace) -> dict[str, Any]:
         registry = assert_locked_preregistration(_strict_json(args.registry))
         precommit, start = _load_parents(args.run_dir)
         days = _validated_days(args.run_dir, registry, precommit, start)
-        terminals = _validated_terminals(
-            args.run_dir, registry, precommit, start, days
-        )
+        terminals = _validated_terminals(args.run_dir, registry, precommit, start, days)
         index = validate_phase_index(
             _strict_json(args.run_dir / "phase-index.json"),
             registry,
@@ -908,7 +902,9 @@ def _validated_truth_scores(
                 raise RuntimeError("AI truth directory contains an unknown day")
             ordinal = int(name[4:])
             if ordinal not in expected or ordinal in actual_dirs:
-                raise RuntimeError("AI truth directory is not bound to a sealed source day")
+                raise RuntimeError(
+                    "AI truth directory is not bound to a sealed source day"
+                )
             actual_dirs[ordinal] = candidate
 
     scores: list[dict[str, Any]] = []
@@ -921,7 +917,9 @@ def _validated_truth_scores(
         stages = ["request.json", "capture.json", "bundle.json", "score.json"]
         for position, name in enumerate(stages):
             if name in present and not set(stages[:position]).issubset(present):
-                raise RuntimeError("AI truth artifacts are not a contiguous evidence chain")
+                raise RuntimeError(
+                    "AI truth artifacts are not a contiguous evidence chain"
+                )
         if "request.json" not in present:
             if present:
                 raise RuntimeError("AI truth request is absent")
@@ -941,9 +939,7 @@ def _validated_truth_scores(
         assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "request"),))
         if "capture.json" not in present:
             continue
-        capture = validate_truth_capture(
-            _strict_json(entries["capture.json"]), request
-        )
+        capture = validate_truth_capture(_strict_json(entries["capture.json"]), request)
         assert_artifacts_valid(run_dir, (_truth_logical(ordinal, "capture"),))
         if "bundle.json" not in present:
             continue
@@ -997,13 +993,125 @@ def _validated_truth_scores(
     return scores
 
 
+def _superseded_status(run_dir: Path) -> dict[str, Any] | None:
+    path = run_dir / "supersession.json"
+    if not path.is_file() and not path.is_symlink():
+        return None
+    _assert_superseded_inventory(run_dir)
+    precommit = validate_precommit(_strict_json(run_dir / "precommit.json"))
+    start = validate_start_receipt(_strict_json(run_dir / "start.json"), precommit)
+    supersession = validate_supersession(_strict_json(path), precommit, start)
+    snapshot = verify_registry(run_dir)
+    if (
+        snapshot.event_count != 3
+        or set(snapshot.committed) != {"precommit", "start", "run/supersession"}
+        or snapshot.invalidated != {"start", "run/supersession"}
+    ):
+        raise RuntimeError("AI supersession validity graph drifted")
+    committed = snapshot.committed["run/supersession"]
+    if (
+        committed["relative_path"] != "supersession.json"
+        or committed["contract"] != supersession["contract"]
+        or committed["artifact_sha256"] != supersession["supersession_sha256"]
+        or committed["own_seal_field"] != "supersession_sha256"
+        or committed["parent_logical_ids"] != ["precommit", "start"]
+    ):
+        raise RuntimeError("AI supersession artifact binding drifted")
+    terminal_event = _strict_json(run_dir / REGISTRY_DIRNAME / "events" / "000002.json")
+    if (
+        terminal_event.get("event_sha256") != snapshot.latest_event_sha256
+        or terminal_event.get("event_kind") != "ARTIFACT_INVALIDATED"
+        or terminal_event.get("target_logical_id") != "start"
+        or terminal_event.get("reason_code") != supersession["reason_code"]
+        or terminal_event.get("evidence_sha256") != supersession["supersession_sha256"]
+    ):
+        raise RuntimeError("AI supersession invalidation binding drifted")
+    validity = validity_status_artifact(run_dir)
+    _assert_superseded_inventory(run_dir)
+    return {
+        "contract": "QR_DOJO_AI_FORWARD_STATUS_V3",
+        "experiment_id": precommit["experiment_id"],
+        "state": "SUPERSEDED_BEFORE_SOURCE",
+        "reason_code": supersession["reason_code"],
+        "superseded_at_utc": supersession["superseded_at_utc"],
+        "supersession_sha256": supersession["supersession_sha256"],
+        "successor_policy": supersession["successor_policy"],
+        "sealed_day_count": 0,
+        "request_day_count": 0,
+        "missing_day_count": 0,
+        "allocated_cell_count": supersession["allocated_cell_count"],
+        "response_sealed_count": 0,
+        "execution_failure_cell_count": 0,
+        "diagnostic_import_cell_count": 0,
+        "missing_response_cell_count": 0,
+        "missing_source_cell_count": 0,
+        "fixed_cell_count": 0,
+        "next_ordinal": None,
+        "promotion_eligible": False,
+        "live_permission": False,
+        "evidence_tier": precommit["evidence_tier"],
+        "truth_day_score_count": 0,
+        "phase_score_present": False,
+        "validity_registry": validity,
+    }
+
+
+def _assert_superseded_inventory(run_dir: Path) -> None:
+    if run_dir.is_symlink() or not run_dir.is_dir():
+        raise RuntimeError("AI supersession run directory is unsafe")
+    expected_root = {
+        ".ai-forward.lock",
+        "precommit.json",
+        "start.json",
+        "supersession.json",
+        REGISTRY_DIRNAME,
+    }
+    root_entries = {entry.name: entry for entry in run_dir.iterdir()}
+    if (
+        not {
+            "precommit.json",
+            "start.json",
+            "supersession.json",
+            REGISTRY_DIRNAME,
+        }.issubset(root_entries)
+        or set(root_entries) - expected_root
+    ):
+        raise RuntimeError("AI supersession run contains an unexpected artifact")
+    for name in ("precommit.json", "start.json", "supersession.json"):
+        entry = root_entries[name]
+        if entry.is_symlink() or not entry.is_file():
+            raise RuntimeError("AI supersession root artifact is unsafe")
+    lock = root_entries.get(".ai-forward.lock")
+    if lock is not None and (
+        lock.is_symlink() or not lock.is_file() or lock.stat().st_size != 0
+    ):
+        raise RuntimeError("AI supersession lock artifact is unsafe")
+    validity = root_entries[REGISTRY_DIRNAME]
+    if validity.is_symlink() or not validity.is_dir():
+        raise RuntimeError("AI supersession validity directory is unsafe")
+    validity_entries = {entry.name: entry for entry in validity.iterdir()}
+    if set(validity_entries) != {"events"}:
+        raise RuntimeError("AI supersession validity inventory drifted")
+    events = validity_entries["events"]
+    if events.is_symlink() or not events.is_dir():
+        raise RuntimeError("AI supersession event directory is unsafe")
+    event_entries = {entry.name: entry for entry in events.iterdir()}
+    if set(event_entries) != {"000000.json", "000001.json", "000002.json"}:
+        raise RuntimeError("AI supersession event inventory drifted")
+    if any(
+        entry.is_symlink() or not entry.is_file() for entry in event_entries.values()
+    ):
+        raise RuntimeError("AI supersession event artifact is unsafe")
+
+
 def _status(args: argparse.Namespace) -> dict[str, Any]:
     registry = assert_locked_preregistration(_strict_json(args.registry))
+    superseded = _superseded_status(args.run_dir)
+    if superseded is not None:
+        return superseded
     precommit, start = _load_parents(args.run_dir)
     valid = _validated_days(args.run_dir, registry, precommit, start)
-    terminals = _validated_terminals(
-        args.run_dir, registry, precommit, start, valid
-    )
+    terminals = _validated_terminals(args.run_dir, registry, precommit, start, valid)
     day_scores = _validated_truth_scores(
         args.run_dir,
         registry,
@@ -1101,6 +1209,8 @@ def _validity_status(args: argparse.Namespace) -> dict[str, Any]:
 
 def _invalidate(args: argparse.Namespace) -> dict[str, Any]:
     with _run_lock(args.run_dir):
+        if _superseded_status(args.run_dir) is not None:
+            raise RuntimeError("AI forward run is terminally superseded")
         append_invalidation(
             args.run_dir,
             logical_id=args.logical_id,
@@ -1227,7 +1337,9 @@ def _write_json_new_or_same(
             os.link(pending, path)
         except FileExistsError:
             if path.is_symlink() or not path.is_file() or path.read_bytes() != data:
-                raise RuntimeError(f"immutable AI artifact concurrently differs: {path}")
+                raise RuntimeError(
+                    f"immutable AI artifact concurrently differs: {path}"
+                )
         pending.unlink()
         _fsync_directory(path.parent)
         _clean_pending(path)
@@ -1294,9 +1406,7 @@ def main() -> int:
     response.set_defaults(handler=_seal_cell_response)
 
     missing_responses = subparsers.add_parser("seal-missing-responses")
-    missing_responses.add_argument(
-        "--registry", type=Path, default=DEFAULT_REGISTRY
-    )
+    missing_responses.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     missing_responses.add_argument("--run-dir", type=Path, required=True)
     missing_responses.add_argument("--ordinal", type=int, required=True)
     missing_responses.set_defaults(handler=_seal_missing_responses)

@@ -103,9 +103,7 @@ def test_operational_worker_result_is_derived_from_virtual_ledgers(
             "bot_dependency_sha256": {
                 path: file_sha(REPO / path) for path in dependency_paths
             },
-            "scorer_sha256": file_sha(
-                REPO / "src/quant_rabbit/dojo_lab_provenance.py"
-            ),
+            "scorer_sha256": file_sha(REPO / "src/quant_rabbit/dojo_lab_provenance.py"),
             "precommit_builder_sha256": file_sha(
                 REPO / "src/quant_rabbit/dojo_worker_forward.py"
             ),
@@ -241,6 +239,30 @@ def test_operational_worker_result_is_derived_from_virtual_ledgers(
     assert {row["status"] for row in manifest["results"]} == {
         "INVALID_UNSCOREABLE_TRIAL"
     }
+
+    cell_terminals = [
+        json.loads(path.read_text())
+        for path in (run_dir / "execution/cells").glob("*/*/terminal.json")
+    ]
+    assert len(cell_terminals) == 24
+    expected_owner_by_candidate = {
+        candidate["candidate_id"]: worker_execution.canonical_strategy_owner_id(
+            candidate["config"], namespace="dojo-worker-forward"
+        )
+        for candidate in precommit["candidate_set"]["candidates"]
+    }
+    for terminal in cell_terminals:
+        concurrency = terminal["score"]["owner_concurrency"]
+        assert concurrency["status"] == "VERIFIED_FROM_FILL_EXIT_LEDGER"
+        assert (
+            concurrency["strategy_owner_id"]
+            == expected_owner_by_candidate[terminal["candidate_id"]]
+        )
+        assert concurrency["max_concurrent_per_pair"] == 1
+        assert concurrency["global_max_concurrent"] == 1
+        assert concurrency["observed_peak_global"] <= 1
+        assert concurrency["observed_peak_by_pair"]["USD_JPY"] <= 1
+        assert concurrency["terminal_active_positions"] == 0
 
     first_terminal = next((run_dir / "execution/cells").glob("*/OHLC/terminal.json"))
     first_terminal.unlink()

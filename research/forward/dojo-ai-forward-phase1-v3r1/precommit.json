@@ -1,0 +1,1315 @@
+{
+  "allocation_nonce_sha256": "14224a77edfc04b0d1b453f77cfe68fda59108754d5422cc750a8389bfe18f9e",
+  "allocation_policy": {
+    "all_three_variants_sealed_atomically_per_day": true,
+    "allocated_cell_count": 90,
+    "decision_time_utc": "15:00:00",
+    "eligible_weekdays_utc": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "missing_day_replacement_allowed": false,
+    "one_fresh_context_per_cell": true,
+    "rank_or_cutoff_reselection_allowed": false,
+    "unique_day_count": 30,
+    "variant_ids": [
+      "A_FABLE_MINIMAL",
+      "B_CALIBRATED_ABSTENTION",
+      "C_STRUCTURAL_REGIME"
+    ]
+  },
+  "authority": {
+    "ai_order_authority": "NONE",
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "positive_result_grants_live_permission": false,
+    "read_only": true
+  },
+  "contract": "QR_DOJO_AI_FORWARD_PRECOMMIT_V3",
+  "created_at_utc": "2026-07-18T23:56:38.734534Z",
+  "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+  "experiment_id": "dojo-prompt-experiment-v1",
+  "limitations": [
+    "EXTERNAL_MONOTONIC_WITNESS_ABSENT",
+    "PROVIDER_MODEL_IDENTITY_ATTESTATION_ABSENT",
+    "PROVIDER_BASE_PROMPT_AND_FULL_REQUEST_ATTESTATION_ABSENT",
+    "LOCAL_EXECUTION_RECEIPT_IS_NOT_PROVIDER_ATTESTATION",
+    "MARKET_TRUTH_AND_SCORING_SELF_ATTESTED_WITHOUT_EXTERNAL_WITNESS",
+    "UPSTREAM_HTTP_STATUS_AND_HEADER_ATTESTATION_ABSENT",
+    "SOURCE_COMPLETENESS_SELF_ATTESTED_FIXED_COVERAGE_GATE",
+    "DOJO_HAS_NO_LIVE_AUTHORITY"
+  ],
+  "market_policy": {
+    "answer_key_before_response_seal_allowed": false,
+    "boundary_tolerance_seconds": 900,
+    "market_derived_answer_key_required": true,
+    "market_hours_policy": "OANDA_US_FX_SUN1705_FRI1659_ALIGNED_CANDLE_BOUNDARIES_NY_V2",
+    "market_hours_source": "https://www.oanda.com/us-en/trading/hours-of-operation/",
+    "max_contiguous_gap_seconds": 900,
+    "minimum_coverage_denominator": 100,
+    "minimum_coverage_numerator": 98,
+    "missing_source_slots_retained": true,
+    "pair": "USD_JPY",
+    "response_deadline_delay_seconds": 21600,
+    "source_coverage_policy": "OANDA_M5_TRUTHFUL_SPARSE_FIXED_COVERAGE_V1",
+    "source_granularity": "M5",
+    "source_kind": "M5_BA_CANDLE",
+    "source_lookback_seconds": 86400,
+    "source_not_before_delay_seconds": 120,
+    "source_price_component": "BA",
+    "source_seal_deadline_delay_seconds": 1800,
+    "truth_financing_pips_per_day": 0.8,
+    "truth_horizon_seconds": 86400,
+    "truth_maturity_delay_seconds": 120,
+    "truth_notional_multiple": 1.0,
+    "truth_seal_deadline_delay_seconds": 21600,
+    "truth_semantics": "FIXED_24H_DIRECTION_AND_SIZE_ONLY",
+    "truth_slippage_pips_per_fill": 0.3
+  },
+  "model_policy": {
+    "model_lineage": "REQUESTED_OPENAI_GPT_5_5_UNVERIFIED",
+    "model_name": "gpt-5.5",
+    "model_version": "CLI_ALIAS_NOT_PROVIDER_SNAPSHOT",
+    "reasoning_effort": "high"
+  },
+  "phase_id": "phase_1_diagnostic",
+  "precommit_sha256": "d1c8e7d6c1c39b655154da21a05f9d4d7503c62cdc55b08d30addd43347251a3",
+  "preregistration_sha256": "cee86c2060511389183591cf071ff91eeb20c45a9c29ba6481d1619f61cb0272",
+  "prompt_locks": {
+    "A_FABLE_MINIMAL": {
+      "attestation_gap_codes": [
+        "SANDBOX_NOT_EXTERNALLY_ATTESTED",
+        "MODEL_INVOCATION_NOT_PROVIDER_ATTESTED",
+        "CHRONOLOGY_NOT_EXTERNALLY_MONOTONIC",
+        "ANSWER_KEY_NOT_MARKET_PROVIDER_ATTESTED",
+        "REGISTRY_NOT_EXTERNALLY_MONOTONIC"
+      ],
+      "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
+      "contract": "QR_DOJO_AI_PROMPT_LOCK_V1",
+      "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+      "external_attestations_verified": false,
+      "fixed_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "abstain_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "enum": [
+              "FLAT",
+              "LONG",
+              "SHORT"
+            ]
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "invalidation_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pair": {
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "NONE",
+              "HALF",
+              "FULL"
+            ]
+          },
+          "strongest_counterargument": {
+            "type": "string"
+          },
+          "target_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "trial_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "abstain_reason",
+          "action",
+          "confidence",
+          "evidence_refs",
+          "invalidation_pips",
+          "pair",
+          "size",
+          "strongest_counterargument",
+          "target_pips",
+          "trial_id"
+        ],
+        "type": "object"
+      },
+      "live_permission": false,
+      "locked_at_utc": "2026-07-18T18:02:04+00:00",
+      "optimization_after_lock_allowed": false,
+      "output_schema_sha256": "4a1041f23e2ffc0008a170da59a97b4149353f35f0cc048b5d6a761ed56af425",
+      "prompt_lock_sha256": "7ea5fe8e90b4df58ad784c64092b5d3ff2d1e4543336f12c005d2d88cbf224f7",
+      "prompt_sha256": "b20c37aff8be4282110a05457c5434e6dc690fd70aa533e06c69e2c50a30cccf",
+      "prompt_text": "You receive one date-hidden, pseudonymized Fable market-context packet. Exact prices can reveal its market date; do not try to identify it. Use only packet evidence available at the decision cutoff and no external information. Choose one FX stance.\n\nReturn exactly one JSON object and no prose with these keys in this order:\n{\"trial_id\":\"<packet trial_id>\",\"action\":\"FLAT|LONG|SHORT\",\"pair\":\"<packet pair>\",\"size\":\"NONE|HALF|FULL\",\"confidence\":0.0,\"evidence_refs\":[\"<packet ref>\"],\"target_pips\":null,\"invalidation_pips\":null,\"strongest_counterargument\":\"<brief packet-based objection>\",\"abstain_reason\":null}\n\nUse NONE only with FLAT; use HALF or FULL only with LONG or SHORT. For a directional stance, target_pips and invalidation_pips must be positive numbers and abstain_reason must be null. For FLAT, both pip fields must be null and abstain_reason must be brief. Confidence is between zero and one. Cite packet references only and give the strongest packet-based objection to the selected stance.\n",
+      "schema_version": 1,
+      "validity_status": "VALID",
+      "variant_id": "A_FABLE_MINIMAL"
+    },
+    "B_CALIBRATED_ABSTENTION": {
+      "attestation_gap_codes": [
+        "SANDBOX_NOT_EXTERNALLY_ATTESTED",
+        "MODEL_INVOCATION_NOT_PROVIDER_ATTESTED",
+        "CHRONOLOGY_NOT_EXTERNALLY_MONOTONIC",
+        "ANSWER_KEY_NOT_MARKET_PROVIDER_ATTESTED",
+        "REGISTRY_NOT_EXTERNALLY_MONOTONIC"
+      ],
+      "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
+      "contract": "QR_DOJO_AI_PROMPT_LOCK_V1",
+      "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+      "external_attestations_verified": false,
+      "fixed_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "abstain_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "enum": [
+              "FLAT",
+              "LONG",
+              "SHORT"
+            ]
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "invalidation_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pair": {
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "NONE",
+              "HALF",
+              "FULL"
+            ]
+          },
+          "strongest_counterargument": {
+            "type": "string"
+          },
+          "target_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "trial_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "abstain_reason",
+          "action",
+          "confidence",
+          "evidence_refs",
+          "invalidation_pips",
+          "pair",
+          "size",
+          "strongest_counterargument",
+          "target_pips",
+          "trial_id"
+        ],
+        "type": "object"
+      },
+      "live_permission": false,
+      "locked_at_utc": "2026-07-18T18:02:04+00:00",
+      "optimization_after_lock_allowed": false,
+      "output_schema_sha256": "4a1041f23e2ffc0008a170da59a97b4149353f35f0cc048b5d6a761ed56af425",
+      "prompt_lock_sha256": "103c61da603cd4950db47456d524bb8e1fd3925f2f9fc6b0dccde7910161ac88",
+      "prompt_sha256": "97b413e5d5ad978a7825d08e0cb390e8d23bbb72d88f9023a6e67abfc219c2c2",
+      "prompt_text": "You receive one date-hidden, pseudonymized market-context packet. Exact prices can reveal its market date; do not try to identify it. Use only packet evidence available at the decision cutoff and no external information. Apply symmetric decision loss: false LONG and false SHORT carry equal weight. Treat FLAT as an active choice, and select it when neither direction has clearly positive utility after uncertainty and execution cost. Calibrate confidence to the selected stance and state the strongest packet-based counterargument.\n\nReturn exactly one JSON object and no prose with these keys in this order:\n{\"trial_id\":\"<packet trial_id>\",\"action\":\"FLAT|LONG|SHORT\",\"pair\":\"<packet pair>\",\"size\":\"NONE|HALF|FULL\",\"confidence\":0.0,\"evidence_refs\":[\"<packet ref>\"],\"target_pips\":null,\"invalidation_pips\":null,\"strongest_counterargument\":\"<strongest packet-based objection>\",\"abstain_reason\":null}\n\nUse NONE only with FLAT; use HALF or FULL only with LONG or SHORT. For a directional stance, target_pips and invalidation_pips must be positive numbers and abstain_reason must be null. For FLAT, both pip fields must be null and abstain_reason must be brief. Confidence is between zero and one. Cite packet references only.\n",
+      "schema_version": 1,
+      "validity_status": "VALID",
+      "variant_id": "B_CALIBRATED_ABSTENTION"
+    },
+    "C_STRUCTURAL_REGIME": {
+      "attestation_gap_codes": [
+        "SANDBOX_NOT_EXTERNALLY_ATTESTED",
+        "MODEL_INVOCATION_NOT_PROVIDER_ATTESTED",
+        "CHRONOLOGY_NOT_EXTERNALLY_MONOTONIC",
+        "ANSWER_KEY_NOT_MARKET_PROVIDER_ATTESTED",
+        "REGISTRY_NOT_EXTERNALLY_MONOTONIC"
+      ],
+      "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
+      "contract": "QR_DOJO_AI_PROMPT_LOCK_V1",
+      "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+      "external_attestations_verified": false,
+      "fixed_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "abstain_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "enum": [
+              "FLAT",
+              "LONG",
+              "SHORT"
+            ]
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "invalidation_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pair": {
+            "type": "string"
+          },
+          "size": {
+            "enum": [
+              "NONE",
+              "HALF",
+              "FULL"
+            ]
+          },
+          "strongest_counterargument": {
+            "type": "string"
+          },
+          "target_pips": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "trial_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "abstain_reason",
+          "action",
+          "confidence",
+          "evidence_refs",
+          "invalidation_pips",
+          "pair",
+          "size",
+          "strongest_counterargument",
+          "target_pips",
+          "trial_id"
+        ],
+        "type": "object"
+      },
+      "live_permission": false,
+      "locked_at_utc": "2026-07-18T18:02:04+00:00",
+      "optimization_after_lock_allowed": false,
+      "output_schema_sha256": "4a1041f23e2ffc0008a170da59a97b4149353f35f0cc048b5d6a761ed56af425",
+      "prompt_lock_sha256": "7f31bc5f68bf23cae80e4b8f61d898c5bea33dd696af049b0ecd6ba5bb658d64",
+      "prompt_sha256": "02a204ade67002fae04a556b5a7f466a07cef28001620d1b7e6024c07bbb4fd5",
+      "prompt_text": "You receive one date-hidden, pseudonymized market-context packet. Exact prices can reveal its market date; do not try to identify it. Use only packet evidence available at the decision cutoff and no external information. Classify the operating state as trend, range, transition, or dislocation; map supply and demand, acceptance and rejection, liquidity, and structural invalidation. Choose a directional stance only when regime, location, structure, and executable cost align; otherwise choose FLAT.\n\nReturn exactly one JSON object and no prose with these keys in this order:\n{\"trial_id\":\"<packet trial_id>\",\"action\":\"FLAT|LONG|SHORT\",\"pair\":\"<packet pair>\",\"size\":\"NONE|HALF|FULL\",\"confidence\":0.0,\"evidence_refs\":[\"<packet ref>\"],\"target_pips\":null,\"invalidation_pips\":null,\"strongest_counterargument\":\"<brief structural objection>\",\"abstain_reason\":null}\n\nUse NONE only with FLAT; use HALF or FULL only with LONG or SHORT. For a directional stance, target_pips and invalidation_pips must be positive numbers and abstain_reason must be null. For FLAT, both pip fields must be null and abstain_reason must be brief. Confidence is between zero and one. Cite packet references only and make the strongest_counterargument structural.\n",
+      "schema_version": 1,
+      "validity_status": "VALID",
+      "variant_id": "C_STRUCTURAL_REGIME"
+    }
+  },
+  "schedule": [
+    {
+      "blind_day_id": "7c74262071bf9bbe5abc7a003d2d7dd838e24680e859f095cdcf3253cf238515",
+      "blind_day_rank": 1,
+      "blind_nonce": "0e945bc369e13ed1e4821fd6cf5a2fb751f8f8168a79e883e86047631d8f5638",
+      "cells": [
+        {
+          "cell_id": "cell-27af49b69c96006e8a32c16253fd0f9e",
+          "context_id": "dojo-prompt-experiment-v1:rank-01:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-4a745c9ad244a2e90d4b6fee3dbc745b",
+          "context_id": "dojo-prompt-experiment-v1:rank-01:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-8d10543d6f5f9293a1c248a1eab24706",
+          "context_id": "dojo-prompt-experiment-v1:rank-01:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-22T15:00:00Z",
+      "ordinal": 1,
+      "response_deadline_utc": "2026-07-22T21:00:00Z",
+      "source_not_before_utc": "2026-07-22T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-22T15:30:00Z",
+      "source_window_end_utc": "2026-07-22T15:00:00Z",
+      "source_window_start_utc": "2026-07-21T15:00:00Z",
+      "truth_not_before_utc": "2026-07-23T15:02:00Z"
+    },
+    {
+      "blind_day_id": "6715487dc9c3a20b22ccee4d7625c458cc4a919f3e708980da3328bf77915179",
+      "blind_day_rank": 2,
+      "blind_nonce": "e53c1e2cd8a0dd213a1edd6df6614ab24175c125a07c957e95f1ff54f38d199e",
+      "cells": [
+        {
+          "cell_id": "cell-7058a4fe23f880adef7ece0dc002e0b8",
+          "context_id": "dojo-prompt-experiment-v1:rank-02:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-7957f74db58a61fd72dda62e450a5938",
+          "context_id": "dojo-prompt-experiment-v1:rank-02:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-28137510b9db59ee3e1d81d74aa34f04",
+          "context_id": "dojo-prompt-experiment-v1:rank-02:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-23T15:00:00Z",
+      "ordinal": 2,
+      "response_deadline_utc": "2026-07-23T21:00:00Z",
+      "source_not_before_utc": "2026-07-23T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-23T15:30:00Z",
+      "source_window_end_utc": "2026-07-23T15:00:00Z",
+      "source_window_start_utc": "2026-07-22T15:00:00Z",
+      "truth_not_before_utc": "2026-07-24T15:02:00Z"
+    },
+    {
+      "blind_day_id": "da8ec36e4cb3581d72482ee67c4b489ab25ec5860448b4679f9bcc48efcae1a0",
+      "blind_day_rank": 3,
+      "blind_nonce": "e5d6beaaa2f863c7383c9b59b665dacfdcd0c6f6608653a0d2a1021c1db20c64",
+      "cells": [
+        {
+          "cell_id": "cell-d8c67fce616436c11df44d489cecb641",
+          "context_id": "dojo-prompt-experiment-v1:rank-03:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-ecb676d4020728d6394f7c2a99bf3546",
+          "context_id": "dojo-prompt-experiment-v1:rank-03:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-53535e7020c20ce6b730612230b6f518",
+          "context_id": "dojo-prompt-experiment-v1:rank-03:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-27T15:00:00Z",
+      "ordinal": 3,
+      "response_deadline_utc": "2026-07-27T21:00:00Z",
+      "source_not_before_utc": "2026-07-27T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-27T15:30:00Z",
+      "source_window_end_utc": "2026-07-27T15:00:00Z",
+      "source_window_start_utc": "2026-07-26T15:00:00Z",
+      "truth_not_before_utc": "2026-07-28T15:02:00Z"
+    },
+    {
+      "blind_day_id": "844a3584264ad0129ea7318d11116cbfee0bbea369d6b62472ed9590e7ab41d2",
+      "blind_day_rank": 4,
+      "blind_nonce": "a393f1635093f82f5983a4ab3c162ba18bd9e137ab322a70974ae9888dde39d0",
+      "cells": [
+        {
+          "cell_id": "cell-ffebe38298e2f1c2ca1bc1dd0fc17eb7",
+          "context_id": "dojo-prompt-experiment-v1:rank-04:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-4713f2017484e9569d7e50e14bc4d4c7",
+          "context_id": "dojo-prompt-experiment-v1:rank-04:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-564ca7e666f7eb48af23db152af5a3ee",
+          "context_id": "dojo-prompt-experiment-v1:rank-04:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-28T15:00:00Z",
+      "ordinal": 4,
+      "response_deadline_utc": "2026-07-28T21:00:00Z",
+      "source_not_before_utc": "2026-07-28T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-28T15:30:00Z",
+      "source_window_end_utc": "2026-07-28T15:00:00Z",
+      "source_window_start_utc": "2026-07-27T15:00:00Z",
+      "truth_not_before_utc": "2026-07-29T15:02:00Z"
+    },
+    {
+      "blind_day_id": "e170d0e2d62f907ee5b20515c49ecbd400f666a8e5b157569e25a8d6e55177d4",
+      "blind_day_rank": 5,
+      "blind_nonce": "0529a945b6d76229629faff436af2c0302013665ec9ead2db56a0f426d2968d8",
+      "cells": [
+        {
+          "cell_id": "cell-6211b0bc7d19a590f1bfa8b2db0228e3",
+          "context_id": "dojo-prompt-experiment-v1:rank-05:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-614196b844b752ce0e8951fba34e745c",
+          "context_id": "dojo-prompt-experiment-v1:rank-05:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a9c8ba3fb1a22d15153c727e1a86a3cb",
+          "context_id": "dojo-prompt-experiment-v1:rank-05:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-29T15:00:00Z",
+      "ordinal": 5,
+      "response_deadline_utc": "2026-07-29T21:00:00Z",
+      "source_not_before_utc": "2026-07-29T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-29T15:30:00Z",
+      "source_window_end_utc": "2026-07-29T15:00:00Z",
+      "source_window_start_utc": "2026-07-28T15:00:00Z",
+      "truth_not_before_utc": "2026-07-30T15:02:00Z"
+    },
+    {
+      "blind_day_id": "6dd3c5f30d6b9c010a6351756bc72ba2bcdd58509bb9950ebd505b8518d1787b",
+      "blind_day_rank": 6,
+      "blind_nonce": "fb4911bfa91580bf0fb0eaf5a917924bba0e9e659cf55e87067a253e0fb93963",
+      "cells": [
+        {
+          "cell_id": "cell-85cd151894da8bee64d5122d9246d828",
+          "context_id": "dojo-prompt-experiment-v1:rank-06:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-2e41c1947fc78a01e76bda22f892613d",
+          "context_id": "dojo-prompt-experiment-v1:rank-06:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a133c4bf3dee3f0ea6f6b4354b90aa9a",
+          "context_id": "dojo-prompt-experiment-v1:rank-06:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-07-30T15:00:00Z",
+      "ordinal": 6,
+      "response_deadline_utc": "2026-07-30T21:00:00Z",
+      "source_not_before_utc": "2026-07-30T15:02:00Z",
+      "source_seal_deadline_utc": "2026-07-30T15:30:00Z",
+      "source_window_end_utc": "2026-07-30T15:00:00Z",
+      "source_window_start_utc": "2026-07-29T15:00:00Z",
+      "truth_not_before_utc": "2026-07-31T15:02:00Z"
+    },
+    {
+      "blind_day_id": "65ee7d5eee5c2098901871511e218e981d245b0445d74413247b7bd399a8afd2",
+      "blind_day_rank": 7,
+      "blind_nonce": "5549261d9527b81e59c48e42f1eba52cada330cc2bfe0eb06ca8afe0d2ef3029",
+      "cells": [
+        {
+          "cell_id": "cell-e7aa32c5de82f47dc75baafa8923745c",
+          "context_id": "dojo-prompt-experiment-v1:rank-07:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-01a56519d76ce898c66aae74e57256f0",
+          "context_id": "dojo-prompt-experiment-v1:rank-07:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-14c860cf2762e38f4c3dcf56d9d8d865",
+          "context_id": "dojo-prompt-experiment-v1:rank-07:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-03T15:00:00Z",
+      "ordinal": 7,
+      "response_deadline_utc": "2026-08-03T21:00:00Z",
+      "source_not_before_utc": "2026-08-03T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-03T15:30:00Z",
+      "source_window_end_utc": "2026-08-03T15:00:00Z",
+      "source_window_start_utc": "2026-08-02T15:00:00Z",
+      "truth_not_before_utc": "2026-08-04T15:02:00Z"
+    },
+    {
+      "blind_day_id": "3a7d42a39ba6b4c68fe7f08155fe6051dc88b514fb54612189ea35e436fe2b6f",
+      "blind_day_rank": 8,
+      "blind_nonce": "d6c921dbf4ffa81357af15d7e5de030adb9c2388cfdba5d64ae60a5a4b54b9ec",
+      "cells": [
+        {
+          "cell_id": "cell-2e49f00e738c819af3f0ffed87195cef",
+          "context_id": "dojo-prompt-experiment-v1:rank-08:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-e288a7b7e7bfacd96607a8bcbc000e53",
+          "context_id": "dojo-prompt-experiment-v1:rank-08:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-1aa8264e56854556eba76c6941ebb58b",
+          "context_id": "dojo-prompt-experiment-v1:rank-08:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-04T15:00:00Z",
+      "ordinal": 8,
+      "response_deadline_utc": "2026-08-04T21:00:00Z",
+      "source_not_before_utc": "2026-08-04T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-04T15:30:00Z",
+      "source_window_end_utc": "2026-08-04T15:00:00Z",
+      "source_window_start_utc": "2026-08-03T15:00:00Z",
+      "truth_not_before_utc": "2026-08-05T15:02:00Z"
+    },
+    {
+      "blind_day_id": "d85c370e9f68b36b7e39ba9cb03f385de45fedccce1419b134ad2ba6cca1b2b6",
+      "blind_day_rank": 9,
+      "blind_nonce": "1298e2ed23b6d7d5c0498a2e7b68892f0d409c8157f5c69be52ace333ba37f20",
+      "cells": [
+        {
+          "cell_id": "cell-e1c1bc7cfe89f91fc67e4ed5434da945",
+          "context_id": "dojo-prompt-experiment-v1:rank-09:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-f317c20072ae7ccb456844b59f38ca0e",
+          "context_id": "dojo-prompt-experiment-v1:rank-09:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-317113cda5878c5d670e4a2d12131ddb",
+          "context_id": "dojo-prompt-experiment-v1:rank-09:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-05T15:00:00Z",
+      "ordinal": 9,
+      "response_deadline_utc": "2026-08-05T21:00:00Z",
+      "source_not_before_utc": "2026-08-05T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-05T15:30:00Z",
+      "source_window_end_utc": "2026-08-05T15:00:00Z",
+      "source_window_start_utc": "2026-08-04T15:00:00Z",
+      "truth_not_before_utc": "2026-08-06T15:02:00Z"
+    },
+    {
+      "blind_day_id": "427911768d0f477777220cf9d3d336b83b29c55cc2b24bf0fb667ead4124886a",
+      "blind_day_rank": 10,
+      "blind_nonce": "41a1ce365247e2f3dc3fbf37c80357b1995efd16780838a3fce14ecdcb17e7af",
+      "cells": [
+        {
+          "cell_id": "cell-28eea4d0e2d1a08847d39bc80ceecb1f",
+          "context_id": "dojo-prompt-experiment-v1:rank-10:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-8e7812de5829a5816dc6a6bb1d5bbdd5",
+          "context_id": "dojo-prompt-experiment-v1:rank-10:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-f7a057b6a6d145fe02ae519239f6fa57",
+          "context_id": "dojo-prompt-experiment-v1:rank-10:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-06T15:00:00Z",
+      "ordinal": 10,
+      "response_deadline_utc": "2026-08-06T21:00:00Z",
+      "source_not_before_utc": "2026-08-06T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-06T15:30:00Z",
+      "source_window_end_utc": "2026-08-06T15:00:00Z",
+      "source_window_start_utc": "2026-08-05T15:00:00Z",
+      "truth_not_before_utc": "2026-08-07T15:02:00Z"
+    },
+    {
+      "blind_day_id": "84e4ba41d565dbf4c1e4e43dd1145a640aa267d562587591cae645e56c5b8696",
+      "blind_day_rank": 11,
+      "blind_nonce": "15948db75db6d509fcef2fd9bdbbb51c77f72583732076a817a619c5bdb0b906",
+      "cells": [
+        {
+          "cell_id": "cell-e61ff3d19894be0608a649f3cf33fb5a",
+          "context_id": "dojo-prompt-experiment-v1:rank-11:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-8019b9de270241b28a20562ae5bb936f",
+          "context_id": "dojo-prompt-experiment-v1:rank-11:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-b64f51949c4b351148424ab6b3799ca1",
+          "context_id": "dojo-prompt-experiment-v1:rank-11:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-10T15:00:00Z",
+      "ordinal": 11,
+      "response_deadline_utc": "2026-08-10T21:00:00Z",
+      "source_not_before_utc": "2026-08-10T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-10T15:30:00Z",
+      "source_window_end_utc": "2026-08-10T15:00:00Z",
+      "source_window_start_utc": "2026-08-09T15:00:00Z",
+      "truth_not_before_utc": "2026-08-11T15:02:00Z"
+    },
+    {
+      "blind_day_id": "352b44b318ac358a8e6c04f05b8d3389fef33cd8a1741b21838d4638371b969b",
+      "blind_day_rank": 12,
+      "blind_nonce": "04f05b201088ad389d6f8f0bf7a72987c71ba69b883de801eadd5e607add6f5f",
+      "cells": [
+        {
+          "cell_id": "cell-d9f4a6dbd260e44e1b82bc43c7b0b110",
+          "context_id": "dojo-prompt-experiment-v1:rank-12:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-a1b262b3396737ca08f11b5365acf958",
+          "context_id": "dojo-prompt-experiment-v1:rank-12:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a0d0d4cf16ab4c49d8662022f14aa237",
+          "context_id": "dojo-prompt-experiment-v1:rank-12:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-11T15:00:00Z",
+      "ordinal": 12,
+      "response_deadline_utc": "2026-08-11T21:00:00Z",
+      "source_not_before_utc": "2026-08-11T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-11T15:30:00Z",
+      "source_window_end_utc": "2026-08-11T15:00:00Z",
+      "source_window_start_utc": "2026-08-10T15:00:00Z",
+      "truth_not_before_utc": "2026-08-12T15:02:00Z"
+    },
+    {
+      "blind_day_id": "f31e8fef9f75c678be8a5236ee351bc33d9fa85410fdef36c30b3bdc06f3ef33",
+      "blind_day_rank": 13,
+      "blind_nonce": "4cbcf9ae4150a435a92e6066a4e2a4a1c3996c360155086db0ab470657ba019b",
+      "cells": [
+        {
+          "cell_id": "cell-199fcc18499217f270f9c8b7b50c20df",
+          "context_id": "dojo-prompt-experiment-v1:rank-13:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-e35ade87b67b6745d398574d8054b678",
+          "context_id": "dojo-prompt-experiment-v1:rank-13:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-edcd07d36d77c538ff8ce1b1092a670b",
+          "context_id": "dojo-prompt-experiment-v1:rank-13:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-12T15:00:00Z",
+      "ordinal": 13,
+      "response_deadline_utc": "2026-08-12T21:00:00Z",
+      "source_not_before_utc": "2026-08-12T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-12T15:30:00Z",
+      "source_window_end_utc": "2026-08-12T15:00:00Z",
+      "source_window_start_utc": "2026-08-11T15:00:00Z",
+      "truth_not_before_utc": "2026-08-13T15:02:00Z"
+    },
+    {
+      "blind_day_id": "c979789d4bf2547420096bf406e11e9b27bbc4c2c779d1c25c6ae3c174d3d2d4",
+      "blind_day_rank": 14,
+      "blind_nonce": "1c4f09d2241abf1ac6229c2c44b322e77d5ff06e122f5898c732f5851f3c1ef5",
+      "cells": [
+        {
+          "cell_id": "cell-8da2b01af6b0296db63b3030766e4265",
+          "context_id": "dojo-prompt-experiment-v1:rank-14:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-ce0c95424ed50b957e735a083537aac9",
+          "context_id": "dojo-prompt-experiment-v1:rank-14:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-5dc2ed6be578827d407f6224fdc0a800",
+          "context_id": "dojo-prompt-experiment-v1:rank-14:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-13T15:00:00Z",
+      "ordinal": 14,
+      "response_deadline_utc": "2026-08-13T21:00:00Z",
+      "source_not_before_utc": "2026-08-13T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-13T15:30:00Z",
+      "source_window_end_utc": "2026-08-13T15:00:00Z",
+      "source_window_start_utc": "2026-08-12T15:00:00Z",
+      "truth_not_before_utc": "2026-08-14T15:02:00Z"
+    },
+    {
+      "blind_day_id": "9a607f0d1fc827ce2a946d83adc84a32164c2b7f30d9d5edf61be3862bd2a2a3",
+      "blind_day_rank": 15,
+      "blind_nonce": "6936a24280447522d950b47daf256942e9d73290395d5332c62976fa25d97053",
+      "cells": [
+        {
+          "cell_id": "cell-19f92abdb96d2eaf0ea2e32eefcf71e9",
+          "context_id": "dojo-prompt-experiment-v1:rank-15:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-dde33de27e21972351a24a49a01b557b",
+          "context_id": "dojo-prompt-experiment-v1:rank-15:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-717ba97a3265413d5f73856a2d9c2bdd",
+          "context_id": "dojo-prompt-experiment-v1:rank-15:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-17T15:00:00Z",
+      "ordinal": 15,
+      "response_deadline_utc": "2026-08-17T21:00:00Z",
+      "source_not_before_utc": "2026-08-17T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-17T15:30:00Z",
+      "source_window_end_utc": "2026-08-17T15:00:00Z",
+      "source_window_start_utc": "2026-08-16T15:00:00Z",
+      "truth_not_before_utc": "2026-08-18T15:02:00Z"
+    },
+    {
+      "blind_day_id": "907e99e7410b729fe1efe564ed46d34e0b43b7b7f9895c93e563ad6a95d5be32",
+      "blind_day_rank": 16,
+      "blind_nonce": "0e62ec4b3b46f55d5a8aa544e37eb670ea97fbdb13e0bbfa733ee302bc33df3b",
+      "cells": [
+        {
+          "cell_id": "cell-21de4fc7eae094413e1ae330521c8507",
+          "context_id": "dojo-prompt-experiment-v1:rank-16:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-9b610ed01e94905e156d43560d856372",
+          "context_id": "dojo-prompt-experiment-v1:rank-16:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a0e11f516b1e059ce5c3bedeab77aabb",
+          "context_id": "dojo-prompt-experiment-v1:rank-16:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-18T15:00:00Z",
+      "ordinal": 16,
+      "response_deadline_utc": "2026-08-18T21:00:00Z",
+      "source_not_before_utc": "2026-08-18T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-18T15:30:00Z",
+      "source_window_end_utc": "2026-08-18T15:00:00Z",
+      "source_window_start_utc": "2026-08-17T15:00:00Z",
+      "truth_not_before_utc": "2026-08-19T15:02:00Z"
+    },
+    {
+      "blind_day_id": "c11a4423f827c3ac7c8f02de5f8b6ffbb5b69e8659b25215a1d756e192fd47ac",
+      "blind_day_rank": 17,
+      "blind_nonce": "3ca80b43e20a04c857a06cbad95a1fea9b581743ef7d721dfa7d993fa897049d",
+      "cells": [
+        {
+          "cell_id": "cell-74d7aef79d2bcf55cd4b6523a5643417",
+          "context_id": "dojo-prompt-experiment-v1:rank-17:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-0ab366607429eb686ad28127ae6231c8",
+          "context_id": "dojo-prompt-experiment-v1:rank-17:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-29b1df4c06a0a4440186a881d3606e73",
+          "context_id": "dojo-prompt-experiment-v1:rank-17:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-19T15:00:00Z",
+      "ordinal": 17,
+      "response_deadline_utc": "2026-08-19T21:00:00Z",
+      "source_not_before_utc": "2026-08-19T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-19T15:30:00Z",
+      "source_window_end_utc": "2026-08-19T15:00:00Z",
+      "source_window_start_utc": "2026-08-18T15:00:00Z",
+      "truth_not_before_utc": "2026-08-20T15:02:00Z"
+    },
+    {
+      "blind_day_id": "591c73859c8fe2f2044533adeacae6ff7619391b3b010b80fb3fcb5603cee502",
+      "blind_day_rank": 18,
+      "blind_nonce": "330c0296addf3ec952b8540f65b52ff3cdf42389cbc3085a0b4933208c26343b",
+      "cells": [
+        {
+          "cell_id": "cell-84a5d5941bb2a6defd3dbb26299a0158",
+          "context_id": "dojo-prompt-experiment-v1:rank-18:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-96e2477b008336f0dff0dc268170a48d",
+          "context_id": "dojo-prompt-experiment-v1:rank-18:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-d02d792110742681f04d9fc284274533",
+          "context_id": "dojo-prompt-experiment-v1:rank-18:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-20T15:00:00Z",
+      "ordinal": 18,
+      "response_deadline_utc": "2026-08-20T21:00:00Z",
+      "source_not_before_utc": "2026-08-20T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-20T15:30:00Z",
+      "source_window_end_utc": "2026-08-20T15:00:00Z",
+      "source_window_start_utc": "2026-08-19T15:00:00Z",
+      "truth_not_before_utc": "2026-08-21T15:02:00Z"
+    },
+    {
+      "blind_day_id": "3a614cb99a3c3bf20bbe811eacb45a8c4ad9694221caf81398d10b0c97bd98ba",
+      "blind_day_rank": 19,
+      "blind_nonce": "a9d2386e32590eff0b596e371a470296e174a43fd9bf2f858fea718dc5cf512d",
+      "cells": [
+        {
+          "cell_id": "cell-40a9f86051f211be0b638a197f7ee963",
+          "context_id": "dojo-prompt-experiment-v1:rank-19:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-99f13de8808556bcebbf39b5061450cc",
+          "context_id": "dojo-prompt-experiment-v1:rank-19:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-0087e419fb8dc4c4dfd383abaca2d972",
+          "context_id": "dojo-prompt-experiment-v1:rank-19:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-24T15:00:00Z",
+      "ordinal": 19,
+      "response_deadline_utc": "2026-08-24T21:00:00Z",
+      "source_not_before_utc": "2026-08-24T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-24T15:30:00Z",
+      "source_window_end_utc": "2026-08-24T15:00:00Z",
+      "source_window_start_utc": "2026-08-23T15:00:00Z",
+      "truth_not_before_utc": "2026-08-25T15:02:00Z"
+    },
+    {
+      "blind_day_id": "66b9852c9b99c10cbf293efd468a1434c9d202c363e6e93298623d7f3ee6505d",
+      "blind_day_rank": 20,
+      "blind_nonce": "1c0fb0c1d82d3294f39d75975d23199537403c42fda93e8ff799f0d82ab0f265",
+      "cells": [
+        {
+          "cell_id": "cell-83ee0a912b9d4832e8d7725c4a98eef5",
+          "context_id": "dojo-prompt-experiment-v1:rank-20:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-c2a472a9da60338222dad481bb670bb9",
+          "context_id": "dojo-prompt-experiment-v1:rank-20:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-59a092ee613374a76d37e9f3ca1f7af7",
+          "context_id": "dojo-prompt-experiment-v1:rank-20:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-25T15:00:00Z",
+      "ordinal": 20,
+      "response_deadline_utc": "2026-08-25T21:00:00Z",
+      "source_not_before_utc": "2026-08-25T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-25T15:30:00Z",
+      "source_window_end_utc": "2026-08-25T15:00:00Z",
+      "source_window_start_utc": "2026-08-24T15:00:00Z",
+      "truth_not_before_utc": "2026-08-26T15:02:00Z"
+    },
+    {
+      "blind_day_id": "0b74d87185bcb46a9fcdf55acecd84d13b4702101526f41b360fbc8fc7956b5d",
+      "blind_day_rank": 21,
+      "blind_nonce": "8c0a5b28ac0f1c00084a188e909a13ed50cd0a411db97888cd8474f9a53df324",
+      "cells": [
+        {
+          "cell_id": "cell-3671c538924b94fd42644bfbe71b0e86",
+          "context_id": "dojo-prompt-experiment-v1:rank-21:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-924301945b194bd9882286bfc0a7218f",
+          "context_id": "dojo-prompt-experiment-v1:rank-21:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a805d14c95f638b0d260bae56d7571b5",
+          "context_id": "dojo-prompt-experiment-v1:rank-21:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-26T15:00:00Z",
+      "ordinal": 21,
+      "response_deadline_utc": "2026-08-26T21:00:00Z",
+      "source_not_before_utc": "2026-08-26T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-26T15:30:00Z",
+      "source_window_end_utc": "2026-08-26T15:00:00Z",
+      "source_window_start_utc": "2026-08-25T15:00:00Z",
+      "truth_not_before_utc": "2026-08-27T15:02:00Z"
+    },
+    {
+      "blind_day_id": "40519492eb5534872c9e5dedaa525bb364c2bb7df15c6c9550d90ef7aef0b230",
+      "blind_day_rank": 22,
+      "blind_nonce": "0e8ea8a0e7f690178a44c0bb154103663eb20eb4018016771b9e6ff9088aded7",
+      "cells": [
+        {
+          "cell_id": "cell-7a81547d5f5ffda88c63901deacb7e6f",
+          "context_id": "dojo-prompt-experiment-v1:rank-22:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-b06052b04ad82828bcdd1fe3f832facd",
+          "context_id": "dojo-prompt-experiment-v1:rank-22:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-51470b1ab6b57ec322943cf62e542f8a",
+          "context_id": "dojo-prompt-experiment-v1:rank-22:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-27T15:00:00Z",
+      "ordinal": 22,
+      "response_deadline_utc": "2026-08-27T21:00:00Z",
+      "source_not_before_utc": "2026-08-27T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-27T15:30:00Z",
+      "source_window_end_utc": "2026-08-27T15:00:00Z",
+      "source_window_start_utc": "2026-08-26T15:00:00Z",
+      "truth_not_before_utc": "2026-08-28T15:02:00Z"
+    },
+    {
+      "blind_day_id": "22f371c85d7a22be16931b6864d83d61cdf0ba64da232b93c983b16a007cedde",
+      "blind_day_rank": 23,
+      "blind_nonce": "03a3a0079f428d6982e867357f32eaad379a8bf995c0312973a098f4e8c74351",
+      "cells": [
+        {
+          "cell_id": "cell-30afd4be209c2b859557da0234d95cf9",
+          "context_id": "dojo-prompt-experiment-v1:rank-23:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-730aaeafa494f47cc987919081c4144a",
+          "context_id": "dojo-prompt-experiment-v1:rank-23:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-11e361c0613cf570ffea70d569cb908b",
+          "context_id": "dojo-prompt-experiment-v1:rank-23:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-08-31T15:00:00Z",
+      "ordinal": 23,
+      "response_deadline_utc": "2026-08-31T21:00:00Z",
+      "source_not_before_utc": "2026-08-31T15:02:00Z",
+      "source_seal_deadline_utc": "2026-08-31T15:30:00Z",
+      "source_window_end_utc": "2026-08-31T15:00:00Z",
+      "source_window_start_utc": "2026-08-30T15:00:00Z",
+      "truth_not_before_utc": "2026-09-01T15:02:00Z"
+    },
+    {
+      "blind_day_id": "87b5f081badea144cf448dd7c919e0b8343d47019877c983c75ec83cf3a0f49a",
+      "blind_day_rank": 24,
+      "blind_nonce": "149e8eec9b285bb891f79ec917a99e6e72ab5542880c16cdd232888ff2691a2a",
+      "cells": [
+        {
+          "cell_id": "cell-c5003daac018dbc01b86a4222b47733e",
+          "context_id": "dojo-prompt-experiment-v1:rank-24:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-d3adb52951402b338744047662ae36e7",
+          "context_id": "dojo-prompt-experiment-v1:rank-24:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-a812b1efd463aca81f072624cbab1b75",
+          "context_id": "dojo-prompt-experiment-v1:rank-24:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-01T15:00:00Z",
+      "ordinal": 24,
+      "response_deadline_utc": "2026-09-01T21:00:00Z",
+      "source_not_before_utc": "2026-09-01T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-01T15:30:00Z",
+      "source_window_end_utc": "2026-09-01T15:00:00Z",
+      "source_window_start_utc": "2026-08-31T15:00:00Z",
+      "truth_not_before_utc": "2026-09-02T15:02:00Z"
+    },
+    {
+      "blind_day_id": "4ea2981d9b0de92e67e59fe14083f19b2b09f4e52561a0297fe9b38d7ddebe13",
+      "blind_day_rank": 25,
+      "blind_nonce": "3b949a98d80fbe38746dbe49125a7f5708fbe704c864f2e4e0b50eccf9bf9e1d",
+      "cells": [
+        {
+          "cell_id": "cell-28d5a33facbb93661381b09884290831",
+          "context_id": "dojo-prompt-experiment-v1:rank-25:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-4fff2906ed348b905fbd4905543ca897",
+          "context_id": "dojo-prompt-experiment-v1:rank-25:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-01de8b342211948abe0fe5c96f1c9211",
+          "context_id": "dojo-prompt-experiment-v1:rank-25:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-02T15:00:00Z",
+      "ordinal": 25,
+      "response_deadline_utc": "2026-09-02T21:00:00Z",
+      "source_not_before_utc": "2026-09-02T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-02T15:30:00Z",
+      "source_window_end_utc": "2026-09-02T15:00:00Z",
+      "source_window_start_utc": "2026-09-01T15:00:00Z",
+      "truth_not_before_utc": "2026-09-03T15:02:00Z"
+    },
+    {
+      "blind_day_id": "060c64ceda5a1a42bae28d32a4e448ba8ee5fdf7866869aeb557a6591a5f08c8",
+      "blind_day_rank": 26,
+      "blind_nonce": "349f4404c379c26590af55c3e4e374008ddbc842a44ae0ca722538f2ec953111",
+      "cells": [
+        {
+          "cell_id": "cell-17477d22a0cb78aaf076099cbb035e31",
+          "context_id": "dojo-prompt-experiment-v1:rank-26:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-5aeabf9a17a2b9c511824f3611677309",
+          "context_id": "dojo-prompt-experiment-v1:rank-26:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-db3002cff7bf1b008a20a7252c4a004d",
+          "context_id": "dojo-prompt-experiment-v1:rank-26:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-03T15:00:00Z",
+      "ordinal": 26,
+      "response_deadline_utc": "2026-09-03T21:00:00Z",
+      "source_not_before_utc": "2026-09-03T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-03T15:30:00Z",
+      "source_window_end_utc": "2026-09-03T15:00:00Z",
+      "source_window_start_utc": "2026-09-02T15:00:00Z",
+      "truth_not_before_utc": "2026-09-04T15:02:00Z"
+    },
+    {
+      "blind_day_id": "3d68ce2f0aa66270fff0cb29f962395b22b1cfb238d4c4951bc04bd7437ea701",
+      "blind_day_rank": 27,
+      "blind_nonce": "0d54d45c4293cfc0dea60fa44289b17fc453ed21ae097d61a92e4cbc72cfe3b1",
+      "cells": [
+        {
+          "cell_id": "cell-44a6aa87d58255c505ce5fc77a0bf1e8",
+          "context_id": "dojo-prompt-experiment-v1:rank-27:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-415e691385a839799df508a6080a1a46",
+          "context_id": "dojo-prompt-experiment-v1:rank-27:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-67aeaecd5c6424d610b02be61949443a",
+          "context_id": "dojo-prompt-experiment-v1:rank-27:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-07T15:00:00Z",
+      "ordinal": 27,
+      "response_deadline_utc": "2026-09-07T21:00:00Z",
+      "source_not_before_utc": "2026-09-07T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-07T15:30:00Z",
+      "source_window_end_utc": "2026-09-07T15:00:00Z",
+      "source_window_start_utc": "2026-09-06T15:00:00Z",
+      "truth_not_before_utc": "2026-09-08T15:02:00Z"
+    },
+    {
+      "blind_day_id": "83c1d4b00d487b322a54e678ca9f9a28e0302b797c81bb0ecb8506d154d02e08",
+      "blind_day_rank": 28,
+      "blind_nonce": "16fca5c6f66d7211630ab7cc4eb78fdbbab5ffbd82a371b772f4a4eba9e3ec96",
+      "cells": [
+        {
+          "cell_id": "cell-d49331c395e97cb9260104f36970aeaa",
+          "context_id": "dojo-prompt-experiment-v1:rank-28:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-7ef6658a41e63024efa3f7470419654b",
+          "context_id": "dojo-prompt-experiment-v1:rank-28:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-5330804a77d6ccac046f43693a0657b7",
+          "context_id": "dojo-prompt-experiment-v1:rank-28:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-08T15:00:00Z",
+      "ordinal": 28,
+      "response_deadline_utc": "2026-09-08T21:00:00Z",
+      "source_not_before_utc": "2026-09-08T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-08T15:30:00Z",
+      "source_window_end_utc": "2026-09-08T15:00:00Z",
+      "source_window_start_utc": "2026-09-07T15:00:00Z",
+      "truth_not_before_utc": "2026-09-09T15:02:00Z"
+    },
+    {
+      "blind_day_id": "9218fbd93c4a7263424eb8e18365bc2a19e0ab5de82f6fcf9665d93e73985f86",
+      "blind_day_rank": 29,
+      "blind_nonce": "6e6629e2283fc131387a9ec41bc44d0e27a6f1386fcf6a324aed80a5bd044568",
+      "cells": [
+        {
+          "cell_id": "cell-80f12e38f92cde45bbce478b309dcd0d",
+          "context_id": "dojo-prompt-experiment-v1:rank-29:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-f6388cda27e24a4da95fba95b685f233",
+          "context_id": "dojo-prompt-experiment-v1:rank-29:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-2e3e15026b64052a706c8dd81bab41ad",
+          "context_id": "dojo-prompt-experiment-v1:rank-29:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-09T15:00:00Z",
+      "ordinal": 29,
+      "response_deadline_utc": "2026-09-09T21:00:00Z",
+      "source_not_before_utc": "2026-09-09T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-09T15:30:00Z",
+      "source_window_end_utc": "2026-09-09T15:00:00Z",
+      "source_window_start_utc": "2026-09-08T15:00:00Z",
+      "truth_not_before_utc": "2026-09-10T15:02:00Z"
+    },
+    {
+      "blind_day_id": "dc059fcdc75e60bbd1f064446f65e29ca41af3d4cd1931ffdcc2b32386b56918",
+      "blind_day_rank": 30,
+      "blind_nonce": "27e6f807ff4dfbe8ac0cb46d0af36c836d9fd85e348c2bf378f1105f5c412561",
+      "cells": [
+        {
+          "cell_id": "cell-19c39ca09800926296957f347393e6be",
+          "context_id": "dojo-prompt-experiment-v1:rank-30:A_FABLE_MINIMAL:fresh",
+          "variant_id": "A_FABLE_MINIMAL"
+        },
+        {
+          "cell_id": "cell-91c8b3b176776c55e8ac694d387fd0b6",
+          "context_id": "dojo-prompt-experiment-v1:rank-30:B_CALIBRATED_ABSTENTION:fresh",
+          "variant_id": "B_CALIBRATED_ABSTENTION"
+        },
+        {
+          "cell_id": "cell-691bc5e49542ed9a18f547217e3c115c",
+          "context_id": "dojo-prompt-experiment-v1:rank-30:C_STRUCTURAL_REGIME:fresh",
+          "variant_id": "C_STRUCTURAL_REGIME"
+        }
+      ],
+      "decision_cutoff_utc": "2026-09-10T15:00:00Z",
+      "ordinal": 30,
+      "response_deadline_utc": "2026-09-10T21:00:00Z",
+      "source_not_before_utc": "2026-09-10T15:02:00Z",
+      "source_seal_deadline_utc": "2026-09-10T15:30:00Z",
+      "source_window_end_utc": "2026-09-10T15:00:00Z",
+      "source_window_start_utc": "2026-09-09T15:00:00Z",
+      "truth_not_before_utc": "2026-09-11T15:02:00Z"
+    }
+  ],
+  "schema_version": 2,
+  "scorer_lock": {
+    "answer_key_open_before_response_seal_allowed": false,
+    "attestation_gap_codes": [
+      "SANDBOX_NOT_EXTERNALLY_ATTESTED",
+      "MODEL_INVOCATION_NOT_PROVIDER_ATTESTED",
+      "CHRONOLOGY_NOT_EXTERNALLY_MONOTONIC",
+      "ANSWER_KEY_NOT_MARKET_PROVIDER_ATTESTED",
+      "REGISTRY_NOT_EXTERNALLY_MONOTONIC"
+    ],
+    "chronology_attestation_status": "SELF_ATTESTED_UNVERIFIED",
+    "contract": "QR_DOJO_AI_SCORER_LOCK_V1",
+    "evidence_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+    "external_attestations_verified": false,
+    "live_permission": false,
+    "locked_at_utc": "2026-07-18T23:56:38.734534+00:00",
+    "policy": {
+      "flat_return": 0.0,
+      "invalid_parent_policy": "TRANSITIVE_INVALIDATION",
+      "metric": "NET_LOG_GROWTH_ALL_TRIALS",
+      "missing_or_schema_invalid_response": "REJECT_BEFORE_KEY_OPEN",
+      "positive_result_grants_live_permission": false,
+      "same_model_lineage_handling": "DECLARED_CLUSTER_ONLY_NO_INDEPENDENCE_CLAIM"
+    },
+    "schema_version": 1,
+    "scorer_lock_sha256": "8479580ebc6a8542d2b4bb90b2a0fd4354422478e40454ed9a170dbbafe5dcdb",
+    "scorer_sha256": "8dc2e989a6e09c7083920f0d9618393baa320ff67e738e3eda32b999354d5f57",
+    "validity_status": "VALID"
+  },
+  "source_bindings": {
+    "files": {
+      "scripts/run-dojo-ai-forward.py": "db3be0693ffcfb6e6ef9ea115ec7d782be79ac051efe6390476da29b393fad14",
+      "src/quant_rabbit/broker/oanda.py": "e00212f04b8fa7cefdb81458f956b1c1dbadbf2c496768f01398cc049b20a1dc",
+      "src/quant_rabbit/dojo_ai_discretion.py": "ad4abcd45aeefdc47b15365ad4222f4d001b12650824931b9a310202a0d9cd7e",
+      "src/quant_rabbit/dojo_ai_execution.py": "77348fe8d4797cbb1870f7155584895f2e0587db198a1f9063c4e04552668df9",
+      "src/quant_rabbit/dojo_ai_forward.py": "10db6b8d5bdc1e7442a72e1d511ed6445c56453eff1ffb6c6f853a21b1f7e868",
+      "src/quant_rabbit/dojo_ai_truth.py": "2271917d5aa11aba0bf1665da938faaa7c6141a50651da0e18f4f2cc0b0dfc92",
+      "src/quant_rabbit/dojo_ai_validity.py": "a6a3ed26445045ac148a44aca4f948c4a21fe01e119bec81b7f720ae62915fac",
+      "src/quant_rabbit/dojo_market_calendar.py": "ecbdcf4f3b43a1f78b3b6989d262e2f8ea39d1aa590187c81aeab1ba2f89a155",
+      "src/quant_rabbit/dojo_prompt_phase.py": "592472a5a4172a9359f9821ac4a525669f2ecc1dc209fc7a6c95b40cd57830c3",
+      "tools/run-dojo-ai-model-cell.py": "bfd234372877cd8aa9c3b9bc7fe0c3dadff7b86888bb99f6fd30ac70b62146cb"
+    },
+    "git_commit": "30c047f8d8fc47b41f806a63e33ad3cfefc57184"
+  },
+  "state": "PRECOMMITTED",
+  "validity_status": "VALID"
+}

@@ -1,0 +1,104 @@
+{
+  "contract": "QR_DOJO_MULTIPAIR_WORKER_TRAIN_INDEX_V1",
+  "schema_version": 1,
+  "recorded_at_utc": "2026-07-19T00:39:00Z",
+  "classification": "TRAIN_DIAGNOSTIC_ONLY",
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE",
+  "strategy_family_count": 3,
+  "candidate_group_count": 4,
+  "unique_pairs": [
+    "AUD_JPY",
+    "CAD_JPY",
+    "EUR_JPY",
+    "EUR_USD",
+    "GBP_AUD",
+    "GBP_USD",
+    "USD_JPY"
+  ],
+  "common_mechanics": {
+    "source": "OANDA_M1_BID_ASK_REPLAY",
+    "intrabar_paths_required": ["OHLC", "OLHC"],
+    "adverse_slippage_pips_per_fill": 0.3,
+    "financing_pips_per_day": 0.8,
+    "leverage": 25.0,
+    "period_end_settlement_required": true,
+    "strategy_owner_isolation_required": true,
+    "conversion_quote_interpolation_allowed": false
+  },
+  "results": [
+    {
+      "family_id": "MOMENTUM_BURST_V1",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-momentum-train-v1.vpfiKC/summary.json",
+      "artifact_file_sha256": "817f85c3104323a3fe0ab81cb9c4a45f4bc74336e2a12874796f650d133cdc78",
+      "pairs": ["USD_JPY", "AUD_JPY", "EUR_JPY", "GBP_AUD"],
+      "pessimistic_trade_count": 113,
+      "pessimistic_pnl_jpy": -38280.33,
+      "pessimistic_final_nav_multiple": 0.95214959,
+      "pessimistic_realized_drawdown_fraction": 0.052293,
+      "margin_closeouts": 0,
+      "positive_after_cost": false,
+      "survivor": false
+    },
+    {
+      "family_id": "SPIKE_FADE_MEAN_REVERSION_V3",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-spikefade-portfolio-train-v3/runs/20260719T003126.667586Z-53a14ed9/portfolio_scoreboard.json",
+      "artifact_file_sha256": "f51b91c6d38b231dbe0b0d4476d64d1a18cf5de283212efc1def41e44cc90b21",
+      "pairs": ["USD_JPY", "CAD_JPY", "EUR_USD", "GBP_USD"],
+      "pessimistic_trade_count": 90,
+      "pessimistic_pnl_jpy": -20871.49,
+      "pessimistic_final_nav_multiple": 0.89564255,
+      "pessimistic_calendar_30d_multiple": 0.7741463,
+      "pessimistic_realized_drawdown_fraction": 0.27561626,
+      "margin_closeouts": 0,
+      "positive_after_cost": false,
+      "survivor": false,
+      "diagnostic_note": "USD_JPY sleeve was +5970.73 JPY, but the fixed four-pair portfolio failed both intrabar paths"
+    },
+    {
+      "family_id": "BREAKOUT_PULLBACK_LOWLEV_V1",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-breakout-train-v1/scoreboard.json",
+      "artifact_file_sha256": "4e8203df91b4d2eef9a0e6857e691fa66880a2b77e9c359674fca381346a0835",
+      "artifact_canonical_sha256": "5f3fdffac821846f33f197ea5e06c46598ff91a5fc4e8c36486741b8ecc44eb0",
+      "corpus_sha256": "f533edcfe9fe1dfab7ae01bf86b507d5e4728d985298791e3abecb98dc6e5ad9",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "pessimistic_trade_count": 43,
+      "pessimistic_pnl_jpy": -301.92,
+      "pessimistic_final_nav_multiple": 0.9984904,
+      "pessimistic_realized_drawdown_fraction": 0.00387985,
+      "margin_closeouts": 0,
+      "positive_after_cost": false,
+      "survivor": false
+    },
+    {
+      "family_id": "BURST_LOWLEV_CONTROL_V1",
+      "artifact_path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-worker-breakout-train-v1/scoreboard.json",
+      "artifact_file_sha256": "4e8203df91b4d2eef9a0e6857e691fa66880a2b77e9c359674fca381346a0835",
+      "artifact_canonical_sha256": "5f3fdffac821846f33f197ea5e06c46598ff91a5fc4e8c36486741b8ecc44eb0",
+      "corpus_sha256": "f533edcfe9fe1dfab7ae01bf86b507d5e4728d985298791e3abecb98dc6e5ad9",
+      "pairs": ["USD_JPY", "EUR_JPY", "EUR_USD", "GBP_USD"],
+      "pessimistic_trade_count": 336,
+      "pessimistic_pnl_jpy": -6621.52,
+      "pessimistic_final_nav_multiple": 0.9668924,
+      "pessimistic_realized_drawdown_fraction": 0.03430335,
+      "margin_closeouts": 0,
+      "positive_after_cost": false,
+      "survivor": false
+    }
+  ],
+  "aggregate_classification": {
+    "survivor_count": 0,
+    "all_candidate_groups_negative_after_declared_cost": true,
+    "monthly_3x_reached": false,
+    "verdict": "NO_SURVIVORS_EXPAND_OR_REDESIGN_IN_TRAIN"
+  },
+  "fail_closed_findings": [
+    "LONGER_MULTIPAIR_RUNS_ABORTED_ON_STALE_CONVERSION_QUOTES",
+    "NO_CONVERSION_INTERPOLATION_OR_RESULT_SALVAGE",
+    "REALIZED_BALANCE_DRAWDOWN_IS_NOT_FULL_INTRABAR_MTM_DRAWDOWN",
+    "HISTORICAL_WINDOWS_ALREADY_WORN_AND_NOT_HOLDOUT",
+    "STATE_DEPENDENT_EXECUTION_TAIL_NOT_PROVED"
+  ]
+}

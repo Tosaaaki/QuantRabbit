@@ -30,7 +30,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 UTC = timezone.utc
 
@@ -71,7 +71,9 @@ def _round_price(pair: str, price: float) -> float:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
     ).hexdigest()
 
 
@@ -120,14 +122,15 @@ def _validate_finite_tree(value: Any, path: str = "payload") -> None:
         for index, item in enumerate(value):
             _validate_finite_tree(item, f"{path}[{index}]")
         return
-    raise VirtualBrokerError(f"{path} contains unsupported value {type(value).__name__}")
+    raise VirtualBrokerError(
+        f"{path} contains unsupported value {type(value).__name__}"
+    )
 
 
 def _validate_pair(pair: str) -> None:
     parts = pair.split("_")
-    if (
-        len(parts) != 2
-        or any(len(part) != 3 or not part.isalpha() or not part.isupper() for part in parts)
+    if len(parts) != 2 or any(
+        len(part) != 3 or not part.isalpha() or not part.isupper() for part in parts
     ):
         raise VirtualBrokerError(f"invalid pair: {pair}")
 
@@ -174,6 +177,9 @@ class VirtualBroker:
     )
     _quote_seq: int = 0
     feed_cursor: Optional[dict[str, Any]] = field(default=None, repr=False)
+    _entry_admission: Optional[
+        Callable[[str, str, Optional[str]], Optional[dict[str, Any]]]
+    ] = field(default=None, init=False, repr=False)
     _seq: int = 0
     _prev_sha: str = "0" * 64
 
@@ -234,7 +240,8 @@ class VirtualBroker:
         }
         record = {**body, "sha": _sha(body)}
         self._handle.write(
-            json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
+            json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            + "\n"
         )
         self._handle.flush()
         if not self.fast_ledger:
@@ -280,9 +287,7 @@ class VirtualBroker:
         ):
             bid, ask, ts = self.last_quotes[pair]
             return bid, ask, ts, last_sequence
-        raise VirtualBrokerError(
-            f"no {pair} conversion quote at or before fill quote"
-        )
+        raise VirtualBrokerError(f"no {pair} conversion quote at or before fill quote")
 
     def _conversion_evidence(
         self,
@@ -317,12 +322,12 @@ class VirtualBroker:
                 via_usd = self._quote_as_of(via_pair, as_of_sequence)
                 via_mid = (via_usd[0] + via_usd[1]) / 2.0
                 if via_mid <= 0:
-                    raise VirtualBrokerError(
-                        f"invalid conversion quote for {via_pair}"
-                    )
+                    raise VirtualBrokerError(f"invalid conversion quote for {via_pair}")
                 sources.extend((("USD_JPY", usd_jpy), (via_pair, via_usd)))
                 rate = ((usd_jpy[0] + usd_jpy[1]) / 2.0) / via_mid
-        reference_epoch = self._ts_epoch(reference_ts) if reference_ts is not None else None
+        reference_epoch = (
+            self._ts_epoch(reference_ts) if reference_ts is not None else None
+        )
         for source_pair, source_quote in sources:
             source_ts = source_quote[2]
             if source_ts == reference_ts:
@@ -410,7 +415,9 @@ class VirtualBroker:
         reference_ts: str,
     ) -> tuple[float, float]:
         mark = bid if pos.side == "LONG" else ask
-        diff = (mark - pos.entry_price) if pos.side == "LONG" else (pos.entry_price - mark)
+        diff = (
+            (mark - pos.entry_price) if pos.side == "LONG" else (pos.entry_price - mark)
+        )
         rate = self._jpy_per_quote_unit(pos.pair, as_of_sequence, reference_ts)
         return diff * pos.units * rate, rate
 
@@ -426,8 +433,8 @@ class VirtualBroker:
         if pair.endswith("JPY"):
             return units * price
         # base-currency exposure valued via quote conversion
-        return units * price * self._jpy_per_quote_unit(
-            pair, as_of_sequence, reference_ts
+        return (
+            units * price * self._jpy_per_quote_unit(pair, as_of_sequence, reference_ts)
         )
 
     def _adverse_exit_price(self, pair: str, side: str, price: float) -> float:
@@ -468,13 +475,16 @@ class VirtualBroker:
         for pair, sides in by_pair.items():
             q = self.last_quotes[pair]
             mid = (q[0] + q[1]) / 2.0
-            margin += self._exposure_jpy(
-                pair,
-                max(sides["LONG"], sides["SHORT"]),
-                mid,
-                as_of_sequence=self._last_quote_watermarks[pair],
-                reference_ts=q[2],
-            ) / self.leverage
+            margin += (
+                self._exposure_jpy(
+                    pair,
+                    max(sides["LONG"], sides["SHORT"]),
+                    mid,
+                    as_of_sequence=self._last_quote_watermarks[pair],
+                    reference_ts=q[2],
+                )
+                / self.leverage
+            )
         usage = margin / equity if equity > 0 else 999.0
         return {
             "balance_jpy": round(self.balance_jpy, 2),
@@ -494,10 +504,16 @@ class VirtualBroker:
         if q is None:
             return False
         mid = (q[0] + q[1]) / 2.0
-        long_u = sum(p.units for p in self.positions.values()
-                     if p.pair == pair and p.side == "LONG")
-        short_u = sum(p.units for p in self.positions.values()
-                      if p.pair == pair and p.side == "SHORT")
+        long_u = sum(
+            p.units
+            for p in self.positions.values()
+            if p.pair == pair and p.side == "LONG"
+        )
+        short_u = sum(
+            p.units
+            for p in self.positions.values()
+            if p.pair == pair and p.side == "SHORT"
+        )
         if side == "LONG":
             long_u += units
         else:
@@ -505,26 +521,89 @@ class VirtualBroker:
         watermark = self._last_quote_watermarks.get(pair)
         if watermark is None:
             raise VirtualBrokerError(f"no accounting watermark for {pair}")
-        new_pair_margin = self._exposure_jpy(
-            pair,
-            max(long_u, short_u),
-            mid,
-            as_of_sequence=watermark,
-            reference_ts=q[2],
-        ) / self.leverage
-        old_pair_margin = self._exposure_jpy(
-            pair, max(long_u - (units if side == "LONG" else 0),
-                      short_u - (units if side == "SHORT" else 0)), mid,
-            as_of_sequence=watermark,
-            reference_ts=q[2],
-        ) / self.leverage
+        new_pair_margin = (
+            self._exposure_jpy(
+                pair,
+                max(long_u, short_u),
+                mid,
+                as_of_sequence=watermark,
+                reference_ts=q[2],
+            )
+            / self.leverage
+        )
+        old_pair_margin = (
+            self._exposure_jpy(
+                pair,
+                max(
+                    long_u - (units if side == "LONG" else 0),
+                    short_u - (units if side == "SHORT" else 0),
+                ),
+                mid,
+                as_of_sequence=watermark,
+                reference_ts=q[2],
+            )
+            / self.leverage
+        )
         new_total = acct["margin_used_jpy"] - old_pair_margin + new_pair_margin
         return new_total <= acct["equity_jpy"]
 
+    def _entry_admission_rejection(
+        self, pair: str, side: str, order_id: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        """Run an installed DOJO admission policy at the actual fill boundary.
+
+        The base virtual broker has no strategy policy.  A provenance owner
+        registry may install one, and a malformed decision fails closed before
+        either a market or resting order can become a position.
+        """
+
+        if self._entry_admission is None:
+            return None
+        rejection = self._entry_admission(pair, side, order_id)
+        if rejection is None:
+            return None
+        expected_keys = {
+            "scope",
+            "reason",
+            "active_pair_positions",
+            "max_concurrent_per_pair",
+            "active_global_positions",
+            "global_max_concurrent",
+        }
+        if not isinstance(rejection, dict) or set(rejection) != expected_keys:
+            raise VirtualBrokerError(
+                "entry admission policy returned malformed evidence"
+            )
+        if rejection["scope"] not in {"PAIR", "GLOBAL"} or rejection["reason"] not in {
+            "OWNER_PAIR_CONCURRENCY_CAP_REACHED",
+            "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED",
+        }:
+            raise VirtualBrokerError(
+                "entry admission policy returned an invalid reason"
+            )
+        for key in ("active_pair_positions", "active_global_positions"):
+            value = rejection[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise VirtualBrokerError(
+                    "entry admission policy returned an invalid count"
+                )
+        for key in ("max_concurrent_per_pair", "global_max_concurrent"):
+            value = rejection[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise VirtualBrokerError(
+                    "entry admission policy returned an invalid cap"
+                )
+        return rejection
+
     # ---- agent actions ---------------------------------------------------
-    def market_order(self, pair: str, side: str, units: float,
-                     tp_pips: Optional[float] = None,
-                     sl_pips: Optional[float] = None) -> str:
+    def market_order(
+        self,
+        pair: str,
+        side: str,
+        units: float,
+        tp_pips: Optional[float] = None,
+        sl_pips: Optional[float] = None,
+    ) -> str:
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -536,9 +615,23 @@ class VirtualBroker:
         q = self.last_quotes.get(pair)
         if q is None:
             raise VirtualBrokerError(f"no live quote for {pair}; cannot fill")
+        rejection = self._entry_admission_rejection(pair, side)
+        if rejection is not None:
+            self._log(
+                "ORDER_REJECTED_CONCURRENCY_CAP",
+                {
+                    "pair": pair,
+                    "side": side,
+                    "units": units,
+                    "admission": rejection,
+                },
+            )
+            raise VirtualBrokerError("owner concurrency cap reached for market order")
         if not self._margin_headroom_ok(pair, side, units):
-            self._log("ORDER_REJECTED_INSUFFICIENT_MARGIN",
-                      {"pair": pair, "side": side, "units": units})
+            self._log(
+                "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+                {"pair": pair, "side": side, "units": units},
+            )
             raise VirtualBrokerError("insufficient margin for market order")
         bid, ask, ts = q
         quote_sequence = self._last_quote_watermarks.get(pair)
@@ -551,26 +644,58 @@ class VirtualBroker:
         entry = _round_price(pair, entry)
         if entry <= 0:
             raise VirtualBrokerError("slippage produced a non-positive entry price")
-        tp = _round_price(pair, entry + tp_pips * pip if side == "LONG" else entry - tp_pips * pip) if tp_pips else None
-        sl = _round_price(pair, entry - sl_pips * pip if side == "LONG" else entry + sl_pips * pip) if sl_pips else None
+        tp = (
+            _round_price(
+                pair, entry + tp_pips * pip if side == "LONG" else entry - tp_pips * pip
+            )
+            if tp_pips
+            else None
+        )
+        sl = (
+            _round_price(
+                pair, entry - sl_pips * pip if side == "LONG" else entry + sl_pips * pip
+            )
+            if sl_pips
+            else None
+        )
         trade_id = self._next_id("T")
         self.positions[trade_id] = VBPosition(
-            trade_id=trade_id, pair=pair, side=side, units=units,
-            entry_price=entry, opened_ts=ts, tp_price=tp, sl_price=sl,
+            trade_id=trade_id,
+            pair=pair,
+            side=side,
+            units=units,
+            entry_price=entry,
+            opened_ts=ts,
+            tp_price=tp,
+            sl_price=sl,
         )
-        self._log("FILL_MARKET", {
-            "trade_id": trade_id, "pair": pair, "side": side, "units": units,
-            "entry": entry, "tp": tp, "sl": sl,
-            "quote": {"bid": bid, "ask": ask, "ts": ts},
-            "conversion": conversion,
-            "slippage_pips": self.slippage_pips,
-        })
+        self._log(
+            "FILL_MARKET",
+            {
+                "trade_id": trade_id,
+                "pair": pair,
+                "side": side,
+                "units": units,
+                "entry": entry,
+                "tp": tp,
+                "sl": sl,
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "conversion": conversion,
+                "slippage_pips": self.slippage_pips,
+            },
+        )
         self._enforce_margin_after_action()
         return trade_id
 
-    def limit_order(self, pair: str, side: str, units: float, price: float,
-                    tp_pips: Optional[float] = None,
-                    sl_pips: Optional[float] = None) -> str:
+    def limit_order(
+        self,
+        pair: str,
+        side: str,
+        units: float,
+        price: float,
+        tp_pips: Optional[float] = None,
+        sl_pips: Optional[float] = None,
+    ) -> str:
         _validate_pair(pair)
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
@@ -582,18 +707,37 @@ class VirtualBroker:
             sl_pips = _finite_number("sl_pips", sl_pips, positive=True)
         order_id = self._next_id("O")
         self.orders[order_id] = VBOrder(
-            order_id=order_id, pair=pair, side=side, units=units,
-            limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips,
+            order_id=order_id,
+            pair=pair,
+            side=side,
+            units=units,
+            limit_price=price,
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
         )
-        self._log("ORDER_LIMIT", {
-            "order_id": order_id, "pair": pair, "side": side,
-            "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
-        })
+        self._log(
+            "ORDER_LIMIT",
+            {
+                "order_id": order_id,
+                "pair": pair,
+                "side": side,
+                "units": units,
+                "price": price,
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+            },
+        )
         return order_id
 
-    def stop_order(self, pair: str, side: str, units: float, price: float,
-                   tp_pips: Optional[float] = None,
-                   sl_pips: Optional[float] = None) -> str:
+    def stop_order(
+        self,
+        pair: str,
+        side: str,
+        units: float,
+        price: float,
+        tp_pips: Optional[float] = None,
+        sl_pips: Optional[float] = None,
+    ) -> str:
         """Breakout entry: LONG fills once the real ask reaches price (at
         the level or WORSE when gapped); SHORT once the real bid does."""
 
@@ -608,13 +752,27 @@ class VirtualBroker:
             sl_pips = _finite_number("sl_pips", sl_pips, positive=True)
         order_id = self._next_id("O")
         self.orders[order_id] = VBOrder(
-            order_id=order_id, pair=pair, side=side, units=units,
-            limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips, kind="STOP",
+            order_id=order_id,
+            pair=pair,
+            side=side,
+            units=units,
+            limit_price=price,
+            tp_pips=tp_pips,
+            sl_pips=sl_pips,
+            kind="STOP",
         )
-        self._log("ORDER_STOP", {
-            "order_id": order_id, "pair": pair, "side": side,
-            "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
-        })
+        self._log(
+            "ORDER_STOP",
+            {
+                "order_id": order_id,
+                "pair": pair,
+                "side": side,
+                "units": units,
+                "price": price,
+                "tp_pips": tp_pips,
+                "sl_pips": sl_pips,
+            },
+        )
         return order_id
 
     def cancel_order(self, order_id: str) -> None:
@@ -645,7 +803,11 @@ class VirtualBroker:
         price = self._adverse_exit_price(
             pos.pair, pos.side, bid if pos.side == "LONG" else ask
         )
-        diff = (price - pos.entry_price) if pos.side == "LONG" else (pos.entry_price - price)
+        diff = (
+            (price - pos.entry_price)
+            if pos.side == "LONG"
+            else (pos.entry_price - price)
+        )
         gross_pl = diff * close_units * conversion_rate
         financing = self._financing_jpy(pos, ts, conversion_rate) * (
             close_units / pos.units
@@ -656,18 +818,28 @@ class VirtualBroker:
             del self.positions[trade_id]
         else:
             pos.units -= close_units
-        self._log("CLOSE", {
-            "trade_id": trade_id, "units": close_units, "price": price,
-            "pl_jpy": round(pl, 2), "quote": {"bid": bid, "ask": ask, "ts": ts},
-            "gross_pl_jpy": round(gross_pl, 2),
-            "financing_jpy": round(financing, 2),
-            "conversion": conversion,
-            "slippage_pips": self.slippage_pips,
-        })
+        self._log(
+            "CLOSE",
+            {
+                "trade_id": trade_id,
+                "units": close_units,
+                "price": price,
+                "pl_jpy": round(pl, 2),
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "gross_pl_jpy": round(gross_pl, 2),
+                "financing_jpy": round(financing, 2),
+                "conversion": conversion,
+                "slippage_pips": self.slippage_pips,
+            },
+        )
         return pl
 
-    def set_exit(self, trade_id: str, tp_price: Optional[float] = None,
-                 sl_price: Optional[float] = None) -> None:
+    def set_exit(
+        self,
+        trade_id: str,
+        tp_price: Optional[float] = None,
+        sl_price: Optional[float] = None,
+    ) -> None:
         pos = self.positions.get(trade_id)
         if pos is None:
             raise VirtualBrokerError(f"unknown trade: {trade_id}")
@@ -680,7 +852,9 @@ class VirtualBroker:
         self._log("SET_EXIT", {"trade_id": trade_id, "tp": tp_price, "sl": sl_price})
 
     # ---- feed ------------------------------------------------------------
-    def on_quote(self, pair: str, bid: float, ask: float, ts: str) -> list[dict[str, Any]]:
+    def on_quote(
+        self, pair: str, bid: float, ask: float, ts: str
+    ) -> list[dict[str, Any]]:
         """Process one real quote: resting orders, TP/SL, margin. Returns events."""
 
         bid, ask = self._validate_quote(pair, bid, ask, ts)
@@ -767,12 +941,29 @@ class VirtualBroker:
                     filled_price = min(order.limit_price, bid)
             if filled_price is None:
                 continue
+            rejection = self._entry_admission_rejection(pair, order.side, order_id)
+            if rejection is not None:
+                del self.orders[order_id]
+                event = {
+                    "event": "ORDER_CANCEL_CONCURRENCY_CAP",
+                    "order_id": order_id,
+                    "pair": pair,
+                    "side": order.side,
+                    "units": order.units,
+                    "quote": {"bid": bid, "ask": ask, "ts": ts},
+                    "admission": rejection,
+                }
+                self._log("ORDER_CANCEL_CONCURRENCY_CAP", event)
+                events.append(event)
+                continue
             applied_slippage_pips = 0.0
             if self.slippage_pips > 0:
                 slip = self.slippage_pips * _pip(pair)
                 stressed_price = _round_price(
                     pair,
-                    filled_price + slip if order.side == "LONG" else filled_price - slip,
+                    filled_price + slip
+                    if order.side == "LONG"
+                    else filled_price - slip,
                 )
                 if order.kind == "LIMIT":
                     # A limit order may receive less improvement under stress,
@@ -792,25 +983,54 @@ class VirtualBroker:
                 applied_slippage_pips = abs(filled_price - observed_price) / _pip(pair)
             if not self._margin_headroom_ok(pair, order.side, order.units):
                 del self.orders[order_id]
-                self._log("LIMIT_REJECTED_INSUFFICIENT_MARGIN",
-                          {"order_id": order_id, "pair": pair})
+                self._log(
+                    "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                    {"order_id": order_id, "pair": pair},
+                )
                 continue
             pip = _pip(pair)
-            tp = _round_price(pair, filled_price + order.tp_pips * pip if order.side == "LONG"
-                              else filled_price - order.tp_pips * pip) if order.tp_pips else None
-            sl = _round_price(pair, filled_price - order.sl_pips * pip if order.side == "LONG"
-                              else filled_price + order.sl_pips * pip) if order.sl_pips else None
+            tp = (
+                _round_price(
+                    pair,
+                    filled_price + order.tp_pips * pip
+                    if order.side == "LONG"
+                    else filled_price - order.tp_pips * pip,
+                )
+                if order.tp_pips
+                else None
+            )
+            sl = (
+                _round_price(
+                    pair,
+                    filled_price - order.sl_pips * pip
+                    if order.side == "LONG"
+                    else filled_price + order.sl_pips * pip,
+                )
+                if order.sl_pips
+                else None
+            )
             trade_id = self._next_id("T")
             conversion = self._conversion_evidence(pair, quote_sequence, ts)
             self.positions[trade_id] = VBPosition(
-                trade_id=trade_id, pair=pair, side=order.side, units=order.units,
-                entry_price=filled_price, opened_ts=ts, tp_price=tp, sl_price=sl,
+                trade_id=trade_id,
+                pair=pair,
+                side=order.side,
+                units=order.units,
+                entry_price=filled_price,
+                opened_ts=ts,
+                tp_price=tp,
+                sl_price=sl,
             )
             del self.orders[order_id]
             event = {
-                "event": "FILL_LIMIT", "order_id": order_id, "trade_id": trade_id,
-                "pair": pair, "side": order.side, "units": order.units,
-                "price": filled_price, "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "event": "FILL_LIMIT",
+                "order_id": order_id,
+                "trade_id": trade_id,
+                "pair": pair,
+                "side": order.side,
+                "units": order.units,
+                "price": filled_price,
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
                 "conversion": conversion,
                 "slippage_pips": self.slippage_pips,
                 "applied_slippage_pips": round(applied_slippage_pips, 8),
@@ -847,20 +1067,24 @@ class VirtualBroker:
                 # TP is a price-protected limit exit.  Fixed stress slippage
                 # must not fabricate an execution through its protected price.
                 exit_price = _round_price(pair, exit_price)
-            conversion = self._conversion_evidence(
-                pos.pair, quote_sequence, ts
-            )
+            conversion = self._conversion_evidence(pos.pair, quote_sequence, ts)
             conversion_rate = float(conversion["rate_jpy_per_quote_unit"])
-            diff = (exit_price - pos.entry_price) if pos.side == "LONG" else (
-                pos.entry_price - exit_price)
+            diff = (
+                (exit_price - pos.entry_price)
+                if pos.side == "LONG"
+                else (pos.entry_price - exit_price)
+            )
             gross_pl = diff * pos.units * conversion_rate
             financing = self._financing_jpy(pos, ts, conversion_rate)
             pl = gross_pl - financing
             self.balance_jpy += pl
             del self.positions[trade_id]
             event = {
-                "event": f"EXIT_{reason}", "trade_id": trade_id, "price": exit_price,
-                "pl_jpy": round(pl, 2), "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "event": f"EXIT_{reason}",
+                "trade_id": trade_id,
+                "price": exit_price,
+                "pl_jpy": round(pl, 2),
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
                 "gross_pl_jpy": round(gross_pl, 2),
                 "financing_jpy": round(financing, 2),
                 "conversion": conversion,
@@ -887,27 +1111,32 @@ class VirtualBroker:
                 raise VirtualBrokerError(
                     f"no accounting watermark for open position pair {pos.pair}"
                 )
-            conversion = self._conversion_evidence(
-                pos.pair, quote_sequence, q[2]
-            )
+            conversion = self._conversion_evidence(pos.pair, quote_sequence, q[2])
             conversion_rate = float(conversion["rate_jpy_per_quote_unit"])
             price = self._adverse_exit_price(
                 pos.pair, pos.side, q[0] if pos.side == "LONG" else q[1]
             )
-            diff = (price - pos.entry_price) if pos.side == "LONG" else (
-                pos.entry_price - price)
+            diff = (
+                (price - pos.entry_price)
+                if pos.side == "LONG"
+                else (pos.entry_price - price)
+            )
             gross_pl = diff * pos.units * conversion_rate
             financing = self._financing_jpy(pos, q[2], conversion_rate)
             pl = gross_pl - financing
             self.balance_jpy += pl
             del self.positions[trade_id]
-            event = {"event": "MARGIN_CLOSEOUT", "trade_id": trade_id,
-                     "price": price, "pl_jpy": round(pl, 2),
-                     "gross_pl_jpy": round(gross_pl, 2),
-                     "financing_jpy": round(financing, 2),
-                     "quote": {"bid": q[0], "ask": q[1], "ts": q[2]},
-                     "conversion": conversion,
-                     "slippage_pips": self.slippage_pips}
+            event = {
+                "event": "MARGIN_CLOSEOUT",
+                "trade_id": trade_id,
+                "price": price,
+                "pl_jpy": round(pl, 2),
+                "gross_pl_jpy": round(gross_pl, 2),
+                "financing_jpy": round(financing, 2),
+                "quote": {"bid": q[0], "ask": q[1], "ts": q[2]},
+                "conversion": conversion,
+                "slippage_pips": self.slippage_pips,
+            }
             self._log("MARGIN_CLOSEOUT", event)
             events.append(event)
         return events
@@ -966,7 +1195,9 @@ class VirtualBroker:
             _validate_pair(pos.pair)
             if pos.side not in {"LONG", "SHORT"}:
                 raise VirtualBrokerError("invalid snapshot position side")
-            pos.units = _finite_number("snapshot position units", pos.units, positive=True)
+            pos.units = _finite_number(
+                "snapshot position units", pos.units, positive=True
+            )
             pos.entry_price = _finite_number(
                 "snapshot position entry_price", pos.entry_price, positive=True
             )
@@ -1001,7 +1232,9 @@ class VirtualBroker:
                 "STOP",
             }:
                 raise VirtualBrokerError("invalid snapshot order side/kind")
-            order.units = _finite_number("snapshot order units", order.units, positive=True)
+            order.units = _finite_number(
+                "snapshot order units", order.units, positive=True
+            )
             order.limit_price = _finite_number(
                 "snapshot order price", order.limit_price, positive=True
             )
@@ -1077,7 +1310,9 @@ class VirtualBroker:
                     positive=True,
                 )
                 if not hist_sequence_value.is_integer():
-                    raise VirtualBrokerError("snapshot history sequence must be an integer")
+                    raise VirtualBrokerError(
+                        "snapshot history sequence must be an integer"
+                    )
                 hist_sequence = int(hist_sequence_value)
                 if hist_sequence <= previous_sequence or hist_sequence > quote_seq:
                     raise VirtualBrokerError("snapshot quote history is not monotonic")
@@ -1085,10 +1320,15 @@ class VirtualBroker:
                 parsed_history.append(
                     (hist_bid, hist_ask, raw_item["ts"], hist_sequence)
                 )
-            if parsed_history[-1][:3] != last_quotes[pair] or parsed_history[-1][3] != sequence:
+            if (
+                parsed_history[-1][:3] != last_quotes[pair]
+                or parsed_history[-1][3] != sequence
+            ):
                 raise VirtualBrokerError("snapshot last quote/history mismatch")
             quote_history[pair] = parsed_history
-        if set(raw_sequences) != set(last_quotes) or set(raw_watermarks) != set(last_quotes):
+        if set(raw_sequences) != set(last_quotes) or set(raw_watermarks) != set(
+            last_quotes
+        ):
             raise VirtualBrokerError("snapshot quote maps disagree")
         if set(raw_history) != set(last_quotes):
             raise VirtualBrokerError("snapshot quote history pairs disagree")

@@ -25,6 +25,7 @@ from collections import deque
 from quant_rabbit.dojo_lab_provenance import (
     OwnedBrokerView,
     canonical_strategy_owner_id,
+    owner_concurrency_caps_from_config,
 )
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
@@ -60,21 +61,24 @@ class Bot:
             cfg.get("strategy_owner_id")
             or canonical_strategy_owner_id(cfg, namespace="lab")
         )
-        self.broker = OwnedBrokerView(broker, self.owner_id)
         self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
         self.tp_pips = float(cfg.get("tp_pips", 0) or 0)
         self.tp_atr = cfg.get("tp_atr")  # scale-free take: TP = tp_atr x ATR
         self.sl_pips = cfg.get("sl_pips")
         self.ceiling_s = int(cfg["ceiling_min"]) * 60
-        self.max_concurrent = int(cfg.get("max_concurrent", 3))
+        self.max_concurrent, self.global_max = owner_concurrency_caps_from_config(cfg)
         self.per_pos_lev = float(cfg.get("per_pos_lev", 4.3))
         self.atr_floor = float(cfg.get("atr_floor_pips", 1.0))
         self.pull_atr = float(cfg.get("pull_atr", 0.6))
         self.fade_atr = float(cfg.get("fade_atr", 1.2))
         self.eff_max = float(cfg.get("eff_max", 0.2))
-        self.global_max = int(cfg.get("global_max_concurrent",
-                                      self.max_concurrent * len(self.pairs)))
+        self.broker = OwnedBrokerView(
+            broker,
+            self.owner_id,
+            max_concurrent_per_pair=self.max_concurrent,
+            global_max_concurrent=self.global_max,
+        )
         self.state: dict[str, _PairState] = {p: _PairState() for p in self.pairs}
         self._owner: dict[str, str] = {}  # owned trade_id -> pair (local cache)
 

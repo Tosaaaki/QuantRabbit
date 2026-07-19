@@ -666,8 +666,7 @@ def test_supersession_is_reciprocal_and_cannot_reactivate_old_evidence() -> None
     assert prior_evaluation["goal_status"] == "3X_NOT_REACHABLE"
     assert prior_evaluation["lifecycle"]["state"] == "SUPERSEDED"
     assert (
-        "LIFECYCLE_SUPERSEDED_BY:worker_forward_v2"
-        in prior_evaluation["edge_blockers"]
+        "LIFECYCLE_SUPERSEDED_BY:worker_forward_v2" in prior_evaluation["edge_blockers"]
     )
 
     current["lifecycle"]["supersedes_lane_ids"] = []
@@ -731,7 +730,18 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     worker_legacy = lanes["worker_w46_w53_legacy_performance_invalid"]
     ai_v1 = lanes["ai_prompt_phase_v1_registered_zero_cells"]
     ai_v2 = lanes["ai_prompt_phase_v2_started_superseded"]
-    ai_v3 = lanes["ai_prompt_phase_v3_implementation_no_run"]
+    ai_v3_implementation = lanes["ai_prompt_phase_v3_implementation_no_run"]
+    ai_v3_failed = lanes["ai_prompt_phase_v3_startup_incomplete"]
+    ai_v3r1 = lanes["ai_prompt_phase_v3r1_started"]
+    ai_exit_train_v1 = lanes["ai_exit_train_v1_diagnostic"]
+    ai_exit_train_v2 = lanes["ai_exit_train_v2_diagnostic"]
+    ai_exit_entry_policy = lanes["worker_ai_exit_entry_policy_train_v2"]
+    capital_worker = lanes["worker_capital_time_release_train_v1"]
+    ai_capital_parent = lanes["worker_ai_capital_recycle_substrate_train_v1"]
+    ai_capital = lanes["ai_capital_recycle_train_v1"]
+    tailguard = lanes["worker_spikefade_tailguard_sl25_train_v1"]
+    tailguard_lowlev = lanes["worker_spikefade_tailguard_lowlev_train_v1"]
+    pullback = lanes["worker_pullback_a2_train_v1"]
     clean_legacy = lanes["ai_dayread_w54_clean_legacy_contract_invalid"]
     assert idea["status"] == "HYPOTHESIS"
     assert idea["distribution_30d"]["stressed_median_multiple"] is None
@@ -745,11 +755,62 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     assert forward_v2["distribution_30d"]["active_days"] == 0
     assert ai_v1["lifecycle"]["state"] == "SUPERSEDED"
     assert ai_v2["lifecycle"]["state"] == "SUPERSEDED"
-    assert ai_v3["status"] == "HYPOTHESIS"
-    assert ai_v3["lifecycle"]["state"] == "IMPLEMENTATION_ONLY"
-    assert ai_v3["provenance"]["prospective"] is False
-    assert ai_v3["provenance"]["evidence_path"] is None
-    assert ai_v3["distribution_30d"]["active_days"] == 0
+    assert ai_v3_implementation["lifecycle"]["state"] == "SUPERSEDED"
+    assert ai_v3_failed["status"] == "INVALID"
+    assert ai_v3_failed["lifecycle"]["state"] == "SUPERSEDED"
+    assert (
+        "VALIDITY_GENESIS_INITIALIZATION_FAILED"
+        in (ai_v3_failed["provenance"]["invalid_reasons"])
+    )
+    assert ai_v3r1["status"] == "INVALID"
+    assert ai_v3r1["lifecycle"]["state"] == "SUPERSEDED"
+    assert ai_v3r1["provenance"]["prospective"] is True
+    assert ai_v3r1["provenance"]["evidence_path"].endswith(
+        "dojo-ai-forward-v3r1-supersession-v1.json"
+    )
+    assert ai_v3r1["distribution_30d"]["active_days"] == 0
+    assert ai_exit_train_v1["status"] == "INVALID"
+    assert ai_exit_train_v1["lifecycle"]["state"] == "SUPERSEDED"
+    assert ai_exit_train_v1["provenance"]["lookahead_free"] is False
+    assert ai_exit_train_v2["status"] == "INVALID"
+    assert ai_exit_train_v2["lifecycle"]["state"] == "CURRENT"
+    assert ai_exit_train_v2["provenance"]["lookahead_free"] is True
+    assert ai_exit_train_v2["provenance"]["prospective"] is False
+    assert ai_exit_train_v2["parent_lane_ids"] == [
+        "worker_ai_exit_entry_policy_train_v2"
+    ]
+    assert ai_exit_train_v2.get("dependence") is None
+    assert ai_exit_entry_policy.get("dependence") is None
+    assert ai_exit_train_v2["provenance"]["evidence_path"].endswith(
+        "dojo-ai-exit-train-v2/evidence.json"
+    )
+    assert capital_worker["provenance"]["prospective"] is False
+    assert capital_worker["margin"]["peak_usage_fraction"] is None
+    assert ai_capital["parent_lane_ids"] == [ai_capital_parent["lane_id"]]
+    assert (
+        ai_capital["provenance"]["content_sha256"]
+        == (ai_capital_parent["provenance"]["content_sha256"])
+    )
+    assert ai_capital["provenance"]["prospective"] is False
+    assert ai_exit_train_v1["provenance"]["evidence_path"].endswith(
+        "dojo-ai-exit-train-v1/evidence.json"
+    )
+    for tuned_worker in (tailguard, tailguard_lowlev, pullback):
+        assert tuned_worker["status"] == "HYPOTHESIS"
+        assert tuned_worker["lifecycle"]["state"] == "CURRENT"
+        assert tuned_worker["provenance"]["valid"] is True
+        assert tuned_worker["provenance"]["prospective"] is False
+        assert tuned_worker["provenance"]["evidence_path"].endswith(
+            "dojo-worker-ai-tuning-20260719/evidence.json"
+        )
+    assert (
+        tailguard["margin"]["peak_usage_fraction"] > tailguard["margin"]["cap_fraction"]
+    )
+    assert (
+        tailguard_lowlev["margin"]["peak_usage_fraction"]
+        < tailguard_lowlev["margin"]["cap_fraction"]
+    )
+    assert pullback["sizing"]["reverse_engineered_from_goal"] is False
     assert worker_legacy["status"] == "INVALID"
     assert (
         "LEGACY_PERFORMANCE_PROVENANCE_INVALIDATED"
@@ -773,11 +834,52 @@ def test_current_registry_keeps_ideas_separate_from_invalid_legacy_artifacts() -
     assert _evaluation(board, "worker_forward_smoke_v2_started")["edge_status"] == (
         "HYPOTHESIS"
     )
-    ai_v3_evaluation = _evaluation(
-        board, "ai_prompt_phase_v3_implementation_no_run"
+    ai_v3r1_evaluation = _evaluation(board, "ai_prompt_phase_v3r1_started")
+    assert ai_v3r1_evaluation["edge_status"] == "INVALID"
+    assert "REDUNDANT_CANDLE_ONLY_INPUT_CLASS" in (ai_v3r1_evaluation["edge_blockers"])
+    ai_exit_v1_evaluation = _evaluation(board, "ai_exit_train_v1_diagnostic")
+    assert ai_exit_v1_evaluation["edge_status"] == "INVALID"
+    assert (
+        "DECISION_BAR_HIGH_LOW_CLOSE_EXPOSED_AT_DECISION_BAR_OPEN"
+        in (ai_exit_v1_evaluation["edge_blockers"])
     )
-    assert ai_v3_evaluation["edge_status"] == "HYPOTHESIS"
-    assert "IMPLEMENTATION_ONLY_NO_RUN_ARTIFACT" in ai_v3_evaluation["edge_blockers"]
+    ai_exit_evaluation = _evaluation(board, "ai_exit_train_v2_diagnostic")
+    assert ai_exit_evaluation["edge_status"] == "INVALID"
+    assert (
+        "SOURCE_GAP_INVALIDATED_X05_AND_SHIFTED_X06_X08"
+        in ai_exit_evaluation["edge_blockers"]
+    )
+    assert (
+        "PARENT_INVALID:worker_ai_exit_entry_policy_train_v2"
+        in ai_exit_evaluation["edge_blockers"]
+    )
+    assert not any(
+        "MISMATCH" in blocker for blocker in ai_exit_evaluation["edge_blockers"]
+    )
+    tailguard_evaluation = _evaluation(
+        board, "worker_spikefade_tailguard_sl25_train_v1"
+    )
+    assert tailguard_evaluation["edge_status"] == "HYPOTHESIS"
+    assert "PROSPECTIVE_PROVENANCE_REQUIRED" in tailguard_evaluation["edge_blockers"]
+    assert "MARGIN_CAP_BREACHED" in tailguard_evaluation["edge_blockers"]
+    lowlev_evaluation = _evaluation(board, "worker_spikefade_tailguard_lowlev_train_v1")
+    assert lowlev_evaluation["edge_status"] == "HYPOTHESIS"
+    assert "MARGIN_CAP_BREACHED" not in lowlev_evaluation["edge_blockers"]
+    pullback_evaluation = _evaluation(board, "worker_pullback_a2_train_v1")
+    assert pullback_evaluation["edge_status"] == "HYPOTHESIS"
+    assert "PROSPECTIVE_PROVENANCE_REQUIRED" in pullback_evaluation["edge_blockers"]
+    capital_evaluation = _evaluation(board, "worker_capital_time_release_train_v1")
+    assert capital_evaluation["edge_status"] == "HYPOTHESIS"
+    assert "MARGIN_PEAK_USAGE_UNKNOWN" in capital_evaluation["edge_blockers"]
+    ai_capital_evaluation = _evaluation(board, "ai_capital_recycle_train_v1")
+    assert ai_capital_evaluation["edge_status"] == "HYPOTHESIS"
+    assert (
+        "PARENT_EDGE_NOT_PROVEN:worker_ai_capital_recycle_substrate_train_v1"
+        in ai_capital_evaluation["edge_blockers"]
+    )
+    assert not any(
+        "MISMATCH" in blocker for blocker in ai_capital_evaluation["edge_blockers"]
+    )
 
 
 def test_current_content_addressed_board_exactly_matches_registry_input() -> None:
@@ -785,9 +887,7 @@ def test_current_content_addressed_board_exactly_matches_registry_input() -> Non
     board_paths = sorted(registry_dir.glob("dojo_goal_board_20260719_*.json"))
     assert len(board_paths) == 1
 
-    source = load_goal_board_input(
-        registry_dir / "dojo_goal_board_input_20260719.json"
-    )
+    source = load_goal_board_input(registry_dir / "dojo_goal_board_input_20260719.json")
     expected = build_goal_board(source, project_root=ROOT)
     actual = json.loads(board_paths[0].read_text(encoding="utf-8"))
 

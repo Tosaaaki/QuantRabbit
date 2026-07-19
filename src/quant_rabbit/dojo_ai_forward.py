@@ -51,6 +51,7 @@ from quant_rabbit.dojo_market_calendar import (
 
 PRECOMMIT_CONTRACT = "QR_DOJO_AI_FORWARD_PRECOMMIT_V3"
 START_CONTRACT = "QR_DOJO_AI_FORWARD_START_V3"
+SUPERSESSION_CONTRACT = "QR_DOJO_AI_FORWARD_SUPERSESSION_V1"
 DAY_SEAL_CONTRACT = "QR_DOJO_AI_DAY_SOURCE_SEAL_V3"
 REQUEST_CONTRACT = "QR_DOJO_AI_FORWARD_REQUEST_V3"
 SOURCE_PROVENANCE_CONTRACT = "QR_DOJO_AI_OANDA_SOURCE_PROVENANCE_V3"
@@ -205,9 +206,7 @@ def build_precommit(
             "source_coverage_policy": M5_COVERAGE_POLICY,
             "minimum_coverage_numerator": M5_MINIMUM_COVERAGE[0],
             "minimum_coverage_denominator": M5_MINIMUM_COVERAGE[1],
-            "max_contiguous_gap_seconds": int(
-                M5_MAX_CONTIGUOUS_GAP.total_seconds()
-            ),
+            "max_contiguous_gap_seconds": int(M5_MAX_CONTIGUOUS_GAP.total_seconds()),
             "boundary_tolerance_seconds": int(M5_BOUNDARY_TOLERANCE.total_seconds()),
             "missing_source_slots_retained": True,
             "market_derived_answer_key_required": True,
@@ -401,6 +400,115 @@ def validate_start_receipt(
     return _snapshot(receipt)
 
 
+def validate_supersession(
+    value: Mapping[str, Any],
+    precommit: Mapping[str, Any],
+    start_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the immutable terminal receipt for a zero-source stopped run."""
+
+    lock = validate_precommit(precommit)
+    start = validate_start_receipt(start_receipt, lock)
+    receipt = _mapping(value, "AI forward supersession")
+    _exact_keys(
+        receipt,
+        {
+            "allocated_cell_count",
+            "authority",
+            "contract",
+            "evidence",
+            "executed_cell_count",
+            "market_source_acquisition_count",
+            "precommit_sha256",
+            "reason_code",
+            "schema_version",
+            "start_receipt_sha256",
+            "state",
+            "successor_policy",
+            "superseded_at_utc",
+            "supersession_sha256",
+        },
+        "AI forward supersession",
+    )
+    _validate_seal(receipt, "supersession_sha256")
+    superseded_at = _parse_utc(receipt["superseded_at_utc"], "superseded_at_utc")
+    started_at = _parse_utc(start["started_at_utc"], "started_at_utc")
+    first_cutoff = _parse_utc(
+        lock["schedule"][0]["decision_cutoff_utc"], "first cutoff"
+    )
+    counts = (
+        receipt["allocated_cell_count"],
+        receipt["executed_cell_count"],
+        receipt["market_source_acquisition_count"],
+    )
+    if any(isinstance(count, bool) or not isinstance(count, int) for count in counts):
+        raise DojoAIForwardError("AI forward supersession counts are invalid")
+    authority = _mapping(receipt["authority"], "supersession authority")
+    _exact_keys(
+        authority,
+        {
+            "broker_mutation_allowed",
+            "live_permission",
+            "order_authority",
+            "promotion_eligible",
+        },
+        "supersession authority",
+    )
+    successor = _mapping(receipt["successor_policy"], "successor_policy")
+    _exact_keys(
+        successor,
+        {
+            "entry_full_context_requires_causal_multisource_contract",
+            "next_experiment_class",
+            "one_judgment_per_fresh_context",
+        },
+        "successor_policy",
+    )
+    if (
+        receipt["contract"] != SUPERSESSION_CONTRACT
+        or isinstance(receipt["schema_version"], bool)
+        or receipt["schema_version"] != 1
+        or receipt["state"] != "SUPERSEDED_BEFORE_SOURCE"
+        or receipt["precommit_sha256"] != lock["precommit_sha256"]
+        or receipt["start_receipt_sha256"] != start["start_receipt_sha256"]
+        or counts != (EXPECTED_CELL_COUNT, 0, 0)
+        or authority["broker_mutation_allowed"] is not False
+        or authority["live_permission"] is not False
+        or authority["order_authority"] != "NONE"
+        or authority["promotion_eligible"] is not False
+        or successor["entry_full_context_requires_causal_multisource_contract"]
+        is not True
+        or successor["next_experiment_class"] != "AI_EXIT_JUDGMENT"
+        or successor["one_judgment_per_fresh_context"] is not True
+        or not (started_at <= superseded_at < first_cutoff)
+    ):
+        raise DojoAIForwardError("AI forward supersession identity drifted")
+    _identifier(receipt["reason_code"], "reason_code")
+    evidence = receipt["evidence"]
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
+        raise DojoAIForwardError("AI forward supersession evidence is invalid")
+    seen_evidence: set[str] = set()
+    for index, raw in enumerate(evidence):
+        row = _mapping(raw, f"supersession evidence {index}")
+        _exact_keys(
+            row,
+            {"artifact_sha256", "path", "result"},
+            f"supersession evidence {index}",
+        )
+        digest = _sha(row["artifact_sha256"], "artifact_sha256")
+        path = row["path"]
+        if (
+            digest in seen_evidence
+            or not isinstance(path, str)
+            or not 1 <= len(path) <= 4096
+            or "\x00" in path
+        ):
+            raise DojoAIForwardError("AI forward supersession evidence drifted")
+        _identifier(row["result"], "evidence result")
+        seen_evidence.add(digest)
+    return _snapshot(receipt)
+
+
 def build_day_requests(
     registry: Mapping[str, Any],
     precommit: Mapping[str, Any],
@@ -472,9 +580,7 @@ def build_source_capture_from_request(
 
     lock = validate_precommit(precommit)
     start = validate_start_receipt(start_receipt, lock)
-    request = validate_source_request(
-        source_request, lock, start, previous_day_seal
-    )
+    request = validate_source_request(source_request, lock, start, previous_day_seal)
     ordinal = request["ordinal"]
     acquired = _utc(acquired_at_utc, "acquired_at_utc")
     requested = _parse_utc(request["requested_at_utc"], "requested_at_utc")
@@ -523,9 +629,7 @@ def validate_source_capture(
         previous_day_seal,
         artifact.get("request"),
         artifact.get("response"),
-        acquired_at_utc=_parse_utc(
-            artifact.get("acquired_at_utc"), "acquired_at_utc"
-        ),
+        acquired_at_utc=_parse_utc(artifact.get("acquired_at_utc"), "acquired_at_utc"),
     )
     if artifact != expected:
         raise DojoAIForwardError("AI source capture bytes or parents drifted")
@@ -544,9 +648,7 @@ def build_day_requests_from_capture(
     assert_locked_preregistration(registry)
     lock = validate_precommit(precommit)
     start = validate_start_receipt(start_receipt, lock)
-    capture = validate_source_capture(
-        source_capture, lock, start, previous_day_seal
-    )
+    capture = validate_source_capture(source_capture, lock, start, previous_day_seal)
     ordinal = capture["ordinal"]
     now = _parse_utc(capture["acquired_at_utc"], "acquired_at_utc")
     schedule, previous_sha = _day_context(
@@ -899,7 +1001,9 @@ def build_cell_response_seal(
             sealed_at_utc=now,
         )
     except (TypeError, ValueError) as exc:
-        raise DojoAIForwardError("AI response schema or parent binding is invalid") from exc
+        raise DojoAIForwardError(
+            "AI response schema or parent binding is invalid"
+        ) from exc
     body = {
         "contract": CELL_RESPONSE_CONTRACT,
         "schema_version": 2,
@@ -916,9 +1020,7 @@ def build_cell_response_seal(
         "truth_not_before_utc": day["schedule"]["truth_not_before_utc"],
         "precommit_sha256": precommit["precommit_sha256"],
         "day_seal_sha256": day["day_seal_sha256"],
-        "request_receipt_sha256": cell["request_receipt"][
-            "request_receipt_sha256"
-        ],
+        "request_receipt_sha256": cell["request_receipt"]["request_receipt_sha256"],
         "response_receipt": response_receipt,
         "answer_key_opened": False,
         "response_selection_allowed": False,
@@ -990,9 +1092,7 @@ def build_executed_cell_terminal(
         "truth_not_before_utc": day["schedule"]["truth_not_before_utc"],
         "precommit_sha256": precommit["precommit_sha256"],
         "day_seal_sha256": day["day_seal_sha256"],
-        "request_receipt_sha256": cell["request_receipt"][
-            "request_receipt_sha256"
-        ],
+        "request_receipt_sha256": cell["request_receipt"]["request_receipt_sha256"],
         "execution_request_sha256": request["execution_request_sha256"],
         "execution_receipt": receipt,
         "execution_receipt_sha256": receipt["execution_receipt_sha256"],
@@ -1089,9 +1189,7 @@ def build_cell_response_failure(
         "response_deadline_utc": day["schedule"]["response_deadline_utc"],
         "precommit_sha256": lock["precommit_sha256"],
         "day_seal_sha256": day["day_seal_sha256"],
-        "request_receipt_sha256": cell["request_receipt"][
-            "request_receipt_sha256"
-        ],
+        "request_receipt_sha256": cell["request_receipt"]["request_receipt_sha256"],
         "response_receipt": None,
         "economic_fallback": "SYNTHETIC_FLAT_ZERO_RETURN",
         "response_failure": True,
@@ -1232,7 +1330,9 @@ def build_phase_index(
                 cell_id = scheduled["cell_id"]
                 raw_terminal = terminal_by_cell.get(cell_id)
                 if raw_terminal is None:
-                    raise DojoAIForwardError("phase index has an unsealed response cell")
+                    raise DojoAIForwardError(
+                        "phase index has an unsealed response cell"
+                    )
                 terminal = validate_cell_terminal(
                     raw_terminal,
                     registry,
@@ -1241,9 +1341,10 @@ def build_phase_index(
                     previous,
                     day,
                 )
-                if _parse_utc(
-                    terminal["sealed_at_utc"], "terminal sealed_at_utc"
-                ) > now:
+                if (
+                    _parse_utc(terminal["sealed_at_utc"], "terminal sealed_at_utc")
+                    > now
+                ):
                     raise DojoAIForwardError("phase index predates a cell terminal")
                 if terminal["state"] == "DIAGNOSTIC_IMPORTED_RESPONSE":
                     raise DojoAIForwardError(
@@ -1258,9 +1359,7 @@ def build_phase_index(
                         "variant_id": scheduled["variant_id"],
                         "cell_id": cell_id,
                         "terminal_state": terminal["state"],
-                        "terminal_artifact_sha256": terminal[
-                            "cell_terminal_sha256"
-                        ],
+                        "terminal_artifact_sha256": terminal["cell_terminal_sha256"],
                         "economic_fallback": (
                             terminal.get("economic_fallback")
                             if terminal["state"]
@@ -1272,7 +1371,10 @@ def build_phase_index(
         previous = day
     if set(terminal_by_cell) != consumed:
         raise DojoAIForwardError("phase index contains an unexpected cell terminal")
-    if len(index) != EXPECTED_CELL_COUNT or len({row["cell_id"] for row in index}) != 90:
+    if (
+        len(index) != EXPECTED_CELL_COUNT
+        or len({row["cell_id"] for row in index}) != 90
+    ):
         raise DojoAIForwardError("phase index denominator is not exactly 90 cells")
 
     response_count = sum(
@@ -1609,9 +1711,7 @@ def _source_from_oanda_response(
         )
         if candle["complete"] is not True:
             raise DojoAIForwardError("OANDA M5 candle is incomplete")
-        opened = _parse_oanda_time(
-            candle["time"], f"OANDA M5 candle {index} time"
-        )
+        opened = _parse_oanda_time(candle["time"], f"OANDA M5 candle {index} time")
         if (
             opened < window_start
             or opened + timedelta(minutes=5) > cutoff
@@ -2038,6 +2138,7 @@ __all__ = [
     "SOURCE_CAPTURE_CONTRACT",
     "SOURCE_REQUEST_CONTRACT",
     "START_CONTRACT",
+    "SUPERSESSION_CONTRACT",
     "build_cell_response_failure",
     "build_cell_response_seal",
     "build_day_requests",
@@ -2054,6 +2155,7 @@ __all__ = [
     "validate_phase_index",
     "validate_precommit",
     "validate_start_receipt",
+    "validate_supersession",
     "validate_source_capture",
     "validate_source_request",
 ]

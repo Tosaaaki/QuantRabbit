@@ -1,0 +1,139 @@
+{
+  "contract": "QR_DOJO_AI_CAPITAL_RECYCLE_TRAIN_EVIDENCE_V1",
+  "schema_version": 1,
+  "experiment_id": "dojo-ai-capital-recycle-train-v1",
+  "recorded_at_utc": "2026-07-19T01:45:04Z",
+  "classification": "WORN_TRAIN_REJECTED_DIAGNOSTIC",
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE",
+  "artifact_bindings": {
+    "artifact_root": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/codex-ai-capital-recycle-train-v1",
+    "preregistration_file_sha256": "de1080d71b3c91358a909720522b638f132fcc9e4eaf1f5afd859106fe827643",
+    "preregistration_canonical_sha256": "0605f0fb854ce8d31b10d2f401afc08cf6f91b00be397932da2af2ef25d4fb3f",
+    "packets_file_sha256": "99e5e39b97e67b83f395e5456b48750806d233c36a7702a63346010570c06402",
+    "packets_canonical_sha256": "d4af33f95d2990ac0a21fe5d030d4c39889a2f4ba653206acb237a166e0b4e2a",
+    "prompt_template_file_sha256": "29e0c4b1d3c52348f80d1e3a23a20c1dcc0f5f39ac96d89911cc5cf9a83d5dad",
+    "responses_file_sha256": "e27e6b78b9a081cf3ea0523b42f90af985ff53d32ad5f5509bcb4d1bb519cdb4",
+    "answer_key_file_sha256": "4b35fe442bcb8b1bc810dc65f34507babb962bdebced90ccc868cec291cfe75c",
+    "answer_key_canonical_sha256": "7cb35436bd1a387062fec76e56c7a21d491241248e2199e1e3e28ebafa8f8650",
+    "evidence_file_sha256": "e9c723df9eb95463fc46f39e57bec2eb8d1e46e776ca7ec8537b689ac988a3a2",
+    "evidence_canonical_sha256": "ffff69f14ecc11127657ee7bb3161c63ef65e234bb3286b03203bd5143e5035c",
+    "posthoc_hypothesis_file_sha256": "1fdc8307bef78bea2e7385c367305375fb22a00f5d609ee02eb0bb4d743e6162",
+    "transport_audit_file_sha256": "b0f05296db4328cf72b7ebfbdce009e8fa02dedaebff25cabac5e7911e45dec8"
+  },
+  "causal_contract": {
+    "one_judgment_per_fresh_context": true,
+    "context_count": 6,
+    "decision_bar_excluded_from_m5_context": true,
+    "completed_m5_bar_count": 36,
+    "completed_h1_close_count": 120,
+    "decision_and_next_entry_price_basis": "DECISION_BAR_OPEN",
+    "answer_key_generated_after_all_responses_sealed": true,
+    "provider_context_nonreuse_attested": false,
+    "provider_model_identity_attested": false,
+    "identical_prompt_transport_bytes_attested": false
+  },
+  "decision_space": {
+    "existing_direction": ["KEEP_LONG", "KEEP_SHORT", "FLAT"],
+    "existing_fraction": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "next_direction": ["LONG", "SHORT", "SKIP"],
+    "next_fraction": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "reserve_fraction_constraint": "1_MINUS_EXISTING_MINUS_NEXT",
+    "score_formula": "(1-existing_fraction)*CUT + existing_fraction*HOLD + next_fraction*NEXT"
+  },
+  "cells": [
+    {
+      "id": "P01",
+      "existing_direction": "KEEP_LONG",
+      "existing_fraction": 0.25,
+      "next_direction": "LONG",
+      "next_fraction": 0.50,
+      "reserve_fraction": 0.25,
+      "ai_capacity_pips": -6.000,
+      "always_hold_capacity_pips": 3.0
+    },
+    {
+      "id": "P02",
+      "existing_direction": "KEEP_SHORT",
+      "existing_fraction": 0.25,
+      "next_direction": "LONG",
+      "next_fraction": 0.50,
+      "reserve_fraction": 0.25,
+      "ai_capacity_pips": -12.300,
+      "always_hold_capacity_pips": -10.5
+    },
+    {
+      "id": "P03",
+      "existing_direction": "KEEP_SHORT",
+      "existing_fraction": 0.50,
+      "next_direction": "SHORT",
+      "next_fraction": 0.50,
+      "reserve_fraction": 0.00,
+      "ai_capacity_pips": 2.300,
+      "always_hold_capacity_pips": 3.0
+    },
+    {
+      "id": "P04",
+      "existing_direction": "KEEP_LONG",
+      "existing_fraction": 0.25,
+      "next_direction": "LONG",
+      "next_fraction": 0.75,
+      "reserve_fraction": 0.00,
+      "ai_capacity_pips": -1.275,
+      "always_hold_capacity_pips": 3.0
+    },
+    {
+      "id": "P05",
+      "existing_direction": "KEEP_SHORT",
+      "existing_fraction": 0.75,
+      "next_direction": "SHORT",
+      "next_fraction": 0.25,
+      "reserve_fraction": 0.00,
+      "ai_capacity_pips": 1.825,
+      "always_hold_capacity_pips": 3.0
+    },
+    {
+      "id": "P06",
+      "existing_direction": "FLAT",
+      "existing_fraction": 0.00,
+      "next_direction": "LONG",
+      "next_fraction": 1.00,
+      "reserve_fraction": 0.00,
+      "ai_capacity_pips": -11.200,
+      "always_hold_capacity_pips": -20.8
+    }
+  ],
+  "score": {
+    "cell_count": 6,
+    "existing_direction_gate_hits": 6,
+    "next_direction_hits": 3,
+    "ai_total_capacity_pips": -26.65,
+    "always_hold_full_total_capacity_pips": -19.30,
+    "always_cut_to_reserve_total_capacity_pips": -35.10,
+    "always_rotate_full_to_next_total_capacity_pips": -39.40,
+    "fixed_50_50_total_capacity_pips": -29.35,
+    "quarter_step_oracle_total_capacity_pips": -9.70,
+    "delta_vs_always_hold_capacity_pips": -7.35,
+    "absolute_profit_positive": false,
+    "verdict": "REJECT_AI_ALLOCATION_BELOW_FULL_HOLD"
+  },
+  "posthoc_next_hypothesis": {
+    "preregistered": false,
+    "rule": "KEEP_IMPLIES_FULL_HOLD_UNLESS_FORWARD_REMAINING_PAYOFF_CLEARLY_DOMINATES_FLAT_IMPLIES_RECYCLE",
+    "same_six_cell_posthoc_capacity_pips": -9.70,
+    "eligible_as_result": false,
+    "requires_separate_train_window": true
+  },
+  "limitations": [
+    "HISTORICAL_WINDOW_ALREADY_WORN_BY_PRIOR_RESEARCH",
+    "SIX_CELL_SMALL_SAMPLE",
+    "LINEAR_CAPACITY_PIPS_NOT_FULL_SHARED_EQUITY_PORTFOLIO_REPLAY",
+    "ADDITIONAL_SLIPPAGE_AND_FINANCING_NOT_CHARGED",
+    "PROVIDER_CONTEXT_AND_MODEL_IDENTITY_NOT_EXTERNALLY_ATTESTED",
+    "IDENTICAL_PROMPT_TRANSPORT_BYTES_NOT_ATTESTED",
+    "POSTHOC_GATE_RULE_IS_HYPOTHESIS_ONLY",
+    "RESULT_CANNOT_PROMOTE_OR_AUTHORIZE_LIVE_TRADING"
+  ]
+}

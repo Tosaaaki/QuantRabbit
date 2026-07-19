@@ -56,10 +56,12 @@ def _strategy_affecting_event(event: str) -> bool:
         or event
         in {
             "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+            "ORDER_REJECTED_CONCURRENCY_CAP",
             "FILL_MARKET",
             "ORDER_LIMIT",
             "ORDER_STOP",
             "ORDER_CANCEL",
+            "ORDER_CANCEL_CONCURRENCY_CAP",
             "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
             "FILL_LIMIT",
             "CLOSE",
@@ -663,6 +665,8 @@ def score_session_ledger(
     expected_bot_config_sha256: str,
     expected_bot_config_length: int,
     reservation_evidence: Mapping[str, Any] | None = None,
+    expected_max_concurrent_per_pair: int | None = None,
+    expected_global_max_concurrent: int | None = None,
 ) -> dict[str, Any]:
     """Authenticate and score one fully resolved virtual-market session."""
 
@@ -720,6 +724,24 @@ def score_session_ledger(
     )
     if expected_bot_config_length <= 0:
         raise DojoLabProvenanceError("expected bot config length must be positive")
+    if (expected_max_concurrent_per_pair is None) != (
+        expected_global_max_concurrent is None
+    ):
+        raise DojoLabProvenanceError(
+            "expected owner concurrency caps must be declared together"
+        )
+    concurrency_caps_supplied = expected_max_concurrent_per_pair is not None
+    if concurrency_caps_supplied and (
+        isinstance(expected_max_concurrent_per_pair, bool)
+        or not isinstance(expected_max_concurrent_per_pair, int)
+        or expected_max_concurrent_per_pair <= 0
+        or isinstance(expected_global_max_concurrent, bool)
+        or not isinstance(expected_global_max_concurrent, int)
+        or expected_global_max_concurrent <= 0
+    ):
+        raise DojoLabProvenanceError(
+            "expected owner concurrency caps must be positive integers"
+        )
 
     entry_count = 0
     resolved_exit_count = 0
@@ -729,6 +751,11 @@ def score_session_ledger(
     terminal_account: Mapping[str, Any] | None = None
     records: list[dict[str, Any]] = []
     previous_sha = _ZERO_SHA256
+    active_owner_trades: dict[str, tuple[str, float]] = {}
+    seen_owner_trade_ids: set[str] = set()
+    resolved_owner_trade_count = 0
+    observed_peak_global = 0
+    observed_peak_by_pair = {pair: 0 for pair in pairs}
 
     with ledger_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -798,11 +825,103 @@ def score_session_ledger(
                     raise DojoLabProvenanceError(
                         "entry hardened slippage does not match the manifest"
                     )
+                if concurrency_caps_supplied:
+                    trade_id = payload.get("trade_id")
+                    pair = payload.get("pair")
+                    if (
+                        not isinstance(trade_id, str)
+                        or not trade_id
+                        or trade_id in seen_owner_trade_ids
+                    ):
+                        raise DojoLabProvenanceError(
+                            "owner concurrency reconstruction has an invalid fill trade id"
+                        )
+                    if not isinstance(pair, str) or pair not in pairs:
+                        raise DojoLabProvenanceError(
+                            "owner concurrency reconstruction has an invalid fill pair"
+                        )
+                    raw_units = payload.get("units")
+                    try:
+                        fill_units = float(raw_units)
+                    except (TypeError, ValueError) as exc:
+                        raise DojoLabProvenanceError(
+                            "owner concurrency reconstruction has invalid fill units"
+                        ) from exc
+                    if (
+                        isinstance(raw_units, bool)
+                        or not math.isfinite(fill_units)
+                        or fill_units <= 0
+                    ):
+                        raise DojoLabProvenanceError(
+                            "owner concurrency reconstruction has invalid fill units"
+                        )
+                    active_pair = (
+                        sum(
+                            active_pair == pair
+                            for active_pair, _ in active_owner_trades.values()
+                        )
+                        + 1
+                    )
+                    active_global = len(active_owner_trades) + 1
+                    if active_pair > expected_max_concurrent_per_pair:
+                        raise DojoLabProvenanceError(
+                            "owner per-pair concurrency cap exceeded in ledger"
+                        )
+                    if active_global > expected_global_max_concurrent:
+                        raise DojoLabProvenanceError(
+                            "owner global concurrency cap exceeded in ledger"
+                        )
+                    active_owner_trades[trade_id] = (pair, fill_units)
+                    seen_owner_trade_ids.add(trade_id)
+                    observed_peak_by_pair[pair] = max(
+                        observed_peak_by_pair[pair], active_pair
+                    )
+                    observed_peak_global = max(observed_peak_global, active_global)
             is_exit = event.startswith("EXIT") or event in {
                 "CLOSE",
                 "MARGIN_CLOSEOUT",
             }
             if is_exit:
+                if concurrency_caps_supplied:
+                    trade_id = payload.get("trade_id")
+                    if (
+                        not isinstance(trade_id, str)
+                        or not trade_id
+                        or trade_id not in active_owner_trades
+                    ):
+                        raise DojoLabProvenanceError(
+                            "owner concurrency reconstruction has an unmatched exit"
+                        )
+                    pair, remaining_units = active_owner_trades[trade_id]
+                    if event == "CLOSE":
+                        raw_close_units = payload.get("units")
+                        try:
+                            close_units = float(raw_close_units)
+                        except (TypeError, ValueError) as exc:
+                            raise DojoLabProvenanceError(
+                                "owner concurrency reconstruction has invalid close units"
+                            ) from exc
+                        if (
+                            isinstance(raw_close_units, bool)
+                            or not math.isfinite(close_units)
+                            or close_units <= 0
+                        ):
+                            raise DojoLabProvenanceError(
+                                "owner concurrency reconstruction has invalid close units"
+                            )
+                        if close_units > remaining_units:
+                            raise DojoLabProvenanceError(
+                                "owner concurrency reconstruction over-closes a trade"
+                            )
+                        remaining_units -= close_units
+                        if remaining_units > 0:
+                            active_owner_trades[trade_id] = (pair, remaining_units)
+                        else:
+                            del active_owner_trades[trade_id]
+                            resolved_owner_trade_count += 1
+                    else:
+                        del active_owner_trades[trade_id]
+                        resolved_owner_trade_count += 1
                 try:
                     value = float(payload["pl_jpy"])
                     financing = float(payload["financing_jpy"])
@@ -1041,13 +1160,22 @@ def score_session_ledger(
         raise DojoLabProvenanceError("terminal account is incomplete") from exc
     if not all(math.isfinite(value) for value in (balance, equity)):
         raise DojoLabProvenanceError("terminal balance/equity must be finite")
+    if concurrency_caps_supplied and len(active_owner_trades) != open_positions:
+        raise DojoLabProvenanceError(
+            "terminal open positions do not reconcile owner concurrency ledger"
+        )
 
     terminal_resolved = open_positions == 0 and resting_orders == 0
     if terminal_resolved and not math.isclose(balance, equity, rel_tol=0, abs_tol=0.01):
         raise DojoLabProvenanceError(
             "resolved terminal account has inconsistent balance/equity"
         )
-    if terminal_resolved and resolved_exit_count != entry_count:
+    entries_resolved = (
+        resolved_owner_trade_count == entry_count
+        if concurrency_caps_supplied
+        else resolved_exit_count == entry_count
+    )
+    if terminal_resolved and not entries_resolved:
         raise DojoLabProvenanceError(
             "resolved terminal account does not reconcile entries and exits"
         )
@@ -1104,7 +1232,7 @@ def score_session_ledger(
     economic_gate_passed = (
         entry_count > 0
         and terminal_resolved
-        and resolved_exit_count == entry_count
+        and entries_resolved
         and terminal_net > 0
         and closeouts == 0
     )
@@ -1116,7 +1244,7 @@ def score_session_ledger(
     # Until an external monotonic witness is integrated, this process cannot
     # honestly mint promotion evidence.
     promotion_eligible = False
-    return {
+    score = {
         "status": status,
         "economic_gate_passed": economic_gate_passed,
         "local_candidate_eligible": local_candidate_eligible,
@@ -1173,6 +1301,18 @@ def score_session_ledger(
         "monthly_multiple_basis": "30_CALENDAR_DAYS_FROM_FULLY_RESOLVED_BALANCE",
         "margin_closeouts": closeouts,
     }
+    if concurrency_caps_supplied:
+        score["owner_concurrency"] = {
+            "status": "VERIFIED_FROM_FILL_EXIT_LEDGER",
+            "strategy_owner_id": expected_strategy_owner_id,
+            "max_concurrent_per_pair": expected_max_concurrent_per_pair,
+            "global_max_concurrent": expected_global_max_concurrent,
+            "observed_peak_global": observed_peak_global,
+            "observed_peak_by_pair": observed_peak_by_pair,
+            "resolved_trade_count": resolved_owner_trade_count,
+            "terminal_active_positions": len(active_owner_trades),
+        }
+    return score
 
 
 def combine_intrabar_results(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1242,6 +1382,59 @@ def canonical_strategy_owner_id(
     return f"{namespace}{suffix}:{digest}"
 
 
+def owner_concurrency_caps_from_config(
+    config: Mapping[str, Any],
+) -> tuple[int, int]:
+    """Resolve the exact owner caps consumed by ``bots/lab_bot.py``."""
+
+    if not isinstance(config, Mapping):
+        raise DojoLabProvenanceError("bot config must be a mapping")
+
+    def positive_integer(name: str, value: object) -> int:
+        if isinstance(value, bool):
+            raise DojoLabProvenanceError(f"{name} must be a positive integer")
+        try:
+            parsed = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise DojoLabProvenanceError(f"{name} must be a positive integer") from exc
+        if parsed <= 0 or (isinstance(value, float) and not value.is_integer()):
+            raise DojoLabProvenanceError(f"{name} must be a positive integer")
+        return parsed
+
+    raw_pairs = config.get("pairs", ["USD_JPY"])
+    if (
+        isinstance(raw_pairs, (str, bytes))
+        or not isinstance(raw_pairs, Sequence)
+        or not raw_pairs
+        or any(not isinstance(pair, str) or not pair for pair in raw_pairs)
+        or len(set(raw_pairs)) != len(raw_pairs)
+    ):
+        raise DojoLabProvenanceError(
+            "bot concurrency config requires a unique non-empty pair sequence"
+        )
+
+    legacy_pair_cap = config.get("max_concurrent")
+    explicit_pair_cap = config.get("max_concurrent_per_pair")
+    if legacy_pair_cap is not None and explicit_pair_cap is not None:
+        if positive_integer("max_concurrent", legacy_pair_cap) != positive_integer(
+            "max_concurrent_per_pair", explicit_pair_cap
+        ):
+            raise DojoLabProvenanceError(
+                "max_concurrent and max_concurrent_per_pair must agree"
+            )
+    pair_cap = positive_integer(
+        "max_concurrent_per_pair",
+        explicit_pair_cap
+        if explicit_pair_cap is not None
+        else (legacy_pair_cap if legacy_pair_cap is not None else 3),
+    )
+    global_cap = positive_integer(
+        "global_max_concurrent",
+        config.get("global_max_concurrent", pair_cap * len(raw_pairs)),
+    )
+    return pair_cap, global_cap
+
+
 class StrategyOwnershipRegistry:
     """One broker-local owner map with ledger enrichment."""
 
@@ -1253,6 +1446,7 @@ class StrategyOwnershipRegistry:
         self._active_trade_owner: dict[str, str] = {}
         self._order_owner_history: dict[str, str] = {}
         self._trade_owner_history: dict[str, str] = {}
+        self._entry_caps: dict[str, tuple[int, int]] = {}
         original_log = broker._log
 
         def owned_log(event: str, payload: dict[str, Any]) -> None:
@@ -1269,8 +1463,16 @@ class StrategyOwnershipRegistry:
             self._commit_event(event, enriched, owner)
 
         broker._log = owned_log  # type: ignore[method-assign]
+        broker._entry_admission = self._entry_admission_decision
 
-    def register_owner(self, owner_id: str, token: object) -> None:
+    def register_owner(
+        self,
+        owner_id: str,
+        token: object,
+        *,
+        max_concurrent_per_pair: int | None = None,
+        global_max_concurrent: int | None = None,
+    ) -> None:
         if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 128:
             raise StrategyOwnershipError(
                 "strategy owner id must contain 1..128 characters"
@@ -1280,6 +1482,26 @@ class StrategyOwnershipRegistry:
         prior = self._owners.get(owner_id)
         if prior is not None and prior is not token:
             raise StrategyOwnershipError(f"duplicate strategy owner id: {owner_id}")
+        if (max_concurrent_per_pair is None) != (global_max_concurrent is None):
+            raise StrategyOwnershipError(
+                "owner concurrency caps must be declared together"
+            )
+        if max_concurrent_per_pair is not None and global_max_concurrent is not None:
+            if (
+                isinstance(max_concurrent_per_pair, bool)
+                or not isinstance(max_concurrent_per_pair, int)
+                or max_concurrent_per_pair <= 0
+                or isinstance(global_max_concurrent, bool)
+                or not isinstance(global_max_concurrent, int)
+                or global_max_concurrent <= 0
+            ):
+                raise StrategyOwnershipError(
+                    "owner concurrency caps must be positive integers"
+                )
+            self._entry_caps[owner_id] = (
+                max_concurrent_per_pair,
+                global_max_concurrent,
+            )
         self._owners[owner_id] = token
 
     @contextmanager
@@ -1296,6 +1518,50 @@ class StrategyOwnershipRegistry:
 
     def _current_owner(self) -> str | None:
         return self._submission_stack[-1] if self._submission_stack else None
+
+    def _entry_admission_decision(
+        self, pair: str, side: str, order_id: str | None
+    ) -> dict[str, Any] | None:
+        """Reject an owner's next fill once its current position cap is full."""
+
+        del side  # The concurrency contract is direction-neutral.
+        owner_id = (
+            self._current_owner()
+            if order_id is None
+            else self._active_order_owner.get(order_id)
+        )
+        if owner_id is None:
+            return None
+        caps = self._entry_caps.get(owner_id)
+        if caps is None:
+            return None
+        max_per_pair, global_max = caps
+        active_trade_ids = self.active_trade_ids(owner_id)
+        active_global = len(active_trade_ids)
+        active_pair = sum(
+            1
+            for trade_id in active_trade_ids
+            if self.__broker.positions[trade_id].pair == pair
+        )
+        if active_pair >= max_per_pair:
+            return {
+                "scope": "PAIR",
+                "reason": "OWNER_PAIR_CONCURRENCY_CAP_REACHED",
+                "active_pair_positions": active_pair,
+                "max_concurrent_per_pair": max_per_pair,
+                "active_global_positions": active_global,
+                "global_max_concurrent": global_max,
+            }
+        if active_global >= global_max:
+            return {
+                "scope": "GLOBAL",
+                "reason": "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED",
+                "active_pair_positions": active_pair,
+                "max_concurrent_per_pair": max_per_pair,
+                "active_global_positions": active_global,
+                "global_max_concurrent": global_max,
+            }
+        return None
 
     @staticmethod
     def _identity(payload: Mapping[str, Any], key: str) -> str | None:
@@ -1314,12 +1580,14 @@ class StrategyOwnershipRegistry:
             "ORDER_STOP",
             "FILL_MARKET",
             "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+            "ORDER_REJECTED_CONCURRENCY_CAP",
         }:
             return self._current_owner()
         if event in {
             "FILL_LIMIT",
             "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
             "ORDER_CANCEL",
+            "ORDER_CANCEL_CONCURRENCY_CAP",
         }:
             order_id = self._identity(payload, "order_id")
             return self._active_order_owner.get(order_id or "")
@@ -1358,7 +1626,13 @@ class StrategyOwnershipRegistry:
             self._bind_unique(self._active_trade_owner, trade_id, owner)
             self._bind_unique(self._trade_owner_history, trade_id, owner)
         elif (
-            event in {"LIMIT_REJECTED_INSUFFICIENT_MARGIN", "ORDER_CANCEL"} and order_id
+            event
+            in {
+                "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
+                "ORDER_CANCEL",
+                "ORDER_CANCEL_CONCURRENCY_CAP",
+            }
+            and order_id
         ):
             self._active_order_owner.pop(order_id, None)
         elif (
@@ -1463,10 +1737,22 @@ class OwnedBrokerView:
         }
     )
 
-    def __init__(self, broker: VirtualBroker, owner_id: str):
+    def __init__(
+        self,
+        broker: VirtualBroker,
+        owner_id: str,
+        *,
+        max_concurrent_per_pair: int | None = None,
+        global_max_concurrent: int | None = None,
+    ):
         ownership = strategy_ownership_registry(broker)
         token = object()
-        ownership.register_owner(owner_id, token)
+        ownership.register_owner(
+            owner_id,
+            token,
+            max_concurrent_per_pair=max_concurrent_per_pair,
+            global_max_concurrent=global_max_concurrent,
+        )
         object.__setattr__(self, "_OwnedBrokerView__broker", broker)
         object.__setattr__(self, "_OwnedBrokerView__ownership", ownership)
         object.__setattr__(self, "_OwnedBrokerView__owner_id", owner_id)

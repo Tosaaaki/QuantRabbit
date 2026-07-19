@@ -22,7 +22,7 @@ from quant_rabbit.dojo_lab_provenance import (
     validate_window_plan,
     write_new_json,
 )
-from quant_rabbit.virtual_broker import VirtualBroker
+from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
 
 BOT_PATH = Path("/tmp/dojo-lab-bot.py")
@@ -36,10 +36,12 @@ DEPENDENCIES = {"src/quant_rabbit/virtual_broker.py": "e" * 64}
 def _strategy_event(event: str) -> bool:
     return event.startswith("EXIT") or event in {
         "ORDER_REJECTED_INSUFFICIENT_MARGIN",
+        "ORDER_REJECTED_CONCURRENCY_CAP",
         "FILL_MARKET",
         "ORDER_LIMIT",
         "ORDER_STOP",
         "ORDER_CANCEL",
+        "ORDER_CANCEL_CONCURRENCY_CAP",
         "LIMIT_REJECTED_INSUFFICIENT_MARGIN",
         "FILL_LIMIT",
         "CLOSE",
@@ -630,6 +632,333 @@ def test_strategy_owner_and_dependency_closure_are_fail_closed(tmp_path: Path) -
         score_session_ledger(ledger, **dependency_kwargs)
 
 
+def _write_concurrency_ledger(tmp_path: Path) -> Path:
+    ledger = tmp_path / "concurrency-ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            _ledger_lines(
+                [
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T1",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T1",
+                            "units": 1_000.0,
+                            "pl_jpy": 50.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T2",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T2",
+                            "units": 1_000.0,
+                            "pl_jpy": 50.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "SESSION_STOP",
+                        {
+                            "account": {
+                                "balance_jpy": 200_100.0,
+                                "equity_jpy": 200_100.0,
+                                "open_positions": 0,
+                                "resting_orders": 0,
+                            }
+                        },
+                    ),
+                ]
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return ledger
+
+
+@pytest.mark.parametrize(
+    ("pair_cap", "global_cap", "message"),
+    [
+        (1, None, "declared together"),
+        (True, 1, "positive integers"),
+        (1, 0, "positive integers"),
+    ],
+)
+def test_score_owner_concurrency_cap_contract_is_fail_closed(
+    tmp_path: Path,
+    pair_cap: object,
+    global_cap: object,
+    message: str,
+) -> None:
+    ledger = _write_concurrency_ledger(tmp_path)
+    kwargs = _score_kwargs()
+    kwargs["expected_max_concurrent_per_pair"] = pair_cap
+    kwargs["expected_global_max_concurrent"] = global_cap
+
+    with pytest.raises(DojoLabProvenanceError, match=message):
+        score_session_ledger(ledger, **kwargs)
+
+
+def test_score_reconstructs_owner_concurrency_from_fill_exit_ledger(
+    tmp_path: Path,
+) -> None:
+    ledger = _write_concurrency_ledger(tmp_path)
+    score = score_session_ledger(
+        ledger,
+        **_score_kwargs(),
+        expected_max_concurrent_per_pair=1,
+        expected_global_max_concurrent=1,
+    )
+
+    assert score["status"] == "PASS_POSITIVE_RESOLVED_BALANCE"
+    assert score["owner_concurrency"] == {
+        "status": "VERIFIED_FROM_FILL_EXIT_LEDGER",
+        "strategy_owner_id": OWNER_ID,
+        "max_concurrent_per_pair": 1,
+        "global_max_concurrent": 1,
+        "observed_peak_global": 1,
+        "observed_peak_by_pair": {"USD_JPY": 1},
+        "resolved_trade_count": 2,
+        "terminal_active_positions": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("pair_cap", "global_cap", "message"),
+    [
+        (1, 2, "per-pair concurrency cap exceeded"),
+        (2, 1, "global concurrency cap exceeded"),
+    ],
+)
+def test_score_rejects_ledger_that_exceeded_owner_concurrency_cap(
+    tmp_path: Path,
+    pair_cap: int,
+    global_cap: int,
+    message: str,
+) -> None:
+    ledger = tmp_path / "concurrency-breach-ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            _ledger_lines(
+                [
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T1",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T2",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T1",
+                            "units": 1_000.0,
+                            "pl_jpy": 50.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T2",
+                            "units": 1_000.0,
+                            "pl_jpy": 50.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "SESSION_STOP",
+                        {
+                            "account": {
+                                "balance_jpy": 200_100.0,
+                                "equity_jpy": 200_100.0,
+                                "open_positions": 0,
+                                "resting_orders": 0,
+                            }
+                        },
+                    ),
+                ]
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DojoLabProvenanceError, match=message):
+        score_session_ledger(
+            ledger,
+            **_score_kwargs(),
+            expected_max_concurrent_per_pair=pair_cap,
+            expected_global_max_concurrent=global_cap,
+        )
+
+
+def test_score_keeps_partial_close_active_until_remaining_units_are_closed(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "partial-close-ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            _ledger_lines(
+                [
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T1",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T1",
+                            "units": 400.0,
+                            "pl_jpy": 40.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T1",
+                            "units": 600.0,
+                            "pl_jpy": 60.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "SESSION_STOP",
+                        {
+                            "account": {
+                                "balance_jpy": 200_100.0,
+                                "equity_jpy": 200_100.0,
+                                "open_positions": 0,
+                                "resting_orders": 0,
+                            }
+                        },
+                    ),
+                ]
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    score = score_session_ledger(
+        ledger,
+        **_score_kwargs(),
+        expected_max_concurrent_per_pair=1,
+        expected_global_max_concurrent=1,
+    )
+
+    assert score["status"] == "PASS_POSITIVE_RESOLVED_BALANCE"
+    assert score["entries"] == 1
+    assert score["resolved_exits"] == 2
+    assert score["owner_concurrency"]["resolved_trade_count"] == 1
+    assert score["owner_concurrency"]["terminal_active_positions"] == 0
+
+
+@pytest.mark.parametrize(
+    ("close_units", "message"),
+    [
+        (0.0, "invalid close units"),
+        (-1.0, "invalid close units"),
+        (1_001.0, "over-closes a trade"),
+    ],
+)
+def test_score_rejects_invalid_partial_close_units(
+    tmp_path: Path,
+    close_units: float,
+    message: str,
+) -> None:
+    ledger = tmp_path / f"invalid-close-{close_units}.jsonl"
+    ledger.write_text(
+        "\n".join(
+            _ledger_lines(
+                [
+                    (
+                        "FILL_MARKET",
+                        {
+                            "trade_id": "T1",
+                            "pair": "USD_JPY",
+                            "units": 1_000.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "CLOSE",
+                        {
+                            "trade_id": "T1",
+                            "units": close_units,
+                            "pl_jpy": 100.0,
+                            "financing_jpy": 0.0,
+                            "slippage_pips": 0.3,
+                        },
+                    ),
+                    (
+                        "SESSION_STOP",
+                        {
+                            "account": {
+                                "balance_jpy": 200_100.0,
+                                "equity_jpy": 200_100.0,
+                                "open_positions": 0,
+                                "resting_orders": 0,
+                            }
+                        },
+                    ),
+                ]
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DojoLabProvenanceError, match=message):
+        score_session_ledger(
+            ledger,
+            **_score_kwargs(),
+            expected_max_concurrent_per_pair=1,
+            expected_global_max_concurrent=1,
+        )
+
+
 def test_both_intrabar_paths_are_required_and_lower_path_is_authoritative() -> None:
     common = {
         "entries": 3,
@@ -797,3 +1126,143 @@ def test_combo_hand_with_short_ceiling_cannot_adopt_or_close_sibling_trade(
     assert trade_id in combo.hands[0].state["USD_JPY"].my_trades
     assert trade_id not in combo.hands[1].state["USD_JPY"].my_trades
     assert math.isfinite(broker.account()["equity_jpy"])
+
+
+def test_same_bar_opposite_resting_orders_cannot_exceed_owner_pair_cap(
+    tmp_path: Path,
+) -> None:
+    lab_module = _load_bot_module("lab_bot")
+    broker = VirtualBroker(
+        tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0, fast_ledger=True
+    )
+    broker.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00")
+    hand = lab_module.Bot(
+        broker,
+        {
+            "signal": "range_fade_limit",
+            "pairs": ["USD_JPY"],
+            "tp_pips": 5,
+            "ceiling_min": 60,
+            "max_concurrent_per_pair": 1,
+            "global_max_concurrent": 4,
+            "strategy_owner_id": "test:pair-cap",
+        },
+    )
+    first_order = hand.broker.limit_order("USD_JPY", "LONG", 1_000, price=150.05)
+    second_order = hand.broker.limit_order("USD_JPY", "SHORT", 1_000, price=149.95)
+
+    events = broker.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:01:00+00:00")
+
+    assert len(broker.positions) == 1
+    assert not broker.orders
+    assert [event["event"] for event in events] == [
+        "FILL_LIMIT",
+        "ORDER_CANCEL_CONCURRENCY_CAP",
+    ]
+    assert events[0]["order_id"] == first_order
+    assert events[1]["order_id"] == second_order
+    assert events[1]["admission"] == {
+        "scope": "PAIR",
+        "reason": "OWNER_PAIR_CONCURRENCY_CAP_REACHED",
+        "active_pair_positions": 1,
+        "max_concurrent_per_pair": 1,
+        "active_global_positions": 1,
+        "global_max_concurrent": 4,
+    }
+    cancellation = next(
+        json.loads(line)
+        for line in broker.ledger_path.read_text().splitlines()
+        if json.loads(line)["event"] == "ORDER_CANCEL_CONCURRENCY_CAP"
+    )
+    assert cancellation["payload"]["strategy_owner_id"] == "test:pair-cap"
+
+
+def test_same_phase_cross_pair_fills_cannot_exceed_owner_global_cap(
+    tmp_path: Path,
+) -> None:
+    lab_module = _load_bot_module("lab_bot")
+    broker = VirtualBroker(
+        tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0, fast_ledger=True
+    )
+    pairs = ["USD_JPY", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CAD_JPY"]
+    initial_quotes = [
+        (pair, 150.00 + index, 150.02 + index, "2026-01-01T00:00:00+00:00#O")
+        for index, pair in enumerate(pairs)
+    ]
+    broker.on_quote_batch(initial_quotes)
+    hand = lab_module.Bot(
+        broker,
+        {
+            "signal": "range_fade_limit",
+            "pairs": pairs,
+            "tp_pips": 5,
+            "ceiling_min": 60,
+            "max_concurrent": 2,
+            "global_max_concurrent": 4,
+            "strategy_owner_id": "test:global-cap",
+        },
+    )
+    order_ids = [
+        hand.broker.limit_order(pair, "LONG", 1_000, price=ask + 0.01)
+        for pair, _, ask, _ in initial_quotes
+    ]
+
+    events = broker.on_quote_batch(
+        [
+            (pair, bid, ask, "2026-01-01T00:01:00+00:00#O")
+            for pair, bid, ask, _ in initial_quotes
+        ]
+    )
+
+    assert len(broker.positions) == 4
+    assert not broker.orders
+    assert sum(event["event"] == "FILL_LIMIT" for event in events) == 4
+    rejected = [
+        event for event in events if event["event"] == "ORDER_CANCEL_CONCURRENCY_CAP"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0]["order_id"] == order_ids[-1]
+    assert rejected[0]["admission"] == {
+        "scope": "GLOBAL",
+        "reason": "OWNER_GLOBAL_CONCURRENCY_CAP_REACHED",
+        "active_pair_positions": 0,
+        "max_concurrent_per_pair": 2,
+        "active_global_positions": 4,
+        "global_max_concurrent": 4,
+    }
+
+
+def test_concurrency_caps_are_owner_isolated_and_market_fills_reject_at_cap(
+    tmp_path: Path,
+) -> None:
+    broker = VirtualBroker(
+        tmp_path / "ledger.jsonl", balance_jpy=2_000_000.0, fast_ledger=True
+    )
+    broker.on_quote("USD_JPY", 150.00, 150.02, "2026-01-01T00:00:00+00:00")
+    owner_a = OwnedBrokerView(
+        broker,
+        "test:owner-a",
+        max_concurrent_per_pair=1,
+        global_max_concurrent=1,
+    )
+    owner_b = OwnedBrokerView(
+        broker,
+        "test:owner-b",
+        max_concurrent_per_pair=1,
+        global_max_concurrent=1,
+    )
+
+    owner_a.market_order("USD_JPY", "LONG", 1_000)
+    owner_b.market_order("USD_JPY", "SHORT", 1_000)
+    with pytest.raises(VirtualBrokerError, match="concurrency cap"):
+        owner_a.market_order("USD_JPY", "SHORT", 1_000)
+
+    assert len(owner_a.active_trade_ids()) == 1
+    assert len(owner_b.active_trade_ids()) == 1
+    rejection = next(
+        json.loads(line)
+        for line in reversed(broker.ledger_path.read_text().splitlines())
+        if json.loads(line)["event"] == "ORDER_REJECTED_CONCURRENCY_CAP"
+    )
+    assert rejection["payload"]["strategy_owner_id"] == "test:owner-a"
+    assert rejection["payload"]["admission"]["scope"] == "PAIR"

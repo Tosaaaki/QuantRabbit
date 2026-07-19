@@ -1,0 +1,24 @@
+{
+  "contract": "QR_DOJO_EVIDENCE_CORRECTION_V1",
+  "schema_version": 1,
+  "recorded_at_utc": "2026-07-19T01:31:36Z",
+  "applies_to_artifact_path": "research/forward/dojo-ai-forward-phase1-v3r1/supersession.json",
+  "applies_to_artifact_sha256": "d665e0ea61d24ad59fc304b60ec8c65a109b9ad3849c861e88bc8eadd80eebd3",
+  "invalidated_evidence": {
+    "path": "/Users/tossaki/App/QuantRabbit_archives/DOJO_20260719/research-data/blind_exit_pilot_v1.json",
+    "stale_result": "AI_EXIT_JUDGMENT_BEATS_BLUNT_TIME_STOP_BY_APPROX_0_6_PIPS",
+    "status": "INVALIDATED_SAME_BAR_LOOKAHEAD",
+    "reason": "DECISION_BAR_HIGH_LOW_CLOSE_EXPOSED_AT_DECISION_BAR_OPEN",
+    "replacement_evidence_path": "research/training/dojo-ai-exit-train-v2/evidence.json",
+    "replacement_evidence_sha256": "46c15577555b1cb16b3dcc00ba144c057b83f7fddd8468370086a08cac9ebddf",
+    "replacement_status": "INVALIDATED_SOURCE_GAP_CONTINUITY",
+    "replacement_result": "PRESERVED_NUMBERS_INVALID_FOR_POLICY_COMPARISON"
+  },
+  "supersession_state_remains_valid": true,
+  "supersession_reason_remains_valid": true,
+  "successor_policy_selection_evidence_valid": false,
+  "proof_eligible": false,
+  "promotion_eligible": false,
+  "live_permission": false,
+  "order_authority": "NONE"
+}

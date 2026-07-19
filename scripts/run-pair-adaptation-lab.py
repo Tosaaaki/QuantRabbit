@@ -26,6 +26,7 @@ from quant_rabbit.dojo_lab_provenance import (  # noqa: E402
     combine_intrabar_results,
     create_run_root,
     create_trial_dir,
+    owner_concurrency_caps_from_config,
     reserve_window_plan,
     score_session_ledger,
     validate_window_plan,
@@ -217,6 +218,7 @@ def run(
             "error": proc.stderr[-500:],
         }
     try:
+        pair_cap, global_cap = owner_concurrency_caps_from_config(owned_cfg)
         score = score_session_ledger(
             session / "ledger.jsonl",
             start_balance_jpy=START_BALANCE_JPY,
@@ -244,6 +246,8 @@ def run(
             ).hexdigest(),
             expected_bot_config_length=len(config_text),
             reservation_evidence=reservation_evidence,
+            expected_max_concurrent_per_pair=pair_cap,
+            expected_global_max_concurrent=global_cap,
         )
     except ValueError as exc:
         return {
