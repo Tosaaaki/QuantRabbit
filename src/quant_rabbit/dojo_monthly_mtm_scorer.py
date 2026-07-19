@@ -317,7 +317,8 @@ def score_monthly_mtm(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     body = {
         "contract": CONTRACT,
         "schema_version": 1,
-        "evidence_boundary": "REFERENCES_VERIFIED_RESULTS_BUT_DOES_NOT_REEXECUTE",
+        "evidence_boundary": "CALLER_REFERENCES_NOT_REEXECUTED_OR_VERIFIED",
+        "research_evidence_verified": False,
         "month_denominator": list(EXPECTED_MONTHS),
         "month_count": len(monthly),
         "months": monthly,
@@ -332,8 +333,8 @@ def score_monthly_mtm(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "three_x_hit_rate_wilson95_lcb": wilson95_lower_bound(hits, len(monthly)),
         "every_month_3x": hits == len(monthly),
         "every_month_gate_pass": all(row["gates"]["all_pass"] for row in monthly),
-        "research_gate_pass": not blockers,
-        "research_blockers": blockers,
+        "arithmetic_gate_pass": not blockers,
+        "arithmetic_blockers": blockers,
         "promotion_eligible": False,
         "promotion_blockers": [
             "HISTORICAL_WORN_DIAGNOSTIC_HAS_NO_PROMOTION_AUTHORITY",

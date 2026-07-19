@@ -61,6 +61,7 @@ MANDATORY_SOURCE_PATHS = frozenset(
         "src/quant_rabbit/dojo_bot_trainer.py",
         "src/quant_rabbit/dojo_lab_provenance.py",
         "src/quant_rabbit/dojo_market_calendar.py",
+        "src/quant_rabbit/analysis/market_status.py",
         "src/quant_rabbit/virtual_broker.py",
     }
 )

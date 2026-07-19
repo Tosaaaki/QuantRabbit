@@ -48,7 +48,8 @@ def test_exact_30_month_all_three_x_is_diagnostic_only() -> None:
     score = score_monthly_mtm(_denominator())
     assert score["month_count"] == 30
     assert score["every_month_3x"] is True
-    assert score["research_gate_pass"] is True
+    assert score["arithmetic_gate_pass"] is True
+    assert score["research_evidence_verified"] is False
     assert score["promotion_eligible"] is False
     assert score["live_permission"] is False
     assert score["order_authority"] == "NONE"
@@ -64,7 +65,7 @@ def test_one_losing_month_cannot_be_hidden_by_large_average() -> None:
     score = score_monthly_mtm(rows)
     assert score["average_pessimistic_stress_multiple"] > 3.0
     assert score["every_month_3x"] is False
-    assert score["research_gate_pass"] is False
+    assert score["arithmetic_gate_pass"] is False
     assert score["losing_months"] == [EXPECTED_MONTHS[7]]
 
 
@@ -86,7 +87,7 @@ def test_risk_caps_are_fixed_at_normal10_stress15_and_margin45() -> None:
     assert score["months"][0]["gates"]["normal_drawdown"] is False
     assert score["months"][1]["gates"]["stress_drawdown"] is False
     assert score["months"][2]["gates"]["peak_margin"] is False
-    assert score["research_gate_pass"] is False
+    assert score["arithmetic_gate_pass"] is False
 
 
 def test_lopo_drop_is_path_aligned_and_all_labels_are_required() -> None:

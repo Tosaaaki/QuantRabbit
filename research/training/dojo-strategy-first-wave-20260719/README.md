@@ -9,16 +9,18 @@ This is a worn-TRAIN study, not forward proof and not live permission.
 - Fixed cells: OHLC/OLHC x BASE/STRESS
 - True LOPO: main plus five leave-one-pair-out replays per cell
 - Fixed denominator: 4 candidates x 4 cells x 6 replay scopes = 96 replays
-- Study SHA-256: `29cca3bfc02d35d5380f33b9332221e8f72065a27a8fdedbb12e4ee2d9b9fd12`
+- Study SHA-256: `605f7b1b2ba8720e5efb12319e76d3ff876a051dc8d493474fe741fabb8beb68`
 
 The June 2025 five-pair source passes the existing 98% full-day, 80% short-day,
 and 900-second causal-gap preflight. No threshold was relaxed to admit it.
 
-Attempts 2 and 3 are intentionally disabled. They require an append-only
-cumulative lineage registry, independently verified prior TRAIN results, and a
-no-repeat candidate registry. Repeated ad-hoc calls must not turn a nominal
-14-candidate budget into an unbounded search.
+This factory emits attempt 1 only. The generic trainer does not yet enforce a
+cumulative lineage across separate studies, so attempts 2 and 3 are not
+admissible evidence until an append-only registry binds independently verified
+prior TRAIN results and rejects repeated candidates. Repeated ad-hoc studies
+must not turn a nominal 14-candidate budget into an unbounded search.
 
-Historical monthly aggregation uses the exact 2024-01 through 2026-06
-denominator. It can report whether all 30 pessimistic STRESS months reached
-3x, but it always keeps promotion, live permission, and order authority off.
+The monthly scorer is currently an arithmetic-only scaffold: it fixes the
+2024-01 through 2026-06 denominator but is not yet bridged to verified trainer
+outputs or family-LOPO replays. It cannot establish research evidence and
+always keeps promotion, live permission, and order authority off.
