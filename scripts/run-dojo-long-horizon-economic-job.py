@@ -23,6 +23,10 @@ from quant_rabbit.dojo_long_horizon_economic_runner import (
     run_long_horizon_economic_job,
 )
 from quant_rabbit.dojo_long_horizon_plan import canonical_sha256
+from quant_rabbit.dojo_tuned_strategy_runtime import (
+    build_tuned_strategy_runtime_factory,
+    build_tuned_strategy_runtime_seal,
+)
 
 
 MAX_INPUT_BYTES = 64 * 1024 * 1024
@@ -30,7 +34,11 @@ MAX_INPUT_BYTES = 64 * 1024 * 1024
 
 def _read_json(path: Path) -> dict[str, Any]:
     state = path.stat(follow_symlinks=False)
-    if not stat.S_ISREG(state.st_mode) or state.st_size <= 0 or state.st_size > MAX_INPUT_BYTES:
+    if (
+        not stat.S_ISREG(state.st_mode)
+        or state.st_size <= 0
+        or state.st_size > MAX_INPUT_BYTES
+    ):
         raise DojoLongHorizonEconomicRunnerError(
             f"input is not a bounded regular file: {path}"
         )
@@ -69,9 +77,7 @@ def _write_exclusive(path: Path, value: Mapping[str, Any]) -> None:
         descriptor = os.open(temporary, flags, 0o600)
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             if handle.write(payload) != len(payload):
-                raise DojoLongHorizonEconomicRunnerError(
-                    "output write was incomplete"
-                )
+                raise DojoLongHorizonEconomicRunnerError("output write was incomplete")
             handle.flush()
             os.fsync(handle.fileno())
         # Hard-link publication is atomic and cannot overwrite an existing
@@ -79,9 +85,7 @@ def _write_exclusive(path: Path, value: Mapping[str, Any]) -> None:
         os.link(temporary, path, follow_symlinks=False)
         directory_fd = os.open(
             path.parent,
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
         )
         try:
             os.fsync(directory_fd)
@@ -108,12 +112,19 @@ def _parser() -> argparse.ArgumentParser:
     builtins = sub.add_parser("seal-builtin-strategies")
     builtins.add_argument("--output", type=Path, required=True)
 
+    tuned = sub.add_parser("seal-tuned-strategies")
+    tuned.add_argument("--candidate-proposals", type=Path, required=True)
+    tuned.add_argument("--generation-ordinal", type=int, required=True)
+    tuned.add_argument("--generation-binding-sha256", required=True)
+    tuned.add_argument("--output", type=Path, required=True)
+
     run = sub.add_parser("run")
     run.add_argument("--runner-handoff", type=Path, required=True)
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--source-root", type=Path, required=True)
     run.add_argument("--source-manifest", type=Path, required=True)
     run.add_argument("--source-slice-receipt", type=Path, required=True)
+    run.add_argument("--economic-evidence-root", type=Path, required=True)
     run.add_argument("--worker-catalog", type=Path, required=True)
     run.add_argument("--coordinate-runtimes", type=Path, required=True)
     mode = run.add_mutually_exclusive_group(required=True)
@@ -130,6 +141,14 @@ def _parser() -> argparse.ArgumentParser:
             "created by this script before the job starts."
         ),
     )
+    mode.add_argument(
+        "--tuned-strategy-runtime-seal",
+        type=Path,
+        help=(
+            "Run a capability-closed immutable generation of trainer-sealed "
+            "declarative workers; plugins and arbitrary Python remain forbidden."
+        ),
+    )
     run.add_argument("--carry-states", type=Path)
     run.add_argument("--output", type=Path, required=True)
     return parser
@@ -141,6 +160,19 @@ def main() -> int:
     try:
         if args.command == "seal-builtin-strategies":
             result = build_builtin_strategy_runtime_seal(repo_root)
+        elif args.command == "seal-tuned-strategies":
+            proposal_doc = _read_json(args.candidate_proposals)
+            proposals = proposal_doc.get("trainer_candidate_proposals")
+            if not isinstance(proposals, list):
+                raise DojoLongHorizonEconomicRunnerError(
+                    "candidate proposal wrapper has no proposal list"
+                )
+            result = build_tuned_strategy_runtime_seal(
+                repo_root,
+                candidate_proposals=proposals,
+                generation_ordinal=args.generation_ordinal,
+                generation_binding_sha256=args.generation_binding_sha256,
+            )
         else:
             handoff = _read_json(args.runner_handoff)
         if args.command == "seal-source-slice":
@@ -178,7 +210,7 @@ def main() -> int:
             if args.builtin_no_intent_only:
                 runtime_factory = builtin_no_intent_runtime_factory
                 runtime_sha = BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256
-            else:
+            elif args.builtin_strategy_runtime_seal is not None:
                 runtime_seal = _read_json(args.builtin_strategy_runtime_seal)
                 runtime_repo_root = repo_root
                 runtime_factory = builtin_strategy_runtime_factory
@@ -187,12 +219,24 @@ def main() -> int:
                     raise DojoLongHorizonEconomicRunnerError(
                         "built-in strategy runtime seal has no binding SHA"
                     )
+            else:
+                runtime_seal = _read_json(args.tuned_strategy_runtime_seal)
+                runtime_repo_root = repo_root
+                runtime_factory = build_tuned_strategy_runtime_factory(
+                    runtime_seal, repo_root=repo_root
+                )
+                runtime_sha = runtime_seal.get("runtime_binding_sha256")
+                if not isinstance(runtime_sha, str):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "tuned strategy runtime seal has no binding SHA"
+                    )
             result = run_long_horizon_economic_job(
                 runner_handoff=handoff,
                 plan=_read_json(args.plan),
                 source_root=args.source_root,
                 source_manifest=_read_json(args.source_manifest),
                 source_slice_receipt=_read_json(args.source_slice_receipt),
+                economic_evidence_root=args.economic_evidence_root,
                 worker_catalog=catalog,
                 coordinate_runtimes=runtimes,
                 worker_runtime_factory=runtime_factory,

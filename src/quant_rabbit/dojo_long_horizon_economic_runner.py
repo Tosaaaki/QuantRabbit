@@ -23,6 +23,8 @@ import math
 import os
 import re
 import stat
+import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,9 +34,19 @@ from quant_rabbit.dojo_long_horizon_execution import (
     RUNNER_HANDOFF_CONTRACT,
     build_long_horizon_coordinate_result,
 )
+from quant_rabbit.dojo_economic_transcript import (
+    DojoEconomicTranscriptError,
+    EconomicTranscriptRecorder,
+    build_economic_transcript_header,
+    build_fixed_denominator_reexecution_attestation,
+)
 from quant_rabbit.dojo_builtin_strategy_runtime import (
     builtin_strategy_runtime_factory,
     verify_builtin_strategy_runtime_seal,
+)
+from quant_rabbit.dojo_tuned_strategy_runtime import (
+    SealedTunedStrategyRuntimeFactory,
+    verify_tuned_strategy_runtime_seal,
 )
 from quant_rabbit.dojo_long_horizon_plan import (
     STARTING_EQUITY_JPY,
@@ -63,6 +75,7 @@ SCHEMA_VERSION: Final = 1
 MAX_SOURCE_LINE_BYTES: Final = 1024 * 1024
 MAX_WORKER_STATE_BYTES: Final = 1024 * 1024
 MAX_RESULT_BYTES: Final = 16 * 1024 * 1024
+MAX_REEXECUTION_ATTESTATION_BYTES: Final = 1024 * 1024
 GENESIS_BATCH_CHAIN_SHA256: Final = "0" * 64
 BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256: Final = canonical_sha256(
     {
@@ -90,9 +103,7 @@ _RUNTIME_KEYS = frozenset(
         "portfolio_policy_binding_sha256",
     }
 )
-_CATALOG_KEYS = frozenset(
-    {"worker_id", "owner_id", "family_id", "config_sha256"}
-)
+_CATALOG_KEYS = frozenset({"worker_id", "owner_id", "family_id", "config_sha256"})
 
 
 class DojoLongHorizonEconomicRunnerError(ValueError):
@@ -108,9 +119,7 @@ class EconomicWorkerRuntime(Protocol):
     and is sealed into continuous-account carry.
     """
 
-    def propose(
-        self, snapshot: Mapping[str, Any]
-    ) -> Sequence[Mapping[str, Any]]: ...
+    def propose(self, snapshot: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]: ...
 
     def export_state(self) -> Any: ...
 
@@ -127,9 +136,7 @@ class _BuiltinNoIntentRuntime:
     ) -> None:
         self._bindings = [dict(row) for row in bindings]
         self._calls = (
-            int(prior_state.get("calls", 0))
-            if isinstance(prior_state, Mapping)
-            else 0
+            int(prior_state.get("calls", 0)) if isinstance(prior_state, Mapping) else 0
         )
 
     def propose(self, snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -191,7 +198,9 @@ def _mapping(value: Any, *, field: str) -> Mapping[str, Any]:
     return value
 
 
-def _exact(value: Any, keys: frozenset[str] | set[str], *, field: str) -> Mapping[str, Any]:
+def _exact(
+    value: Any, keys: frozenset[str] | set[str], *, field: str
+) -> Mapping[str, Any]:
     row = _mapping(value, field=field)
     if set(row) != set(keys):
         raise DojoLongHorizonEconomicRunnerError(
@@ -240,6 +249,117 @@ def _identifier(value: Any, *, field: str) -> str:
     return value
 
 
+def _economic_evidence_directory(path: Path) -> Path:
+    directory = Path(path)
+    state = directory.stat(follow_symlinks=False)
+    if directory.is_symlink() or not stat.S_ISDIR(state.st_mode):
+        raise DojoLongHorizonEconomicRunnerError(
+            "economic evidence root must be an existing non-symlink directory"
+        )
+    return directory.resolve(strict=True)
+
+
+def _write_exclusive_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Crash-safe immutable publication for a bounded attestation."""
+
+    payload = _canonical_bytes(value) + b"\n"
+    if len(payload) > MAX_REEXECUTION_ATTESTATION_BYTES:
+        raise DojoLongHorizonEconomicRunnerError(
+            "reexecution attestation exceeds its byte bound"
+        )
+    temporary = path.with_name(
+        f".{path.name}.{canonical_sha256(value)}.{os.getpid()}.tmp"
+    )
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            if handle.write(payload) != len(payload):
+                raise DojoLongHorizonEconomicRunnerError(
+                    "reexecution attestation write was incomplete"
+                )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _reexecute_transcript_in_separate_process(path: Path) -> dict[str, Any]:
+    """Run the canonical auditor outside the runner process and parse only stdout."""
+
+    repository_root = Path(__file__).resolve().parents[2]
+    source_root = repository_root / "src"
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath = str(source_root)
+    if inherited_pythonpath:
+        pythonpath = os.pathsep.join((pythonpath, inherited_pythonpath))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.dojo_economic_transcript",
+            str(path),
+        ],
+        cwd=repository_root,
+        env={**os.environ, "PYTHONPATH": pythonpath},
+        check=False,
+        capture_output=True,
+    )
+    if (
+        completed.returncode != 0
+        or completed.stderr
+        or not completed.stdout
+        or len(completed.stdout) > MAX_REEXECUTION_ATTESTATION_BYTES
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "separate-process economic transcript reexecution failed"
+        )
+    row = _strict_json_line(
+        completed.stdout,
+        field=f"reexecution attestation for {path.name}",
+    )
+    return dict(row)
+
+
+def _failure_stage(code: str) -> str:
+    return {
+        "WORKER_RUNTIME_INITIALIZATION_FAILURE": "RUNTIME_INITIALIZATION",
+        "PORTFOLIO_PREPARE_FAILURE": "POST_EXIT_PREPARATION",
+        "WORKER_PROTOCOL_FAILURE": "PROPOSAL_COLLECTION",
+        "PORTFOLIO_CONSUME_FAILURE": "ALLOCATION_REDUCTION",
+        "SOURCE_STREAM_FAILURE": "SOURCE_STREAM",
+        "SOURCE_QUOTE_COVERAGE_UNPROVEN": "SOURCE_COVERAGE",
+        "PORTFOLIO_FINALIZE_FAILURE": "TERMINAL_SETTLEMENT",
+    }.get(code, "UNKNOWN_FAILURE_STAGE")
+
+
+def _transcript_call(action: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    try:
+        return action(*args, **kwargs)
+    except DojoEconomicTranscriptError as exc:
+        raise DojoLongHorizonEconomicRunnerError(
+            "economic transcript recording failed closed"
+        ) from exc
+
+
 def _strict_json_line(raw: bytes, *, field: str) -> Mapping[str, Any]:
     if not raw.endswith(b"\n") or len(raw) > MAX_SOURCE_LINE_BYTES:
         raise DojoLongHorizonEconomicRunnerError(
@@ -275,9 +395,7 @@ def _strict_json_line(raw: bytes, *, field: str) -> Mapping[str, Any]:
         ) from exc
     row = _mapping(value, field=field)
     if raw != _canonical_bytes(row) + b"\n":
-        raise DojoLongHorizonEconomicRunnerError(
-            f"{field} is not canonical JSONL"
-        )
+        raise DojoLongHorizonEconomicRunnerError(f"{field} is not canonical JSONL")
     return row
 
 
@@ -328,9 +446,7 @@ def _validate_source_row(
             raise DojoLongHorizonEconomicRunnerError("source quote pair is invalid")
         sides: dict[str, list[float]] = {}
         for side in ("bid", "ask"):
-            values = _sequence(
-                quote[side], field=f"source row.quotes[{index}].{side}"
-            )
+            values = _sequence(quote[side], field=f"source row.quotes[{index}].{side}")
             if len(values) != 4:
                 raise DojoLongHorizonEconomicRunnerError(
                     "source bid/ask must be [O,H,L,C]"
@@ -339,9 +455,12 @@ def _validate_source_row(
                 _positive(item, field=f"source row.quotes[{index}].{side}[{offset}]")
                 for offset, item in enumerate(values)
             ]
-            if not parsed[2] <= min(parsed[0], parsed[3]) <= max(
-                parsed[0], parsed[3]
-            ) <= parsed[1]:
+            if (
+                not parsed[2]
+                <= min(parsed[0], parsed[3])
+                <= max(parsed[0], parsed[3])
+                <= parsed[1]
+            ):
                 raise DojoLongHorizonEconomicRunnerError(
                     "source OHLC geometry is invalid"
                 )
@@ -376,7 +495,9 @@ def _safe_source_path(source_root: Path, relative_path: Any) -> Path:
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise DojoLongHorizonEconomicRunnerError("source shard escapes source root") from exc
+        raise DojoLongHorizonEconomicRunnerError(
+            "source shard escapes source root"
+        ) from exc
     state = path.stat(follow_symlinks=False)
     if not stat.S_ISREG(state.st_mode) or path.suffix != ".jsonl":
         raise DojoLongHorizonEconomicRunnerError(
@@ -434,7 +555,9 @@ def _source_parent_binding(
     ):
         raise DojoLongHorizonEconomicRunnerError("source manifest seal is invalid")
     bindings = _sequence(manifest.get("bindings"), field="source manifest.bindings")
-    matches = [row for row in bindings if row.get("binding_id") == job["source_binding_id"]]
+    matches = [
+        row for row in bindings if row.get("binding_id") == job["source_binding_id"]
+    ]
     if len(matches) != 1:
         raise DojoLongHorizonEconomicRunnerError(
             "source manifest has no unique job binding"
@@ -547,9 +670,10 @@ def _parent_price_rows(
                 "parent coverage references an unknown physical shard"
             )
         physical = _mapping(raw_physical, field="source physical shard")
-        if physical.get("pair") != pair or physical.get("granularity") != job[
-            "granularity"
-        ]:
+        if (
+            physical.get("pair") != pair
+            or physical.get("granularity") != job["granularity"]
+        ):
             raise DojoLongHorizonEconomicRunnerError(
                 "parent physical shard pair/granularity drifted"
             )
@@ -562,7 +686,9 @@ def _parent_price_rows(
             Path(str(roots[root_kind])), physical.get("relative_path")
         )
         expected_size = _integer(
-            physical.get("file_size_bytes"), field="physical shard.file_size_bytes", minimum=1
+            physical.get("file_size_bytes"),
+            field="physical shard.file_size_bytes",
+            minimum=1,
         )
         expected_sha = _sha(
             physical.get("file_sha256"), field="physical shard.file_sha256"
@@ -742,9 +868,7 @@ def build_month_source_slice_receipt(
     if count == 0 or first is None or previous is None:
         raise DojoLongHorizonEconomicRunnerError("source shard is empty")
     parent = _source_parent_binding(source_manifest, job=job)
-    parent_rows = _parent_price_rows(
-        source_manifest, job=job, parent=parent
-    )
+    parent_rows = _parent_price_rows(source_manifest, job=job, parent=parent)
     derivation_sha = _verify_normalized_prices(normalized_rows, parent_rows)
     body = {
         "contract": SOURCE_SLICE_CONTRACT,
@@ -839,7 +963,10 @@ def _verify_runner_handoff(value: Mapping[str, Any]) -> dict[str, Any]:
     digest = row.get("runner_handoff_sha256")
     _sha(digest, field="runner handoff.runner_handoff_sha256")
     body = {key: item for key, item in row.items() if key != "runner_handoff_sha256"}
-    if digest != canonical_sha256(body) or row.get("contract") != RUNNER_HANDOFF_CONTRACT:
+    if (
+        digest != canonical_sha256(body)
+        or row.get("contract") != RUNNER_HANDOFF_CONTRACT
+    ):
         raise DojoLongHorizonEconomicRunnerError("runner handoff seal is invalid")
     job = _mapping(row.get("job"), field="runner handoff.job")
     job_sha = _sha(job.get("job_sha256"), field="runner handoff.job.job_sha256")
@@ -848,10 +975,16 @@ def _verify_runner_handoff(value: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise DojoLongHorizonEconomicRunnerError("runner job digest drifted")
     claim = _mapping(row.get("claim"), field="runner handoff.claim")
-    claim_sha = _sha(claim.get("claim_sha256"), field="runner handoff.claim.claim_sha256")
-    if claim_sha != canonical_sha256(
-        {key: item for key, item in claim.items() if key != "claim_sha256"}
-    ) or claim.get("job_sha256") != job_sha:
+    claim_sha = _sha(
+        claim.get("claim_sha256"), field="runner handoff.claim.claim_sha256"
+    )
+    if (
+        claim_sha
+        != canonical_sha256(
+            {key: item for key, item in claim.items() if key != "claim_sha256"}
+        )
+        or claim.get("job_sha256") != job_sha
+    ):
         raise DojoLongHorizonEconomicRunnerError("runner claim digest drifted")
     obligations = _mapping(row.get("runner_obligations"), field="runner obligations")
     if not (
@@ -860,9 +993,13 @@ def _verify_runner_handoff(value: Mapping[str, Any]) -> dict[str, Any]:
         and obligations.get("source_reopen_or_resort_allowed") is False
         and obligations.get("broker_or_live_path_allowed") is False
     ):
-        raise DojoLongHorizonEconomicRunnerError("runner obligations are not fail-closed")
+        raise DojoLongHorizonEconomicRunnerError(
+            "runner obligations are not fail-closed"
+        )
     if row.get("terminal_status") is not None:
-        raise DojoLongHorizonEconomicRunnerError("terminal runner handoff cannot execute")
+        raise DojoLongHorizonEconomicRunnerError(
+            "terminal runner handoff cannot execute"
+        )
     if row.get("recorded_coordinate_count") != 0:
         raise DojoLongHorizonEconomicRunnerError(
             "economic runner requires a fresh all-coordinate handoff; partial-cell "
@@ -938,9 +1075,10 @@ def _coordinate_runtime_rows(
     for coordinate_id in expected_ids:
         raw = _exact(raw_map[coordinate_id], _RUNTIME_KEYS, field="coordinate runtime")
         coordinate = coordinates[coordinate_id]
-        if raw["coordinate_id"] != coordinate_id or raw["cost_scenario"] != coordinate[
-            "cost_scenario"
-        ]:
+        if (
+            raw["coordinate_id"] != coordinate_id
+            or raw["cost_scenario"] != coordinate["cost_scenario"]
+        ):
             raise DojoLongHorizonEconomicRunnerError(
                 "coordinate runtime identity or cost scenario drifted"
             )
@@ -956,7 +1094,9 @@ def _coordinate_runtime_rows(
             or canonical_sha256({"pairs": trade_pairs})
             != coordinate["trade_pair_set_sha256"]
         ):
-            raise DojoLongHorizonEconomicRunnerError("coordinate trade-pair set drifted")
+            raise DojoLongHorizonEconomicRunnerError(
+                "coordinate trade-pair set drifted"
+            )
         active = _selected(
             catalog, coordinate["active_worker_mask"], field="active_worker_mask"
         )
@@ -1029,9 +1169,7 @@ def _coordinate_runtime_rows(
             "trade_pairs": trade_pairs,
             "active_worker_bindings": [dict(item) for item in active],
             "portfolio_policy": policy,
-            "portfolio_policy_binding_sha256": raw[
-                "portfolio_policy_binding_sha256"
-            ],
+            "portfolio_policy_binding_sha256": raw["portfolio_policy_binding_sha256"],
         }
     return result
 
@@ -1071,8 +1209,7 @@ def _validate_economic_carry(
         or row["state_sha256"] != canonical_sha256(body)
         or row["state_slot_id"] != state_slot_id
         or row["portfolio_policy_sha256"] != policy_sha256
-        or row["worker_runtime_binding_sha256"]
-        != worker_runtime_binding_sha256
+        or row["worker_runtime_binding_sha256"] != worker_runtime_binding_sha256
         or row["worker_state_sha256"] != canonical_sha256(row["worker_state"])
         or row["authority"] != _authority()
     ):
@@ -1100,9 +1237,10 @@ def _validate_economic_carry(
         field="carry source cursor.source_row_count",
         minimum=1,
     )
-    if cursor["granularity"] not in _GRANULARITY_SECONDS or cursor[
-        "intrabar_path"
-    ] not in _PHASES:
+    if (
+        cursor["granularity"] not in _GRANULARITY_SECONDS
+        or cursor["intrabar_path"] not in _PHASES
+    ):
         raise DojoLongHorizonEconomicRunnerError("carry source cursor is unsupported")
     portfolio = _mapping(row["portfolio_carry_state"], field="portfolio carry")
     if portfolio.get("policy_sha256") != policy_sha256:
@@ -1242,6 +1380,7 @@ def run_long_horizon_economic_job(
     source_root: Path,
     source_manifest: Mapping[str, Any],
     source_slice_receipt: Mapping[str, Any],
+    economic_evidence_root: Path,
     worker_catalog: Sequence[Mapping[str, Any]],
     coordinate_runtimes: Mapping[str, Mapping[str, Any]],
     worker_runtime_factory: WorkerRuntimeFactory,
@@ -1270,6 +1409,7 @@ def run_long_horizon_economic_job(
     receipt = validate_month_source_slice_receipt(
         source_slice_receipt, job=job, source_manifest=source_manifest
     )
+    evidence_root = _economic_evidence_directory(economic_evidence_root)
     path = _safe_source_path(source_root, receipt["relative_path"])
     before = path.stat(follow_symlinks=False)
     catalog = _worker_catalog(worker_catalog, job=job)
@@ -1326,6 +1466,32 @@ def run_long_horizon_economic_job(
                 "worker catalog differs from the sealed built-in strategy catalog"
             )
         worker_runtime_mode = "SEALED_BUILTIN_MULTI_STRATEGY"
+    elif type(worker_runtime_factory) is SealedTunedStrategyRuntimeFactory:
+        if worker_runtime_seal is None or worker_runtime_repo_root is None:
+            raise DojoLongHorizonEconomicRunnerError(
+                "tuned strategy runtime requires its generation dependency seal"
+            )
+        try:
+            verified_runtime_seal = verify_tuned_strategy_runtime_seal(
+                worker_runtime_seal, repo_root=worker_runtime_repo_root
+            )
+        except ValueError as exc:
+            raise DojoLongHorizonEconomicRunnerError(
+                f"tuned strategy runtime seal is invalid: {exc}"
+            ) from exc
+        if (
+            runtime_sha != verified_runtime_seal["runtime_binding_sha256"]
+            or worker_runtime_factory.runtime_binding_sha256 != runtime_sha
+            or not worker_runtime_factory.matches_verified_seal(verified_runtime_seal)
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                "tuned strategy runtime factory differs from its immutable seal"
+            )
+        if catalog != verified_runtime_seal["worker_catalog"]:
+            raise DojoLongHorizonEconomicRunnerError(
+                "worker catalog differs from the tuned generation seal"
+            )
+        worker_runtime_mode = "SEALED_TUNED_DECLARATIVE_MULTI_STRATEGY"
     else:
         raise DojoLongHorizonEconomicRunnerError(
             "external in-process worker code is forbidden in the economic evidence "
@@ -1354,6 +1520,9 @@ def run_long_horizon_economic_job(
 
     sessions: dict[str, Any] = {}
     worker_instances: dict[str, EconomicWorkerRuntime] = {}
+    transcript_recorders: dict[str, EconomicTranscriptRecorder] = {}
+    transcript_paths: dict[str, Path] = {}
+    terminal_transcript_ids: set[str] = set()
     predecessor_sha: dict[str, str | None] = {}
     failures: dict[str, tuple[str, str]] = {}
     portfolio_results: dict[str, dict[str, Any]] = {}
@@ -1406,6 +1575,74 @@ def run_long_horizon_economic_job(
             predecessor_last_epochs.add(cursor["last_epoch"])
         else:
             predecessor_sha[coordinate_id] = None
+        transcript_id = canonical_sha256(
+            {
+                "contract": "QR_DOJO_LONG_HORIZON_TRANSCRIPT_ID_V1",
+                "job_sha256": job["job_sha256"],
+                "claim_sha256": claim["claim_sha256"],
+                "coordinate_id": coordinate_id,
+                "source_slice_receipt_sha256": receipt["source_slice_receipt_sha256"],
+                "worker_runtime_binding_sha256": runtime_sha,
+                "portfolio_policy_binding_sha256": runtime[
+                    "portfolio_policy_binding_sha256"
+                ],
+                "predecessor_state_sha256": predecessor_sha[coordinate_id],
+            }
+        )
+        transcript_path = evidence_root / f"{transcript_id}.economic.jsonl"
+        input_bindings = {
+            "job_sha256": job["job_sha256"],
+            "claim_sha256": claim["claim_sha256"],
+            "source_slice_receipt_sha256": receipt["source_slice_receipt_sha256"],
+            "worker_runtime_binding_sha256": runtime_sha,
+            "cost_policy_sha256": implementation_digests[
+                "base_cost_policy_sha256"
+                if coordinate["cost_scenario"] == "BASE"
+                else "stress_cost_policy_sha256"
+            ],
+            "risk_policy_sha256": implementation_digests["risk_policy_sha256"],
+            "replay_engine_sha256": implementation_digests["replay_engine_sha256"],
+            "portfolio_policy_binding_sha256": runtime[
+                "portfolio_policy_binding_sha256"
+            ],
+            "predecessor_state_sha256": predecessor_sha[coordinate_id],
+            "predecessor_portfolio_carry_state_sha256": (
+                None
+                if portfolio_carry is None
+                else portfolio_carry["carry_state_sha256"]
+            ),
+            "predecessor_source_batch_chain_sha256": (
+                GENESIS_BATCH_CHAIN_SHA256
+                if slot is None
+                else verified_carry["source_batch_chain_sha256"]
+            ),
+        }
+        header = _transcript_call(
+            build_economic_transcript_header,
+            transcript_id=transcript_id,
+            coordinate_id=coordinate_id,
+            portfolio_policy=runtime["portfolio_policy"],
+            input_bindings=input_bindings,
+            terminal_policy=coordinate["terminal_policy"],
+            expected_quote_batch_count=(
+                receipt["row_count"] * len(_PHASES[job["intrabar_path"]])
+            ),
+            initial_balance_jpy=initial if portfolio_carry is None else None,
+            predecessor_portfolio_carry_state=portfolio_carry,
+        )
+        try:
+            transcript_recorders[coordinate_id] = _transcript_call(
+                EconomicTranscriptRecorder,
+                transcript_path,
+                header,
+            )
+        except Exception:
+            # Preserve every already-created incomplete file as fail-closed
+            # crash evidence, but do not leak its descriptor to the caller.
+            for recorder in transcript_recorders.values():
+                recorder.close()
+            raise
+        transcript_paths[coordinate_id] = transcript_path
         try:
             sessions[coordinate_id] = PortfolioReplaySession(
                 policy=runtime["portfolio_policy"],
@@ -1413,7 +1650,12 @@ def run_long_horizon_economic_job(
                 carry_state=portfolio_carry,
             )
             worker_instances[coordinate_id] = worker_runtime_factory(
-                {**coordinate, "trade_pairs": runtime["trade_pairs"]},
+                {
+                    **coordinate,
+                    "trade_pairs": runtime["trade_pairs"],
+                    "granularity": job["granularity"],
+                    "bar_seconds": _GRANULARITY_SECONDS[job["granularity"]],
+                },
                 runtime["active_worker_bindings"],
                 prior_worker_state,
             )
@@ -1430,6 +1672,13 @@ def run_long_horizon_economic_job(
                 "WORKER_RUNTIME_INITIALIZATION_FAILURE",
                 evidence,
             )
+            _transcript_call(
+                transcript_recorders[coordinate_id].seal_failure,
+                failure_code="WORKER_RUNTIME_INITIALIZATION_FAILURE",
+                failure_stage=_failure_stage("WORKER_RUNTIME_INITIALIZATION_FAILURE"),
+                failure_evidence_sha256=evidence,
+            )
+            terminal_transcript_ids.add(coordinate_id)
             sessions.pop(coordinate_id, None)
             worker_instances.pop(coordinate_id, None)
 
@@ -1447,9 +1696,7 @@ def run_long_horizon_economic_job(
         )
     watermark = next(iter(predecessor_watermarks), 0)
     batch_count = 0
-    batch_chain = next(
-        iter(predecessor_batch_chains), GENESIS_BATCH_CHAIN_SHA256
-    )
+    batch_chain = next(iter(predecessor_batch_chains), GENESIS_BATCH_CHAIN_SHA256)
     stream_predecessor_epoch = next(iter(predecessor_last_epochs), None)
     systemic_source_failure = False
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -1498,6 +1745,17 @@ def run_long_horizon_economic_job(
                     for coordinate_id in list(sessions):
                         if coordinate_id in failures:
                             continue
+                        _transcript_call(
+                            transcript_recorders[coordinate_id].record_quote_batch,
+                            coordinate_id=coordinate_id,
+                            epoch=candle["epoch"],
+                            phase=phase,
+                            intrabar=job["intrabar_path"],
+                            quote_watermark=watermark,
+                            quotes=quotes,
+                            quote_batch_sha256_value=quote_digest,
+                            source_batch_chain_sha256=batch_chain,
+                        )
                         try:
                             snapshots[coordinate_id] = sessions[
                                 coordinate_id
@@ -1509,6 +1767,12 @@ def run_long_horizon_economic_job(
                                 quote_watermark=watermark,
                                 quotes=quotes,
                                 quote_batch_sha256_value=quote_digest,
+                            )
+                            _transcript_call(
+                                transcript_recorders[
+                                    coordinate_id
+                                ].record_post_exit_snapshot,
+                                snapshots[coordinate_id],
                             )
                         except Exception:
                             evidence = canonical_sha256(
@@ -1522,6 +1786,15 @@ def run_long_horizon_economic_job(
                                 "PORTFOLIO_PREPARE_FAILURE",
                                 evidence,
                             )
+                            _transcript_call(
+                                transcript_recorders[coordinate_id].seal_failure,
+                                failure_code="PORTFOLIO_PREPARE_FAILURE",
+                                failure_stage=_failure_stage(
+                                    "PORTFOLIO_PREPARE_FAILURE"
+                                ),
+                                failure_evidence_sha256=evidence,
+                            )
+                            terminal_transcript_ids.add(coordinate_id)
                     # Barrier 2: collect and seal all decisions.  No coordinate
                     # is economically advanced while another is still deciding.
                     proposal_batches: dict[str, Mapping[str, Any]] = {}
@@ -1529,10 +1802,18 @@ def run_long_horizon_economic_job(
                         if coordinate_id in failures:
                             continue
                         try:
-                            proposal_batches[coordinate_id] = _raw_proposals_for_snapshot(
-                                worker_instances[coordinate_id],
-                                snapshot=snapshot,
-                                trade_pairs=runtimes[coordinate_id]["trade_pairs"],
+                            proposal_batches[coordinate_id] = (
+                                _raw_proposals_for_snapshot(
+                                    worker_instances[coordinate_id],
+                                    snapshot=snapshot,
+                                    trade_pairs=runtimes[coordinate_id]["trade_pairs"],
+                                )
+                            )
+                            _transcript_call(
+                                transcript_recorders[
+                                    coordinate_id
+                                ].record_worker_proposal_batch,
+                                proposal_batches[coordinate_id],
                             )
                         except Exception:
                             evidence = canonical_sha256(
@@ -1546,11 +1827,26 @@ def run_long_horizon_economic_job(
                                 "WORKER_PROTOCOL_FAILURE",
                                 evidence,
                             )
+                            _transcript_call(
+                                transcript_recorders[coordinate_id].seal_failure,
+                                failure_code="WORKER_PROTOCOL_FAILURE",
+                                failure_stage=_failure_stage("WORKER_PROTOCOL_FAILURE"),
+                                failure_evidence_sha256=evidence,
+                            )
+                            terminal_transcript_ids.add(coordinate_id)
                     for coordinate_id, proposal_batch in proposal_batches.items():
                         if coordinate_id in failures:
                             continue
                         try:
-                            sessions[coordinate_id].consume_proposal_batch(proposal_batch)
+                            allocation_receipt = sessions[
+                                coordinate_id
+                            ].consume_proposal_batch(proposal_batch)
+                            _transcript_call(
+                                transcript_recorders[
+                                    coordinate_id
+                                ].record_allocation_receipt,
+                                allocation_receipt,
+                            )
                         except Exception:
                             evidence = canonical_sha256(
                                 {
@@ -1565,6 +1861,15 @@ def run_long_horizon_economic_job(
                                 "PORTFOLIO_CONSUME_FAILURE",
                                 evidence,
                             )
+                            _transcript_call(
+                                transcript_recorders[coordinate_id].seal_failure,
+                                failure_code="PORTFOLIO_CONSUME_FAILURE",
+                                failure_stage=_failure_stage(
+                                    "PORTFOLIO_CONSUME_FAILURE"
+                                ),
+                                failure_evidence_sha256=evidence,
+                            )
+                            terminal_transcript_ids.add(coordinate_id)
             after = os.fstat(handle.fileno())
         current = path.stat(follow_symlinks=False)
         if (
@@ -1600,9 +1905,7 @@ def run_long_horizon_economic_job(
             {
                 "job_sha256": job["job_sha256"],
                 "failure_code": "SOURCE_STREAM_FAILURE",
-                "source_slice_receipt_sha256": receipt[
-                    "source_slice_receipt_sha256"
-                ],
+                "source_slice_receipt_sha256": receipt["source_slice_receipt_sha256"],
             }
         )
         failures = {
@@ -1624,6 +1927,17 @@ def run_long_horizon_economic_job(
             coordinate_id: ("SOURCE_QUOTE_COVERAGE_UNPROVEN", evidence)
             for coordinate_id in handoff["runnable_coordinate_ids"]
         }
+
+    for coordinate_id, (code, evidence) in failures.items():
+        if coordinate_id in terminal_transcript_ids:
+            continue
+        _transcript_call(
+            transcript_recorders[coordinate_id].seal_failure,
+            failure_code=code,
+            failure_stage=_failure_stage(code),
+            failure_evidence_sha256=evidence,
+        )
+        terminal_transcript_ids.add(coordinate_id)
 
     cells: list[dict[str, Any]] = []
     evidence_rows: list[dict[str, Any]] = []
@@ -1698,9 +2012,7 @@ def run_long_horizon_economic_job(
                 starting_equity_jpy=result["start_equity_jpy"],
                 ending_balance_jpy=result["end_balance_jpy"],
                 ending_equity_jpy=result["end_equity_jpy"],
-                minimum_mtm_equity_jpy=_result_number(
-                    result, "minimum_mtm_equity_jpy"
-                ),
+                minimum_mtm_equity_jpy=_result_number(result, "minimum_mtm_equity_jpy"),
                 minimum_free_margin_jpy=_result_number(
                     result, "minimum_free_margin_jpy"
                 ),
@@ -1712,14 +2024,10 @@ def run_long_horizon_economic_job(
                 ruin_event_count=int(_result_number(result, "ruin_event_count")),
                 trade_count=result["trade_count"],
                 fill_count=result["execution_fill_count"],
-                margin_reject_count=int(
-                    _result_number(result, "margin_reject_count")
-                ),
+                margin_reject_count=int(_result_number(result, "margin_reject_count")),
                 financing_jpy=result["financing_cost_jpy"],
                 transaction_cost_jpy=result["transaction_cost_jpy"],
-                source_slice_receipt_sha256=receipt[
-                    "source_slice_receipt_sha256"
-                ],
+                source_slice_receipt_sha256=receipt["source_slice_receipt_sha256"],
                 batch_chain_sha256=batch_chain,
                 compact_evidence_sha256=compact_evidence,
                 quote_coverage_complete=receipt["parent_quote_coverage_complete"],
@@ -1727,6 +2035,13 @@ def run_long_horizon_economic_job(
                 predecessor_state_sha256=predecessor_sha[coordinate_id],
                 carry_out_state_sha256=carry_out_sha,
             )
+            _transcript_call(
+                transcript_recorders[coordinate_id].seal_success,
+                terminal_policy=coordinate["terminal_policy"],
+                portfolio_result=result,
+                source_batch_chain_sha256=batch_chain,
+            )
+            terminal_transcript_ids.add(coordinate_id)
             cells.append(cell)
             portfolio_results[coordinate_id] = result
             evidence_rows.append(
@@ -1744,6 +2059,14 @@ def run_long_horizon_economic_job(
                     "batch_chain_sha256": batch_chain,
                 }
             )
+            if coordinate_id not in terminal_transcript_ids:
+                _transcript_call(
+                    transcript_recorders[coordinate_id].seal_failure,
+                    failure_code="PORTFOLIO_FINALIZE_FAILURE",
+                    failure_stage=_failure_stage("PORTFOLIO_FINALIZE_FAILURE"),
+                    failure_evidence_sha256=evidence,
+                )
+                terminal_transcript_ids.add(coordinate_id)
             cells.append(
                 _failure_cell(
                     job=job,
@@ -1756,7 +2079,49 @@ def run_long_horizon_economic_job(
 
     complete_count = sum(row["status"] == "COMPLETE" for row in cells)
     failed_count = sum(row["status"] == "FAILED" for row in cells)
-    mixed_incomplete = complete_count > 0 and failed_count > 0
+    expected_coordinate_ids = sorted(handoff["runnable_coordinate_ids"])
+    if terminal_transcript_ids != set(expected_coordinate_ids):
+        raise DojoLongHorizonEconomicRunnerError(
+            "economic transcript terminal denominator is incomplete"
+        )
+    attestations_by_coordinate: dict[str, dict[str, Any]] = {}
+    transcript_artifacts: list[dict[str, Any]] = []
+    for coordinate_id in expected_coordinate_ids:
+        transcript_path = transcript_paths[coordinate_id]
+        attestation = _reexecute_transcript_in_separate_process(transcript_path)
+        attestation_path = transcript_path.with_suffix(".attestation.json")
+        _write_exclusive_json(attestation_path, attestation)
+        attestations_by_coordinate[coordinate_id] = attestation
+        transcript_artifacts.append(
+            {
+                "coordinate_id": coordinate_id,
+                "transcript_filename": transcript_path.name,
+                "transcript_file_sha256": attestation["transcript_file_sha256"],
+                "reexecution_attestation_filename": attestation_path.name,
+                "reexecution_attestation_sha256": attestation[
+                    "reexecution_attestation_sha256"
+                ],
+                "reexecution_status": attestation["status"],
+            }
+        )
+    fixed_attestation = _transcript_call(
+        build_fixed_denominator_reexecution_attestation,
+        expected_coordinate_ids=expected_coordinate_ids,
+        attestations_by_coordinate=attestations_by_coordinate,
+    )
+    fixed_attestation_path = evidence_root / (
+        f"{job['job_sha256']}.{claim['claim_sha256']}.fixed-denominator-attestation.json"
+    )
+    _write_exclusive_json(fixed_attestation_path, fixed_attestation)
+    source_quote_coverage_proved = receipt["parent_quote_coverage_complete"] is True
+    independent_reexecution_passed = (
+        fixed_attestation["status"] == "VERIFIED_COMPLETE"
+        and fixed_attestation["downstream_terminal_reduction_allowed"] is True
+        and failed_count == 0
+    )
+    official_evidence_eligible = (
+        independent_reexecution_passed and source_quote_coverage_proved
+    )
     body = {
         "contract": ECONOMIC_JOB_RESULT_CONTRACT,
         "schema_version": SCHEMA_VERSION,
@@ -1784,8 +2149,10 @@ def run_long_horizon_economic_job(
         "portfolio_results_by_coordinate": (
             portfolio_results if failed_count == 0 else {}
         ),
-        "economic_carry_states_by_slot": economic_carries,
-        "compact_evidence_rows": evidence_rows,
+        "economic_carry_states_by_slot": (
+            economic_carries if failed_count == 0 else {}
+        ),
+        "compact_evidence_rows": evidence_rows if failed_count == 0 else [],
         "worker_runtime_binding_sha256": runtime_sha,
         "coordinate_runtime_bindings_sha256": canonical_sha256(
             [
@@ -1811,11 +2178,26 @@ def run_long_horizon_economic_job(
             if verified_runtime_seal is not None
             else None
         ),
-        "partial_economics_reported": mixed_incomplete,
+        "partial_economics_reported": False,
         "downstream_terminal_reduction_allowed": failed_count == 0,
-        "economic_transcript_available": False,
-        "official_evidence_eligible": False,
-        "proof_classification": "COMPACT_HASHED_DIAGNOSTIC_SCAFFOLD_ONLY",
+        "economic_transcript_available": True,
+        "economic_transcript_artifacts": transcript_artifacts,
+        "economic_transcript_artifacts_sha256": canonical_sha256(transcript_artifacts),
+        "fixed_denominator_reexecution_attestation": fixed_attestation,
+        "fixed_denominator_reexecution_attestation_filename": (
+            fixed_attestation_path.name
+        ),
+        "fixed_denominator_reexecution_attestation_sha256": fixed_attestation[
+            "fixed_denominator_attestation_sha256"
+        ],
+        "independent_economic_reexecution_passed": (independent_reexecution_passed),
+        "source_quote_coverage_proved": source_quote_coverage_proved,
+        "official_evidence_eligible": official_evidence_eligible,
+        "proof_classification": (
+            "INDEPENDENTLY_REEXECUTED_WORN_TRAIN"
+            if official_evidence_eligible
+            else "FAIL_CLOSED_INCOMPLETE_ECONOMIC_EVIDENCE"
+        ),
         "authority": _authority(),
     }
     result = {**body, "economic_job_result_sha256": canonical_sha256(body)}

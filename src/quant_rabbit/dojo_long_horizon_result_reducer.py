@@ -40,6 +40,7 @@ MAX_REPORTED_ISSUES: Final = 100
 _INDEPENDENT_ECONOMIC_EVIDENCE_BLOCKER: Final = (
     "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED"
 )
+_SOURCE_QUOTE_COVERAGE_BLOCKER: Final = "SOURCE_QUOTE_COVERAGE_NOT_PROVED"
 
 
 class DojoLongHorizonResultReducerError(ValueError):
@@ -149,9 +150,7 @@ def long_horizon_economic_runner_output_requirements() -> dict[str, Any]:
             "recompute_every_timestamp_mtm_and_margin": True,
         },
         "current_trusted_reducer_gap": {
-            "current_output_contract": (
-                "QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"
-            ),
+            "current_output_contract": ("QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"),
             "current_output_is_sufficient_for_long_horizon_cell": False,
             "missing_or_ambiguous_independent_metrics": [
                 "minimum_mtm_equity_jpy",
@@ -207,13 +206,19 @@ def long_horizon_economic_runner_output_requirements() -> dict[str, Any]:
 
 def _official_gate(
     cell_reported_blockers: Sequence[str],
+    *,
+    independent_reexecution_passed: bool = False,
+    source_quote_coverage_proved: bool = False,
 ) -> tuple[bool, list[str]]:
-    """Keep the official gate closed until causal inputs are re-executed."""
+    """Require both independent replay and proved quote coverage."""
 
-    return False, [
-        _INDEPENDENT_ECONOMIC_EVIDENCE_BLOCKER,
-        *cell_reported_blockers,
-    ]
+    evidence_blockers: list[str] = []
+    if independent_reexecution_passed is not True:
+        evidence_blockers.append(_INDEPENDENT_ECONOMIC_EVIDENCE_BLOCKER)
+    if source_quote_coverage_proved is not True:
+        evidence_blockers.append(_SOURCE_QUOTE_COVERAGE_BLOCKER)
+    blockers = [*evidence_blockers, *cell_reported_blockers]
+    return not blockers, blockers
 
 
 def _sequence(value: Any, *, field: str) -> Sequence[Any]:
@@ -905,9 +910,7 @@ def score_long_horizon_results(
     if not risk["gate_pass"]:
         cell_reported_blockers.append("RISK_MARGIN_OR_RUIN_GATE_FAILED")
     if not lopo["all_lopo_gates_pass"]:
-        cell_reported_blockers.append(
-            "PAIR_FAMILY_OR_CURRENCY_LOPO_GATE_FAILED"
-        )
+        cell_reported_blockers.append("PAIR_FAMILY_OR_CURRENCY_LOPO_GATE_FAILED")
     if not chain["continuous_chain_gate_pass"]:
         cell_reported_blockers.append("CONTINUOUS_ACCOUNT_CHAIN_FAILED")
     if not chain["independent_reset_gate_pass"]:

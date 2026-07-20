@@ -224,45 +224,74 @@ def test_self_reported_cells_cannot_open_the_official_economic_gate() -> None:
 
     assert gate_pass is False
     assert blockers == [
-        "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED"
+        "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED",
+        "SOURCE_QUOTE_COVERAGE_NOT_PROVED",
     ]
 
     gate_pass, blockers = _official_gate(["NOT_EVERY_MONTH_3X"])
     assert gate_pass is False
     assert blockers == [
         "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED",
+        "SOURCE_QUOTE_COVERAGE_NOT_PROVED",
         "NOT_EVERY_MONTH_3X",
     ]
+
+    gate_pass, blockers = _official_gate(
+        [],
+        independent_reexecution_passed=True,
+        source_quote_coverage_proved=False,
+    )
+    assert gate_pass is False
+    assert blockers == ["SOURCE_QUOTE_COVERAGE_NOT_PROVED"]
+
+    gate_pass, blockers = _official_gate(
+        [],
+        independent_reexecution_passed=True,
+        source_quote_coverage_proved=True,
+    )
+    assert gate_pass is True
+    assert blockers == []
 
 
 def test_runner_output_requirement_demands_causal_inputs_not_aggregate_hashes() -> None:
     requirement = long_horizon_economic_runner_output_requirements()
 
-    assert requirement["job_source_packet"][
-        "source_receipt_hash_without_bound_source_bytes_is_sufficient"
-    ] is False
-    assert requirement["coordinate_reducer_input"][
-        "event_only_fill_exit_ledger_is_sufficient"
-    ] is False
+    assert (
+        requirement["job_source_packet"][
+            "source_receipt_hash_without_bound_source_bytes_is_sufficient"
+        ]
+        is False
+    )
+    assert (
+        requirement["coordinate_reducer_input"][
+            "event_only_fill_exit_ledger_is_sufficient"
+        ]
+        is False
+    )
     assert requirement["independent_reexecution"]["required"] is True
-    assert requirement["independent_reexecution"][
-        "runner_aggregate_result_is_an_input_to_reducer"
-    ] is False
-    assert requirement["current_trusted_reducer_gap"][
-        "current_output_is_sufficient_for_long_horizon_cell"
-    ] is False
-    assert "minimum_mtm_equity_jpy" in requirement[
-        "current_trusted_reducer_gap"
-    ]["missing_or_ambiguous_independent_metrics"]
-    assert requirement["continuous_carry"][
-        "full_carry_state_bytes_required"
-    ] is True
-    assert requirement["failure_evidence"][
-        "failure_may_reduce_denominator"
-    ] is False
-    assert requirement["lopo"][
-        "post_hoc_subtraction_from_full_portfolio_allowed"
-    ] is False
+    assert (
+        requirement["independent_reexecution"][
+            "runner_aggregate_result_is_an_input_to_reducer"
+        ]
+        is False
+    )
+    assert (
+        requirement["current_trusted_reducer_gap"][
+            "current_output_is_sufficient_for_long_horizon_cell"
+        ]
+        is False
+    )
+    assert (
+        "minimum_mtm_equity_jpy"
+        in requirement["current_trusted_reducer_gap"][
+            "missing_or_ambiguous_independent_metrics"
+        ]
+    )
+    assert requirement["continuous_carry"]["full_carry_state_bytes_required"] is True
+    assert requirement["failure_evidence"]["failure_may_reduce_denominator"] is False
+    assert (
+        requirement["lopo"]["post_hoc_subtraction_from_full_portfolio_allowed"] is False
+    )
     assert requirement["authority"]["live_permission"] is False
     unsigned = {
         key: value for key, value in requirement.items() if key != "requirements_sha256"
