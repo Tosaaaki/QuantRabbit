@@ -32,7 +32,8 @@ from quant_rabbit.dojo_candidate_lineage_registry import (
 )
 from quant_rabbit.dojo_drive_remote_evidence import (
     TRAINER_READBACK_KINDS,
-    _DriveDownloadedArtifact,
+    _AuthenticatedDriveReadbackConnector,
+    _DriveConnectorArtifactReadback,
     _VerifiedDriveTrainerReadback,
     _verify_authenticated_drive_trainer_readback,
 )
@@ -49,6 +50,26 @@ SOURCES = {
     "bots/lab_bot.py": "a" * 64,
     "src/quant_rabbit/dojo_bot_trainer.py": "b" * 64,
 }
+
+
+class _FakeAuthenticatedConnector(_AuthenticatedDriveReadbackConnector):
+    def __init__(
+        self, readbacks: dict[str, _DriveConnectorArtifactReadback]
+    ) -> None:
+        self.readbacks = readbacks
+
+    def read_revision(
+        self,
+        *,
+        artifact_kind: str,
+        drive_file_id: str,
+        metadata_fields: tuple[str, ...],
+    ) -> _DriveConnectorArtifactReadback:
+        _ = drive_file_id, metadata_fields
+        return self.readbacks[artifact_kind]
+
+    def completed_at_utc(self) -> str:
+        return "2026-07-20T00:10:00Z"
 
 
 def _canonical_sha(value: object) -> str:
@@ -493,25 +514,28 @@ def _bind_inputs(
         "TERMINAL_HANDOFF": canonical_handoff_bytes(handoff) + b"\n",
     }
     parent_id = "drivePacketParent123"
-    readbacks = []
+    readbacks = {}
+    drive_file_ids = {}
     for index, kind in enumerate(TRAINER_READBACK_KINDS, start=1):
         raw = local[kind]
-        readbacks.append(
-            _DriveDownloadedArtifact(
-                artifact_kind=kind,
-                metadata={
-                    "id": f"drivePacketFile{index:02d}",
-                    "name": f"packet-{index:02d}-{kind.lower()}.json",
-                    "size": str(len(raw)),
-                    "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
-                    "modifiedTime": f"2026-07-20T00:0{index + 3}:00Z",
-                    "parents": [parent_id],
-                    "trashed": False,
-                    "version": str(200 + index),
-                    "headRevisionId": f"packetRevision{index:02d}",
-                },
-                downloaded_bytes=raw,
-            )
+        file_id = f"drivePacketFile{index:02d}"
+        metadata = {
+            "id": file_id,
+            "name": f"packet-{index:02d}-{kind.lower()}.json",
+            "size": str(len(raw)),
+            "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+            "modifiedTime": f"2026-07-20T00:0{index + 3}:00Z",
+            "parents": [parent_id],
+            "trashed": False,
+            "version": str(200 + index),
+            "headRevisionId": f"packetRevision{index:02d}",
+        }
+        drive_file_ids[kind] = file_id
+        readbacks[kind] = _DriveConnectorArtifactReadback(
+            artifact_kind=kind,
+            metadata_before=copy.deepcopy(metadata),
+            metadata_after=copy.deepcopy(metadata),
+            downloaded_bytes=raw,
         )
     # Simulate the future authenticated connector adapter at its private
     # in-process boundary.  The file CLI cannot mint this capability.
@@ -524,8 +548,8 @@ def _bind_inputs(
         lineage=snapshot,
         expected_parent_id=parent_id,
         local_artifact_bytes=local,
-        readbacks=readbacks,
-        readback_at_utc="2026-07-20T00:10:00Z",
+        drive_file_ids=drive_file_ids,
+        connector=_FakeAuthenticatedConnector(readbacks),
     )
     tuning_state = initialize_tuning_state(
         events, artifact_root=tmp_path, sealed_study=sealed

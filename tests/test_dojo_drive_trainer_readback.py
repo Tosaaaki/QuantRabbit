@@ -10,7 +10,8 @@ from quant_rabbit.dojo_candidate_lineage_registry import verify_registry
 from quant_rabbit.dojo_drive_remote_evidence import (
     TRAINER_READBACK_KINDS,
     DojoDriveRemoteEvidenceError,
-    _DriveDownloadedArtifact,
+    _AuthenticatedDriveReadbackConnector,
+    _DriveConnectorArtifactReadback,
     _VerifiedDriveTrainerReadback,
     _trainer_packet_drive_evidence_refs,
     _verify_authenticated_drive_trainer_readback,
@@ -26,6 +27,31 @@ from test_dojo_terminal_handoff import (
 PARENT_ID = "driveTrainerParent123"
 
 
+class _FakeAuthenticatedConnector(_AuthenticatedDriveReadbackConnector):
+    def __init__(
+        self,
+        readbacks: dict[str, _DriveConnectorArtifactReadback],
+        *,
+        completed_at: str = "2026-07-20T01:10:00Z",
+    ) -> None:
+        self.readbacks = readbacks
+        self.completed_at = completed_at
+        self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def read_revision(
+        self,
+        *,
+        artifact_kind: str,
+        drive_file_id: str,
+        metadata_fields: tuple[str, ...],
+    ) -> _DriveConnectorArtifactReadback:
+        self.calls.append((artifact_kind, drive_file_id, metadata_fields))
+        return self.readbacks[artifact_kind]
+
+    def completed_at_utc(self) -> str:
+        return self.completed_at
+
+
 def _readback_fixture(root: Path) -> dict:
     fixture = _terminal_fixture(root)
     pending = _preseal_lineage(fixture)
@@ -38,32 +64,38 @@ def _readback_fixture(root: Path) -> dict:
         "SEALED_STUDY": fixture["study_path"].read_bytes(),
         "TERMINAL_HANDOFF": canonical_json_bytes(handoff) + b"\n",
     }
-    readbacks = []
+    readbacks = {}
+    drive_file_ids = {}
     for index, kind in enumerate(TRAINER_READBACK_KINDS, start=1):
         raw = local[kind]
-        readbacks.append(
-            _DriveDownloadedArtifact(
-                artifact_kind=kind,
-                metadata={
-                    "id": f"driveTrainerFile{index:02d}",
-                    "name": f"{index:02d}-{kind.lower()}.json",
-                    "size": str(len(raw)),
-                    "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
-                    "modifiedTime": f"2026-07-20T01:0{index + 2}:00Z",
-                    "parents": [PARENT_ID],
-                    "trashed": False,
-                    "version": str(100 + index),
-                    "headRevisionId": f"driveRevision{index:02d}",
-                },
-                downloaded_bytes=raw,
-            )
+        file_id = f"driveTrainerFile{index:02d}"
+        metadata = {
+            "id": file_id,
+            "name": f"{index:02d}-{kind.lower()}.json",
+            "size": str(len(raw)),
+            "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+            "modifiedTime": f"2026-07-20T01:0{index + 2}:00Z",
+            "parents": [PARENT_ID],
+            "trashed": False,
+            "version": str(100 + index),
+            "headRevisionId": f"driveRevision{index:02d}",
+        }
+        drive_file_ids[kind] = file_id
+        readbacks[kind] = _DriveConnectorArtifactReadback(
+            artifact_kind=kind,
+            metadata_before=copy.deepcopy(metadata),
+            metadata_after=copy.deepcopy(metadata),
+            downloaded_bytes=raw,
         )
+    connector = _FakeAuthenticatedConnector(readbacks)
     return {
         **fixture,
         "handoff": handoff,
         "lineage_snapshot": lineage,
         "local": local,
         "readbacks": readbacks,
+        "drive_file_ids": drive_file_ids,
+        "connector": connector,
     }
 
 
@@ -79,8 +111,8 @@ def _verify(fixture: dict) -> _VerifiedDriveTrainerReadback:
         lineage=fixture["lineage_snapshot"],
         expected_parent_id=PARENT_ID,
         local_artifact_bytes=fixture["local"],
-        readbacks=fixture["readbacks"],
-        readback_at_utc="2026-07-20T01:10:00Z",
+        drive_file_ids=fixture["drive_file_ids"],
+        connector=fixture["connector"],
     )
 
 
@@ -106,6 +138,9 @@ def test_exact_downloaded_terminal_artifacts_create_typed_packet_evidence(
     )
     assert {row["artifact_kind"] for row in refs} == set(TRAINER_READBACK_KINDS)
     assert len({row["readback_sha256"] for row in refs}) == 1
+    assert [call[0] for call in fixture["connector"].calls] == list(
+        TRAINER_READBACK_KINDS
+    )
 
 
 @pytest.mark.parametrize(
@@ -122,8 +157,8 @@ def test_download_metadata_revision_parent_and_trashed_are_fail_closed(
     tmp_path: Path, mutation: str, match: str
 ) -> None:
     fixture = _readback_fixture(tmp_path / mutation)
-    first = fixture["readbacks"][0]
-    metadata = copy.deepcopy(first.metadata)
+    first = fixture["readbacks"]["RUN"]
+    metadata = copy.deepcopy(first.metadata_before)
     downloaded = first.downloaded_bytes
     if mutation == "download":
         downloaded += b"x"
@@ -135,9 +170,10 @@ def test_download_metadata_revision_parent_and_trashed_are_fail_closed(
         metadata["version"] = "0"
     else:
         metadata["headRevisionId"] = "short"
-    fixture["readbacks"][0] = _DriveDownloadedArtifact(
+    fixture["readbacks"]["RUN"] = _DriveConnectorArtifactReadback(
         artifact_kind=first.artifact_kind,
-        metadata=metadata,
+        metadata_before=copy.deepcopy(metadata),
+        metadata_after=copy.deepcopy(metadata),
         downloaded_bytes=downloaded,
     )
 
@@ -160,6 +196,39 @@ def test_partial_resealed_run_cannot_shrink_the_drive_denominator(
     with pytest.raises(
         DojoDriveRemoteEvidenceError, match="terminal readback denominator is invalid"
     ):
+        _verify(fixture)
+
+
+def test_plain_json_shape_cannot_replace_authenticated_connector(
+    tmp_path: Path,
+) -> None:
+    fixture = _readback_fixture(tmp_path / "json-connector")
+    fixture["connector"] = {
+        "remote_verified": True,
+        "readbacks": fixture["readbacks"],
+    }
+
+    with pytest.raises(
+        DojoDriveRemoteEvidenceError,
+        match="authenticated Drive connector adapter capability is required",
+    ):
+        _verify(fixture)
+
+
+def test_bracketing_metadata_revision_drift_is_rejected(tmp_path: Path) -> None:
+    fixture = _readback_fixture(tmp_path / "revision-drift")
+    first = fixture["readbacks"]["RUN"]
+    metadata_after = copy.deepcopy(first.metadata_after)
+    metadata_after["version"] = "999"
+    metadata_after["headRevisionId"] = "driveRevisionChanged99"
+    fixture["readbacks"]["RUN"] = _DriveConnectorArtifactReadback(
+        artifact_kind="RUN",
+        metadata_before=first.metadata_before,
+        metadata_after=metadata_after,
+        downloaded_bytes=first.downloaded_bytes,
+    )
+
+    with pytest.raises(DojoDriveRemoteEvidenceError, match="revision changed"):
         _verify(fixture)
 
 

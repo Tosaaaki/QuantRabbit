@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import re
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -72,6 +73,9 @@ _DRIVE_READBACK_METADATA_KEYS: Final = frozenset(
         "version",
         "headRevisionId",
     }
+)
+_DRIVE_READBACK_METADATA_FIELDS: Final = tuple(
+    sorted(_DRIVE_READBACK_METADATA_KEYS)
 )
 _TRAINER_READBACK_KEYS: Final = frozenset(
     {
@@ -449,19 +453,46 @@ class DriveMetadataConsistencyResult:
 
 
 @dataclass(frozen=True)
-class _DriveDownloadedArtifact:
-    """One connector-fetched Drive file resource plus its downloaded bytes.
+class _DriveConnectorArtifactReadback:
+    """One revision-pinned connector download and its bracketing metadata.
 
-    ``metadata`` must be the selected Google Drive file-resource fields from
-    the same readback operation as ``downloaded_bytes``.  A metadata-only JSON
-    claim is deliberately insufficient: the verifier recomputes both hashes
-    and requires the downloaded bytes to equal the independently opened local
-    terminal artifact byte-for-byte.
+    The adapter must fetch ``metadata_before``, download that exact
+    ``headRevisionId``, then fetch ``metadata_after``.  The validator requires
+    both metadata snapshots to be identical and recomputes all content hashes.
     """
 
     artifact_kind: str
-    metadata: Mapping[str, Any]
+    metadata_before: Mapping[str, Any]
+    metadata_after: Mapping[str, Any]
     downloaded_bytes: bytes
+
+
+class _AuthenticatedDriveReadbackConnector(ABC):
+    """Non-serializable host adapter boundary for authenticated Drive tools.
+
+    A plain mapping/list loaded from JSON cannot satisfy this boundary.  The
+    production implementation must be owned by the orchestration host and call
+    its authenticated Google Drive connector directly; local Python in this
+    repository deliberately provides no concrete implementation or factory.
+
+    This is a process trust boundary, not a cryptographic remote signature.
+    Arbitrary local code can always fabricate an implementation, so packet
+    publication remains disabled in the file CLI.
+    """
+
+    @abstractmethod
+    def read_revision(
+        self,
+        *,
+        artifact_kind: str,
+        drive_file_id: str,
+        metadata_fields: tuple[str, ...],
+    ) -> _DriveConnectorArtifactReadback:
+        """Fetch metadata, revision-pinned bytes, then metadata again."""
+
+    @abstractmethod
+    def completed_at_utc(self) -> str:
+        """Return the host-observed completion time for this readback batch."""
 
 
 @dataclass(frozen=True)
@@ -488,8 +519,8 @@ def _verify_authenticated_drive_trainer_readback(
     lineage: CandidateLineageSnapshot,
     expected_parent_id: str,
     local_artifact_bytes: Mapping[str, bytes],
-    readbacks: Sequence[_DriveDownloadedArtifact],
-    readback_at_utc: datetime | str,
+    drive_file_ids: Mapping[str, str],
+    connector: _AuthenticatedDriveReadbackConnector,
 ) -> _VerifiedDriveTrainerReadback:
     """Private adapter seam for exact authenticated Drive downloads.
 
@@ -500,11 +531,12 @@ def _verify_authenticated_drive_trainer_readback(
     monotonically identified Drive version and head revision.
 
     This private boundary is not an attestation source by itself.  Its caller
-    must be an authenticated Drive connector adapter that obtained ``metadata``
-    and ``downloaded_bytes`` in the same process and operation.  It is kept
-    private so a JSON/file CLI cannot turn self-authored metadata into
-    ``remote_verified=true``.  Unlike legacy metadata-consistency receipts, no
-    caller-authored ``remote_verified`` field is accepted as input.
+    must supply a host-owned :class:`_AuthenticatedDriveReadbackConnector` that
+    obtains bracketing metadata and revision-pinned bytes directly.  It is kept
+    private and accepts no serialized readback object, so a JSON/file CLI cannot
+    turn self-authored metadata into ``remote_verified=true``.  Unlike legacy
+    metadata-consistency receipts, no caller-authored ``remote_verified`` field
+    is accepted as input.
     """
 
     # Lazy import avoids a module cycle: the trainer packet imports the typed
@@ -537,14 +569,14 @@ def _verify_authenticated_drive_trainer_readback(
         terminal_handoff_receipt, normalized_run, lineage_binding
     )
     parent_id = _drive_id(expected_parent_id, "expected Drive parent id")
-    observed_at = _utc_text(readback_at_utc, "readback_at_utc")
-    observed_instant = _utc(observed_at, "readback_at_utc")
+    if not isinstance(connector, _AuthenticatedDriveReadbackConnector):
+        raise DojoDriveRemoteEvidenceError(
+            "authenticated Drive connector adapter capability is required"
+        )
     handoff_instant = _utc(
         terminal_handoff_receipt.get("recorded_at_utc"),
         "terminal handoff recorded_at_utc",
     )
-    if observed_instant < handoff_instant:
-        raise DojoDriveRemoteEvidenceError("Drive readback predates terminal handoff")
 
     if not isinstance(local_artifact_bytes, Mapping):
         raise DojoDriveRemoteEvidenceError("local artifact bytes must be an object")
@@ -573,35 +605,56 @@ def _verify_authenticated_drive_trainer_readback(
             )
         local_bytes[kind] = raw
 
-    if not isinstance(readbacks, Sequence) or isinstance(
-        readbacks, (str, bytes, bytearray)
-    ):
-        raise DojoDriveRemoteEvidenceError("Drive readbacks must be an array")
-    if len(readbacks) != len(TRAINER_READBACK_KINDS):
+    if not isinstance(drive_file_ids, Mapping):
+        raise DojoDriveRemoteEvidenceError("Drive file ids must be an object")
+    if set(drive_file_ids) != set(TRAINER_READBACK_KINDS):
         raise DojoDriveRemoteEvidenceError(
-            "Drive readback denominator omits or adds a terminal artifact"
+            "Drive file-id denominator omits or adds a terminal artifact"
         )
-    by_kind: dict[str, _DriveDownloadedArtifact] = {}
-    for item in readbacks:
-        if not isinstance(item, _DriveDownloadedArtifact):
-            raise DojoDriveRemoteEvidenceError("Drive readback has the wrong type")
-        kind = item.artifact_kind
-        if kind not in TRAINER_READBACK_KINDS or kind in by_kind:
-            raise DojoDriveRemoteEvidenceError(
-                "Drive readback artifact kind is duplicate or unsupported"
+    expected_file_ids = {
+        kind: _drive_id(drive_file_ids[kind], f"expected {kind} Drive file id")
+        for kind in TRAINER_READBACK_KINDS
+    }
+    if len(set(expected_file_ids.values())) != len(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError("Drive file ids are duplicated")
+    connector_items: dict[str, _DriveConnectorArtifactReadback] = {}
+    for kind in TRAINER_READBACK_KINDS:
+        try:
+            item = connector.read_revision(
+                artifact_kind=kind,
+                drive_file_id=expected_file_ids[kind],
+                metadata_fields=_DRIVE_READBACK_METADATA_FIELDS,
             )
-        by_kind[kind] = item
-    if set(by_kind) != set(TRAINER_READBACK_KINDS):
+        except Exception as exc:
+            raise DojoDriveRemoteEvidenceError(
+                f"authenticated Drive connector readback failed for {kind}"
+            ) from exc
+        if not isinstance(item, _DriveConnectorArtifactReadback):
+            raise DojoDriveRemoteEvidenceError(
+                "Drive connector returned the wrong readback type"
+            )
+        if item.artifact_kind != kind:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive connector returned a foreign artifact kind"
+            )
+        connector_items[kind] = item
+    try:
+        connector_completed_at = connector.completed_at_utc()
+    except Exception as exc:
         raise DojoDriveRemoteEvidenceError(
-            "Drive readback denominator omits a terminal artifact"
-        )
+            "authenticated Drive connector completion timestamp failed"
+        ) from exc
+    observed_at = _utc_text(connector_completed_at, "readback_at_utc")
+    observed_instant = _utc(observed_at, "readback_at_utc")
+    if observed_instant < handoff_instant:
+        raise DojoDriveRemoteEvidenceError("Drive readback predates terminal handoff")
 
     objects: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     seen_names: set[str] = set()
     seen_revisions: set[tuple[str, str]] = set()
     for kind in TRAINER_READBACK_KINDS:
-        item = by_kind[kind]
+        item = connector_items[kind]
         downloaded = item.downloaded_bytes
         if not isinstance(downloaded, bytes) or not downloaded:
             raise DojoDriveRemoteEvidenceError(
@@ -611,11 +664,25 @@ def _verify_authenticated_drive_trainer_readback(
             raise DojoDriveRemoteEvidenceError(
                 f"downloaded {kind} bytes differ from the local terminal artifact"
             )
-        metadata = _normalize_drive_readback_metadata(
-            item.metadata,
+        metadata_before = _normalize_drive_readback_metadata(
+            item.metadata_before,
             expected_parent_id=parent_id,
             downloaded_bytes=downloaded,
         )
+        metadata_after = _normalize_drive_readback_metadata(
+            item.metadata_after,
+            expected_parent_id=parent_id,
+            downloaded_bytes=downloaded,
+        )
+        if metadata_before != metadata_after:
+            raise DojoDriveRemoteEvidenceError(
+                f"Drive {kind} revision changed during connector readback"
+            )
+        metadata = metadata_after
+        if metadata["drive_file_id"] != expected_file_ids[kind]:
+            raise DojoDriveRemoteEvidenceError(
+                f"Drive {kind} connector returned another file id"
+            )
         modified = _utc(metadata["modified_time"], f"{kind} modified_time")
         if modified < handoff_instant or modified > observed_instant:
             raise DojoDriveRemoteEvidenceError(
