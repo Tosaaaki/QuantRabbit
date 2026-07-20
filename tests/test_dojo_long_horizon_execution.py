@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import errno
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import quant_rabbit.dojo_long_horizon_execution as execution
 
 from quant_rabbit.dojo_long_horizon_execution import (
     CELL_CONTRACT,
@@ -56,6 +58,34 @@ RESOURCE_POLICY = {
     "max_terminal_bytes": 2_097_152,
     "max_parallel_jobs": 4,
 }
+
+
+class _FaultingBinaryHandle:
+    def __init__(self, handle: object, *, stage: str) -> None:
+        self._handle = handle
+        self._stage = stage
+
+    def __enter__(self) -> _FaultingBinaryHandle:
+        self._handle.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> object:
+        return self._handle.__exit__(*args)
+
+    def write(self, payload: bytes) -> int:
+        if self._stage == "write":
+            raise OSError(errno.ENOSPC, "injected write failure")
+        if self._stage == "short_write":
+            return self._handle.write(payload[: max(1, len(payload) // 2)])
+        return self._handle.write(payload)
+
+    def flush(self) -> None:
+        if self._stage == "flush":
+            raise OSError(errno.ENOSPC, "injected flush failure")
+        self._handle.flush()
+
+    def fileno(self) -> int:
+        return self._handle.fileno()
 
 
 def _digests(keys: tuple[str, ...], offset: int) -> dict[str, str]:
@@ -153,6 +183,110 @@ def _failed_result(*, job: dict, claim: dict, coordinate: dict, code: str) -> di
             ),
         },
     )
+
+
+@pytest.mark.parametrize("stage", ["write", "flush"])
+def test_exclusive_write_removes_final_name_after_io_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    target = tmp_path / "state" / "artifact.json"
+    value = {"contract": "QR_TEST_IMMUTABLE_ARTIFACT_V1", "ordinal": 7}
+    original_fdopen = execution.os.fdopen
+
+    def faulting_fdopen(
+        descriptor: int, *args: object, **kwargs: object
+    ) -> _FaultingBinaryHandle:
+        return _FaultingBinaryHandle(
+            original_fdopen(descriptor, *args, **kwargs), stage=stage
+        )
+
+    monkeypatch.setattr(execution.os, "fdopen", faulting_fdopen)
+    with pytest.raises(OSError, match=f"injected {stage} failure"):
+        execution._write_exclusive(target, value)
+
+    assert not target.exists()
+    monkeypatch.setattr(execution.os, "fdopen", original_fdopen)
+    assert execution._write_exclusive(target, value) is True
+    assert target.read_bytes() == execution._canonical_bytes(value) + b"\n"
+
+
+def test_exclusive_write_removes_final_name_after_short_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state" / "artifact.json"
+    value = {"contract": "QR_TEST_IMMUTABLE_ARTIFACT_V1", "ordinal": 8}
+    original_fdopen = execution.os.fdopen
+
+    def faulting_fdopen(
+        descriptor: int, *args: object, **kwargs: object
+    ) -> _FaultingBinaryHandle:
+        return _FaultingBinaryHandle(
+            original_fdopen(descriptor, *args, **kwargs), stage="short_write"
+        )
+
+    monkeypatch.setattr(execution.os, "fdopen", faulting_fdopen)
+    with pytest.raises(
+        DojoLongHorizonExecutionError, match="exclusive write was incomplete"
+    ):
+        execution._write_exclusive(target, value)
+
+    assert not target.exists()
+    monkeypatch.setattr(execution.os, "fdopen", original_fdopen)
+    assert execution._write_exclusive(target, value) is True
+    assert target.read_bytes() == execution._canonical_bytes(value) + b"\n"
+
+
+def test_exclusive_write_removes_final_name_after_file_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state" / "artifact.json"
+    value = {"contract": "QR_TEST_IMMUTABLE_ARTIFACT_V1", "ordinal": 9}
+    original_fsync = execution.os.fsync
+    fsync_calls = 0
+
+    def fail_first_fsync(descriptor: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise OSError(errno.EIO, "injected file fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(execution.os, "fsync", fail_first_fsync)
+    with pytest.raises(OSError, match="injected file fsync failure"):
+        execution._write_exclusive(target, value)
+
+    assert fsync_calls == 2
+    assert not target.exists()
+    monkeypatch.setattr(execution.os, "fsync", original_fsync)
+    assert execution._write_exclusive(target, value) is True
+    assert target.read_bytes() == execution._canonical_bytes(value) + b"\n"
+
+
+def test_exclusive_write_preserves_complete_file_after_directory_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state" / "artifact.json"
+    value = {"contract": "QR_TEST_IMMUTABLE_ARTIFACT_V1", "ordinal": 10}
+    expected = execution._canonical_bytes(value) + b"\n"
+    original_fsync = execution.os.fsync
+    fsync_calls = 0
+
+    def fail_second_fsync(descriptor: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError(errno.EIO, "injected directory fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(execution.os, "fsync", fail_second_fsync)
+    with pytest.raises(OSError, match="injected directory fsync failure"):
+        execution._write_exclusive(target, value)
+
+    assert fsync_calls == 2
+    assert target.read_bytes() == expected
+    monkeypatch.setattr(execution.os, "fsync", original_fsync)
+    assert execution._write_exclusive(target, value) is False
+    assert target.read_bytes() == expected
 
 
 def test_manifest_seals_jobs_workers_resources_and_no_authority(

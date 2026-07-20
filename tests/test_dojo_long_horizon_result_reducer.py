@@ -21,8 +21,10 @@ from quant_rabbit.dojo_long_horizon_result_reducer import (
     _lopo_summary,
     _m1_context_summary,
     _monthly_main_summary,
+    _official_gate,
     _profit_drop_fraction,
     _risk_summary,
+    long_horizon_economic_runner_output_requirements,
     score_long_horizon_results,
 )
 from quant_rabbit.dojo_long_horizon_schedule import (
@@ -215,6 +217,57 @@ def test_scorecard_authority_is_permanently_diagnostic_only() -> None:
     assert authority["order_authority"] == "NONE"
     assert authority["automatic_deployment_allowed"] is False
     assert authority["trainer_may_change_live_configuration"] is False
+
+
+def test_self_reported_cells_cannot_open_the_official_economic_gate() -> None:
+    gate_pass, blockers = _official_gate([])
+
+    assert gate_pass is False
+    assert blockers == [
+        "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED"
+    ]
+
+    gate_pass, blockers = _official_gate(["NOT_EVERY_MONTH_3X"])
+    assert gate_pass is False
+    assert blockers == [
+        "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED",
+        "NOT_EVERY_MONTH_3X",
+    ]
+
+
+def test_runner_output_requirement_demands_causal_inputs_not_aggregate_hashes() -> None:
+    requirement = long_horizon_economic_runner_output_requirements()
+
+    assert requirement["job_source_packet"][
+        "source_receipt_hash_without_bound_source_bytes_is_sufficient"
+    ] is False
+    assert requirement["coordinate_reducer_input"][
+        "event_only_fill_exit_ledger_is_sufficient"
+    ] is False
+    assert requirement["independent_reexecution"]["required"] is True
+    assert requirement["independent_reexecution"][
+        "runner_aggregate_result_is_an_input_to_reducer"
+    ] is False
+    assert requirement["current_trusted_reducer_gap"][
+        "current_output_is_sufficient_for_long_horizon_cell"
+    ] is False
+    assert "minimum_mtm_equity_jpy" in requirement[
+        "current_trusted_reducer_gap"
+    ]["missing_or_ambiguous_independent_metrics"]
+    assert requirement["continuous_carry"][
+        "full_carry_state_bytes_required"
+    ] is True
+    assert requirement["failure_evidence"][
+        "failure_may_reduce_denominator"
+    ] is False
+    assert requirement["lopo"][
+        "post_hoc_subtraction_from_full_portfolio_allowed"
+    ] is False
+    assert requirement["authority"]["live_permission"] is False
+    unsigned = {
+        key: value for key, value in requirement.items() if key != "requirements_sha256"
+    }
+    assert requirement["requirements_sha256"] == canonical_sha256(unsigned)
 
 
 def test_zero_trade_complete_month_is_one_x_and_fails_three_x_without_becoming_failed() -> (

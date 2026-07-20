@@ -7,6 +7,9 @@ import pytest
 
 from quant_rabbit.dojo_portfolio_replay_reducer import (
     DojoPortfolioReplayError,
+    MONTH_END_FLAT_SETTLEMENT,
+    MONTH_END_MTM_WITH_STATE_HANDOFF,
+    PortfolioReplaySession,
     admit_worker_proposals,
     canonical_portfolio_sha256,
     quote_batch_sha256,
@@ -51,6 +54,7 @@ def make_policy(
     max_stop_fraction: float = 0.8,
     max_margin_fraction: float = 0.8,
     max_lock_seconds: int = 86_400,
+    tradable_pairs: tuple[str, ...] | None = None,
 ) -> dict:
     conversion_routes = []
     if "EUR_USD" in pairs:
@@ -61,6 +65,7 @@ def make_policy(
         {
             "policy_id": "focused-test-policy",
             "expected_quote_pairs": list(pairs),
+            "tradable_pairs": list(pairs if tradable_pairs is None else tradable_pairs),
             "active_worker_bindings": deepcopy(WORKERS),
             "leverage": 20,
             "margin_closeout_fraction": 0.9,
@@ -315,6 +320,30 @@ def test_every_declarative_portfolio_cap_has_an_explicit_rejection(
     assert expected_reason in {row["reason"] for row in decision["rejected"]}
 
 
+def test_feed_pair_is_not_implicitly_tradable_in_lopo_or_m1_context() -> None:
+    epoch = 1_704_067_200
+    prices = {"EUR_USD": (1.1, 1.1002), "USD_JPY": (145.0, 145.02)}
+    snapshot = make_snapshot(epoch=epoch, prices=prices)
+    held_out = make_intent(
+        intent_id="held-out-pair",
+        pair="EUR_USD",
+        entry_price=1.1002,
+        sl_price=1.09,
+        tp_price=1.12,
+        valid_until_epoch=epoch,
+    )
+    decision = admit_worker_proposals(
+        snapshot,
+        make_batch(snapshot, new_by_worker={"worker-a": [held_out]}),
+        make_policy(
+            pairs=("EUR_USD", "USD_JPY"), tradable_pairs=("USD_JPY",)
+        ),
+    )
+
+    assert decision["accepted_count"] == 0
+    assert decision["rejected"][0]["reason"] == "PAIR_NOT_TRADABLE"
+
+
 def test_reducer_recomputes_market_fill_and_emits_compact_valid_result() -> None:
     epoch = 1_704_067_200
     snapshot = make_snapshot(epoch=epoch)
@@ -335,6 +364,191 @@ def test_reducer_recomputes_market_fill_and_emits_compact_valid_result() -> None
     assert result["slippage_cost_jpy"] == pytest.approx(1.0)
     assert result["raw_quote_events_included"] is False
     assert "quotes" not in result
+    assert validate_portfolio_replay_result(result) == result
+
+
+def test_incremental_session_is_byte_equivalent_to_batch_wrapper() -> None:
+    epoch = 1_704_067_200
+    policy = make_policy()
+    session = PortfolioReplaySession(policy=policy, initial_balance_jpy=200_000)
+    quotes = make_quotes(epoch, "O", {"USD_JPY": (145.0, 145.02)})
+    digest = quote_batch_sha256(
+        epoch=epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=1,
+        quotes=quotes,
+    )
+    snapshot = session.prepare_coordinate(
+        coordinate_id=f"{epoch}:O",
+        epoch=epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=1,
+        quotes=quotes,
+        quote_batch_sha256_value=digest,
+    )
+    intent = make_intent(intent_id="stream-market", valid_until_epoch=epoch)
+    batch = make_batch(snapshot, new_by_worker={"worker-a": [intent]})
+    receipt = session.consume_proposal_batch(batch)
+    streamed = session.finalize(
+        terminal_policy=MONTH_END_MTM_WITH_STATE_HANDOFF
+    )
+    batched = reduce_portfolio_replay(
+        policy=policy,
+        frames=[{"post_exit_snapshot": snapshot, "proposal_batch": batch}],
+        initial_balance_jpy=200_000,
+    )
+
+    assert streamed == batched
+    assert receipt["snapshot_sha256"] == snapshot["snapshot_sha256"]
+    assert receipt["entry_fill_delta"] == 1
+    assert streamed["processed_coordinate_count"] == 1
+    assert streamed["minimum_mtm_equity_jpy"] == pytest.approx(199_997.0)
+    assert streamed["minimum_free_margin_jpy"] < streamed["minimum_mtm_equity_jpy"]
+
+
+def test_carry_seeds_month_open_margin_extrema_before_first_o_exit() -> None:
+    epoch = 1_704_067_200
+    policy = make_policy()
+    first = PortfolioReplaySession(policy=policy, initial_balance_jpy=200_000)
+    for watermark, phase in enumerate(("O", "H", "L", "C"), start=1):
+        quotes = make_quotes(epoch, phase, {"USD_JPY": (145.0, 145.02)})
+        snapshot = first.prepare_coordinate(
+            coordinate_id=f"{epoch}:{phase}",
+            epoch=epoch,
+            phase=phase,
+            intrabar="OHLC",
+            quote_watermark=watermark,
+            quotes=quotes,
+        )
+        intents = (
+            {
+                "worker-a": [
+                    make_intent(
+                        intent_id="carried-long",
+                        tp_price=146.0,
+                        valid_until_epoch=epoch,
+                    )
+                ]
+            }
+            if phase == "C"
+            else None
+        )
+        first.consume_proposal_batch(make_batch(snapshot, new_by_worker=intents))
+    first_result = first.finalize(
+        terminal_policy=MONTH_END_MTM_WITH_STATE_HANDOFF
+    )
+
+    carried_equity = 200_000 + 100 * (145.0 - 145.03)
+    carried_margin = 100 * 145.01 / 20
+    second = PortfolioReplaySession(policy=policy, carry_state=first_result["carry_state"])
+    next_epoch = epoch + 60
+    next_quotes = make_quotes(next_epoch, "O", {"USD_JPY": (147.0, 147.02)})
+    # The carried position exits at TP before the first worker-visible O.  The
+    # segment must nevertheless retain its month-open locked margin baseline.
+    snapshot = second.prepare_coordinate(
+        coordinate_id=f"{next_epoch}:O",
+        epoch=next_epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=5,
+        quotes=next_quotes,
+    )
+    assert snapshot["positions"] == []
+    second.consume_proposal_batch(make_batch(snapshot))
+    result = second.finalize(terminal_policy=MONTH_END_MTM_WITH_STATE_HANDOFF)
+
+    assert result["peak_margin_jpy"] == pytest.approx(carried_margin)
+    assert result["peak_margin_usage_fraction"] == pytest.approx(
+        carried_margin / carried_equity
+    )
+    assert result["minimum_free_margin_jpy"] == pytest.approx(
+        carried_equity - carried_margin
+    )
+
+
+def test_favorable_gap_limit_pays_sealed_slippage_without_worse_than_limit() -> None:
+    epoch = 1_704_067_200
+    policy = make_policy()
+    session = PortfolioReplaySession(policy=policy, initial_balance_jpy=200_000)
+    limit = make_intent(
+        intent_id="gap-limit",
+        action="LIMIT",
+        entry_price=144.5,
+        sl_price=143.5,
+        tp_price=146.0,
+        valid_until_epoch=epoch + 120,
+    )
+    for watermark, phase in enumerate(("O", "H", "L", "C"), start=1):
+        quotes = make_quotes(epoch, phase, {"USD_JPY": (145.0, 145.02)})
+        snapshot = session.prepare_coordinate(
+            coordinate_id=f"{epoch}:{phase}",
+            epoch=epoch,
+            phase=phase,
+            intrabar="OHLC",
+            quote_watermark=watermark,
+            quotes=quotes,
+        )
+        intents = {"worker-a": [limit]} if phase == "O" else None
+        session.consume_proposal_batch(make_batch(snapshot, new_by_worker=intents))
+
+    next_epoch = epoch + 60
+    quotes = make_quotes(next_epoch, "O", {"USD_JPY": (143.98, 144.0)})
+    snapshot = session.prepare_coordinate(
+        coordinate_id=f"{next_epoch}:O",
+        epoch=next_epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=5,
+        quotes=quotes,
+    )
+    session.consume_proposal_batch(make_batch(snapshot))
+    result = session.finalize(terminal_policy=MONTH_END_MTM_WITH_STATE_HANDOFF)
+
+    [position] = result["carry_state"]["positions"]
+    assert position["entry_price"] == pytest.approx(144.01)
+    assert position["entry_price"] <= 144.5
+    assert result["slippage_cost_jpy"] == pytest.approx(1.0)
+
+
+def test_streaming_session_is_two_phase_and_flat_settlement_is_central() -> None:
+    epoch = 1_704_067_200
+    session = PortfolioReplaySession(
+        policy=make_policy(), initial_balance_jpy=200_000
+    )
+    quotes = make_quotes(epoch, "O", {"USD_JPY": (145.0, 145.02)})
+    snapshot = session.prepare_coordinate(
+        coordinate_id=f"{epoch}:O",
+        epoch=epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=1,
+        quotes=quotes,
+    )
+    with pytest.raises(DojoPortfolioReplayError, match="prior prepared"):
+        session.prepare_coordinate(
+            coordinate_id=f"{epoch}:O:duplicate",
+            epoch=epoch,
+            phase="O",
+            intrabar="OHLC",
+            quote_watermark=2,
+            quotes=quotes,
+        )
+    with pytest.raises(DojoPortfolioReplayError, match="unacknowledged"):
+        session.finalize(terminal_policy=MONTH_END_FLAT_SETTLEMENT)
+    intent = make_intent(intent_id="flat-me", valid_until_epoch=epoch)
+    session.consume_proposal_batch(
+        make_batch(snapshot, new_by_worker={"worker-a": [intent]})
+    )
+    result = session.finalize(terminal_policy=MONTH_END_FLAT_SETTLEMENT)
+
+    assert result["open_position_count"] == 0
+    assert result["pending_order_count"] == 0
+    assert result["end_balance_jpy"] == pytest.approx(199_995.0)
+    assert result["trade_count"] == 1
+    assert result["execution_fill_count"] == 2
+    assert result["terminal_policy"] == MONTH_END_FLAT_SETTLEMENT
     assert validate_portfolio_replay_result(result) == result
 
 
@@ -634,7 +848,7 @@ def test_trigger_is_frozen_before_snapshot_and_late_cancel_cannot_escape_gap_fil
         "reason_code": "ADVERSE_GAP_ESCAPE",
     }
     with pytest.raises(
-        DojoPortfolioReplayError, match="pending_orders row count mismatch"
+        DojoPortfolioReplayError, match="differs from reducer-owned state"
     ):
         reduce_portfolio_replay(
             policy=policy,
@@ -893,6 +1107,16 @@ def test_margin_closeout_is_economic_failure_not_silent_success() -> None:
 
     assert result["margin_closeouts"] == 1
     assert result["end_balance_jpy"] == pytest.approx(closeout_balance)
+    pre_closeout_equity = 200_000 + 20_000 * (100.0 - 145.03)
+    pre_closeout_margin = 20_000 * 100.01 / 20
+    assert result["minimum_free_margin_jpy"] == pytest.approx(
+        pre_closeout_equity - pre_closeout_margin
+    )
+    assert result["peak_margin_jpy"] == pytest.approx(20_000 * 145.01 / 20)
+    assert result["peak_margin_usage_fraction"] == pytest.approx(1.0)
+    # Account state is sampled before and after liquidation, but ruin is one
+    # positive-to-non-positive transition rather than a sticky boolean write.
+    assert result["ruin_event_count"] == 1
     assert "MARGIN_CLOSEOUT_OCCURRED" in result["economic_failure_codes"]
     assert "NON_POSITIVE_END_EQUITY" in result["economic_failure_codes"]
     assert result["status"] == "COMPLETE_WITH_ECONOMIC_FAILURES"

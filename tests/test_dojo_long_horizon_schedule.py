@@ -289,7 +289,12 @@ def test_continuous_and_independent_accounts_are_separate_coordinates(
     final_continuous = main(final_job, "CONTINUOUS_ACCOUNT")
     assert final_continuous["continuous_chain_ordinal"] == 77
     assert final_continuous["continuous_chain_last"] is True
-    assert final_continuous["carry_out_state_slot_id"] is not None
+    assert final_continuous["terminal_policy"] == "MONTH_END_FLAT_SETTLEMENT"
+    assert final_continuous["carry_out_state_slot_id"] is None
+
+    assert january_continuous["terminal_policy"] == (
+        "MONTH_END_MTM_WITH_STATE_HANDOFF"
+    )
 
     independent = main(january, "INDEPENDENT_MONTH")
     assert independent["continuous_account_chain_id"] is None
@@ -299,6 +304,7 @@ def test_continuous_and_independent_accounts_are_separate_coordinates(
     assert independent["carry_in_state_slot_id"] is None
     assert independent["carry_out_state_slot_id"] is None
     assert independent["predecessor_state_slot_id"] is None
+    assert independent["terminal_policy"] == "MONTH_END_FLAT_SETTLEMENT"
 
 
 def test_worker_family_coverage_is_exact_and_authority_is_absent(

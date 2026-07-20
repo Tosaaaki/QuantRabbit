@@ -216,11 +216,6 @@ def _coordinate(
     aggregation_weight: float,
     replica_paired_consistency_required: bool,
 ) -> dict[str, Any]:
-    terminal_policy = (
-        "MONTH_END_FLAT_SETTLEMENT"
-        if evaluation_mode == "INDEPENDENT_MONTH"
-        else "MONTH_END_MTM_WITH_STATE_HANDOFF"
-    )
     active_worker_ids = {row["worker_id"] for row in active_worker_rows}
     active_worker_mask = "".join(
         "1" if row["worker_id"] in active_worker_ids else "0" for row in all_worker_rows
@@ -268,18 +263,22 @@ def _coordinate(
                 "boundary_ordinal": month_ordinal,
             }
         )
-        carry_out_state_slot_id = canonical_sha256(
-            {
-                "continuous_account_chain_id": continuous_chain_id,
-                "boundary_ordinal": month_ordinal + 1,
-            }
+        continuous_chain_last = month_ordinal == month_count - 1
+        carry_out_state_slot_id = (
+            None
+            if continuous_chain_last
+            else canonical_sha256(
+                {
+                    "continuous_account_chain_id": continuous_chain_id,
+                    "boundary_ordinal": month_ordinal + 1,
+                }
+            )
         )
         predecessor_state_slot_id = (
             None if month_ordinal == 0 else carry_in_state_slot_id
         )
         continuous_chain_ordinal: int | None = month_ordinal
         continuous_chain_first = month_ordinal == 0
-        continuous_chain_last = month_ordinal == month_count - 1
     else:
         carry_in_state_slot_id = None
         carry_out_state_slot_id = None
@@ -287,6 +286,11 @@ def _coordinate(
         continuous_chain_ordinal = None
         continuous_chain_first = False
         continuous_chain_last = False
+    terminal_policy = (
+        "MONTH_END_FLAT_SETTLEMENT"
+        if evaluation_mode == "INDEPENDENT_MONTH" or continuous_chain_last
+        else "MONTH_END_MTM_WITH_STATE_HANDOFF"
+    )
     body = {
         "plan_sha256": plan_sha256,
         "worker_set_sha256": worker_set_sha256,

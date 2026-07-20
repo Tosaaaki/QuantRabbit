@@ -1177,6 +1177,8 @@ def _write_exclusive(path: Path, value: Mapping[str, Any]) -> bool:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
+    created = False
+    file_synced = False
     directory_fd = os.open(
         directory,
         os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
@@ -1191,6 +1193,7 @@ def _write_exclusive(path: Path, value: Mapping[str, Any]) -> bool:
                     f"immutable artifact already exists with different bytes: {path.name}"
                 )
             return False
+        created = True
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             descriptor = None
             written = handle.write(payload)
@@ -1198,8 +1201,35 @@ def _write_exclusive(path: Path, value: Mapping[str, Any]) -> bool:
                 raise DojoLongHorizonExecutionError("exclusive write was incomplete")
             handle.flush()
             os.fsync(handle.fileno())
+            file_synced = True
         os.fsync(directory_fd)
         return True
+    except BaseException as exc:
+        # Before the file itself is durable, its immutable final name must not
+        # survive a failed write.  Once file fsync has succeeded, however, a
+        # directory-fsync failure means publication durability is unknown.  In
+        # that phase keep the complete artifact: a retry verifies the exact
+        # bytes above and returns False instead of deleting a possibly
+        # published value.
+        if created and not file_synced:
+            try:
+                os.unlink(path.name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_error:
+                exc.add_note(
+                    "failed to remove incomplete exclusive artifact: "
+                    f"{cleanup_error!r}"
+                )
+            else:
+                try:
+                    os.fsync(directory_fd)
+                except OSError as cleanup_error:
+                    exc.add_note(
+                        "failed to fsync incomplete-artifact removal: "
+                        f"{cleanup_error!r}"
+                    )
+        raise
     finally:
         if descriptor is not None:
             os.close(descriptor)

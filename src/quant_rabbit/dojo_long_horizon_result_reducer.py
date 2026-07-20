@@ -31,9 +31,15 @@ from quant_rabbit.dojo_long_horizon_plan import (
 
 
 CONTRACT: Final = "QR_DOJO_LONG_HORIZON_RESULT_SCORECARD_V1"
+ECONOMIC_RUNNER_OUTPUT_CONTRACT: Final = (
+    "QR_DOJO_LONG_HORIZON_ECONOMIC_RUNNER_OUTPUT_REQUIREMENTS_V1"
+)
 SCHEMA_VERSION: Final = 1
 EVIDENCE_TIER: Final = "WORN_HISTORICAL_TRAIN_ONLY"
 MAX_REPORTED_ISSUES: Final = 100
+_INDEPENDENT_ECONOMIC_EVIDENCE_BLOCKER: Final = (
+    "COMPACT_ECONOMIC_EVIDENCE_NOT_INDEPENDENTLY_REEXECUTED"
+)
 
 
 class DojoLongHorizonResultReducerError(ValueError):
@@ -51,6 +57,163 @@ def _authority() -> dict[str, Any]:
         "promotion_eligible": False,
         "trainer_may_change_live_configuration": False,
     }
+
+
+def long_horizon_economic_runner_output_requirements() -> dict[str, Any]:
+    """Describe the minimum replay inputs an independent scorer must receive.
+
+    Hashes of runner-authored aggregate numbers are not computation proofs.
+    A future accepted runner must retain enough causal input to let this
+    separately pinned scorer invoke the trusted portfolio reducer again and
+    compare every terminal claim.  The current terminal contract supplies
+    digests only, so these requirements remain unmet and the official gate is
+    deliberately closed.
+    """
+
+    body = {
+        "contract": ECONOMIC_RUNNER_OUTPUT_CONTRACT,
+        "schema_version": SCHEMA_VERSION,
+        "classification": EVIDENCE_TIER,
+        "artifact_cardinality": {
+            "one_shared_source_stream_packet_per_job": True,
+            "one_causal_reducer_input_transcript_per_coordinate": True,
+            "one_terminal_or_typed_failure_per_coordinate": True,
+            "failed_coordinates_remain_in_fixed_denominator": True,
+        },
+        "job_source_packet": {
+            "required": True,
+            "fields": [
+                "job_sha256",
+                "source_binding_id",
+                "source_slice_receipt",
+                "source_slice_bytes_sha256",
+                "ordered_quote_batch_payloads",
+                "ordered_quote_batch_chain_sha256",
+                "first_source_cursor",
+                "last_source_cursor",
+                "expected_quote_pair_set_sha256",
+                "observed_quote_pair_set_sha256",
+                "missing_quote_count",
+                "synthetic_quote_count",
+            ],
+            "same_ordered_quote_batches_fanned_to_all_coordinates": True,
+            "source_receipt_hash_without_bound_source_bytes_is_sufficient": False,
+        },
+        "coordinate_reducer_input": {
+            "required": True,
+            "fields": [
+                "coordinate_id",
+                "job_sha256",
+                "portfolio_policy",
+                "portfolio_policy_sha256",
+                "worker_binding_set_sha256",
+                "post_exit_snapshots",
+                "all_worker_proposal_batches",
+                "risk_reducing_intents",
+                "new_risk_intents",
+                "reducer_frame_order_sha256",
+                "terminal_settlement_input",
+            ],
+            "one_decision_context_per_timestamp": True,
+            "worker_reported_fill_pnl_cost_or_margin_is_trusted": False,
+            "event_only_fill_exit_ledger_is_sufficient": False,
+        },
+        "independent_reexecution": {
+            "required": True,
+            "trusted_reducer": (
+                "quant_rabbit.dojo_portfolio_replay_reducer.reduce_portfolio_replay"
+            ),
+            "trusted_reducer_code_sha256_must_equal_plan": True,
+            "runner_aggregate_result_is_an_input_to_reducer": False,
+            "terminal_fields_recomputed_and_compared": [
+                "starting_balance_jpy",
+                "starting_equity_jpy",
+                "ending_balance_jpy",
+                "ending_equity_jpy",
+                "minimum_mtm_equity_jpy",
+                "minimum_free_margin_jpy",
+                "max_mtm_drawdown_fraction",
+                "peak_margin_usage_fraction",
+                "margin_closeout_count",
+                "ruin_event_count",
+                "trade_count",
+                "fill_count",
+                "margin_reject_count",
+                "financing_jpy",
+                "transaction_cost_jpy",
+            ],
+            "recompute_fill_prices_from_quotes": True,
+            "recompute_exit_prices_from_quotes": True,
+            "recompute_fx_conversion_from_synchronized_quotes": True,
+            "recompute_spread_slippage_fees_and_financing": True,
+            "recompute_every_timestamp_mtm_and_margin": True,
+        },
+        "current_trusted_reducer_gap": {
+            "current_output_contract": (
+                "QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"
+            ),
+            "current_output_is_sufficient_for_long_horizon_cell": False,
+            "missing_or_ambiguous_independent_metrics": [
+                "minimum_mtm_equity_jpy",
+                "minimum_free_margin_jpy",
+                "peak_margin_usage_fraction_at_one_timestamp",
+                "ruin_event_count",
+                "trade_count_semantics",
+                "margin_reject_count_semantics",
+                "transaction_cost_jpy_including_every_fee_component",
+                "quote_coverage_complete",
+                "active_worker_ack_complete",
+            ],
+            "peak_margin_jpy_divided_by_unaligned_peak_equity_is_allowed": False,
+            "position_closes_may_silently_substitute_for_trade_count": False,
+        },
+        "continuous_carry": {
+            "full_carry_state_bytes_required": True,
+            "carry_state_sha256_required": True,
+            "next_month_predecessor_must_equal_prior_carry_bytes": True,
+            "equity_only_or_state_hash_only_handoff_is_sufficient": False,
+        },
+        "failure_evidence": {
+            "typed_failure_document_required": True,
+            "failure_document_bytes_must_match_evidence_sha256": True,
+            "source_or_reducer_failure_must_be_independently_reproducible": True,
+            "partial_or_zero_economics_allowed": False,
+            "failure_may_reduce_denominator": False,
+        },
+        "lopo": {
+            "separate_causal_reexecution_per_fold_required": True,
+            "post_hoc_subtraction_from_full_portfolio_allowed": False,
+            "comparison_alignment": [
+                "month",
+                "evaluation_mode",
+                "intrabar_path",
+                "cost_scenario",
+            ],
+        },
+        "current_event_only_compact_ledger_limitations": [
+            "NO_ORDERED_SOURCE_QUOTE_PAYLOADS",
+            "NO_ALL_WORKER_PROPOSAL_TRANSCRIPT",
+            "FILL_PRICE_NOT_RECOMPUTABLE_FROM_SOURCE_QUOTES",
+            "CONVERSION_RATE_NOT_RECOMPUTABLE_FROM_SOURCE_QUOTES",
+            "FINANCING_NOT_RECOMPUTABLE_FROM_SEALED_POLICY_AND_TIME",
+            "MTM_AND_MARGIN_PATH_ARE_SELF_REPORTED",
+            "FULL_CONTINUOUS_CARRY_BYTES_NOT_BOUND_TO_TERMINAL_CELL",
+            "FAILURE_EVIDENCE_BYTES_NOT_OPENED",
+        ],
+        "authority": _authority(),
+    }
+    return {**body, "requirements_sha256": canonical_sha256(body)}
+
+
+def _official_gate(
+    cell_reported_blockers: Sequence[str],
+) -> tuple[bool, list[str]]:
+    """Keep the official gate closed until causal inputs are re-executed."""
+
+    return False, [
+        _INDEPENDENT_ECONOMIC_EVIDENCE_BLOCKER,
+        *cell_reported_blockers,
+    ]
 
 
 def _sequence(value: Any, *, field: str) -> Sequence[Any]:
@@ -732,23 +895,26 @@ def score_long_horizon_results(
         ],
     )
 
-    blockers: list[str] = []
+    cell_reported_blockers: list[str] = []
     if not denominator["all_coordinates_complete"]:
-        blockers.append("RESULT_DENOMINATOR_CONTAINS_FAILED_CELLS")
+        cell_reported_blockers.append("RESULT_DENOMINATOR_CONTAINS_FAILED_CELLS")
     if not monthly["independent_and_continuous_every_month_3x"]:
-        blockers.append("NOT_EVERY_MONTH_3X_IN_BOTH_ACCOUNT_MODES")
+        cell_reported_blockers.append("NOT_EVERY_MONTH_3X_IN_BOTH_ACCOUNT_MODES")
     if not monthly["independent_and_continuous_zero_losing_months"]:
-        blockers.append("LOSING_OR_UNKNOWN_MONTH_PRESENT")
+        cell_reported_blockers.append("LOSING_OR_UNKNOWN_MONTH_PRESENT")
     if not risk["gate_pass"]:
-        blockers.append("RISK_MARGIN_OR_RUIN_GATE_FAILED")
+        cell_reported_blockers.append("RISK_MARGIN_OR_RUIN_GATE_FAILED")
     if not lopo["all_lopo_gates_pass"]:
-        blockers.append("PAIR_FAMILY_OR_CURRENCY_LOPO_GATE_FAILED")
+        cell_reported_blockers.append(
+            "PAIR_FAMILY_OR_CURRENCY_LOPO_GATE_FAILED"
+        )
     if not chain["continuous_chain_gate_pass"]:
-        blockers.append("CONTINUOUS_ACCOUNT_CHAIN_FAILED")
+        cell_reported_blockers.append("CONTINUOUS_ACCOUNT_CHAIN_FAILED")
     if not chain["independent_reset_gate_pass"]:
-        blockers.append("INDEPENDENT_MONTH_RESET_FAILED")
+        cell_reported_blockers.append("INDEPENDENT_MONTH_RESET_FAILED")
     if not m1["all_contexts_complete"]:
-        blockers.append("M1_PRECISION_CONTEXT_INCOMPLETE")
+        cell_reported_blockers.append("M1_PRECISION_CONTEXT_INCOMPLETE")
+    arithmetic_gate_pass, blockers = _official_gate(cell_reported_blockers)
 
     body = {
         "contract": CONTRACT,
@@ -765,20 +931,30 @@ def score_long_horizon_results(
         ),
         "evidence_boundary": {
             "terminal_control_plane_independently_validated": True,
-            "terminal_economics_independently_reduced": True,
+            "terminal_cell_values_independently_aggregated": True,
+            "terminal_economic_values_independently_recomputed": False,
             "compact_trade_evidence_reexecuted_by_this_scorer": False,
+            "source_quote_bytes_opened_by_this_scorer": False,
+            "worker_proposal_transcripts_opened_by_this_scorer": False,
+            "continuous_carry_state_bytes_revalidated_by_this_scorer": False,
+            "typed_failure_evidence_bytes_opened_by_this_scorer": False,
             "historical_worn_train_only": True,
             "prospective_proof": False,
         },
+        "required_economic_runner_output": (
+            long_horizon_economic_runner_output_requirements()
+        ),
         "denominator": denominator,
         "monthly_m5_portfolio_main": monthly,
         "continuous_and_reset_integrity": chain,
         "risk_margin_and_ruin": risk,
         "lopo_concentration": lopo,
         "m1_precision_context_diagnostic": m1,
-        "arithmetic_gate_pass": not blockers,
+        "cell_reported_diagnostic_gate_pass": not cell_reported_blockers,
+        "cell_reported_diagnostic_blockers": cell_reported_blockers,
+        "arithmetic_gate_pass": arithmetic_gate_pass,
         "arithmetic_blockers": blockers,
-        "diagnostic_target_reached": not blockers,
+        "diagnostic_target_reached": False,
         "market_return_guarantee": False,
         "promotion_eligible": False,
         "promotion_blockers": [
@@ -793,6 +969,8 @@ def score_long_horizon_results(
 
 __all__ = [
     "CONTRACT",
+    "ECONOMIC_RUNNER_OUTPUT_CONTRACT",
     "DojoLongHorizonResultReducerError",
+    "long_horizon_economic_runner_output_requirements",
     "score_long_horizon_results",
 ]

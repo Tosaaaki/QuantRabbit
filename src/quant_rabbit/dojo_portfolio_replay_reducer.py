@@ -24,6 +24,7 @@ from typing import Any, Final, Mapping, Sequence
 
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
+    seal_post_exit_snapshot,
     verify_post_exit_snapshot,
     verify_worker_proposal_batch,
 )
@@ -32,11 +33,16 @@ from quant_rabbit.dojo_shared_worker_protocol import (
 PORTFOLIO_POLICY_CONTRACT: Final = "QR_DOJO_SHARED_PORTFOLIO_POLICY_V1"
 PORTFOLIO_REPLAY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"
 PORTFOLIO_CARRY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_CARRY_V1"
+PORTFOLIO_COORDINATE_RECEIPT_CONTRACT: Final = (
+    "QR_DOJO_SHARED_PORTFOLIO_COORDINATE_RECEIPT_V1"
+)
 QUOTE_BATCH_CONTRACT: Final = "QR_DOJO_EXACT_QUOTE_BATCH_V1"
 SCHEMA_VERSION: Final = 1
 MONTH_SECONDS: Final = 30 * 24 * 60 * 60
 UNVERIFIED_CLUSTER: Final = "UNVERIFIED"
 GENESIS_EVENT_SHA256: Final = "0" * 64
+MONTH_END_FLAT_SETTLEMENT: Final = "MONTH_END_FLAT_SETTLEMENT"
+MONTH_END_MTM_WITH_STATE_HANDOFF: Final = "MONTH_END_MTM_WITH_STATE_HANDOFF"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
@@ -48,6 +54,7 @@ _POLICY_RAW_KEYS = frozenset(
     {
         "policy_id",
         "expected_quote_pairs",
+        "tradable_pairs",
         "active_worker_bindings",
         "leverage",
         "margin_closeout_fraction",
@@ -197,6 +204,16 @@ def seal_portfolio_policy(policy: Mapping[str, Any]) -> dict[str, Any]:
     )
     if not expected_pairs:
         raise DojoPortfolioReplayError("policy.expected_quote_pairs must not be empty")
+    tradable_pairs = sorted(
+        {
+            _pair(item, "policy.tradable_pairs")
+            for item in _sequence(raw["tradable_pairs"], "policy.tradable_pairs")
+        }
+    )
+    if not tradable_pairs or not set(tradable_pairs).issubset(expected_pairs):
+        raise DojoPortfolioReplayError(
+            "policy.tradable_pairs must be a non-empty subset of expected_quote_pairs"
+        )
 
     bindings = _sorted_unique_rows(
         raw["active_worker_bindings"],
@@ -345,6 +362,7 @@ def seal_portfolio_policy(policy: Mapping[str, Any]) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "policy_id": _identifier(raw["policy_id"], "policy.policy_id"),
         "expected_quote_pairs": expected_pairs,
+        "tradable_pairs": tradable_pairs,
         "active_worker_bindings": bindings,
         "leverage": leverage,
         "margin_closeout_fraction": closeout_margin,
@@ -550,11 +568,27 @@ def _pending_fill(
     side = order["side"]
     trigger = float(order["trigger_price"])
     if order["order_kind"] == "LIMIT":
-        if side == "LONG" and quote["ask"] <= trigger:
-            return min(trigger, float(quote["ask"])), 0.0
-        if side == "SHORT" and quote["bid"] >= trigger:
-            return max(trigger, float(quote["bid"])), 0.0
-        return None
+        executable = float(quote["ask"] if side == "LONG" else quote["bid"])
+        triggered = (side == "LONG" and executable <= trigger) or (
+            side == "SHORT" and executable >= trigger
+        )
+        if not triggered:
+            return None
+        # Apply the sealed adverse entry-slippage offset to favorable gap price
+        # improvement, capped at the limit so a LIMIT is never filled worse
+        # than its trigger.  The returned cost is the effective offset actually
+        # consumed; an exact touch therefore fills at the trigger with zero
+        # additional slippage, while a wider favorable gap pays the sealed cost.
+        sealed_slip = float(
+            indexes["slippage"][order["pair"]]["entry_slippage_price"]
+        )
+        if side == "LONG":
+            price = min(trigger, executable + sealed_slip)
+            effective_slip = price - executable
+        else:
+            price = max(trigger, executable - sealed_slip)
+            effective_slip = executable - price
+        return price, effective_slip
     triggered = (side == "LONG" and quote["ask"] >= trigger) or (
         side == "SHORT" and quote["bid"] <= trigger
     )
@@ -743,6 +777,8 @@ def _allocation_rejection(
 ) -> str | None:
     if equity_jpy <= 0:
         return "NON_POSITIVE_EQUITY"
+    if candidate["pair"] not in policy["tradable_pairs"]:
+        return "PAIR_NOT_TRADABLE"
     if candidate["hard_max_holding_seconds"] > policy["max_lock_seconds"]:
         return "LOCK_CAP"
     if (
@@ -1000,12 +1036,17 @@ def _empty_metrics() -> dict[str, Any]:
         "orders_cancelled": 0,
         "position_closes": 0,
         "margin_closeouts": 0,
+        "margin_reject_count": 0,
+        "ruin_event_count": 0,
         "realized_pnl_jpy": 0.0,
         "financing_cost_jpy": 0.0,
         "spread_cost_jpy": 0.0,
         "slippage_cost_jpy": 0.0,
         "capital_lock_margin_jpy_seconds": 0.0,
         "peak_margin_jpy": 0.0,
+        "peak_margin_usage_fraction": 0.0,
+        "minimum_mtm_equity_jpy": None,
+        "minimum_free_margin_jpy": None,
         "max_drawdown_fraction": 0.0,
         "rejection_counts": {},
         "pair_pnl": {},
@@ -1040,6 +1081,59 @@ def _record_equity(state: dict[str, Any], equity: float) -> None:
         state["metrics"]["max_drawdown_fraction"] = max(
             float(state["metrics"]["max_drawdown_fraction"]), drawdown
         )
+
+
+def _record_account_state(
+    state: dict[str, Any],
+    quotes: Mapping[str, Mapping[str, Any]],
+    indexes: Mapping[str, Any],
+    policy: Mapping[str, Any],
+) -> tuple[float, float, float]:
+    """Record streaming MTM, reserved margin and free-margin extrema."""
+
+    equity = _account_equity(state, quotes, indexes)
+    reserved_margin = _exposure(
+        list(state["positions"].values()),
+        list(state["pending_orders"].values()),
+        quotes,
+        indexes,
+        policy,
+    )["margin"]
+    free_margin = equity - reserved_margin
+    _record_equity(state, equity)
+    metrics = state["metrics"]
+    current_min_equity = metrics["minimum_mtm_equity_jpy"]
+    metrics["minimum_mtm_equity_jpy"] = (
+        equity if current_min_equity is None else min(float(current_min_equity), equity)
+    )
+    current_min_free = metrics["minimum_free_margin_jpy"]
+    metrics["minimum_free_margin_jpy"] = (
+        free_margin
+        if current_min_free is None
+        else min(float(current_min_free), free_margin)
+    )
+    margin_usage = reserved_margin / equity if equity > 0 else 1.0
+    metrics["peak_margin_usage_fraction"] = max(
+        float(metrics["peak_margin_usage_fraction"]), margin_usage
+    )
+    metrics["peak_margin_jpy"] = max(
+        float(metrics["peak_margin_jpy"]), reserved_margin
+    )
+    ruin_active = bool(state.get("ruin_active", False))
+    if equity <= 0 and not ruin_active:
+        metrics["ruin_event_count"] += 1
+        state["ruin_active"] = True
+        _event(
+            state,
+            "RUIN_ENTER",
+            {
+                "equity_jpy": equity,
+                "free_margin_jpy": free_margin,
+            },
+        )
+    elif equity > 0 and ruin_active:
+        state["ruin_active"] = False
+    return equity, reserved_margin, free_margin
 
 
 def _state_from_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -1501,6 +1595,9 @@ def _apply_actual_risk_reductions(
 
 
 def _new_state(initial_balance_jpy: float, policy_sha256: str) -> dict[str, Any]:
+    metrics = _empty_metrics()
+    metrics["minimum_mtm_equity_jpy"] = initial_balance_jpy
+    metrics["minimum_free_margin_jpy"] = initial_balance_jpy
     return {
         "policy_sha256": policy_sha256,
         "balance_jpy": initial_balance_jpy,
@@ -1516,9 +1613,10 @@ def _new_state(initial_balance_jpy: float, policy_sha256: str) -> dict[str, Any]
         "start_balance_jpy": initial_balance_jpy,
         "start_equity_jpy": initial_balance_jpy,
         "peak_equity_jpy": initial_balance_jpy,
+        "ruin_active": False,
         "event_chain_sha256": GENESIS_EVENT_SHA256,
         "event_count": 0,
-        "metrics": _empty_metrics(),
+        "metrics": metrics,
     }
 
 
@@ -1627,7 +1725,7 @@ def _state_from_carry(
             raise DojoPortfolioReplayError(
                 "carry position owner is not an active sealed worker"
             )
-        if position["pair"] not in policy["expected_quote_pairs"] or position[
+        if position["pair"] not in policy["tradable_pairs"] or position[
             "side"
         ] not in {"LONG", "SHORT"}:
             raise DojoPortfolioReplayError("carry position has unknown pair or side")
@@ -1662,7 +1760,7 @@ def _state_from_carry(
             raise DojoPortfolioReplayError(
                 "carry pending order owner is not an active sealed worker"
             )
-        if order["pair"] not in policy["expected_quote_pairs"] or order["side"] not in {
+        if order["pair"] not in policy["tradable_pairs"] or order["side"] not in {
             "LONG",
             "SHORT",
         }:
@@ -1716,8 +1814,17 @@ def _state_from_carry(
     metric_keys = frozenset(_empty_metrics())
     metrics = dict(_mapping(row["metrics"], "carry_state.metrics"))
     _exact(metrics, metric_keys, "carry_state.metrics")
+    signed_metric_keys = {
+        "realized_pnl_jpy",
+        "minimum_mtm_equity_jpy",
+        "minimum_free_margin_jpy",
+    }
     for key in metric_keys - {"rejection_counts", "pair_pnl", "family_pnl"}:
-        _finite(metrics[key], f"carry_state.metrics.{key}", minimum=0)
+        _finite(
+            metrics[key],
+            f"carry_state.metrics.{key}",
+            minimum=None if key in signed_metric_keys else 0,
+        )
     for dimension in ("pair_pnl", "family_pnl"):
         dimension_rows = _mapping(
             metrics[dimension], f"carry_state.metrics.{dimension}"
@@ -1779,6 +1886,9 @@ def _state_from_carry(
         "start_balance_jpy": row["start_balance_jpy"],
         "start_equity_jpy": row["start_equity_jpy"],
         "peak_equity_jpy": row["peak_equity_jpy"],
+        # Ruin is a transition, not a sticky reporting boolean.  Its active
+        # state is determined by the carried executable MTM at the handoff.
+        "ruin_active": float(row["equity_jpy"]) <= 0,
         "event_chain_sha256": row["event_chain_sha256"],
         "event_count": row["event_count"],
         "metrics": _copy(metrics),
@@ -1792,6 +1902,30 @@ def _state_from_carry(
     )
     equity = _account_equity(state, state["last_quotes"], _policy_indexes(policy))
     _assert_close(equity, row["equity_jpy"], "carry_state.equity_jpy")
+    # A carry transfers economic state, not the preceding reporting window.
+    # Long-horizon month cells must start at their own month-open MTM equity and
+    # report only this segment's fills/costs/drawdown while preserving positions,
+    # orders, financing balance and the append-only event chain.
+    segment_metrics = _empty_metrics()
+    segment_metrics["minimum_mtm_equity_jpy"] = equity
+    month_open_exposure = _exposure(
+        list(state["positions"].values()),
+        list(state["pending_orders"].values()),
+        state["last_quotes"],
+        _policy_indexes(policy),
+        policy,
+    )
+    month_open_margin = float(month_open_exposure["margin"])
+    segment_metrics["minimum_free_margin_jpy"] = equity - month_open_margin
+    segment_metrics["peak_margin_jpy"] = month_open_margin
+    segment_metrics["peak_margin_usage_fraction"] = (
+        month_open_margin / equity if equity > 0 else 1.0
+    )
+    state["start_epoch"] = None
+    state["start_balance_jpy"] = state["balance_jpy"]
+    state["start_equity_jpy"] = equity
+    state["peak_equity_jpy"] = equity
+    state["metrics"] = segment_metrics
     return state
 
 
@@ -1834,7 +1968,509 @@ def _carry_artifact(
     return body
 
 
-def reduce_portfolio_replay(
+class PortfolioReplaySession:
+    """Incremental, bounded-memory shared-account replay session.
+
+    A session validates policy/carry and builds policy indexes once.  Each quote
+    coordinate is a strict two-step transaction: ``prepare_coordinate`` advances
+    reducer-owned economics and returns the exact worker snapshot;
+    ``consume_proposal_batch`` verifies the all-worker acknowledgement and
+    completes allocation.  Only one prepared coordinate may exist at a time.
+    """
+
+    def __init__(
+        self,
+        *,
+        policy: Mapping[str, Any],
+        initial_balance_jpy: int | float | None = None,
+        carry_state: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.policy = verify_portfolio_policy(policy)
+        self.indexes = _policy_indexes(self.policy)
+        if carry_state is None:
+            if initial_balance_jpy is None:
+                raise DojoPortfolioReplayError(
+                    "initial_balance_jpy is required without carry_state"
+                )
+            self.state = _new_state(
+                _positive(initial_balance_jpy, "initial_balance_jpy"),
+                self.policy["policy_sha256"],
+            )
+        else:
+            if initial_balance_jpy is not None:
+                raise DojoPortfolioReplayError(
+                    "initial_balance_jpy and carry_state are mutually exclusive"
+                )
+            self.state = _state_from_carry(carry_state, self.policy)
+        self._prepared: dict[str, Any] | None = None
+        self._processed_coordinate_count = 0
+        self._final_result: dict[str, Any] | None = None
+        self._terminal_policy: str | None = None
+
+    def prepare_coordinate(
+        self,
+        *,
+        coordinate_id: str,
+        epoch: int,
+        phase: str,
+        intrabar: str,
+        quote_watermark: int,
+        quotes: Sequence[Mapping[str, Any]],
+        quote_batch_sha256_value: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance through exits and return the reducer-owned worker snapshot."""
+
+        if self._final_result is not None:
+            raise DojoPortfolioReplayError("a finalized session cannot consume quotes")
+        if self._prepared is not None:
+            raise DojoPortfolioReplayError(
+                "the prior prepared coordinate requires one proposal batch"
+            )
+        epoch_value = _integer(epoch, "coordinate.epoch")
+        if phase not in {"O", "H", "L", "C"}:
+            raise DojoPortfolioReplayError("coordinate.phase is unsupported")
+        if intrabar not in _INTRABAR_PHASE_ORDER:
+            raise DojoPortfolioReplayError("coordinate.intrabar is unsupported")
+        watermark = _integer(quote_watermark, "coordinate.quote_watermark")
+        coordinate_name = _identifier(coordinate_id, "coordinate.coordinate_id")
+        computed_digest = quote_batch_sha256(
+            epoch=epoch_value,
+            phase=phase,
+            intrabar=intrabar,
+            quote_watermark=watermark,
+            quotes=quotes,
+        )
+        if quote_batch_sha256_value is not None and _sha(
+            quote_batch_sha256_value, "coordinate.quote_batch_sha256"
+        ) != computed_digest:
+            raise DojoPortfolioReplayError("quote batch digest mismatch")
+
+        # Validate the complete mark set and timestamp coordinate before state
+        # mutation.  The placeholder account/state are intentionally empty;
+        # reducer-owned economic state is sealed only after exits below.
+        try:
+            market_guard = seal_post_exit_snapshot(
+                {
+                    "coordinate_id": coordinate_name,
+                    "epoch": epoch_value,
+                    "phase": phase,
+                    "intrabar": intrabar,
+                    "quote_batch_sha256": computed_digest,
+                    "quote_watermark": watermark,
+                    "expected_quote_pairs": self.policy["expected_quote_pairs"],
+                    "active_worker_bindings": self.policy["active_worker_bindings"],
+                    "account": {
+                        "balance_jpy": 0.0,
+                        "equity_jpy": 0.0,
+                        "margin_used_jpy": 0.0,
+                        "accrued_financing_jpy": 0.0,
+                    },
+                    "quotes": list(quotes),
+                    "positions": [],
+                    "pending_orders": [],
+                }
+            )
+        except ProtocolViolation as exc:
+            raise DojoPortfolioReplayError(f"invalid quote coordinate: {exc}") from exc
+        normalized_quotes = _quote_map(market_guard)
+
+        phase_rank = _INTRABAR_PHASE_ORDER[intrabar][phase]
+        last_coordinate = self.state["last_coordinate"]
+        if last_coordinate is None:
+            if phase != "O":
+                raise DojoPortfolioReplayError(
+                    "a replay without prior coordinate must begin at O"
+                )
+        else:
+            last_epoch, last_rank, last_intrabar = last_coordinate
+            if int(last_epoch) == epoch_value and last_intrabar != intrabar:
+                raise DojoPortfolioReplayError(
+                    "intrabar path changed within one candle epoch"
+                )
+            if int(last_epoch) == epoch_value and phase_rank != int(last_rank) + 1:
+                raise DojoPortfolioReplayError(
+                    "coordinate phase must be the exact next phase of the sealed intrabar path"
+                )
+            if int(last_epoch) < epoch_value and (
+                int(last_rank) != 3 or phase != "O"
+            ):
+                raise DojoPortfolioReplayError(
+                    "a new candle requires a completed prior C phase and must begin at O"
+                )
+            if int(last_epoch) > epoch_value:
+                raise DojoPortfolioReplayError("coordinate epoch moved backwards")
+        if (
+            self.state["last_quote_watermark"] is not None
+            and watermark <= self.state["last_quote_watermark"]
+        ):
+            raise DojoPortfolioReplayError(
+                "quote watermark must be strictly increasing"
+            )
+
+        self.state["coordinate_seq"] += 1
+        previous_epoch = self.state["last_epoch"]
+        if previous_epoch is not None:
+            elapsed = epoch_value - int(previous_epoch)
+            locked = _exposure(
+                list(self.state["positions"].values()),
+                list(self.state["pending_orders"].values()),
+                self.state["last_quotes"],
+                self.indexes,
+                self.policy,
+            )["margin"]
+            self.state["metrics"]["capital_lock_margin_jpy_seconds"] += (
+                locked * elapsed
+            )
+        carry_charges = _financing_charges(self.state, epoch_value, self.indexes)
+        _expire_old_pending(self.state, epoch_value)
+        _process_system_exits(
+            self.state, epoch_value, normalized_quotes, self.indexes
+        )
+        frozen_trigger_candidates = _triggered_pending_candidates(
+            self.state,
+            epoch=epoch_value,
+            coordinate_seq=self.state["coordinate_seq"],
+            quotes=normalized_quotes,
+            indexes=self.indexes,
+            policy=self.policy,
+        )
+        _book_financing(self.state, carry_charges)
+        # Preserve the actual stressed state which causes forced liquidation.
+        # Recording only after closeout would erase the low equity/free margin
+        # and peak usage observed at the executable current quote.
+        _record_account_state(
+            self.state, normalized_quotes, self.indexes, self.policy
+        )
+        _process_margin_closeout(
+            self.state, normalized_quotes, self.indexes, self.policy
+        )
+        _record_account_state(
+            self.state, normalized_quotes, self.indexes, self.policy
+        )
+
+        computed_equity = _account_equity(
+            self.state, normalized_quotes, self.indexes
+        )
+        open_margin = sum(
+            _margin(row, normalized_quotes, self.indexes, self.policy)
+            for row in self.state["positions"].values()
+        )
+        try:
+            snapshot = seal_post_exit_snapshot(
+                {
+                    "coordinate_id": coordinate_name,
+                    "epoch": epoch_value,
+                    "phase": phase,
+                    "intrabar": intrabar,
+                    "quote_batch_sha256": computed_digest,
+                    "quote_watermark": watermark,
+                    "expected_quote_pairs": self.policy["expected_quote_pairs"],
+                    "active_worker_bindings": self.policy["active_worker_bindings"],
+                    "account": {
+                        "balance_jpy": self.state["balance_jpy"],
+                        "equity_jpy": computed_equity,
+                        "margin_used_jpy": open_margin,
+                        "accrued_financing_jpy": self.state[
+                            "accrued_financing_jpy"
+                        ],
+                    },
+                    "quotes": list(market_guard["quotes"]),
+                    "positions": [
+                        _project_position(row)
+                        for row in self.state["positions"].values()
+                    ],
+                    "pending_orders": [
+                        _project_order(row)
+                        for row in self.state["pending_orders"].values()
+                    ],
+                }
+            )
+        except ProtocolViolation as exc:  # pragma: no cover - internal invariant
+            raise DojoPortfolioReplayError(
+                f"reducer produced an invalid post-exit snapshot: {exc}"
+            ) from exc
+        self._prepared = {
+            "snapshot": snapshot,
+            "quotes": normalized_quotes,
+            "epoch": epoch_value,
+            "phase_rank": phase_rank,
+            "intrabar": intrabar,
+            "watermark": watermark,
+            "frozen_trigger_candidates": frozen_trigger_candidates,
+        }
+        return _copy(snapshot)
+
+    def consume_proposal_batch(
+        self, proposal_batch: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Atomically consume the exact all-worker batch for the prepared view."""
+
+        if self._prepared is None:
+            raise DojoPortfolioReplayError(
+                "prepare_coordinate must precede proposal consumption"
+            )
+        prepared = self._prepared
+        snapshot = prepared["snapshot"]
+        quotes = prepared["quotes"]
+        try:
+            batch = verify_worker_proposal_batch(snapshot, proposal_batch)
+        except ProtocolViolation as exc:
+            raise DojoPortfolioReplayError(
+                f"invalid all-worker proposal batch: {exc}"
+            ) from exc
+        epoch = int(prepared["epoch"])
+        if self.state["start_epoch"] is None:
+            self.state["start_epoch"] = epoch
+        before = {
+            key: self.state["metrics"][key]
+            for key in ("attempts", "fills", "rejections")
+        }
+        _record_account_state(self.state, quotes, self.indexes, self.policy)
+        _event(
+            self.state,
+            "POST_EXIT_SNAPSHOT_ACK",
+            {
+                "snapshot_sha256": snapshot["snapshot_sha256"],
+                "batch_sha256": batch["batch_sha256"],
+            },
+        )
+        _apply_actual_risk_reductions(self.state, batch, quotes, self.indexes)
+        candidates = list(prepared["frozen_trigger_candidates"])
+        candidates.extend(
+            _candidate_from_intent(
+                proposal, intent, quotes, self.indexes, self.policy, epoch
+            )
+            for proposal in batch["proposals"]
+            for intent in proposal["new_risk_intents"]
+        )
+        candidates.sort(
+            key=lambda row: (
+                row["stop_risk_jpy"],
+                row["margin_jpy"],
+                row["family_id"],
+                row["worker_id"],
+                row["intent_id"],
+            )
+        )
+        self.state["metrics"]["attempts"] += len(candidates)
+        for candidate in candidates:
+            equity = _account_equity(self.state, quotes, self.indexes)
+            reason = _allocation_rejection(
+                candidate,
+                [],
+                list(self.state["positions"].values()),
+                list(self.state["pending_orders"].values()),
+                quotes,
+                self.indexes,
+                self.policy,
+                equity,
+            )
+            if reason is not None:
+                metrics = self.state["metrics"]
+                metrics["rejections"] += 1
+                if reason == "MARGIN_CAP":
+                    metrics["margin_reject_count"] += 1
+                counts = metrics["rejection_counts"]
+                counts[reason] = counts.get(reason, 0) + 1
+                _event(
+                    self.state,
+                    "ADMISSION_REJECT",
+                    {
+                        "worker_id": candidate["worker_id"],
+                        "intent_id": candidate["intent_id"],
+                        "source": candidate["source"],
+                        "reason": reason,
+                    },
+                )
+                continue
+            _place_accepted_candidate(
+                self.state,
+                candidate,
+                quotes,
+                self.indexes,
+                epoch,
+                self.state["coordinate_seq"],
+            )
+        equity, reserved_margin, free_margin = _record_account_state(
+            self.state, quotes, self.indexes, self.policy
+        )
+        self.state["last_quotes"] = quotes
+        self.state["last_epoch"] = epoch
+        self.state["last_coordinate"] = [
+            epoch,
+            prepared["phase_rank"],
+            prepared["intrabar"],
+        ]
+        self.state["last_quote_watermark"] = prepared["watermark"]
+        self._processed_coordinate_count += 1
+        self._prepared = None
+        body = {
+            "contract": PORTFOLIO_COORDINATE_RECEIPT_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "policy_sha256": self.policy["policy_sha256"],
+            "snapshot_sha256": snapshot["snapshot_sha256"],
+            "proposal_batch_sha256": batch["batch_sha256"],
+            "quote_batch_sha256": snapshot["quote_batch_sha256"],
+            "epoch": epoch,
+            "phase": snapshot["phase"],
+            "quote_watermark": snapshot["quote_watermark"],
+            "ending_balance_jpy": self.state["balance_jpy"],
+            "ending_equity_jpy": equity,
+            "reserved_margin_jpy": reserved_margin,
+            "free_margin_jpy": free_margin,
+            "attempt_delta": self.state["metrics"]["attempts"]
+            - before["attempts"],
+            "entry_fill_delta": self.state["metrics"]["fills"] - before["fills"],
+            "rejection_delta": self.state["metrics"]["rejections"]
+            - before["rejections"],
+            "event_count": self.state["event_count"],
+            "event_chain_sha256": self.state["event_chain_sha256"],
+            "live_permission": False,
+            "broker_mutation_allowed": False,
+        }
+        body["coordinate_receipt_sha256"] = canonical_portfolio_sha256(body)
+        return body
+
+    def finalize(
+        self,
+        *,
+        terminal_policy: str = MONTH_END_MTM_WITH_STATE_HANDOFF,
+    ) -> dict[str, Any]:
+        """Finalize current segment, optionally flattening at the last mark."""
+
+        if terminal_policy not in {
+            MONTH_END_FLAT_SETTLEMENT,
+            MONTH_END_MTM_WITH_STATE_HANDOFF,
+        }:
+            raise DojoPortfolioReplayError("terminal_policy is unsupported")
+        if self._prepared is not None:
+            raise DojoPortfolioReplayError(
+                "cannot finalize with an unacknowledged prepared snapshot"
+            )
+        if self._processed_coordinate_count == 0:
+            raise DojoPortfolioReplayError("cannot finalize an empty replay segment")
+        if self._final_result is not None:
+            if terminal_policy != self._terminal_policy:
+                raise DojoPortfolioReplayError(
+                    "a finalized session cannot change terminal policy"
+                )
+            return _copy(self._final_result)
+        quotes = self.state["last_quotes"]
+        if terminal_policy == MONTH_END_FLAT_SETTLEMENT:
+            for order_id in sorted(list(self.state["pending_orders"])):
+                del self.state["pending_orders"][order_id]
+                self.state["metrics"]["orders_cancelled"] += 1
+                _event(
+                    self.state,
+                    "ORDER_CANCEL",
+                    {"order_id": order_id, "intent_id": "TERMINAL_SETTLEMENT"},
+                )
+            for position_id in sorted(list(self.state["positions"])):
+                _close_position(
+                    self.state,
+                    position_id,
+                    None,
+                    "TERMINAL_SETTLEMENT",
+                    quotes,
+                    self.indexes,
+                )
+            _record_account_state(self.state, quotes, self.indexes, self.policy)
+        self._terminal_policy = terminal_policy
+        self._final_result = self._build_result(terminal_policy=terminal_policy)
+        return _copy(self._final_result)
+
+    def _build_result(self, *, terminal_policy: str) -> dict[str, Any]:
+        state = self.state
+        quotes = state["last_quotes"]
+        end_equity = _account_equity(state, quotes, self.indexes)
+        period_seconds = int(state["last_epoch"] - state["start_epoch"])
+        period_multiple = end_equity / float(state["start_equity_jpy"])
+        monthly_multiple = (
+            period_multiple ** (MONTH_SECONDS / period_seconds)
+            if period_seconds > 0 and period_multiple > 0
+            else None
+        )
+        metrics = state["metrics"]
+        carry = _carry_artifact(state, quotes, self.indexes)
+        economic_failures = []
+        if metrics["fills"] == 0:
+            economic_failures.append("ZERO_FILLS")
+        if metrics["margin_closeouts"] > 0:
+            economic_failures.append("MARGIN_CLOSEOUT_OCCURRED")
+        if end_equity <= 0:
+            economic_failures.append("NON_POSITIVE_END_EQUITY")
+        transaction_cost = metrics["spread_cost_jpy"] + metrics["slippage_cost_jpy"]
+        result = {
+            "contract": PORTFOLIO_REPLAY_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "status": "COMPLETE"
+            if not economic_failures
+            else "COMPLETE_WITH_ECONOMIC_FAILURES",
+            "economic_failure_codes": economic_failures,
+            "policy_sha256": self.policy["policy_sha256"],
+            "terminal_policy": terminal_policy,
+            "processed_coordinate_count": self._processed_coordinate_count,
+            "start_epoch": state["start_epoch"],
+            "end_epoch": state["last_epoch"],
+            "duration_seconds": period_seconds,
+            "start_balance_jpy": state["start_balance_jpy"],
+            "end_balance_jpy": state["balance_jpy"],
+            "start_equity_jpy": state["start_equity_jpy"],
+            "end_equity_jpy": end_equity,
+            "minimum_mtm_equity_jpy": metrics["minimum_mtm_equity_jpy"],
+            "minimum_free_margin_jpy": metrics["minimum_free_margin_jpy"],
+            "period_multiple_mtm": period_multiple,
+            "monthly_multiple_mtm": monthly_multiple,
+            "max_drawdown_fraction": metrics["max_drawdown_fraction"],
+            "peak_margin_jpy": metrics["peak_margin_jpy"],
+            "peak_margin_usage_fraction": metrics["peak_margin_usage_fraction"],
+            "margin_closeouts": metrics["margin_closeouts"],
+            "margin_reject_count": metrics["margin_reject_count"],
+            "ruin_event_count": metrics["ruin_event_count"],
+            "realized_pnl_jpy": metrics["realized_pnl_jpy"],
+            "financing_cost_jpy": metrics["financing_cost_jpy"],
+            "spread_cost_jpy": metrics["spread_cost_jpy"],
+            "slippage_cost_jpy": metrics["slippage_cost_jpy"],
+            "transaction_cost_jpy": transaction_cost,
+            "attempts": metrics["attempts"],
+            "fills": metrics["fills"],
+            "execution_fill_count": metrics["fills"] + metrics["position_closes"],
+            "trade_count": metrics["position_closes"],
+            "rejections": metrics["rejections"],
+            "rejection_counts": dict(sorted(metrics["rejection_counts"].items())),
+            "orders_placed": metrics["orders_placed"],
+            "orders_triggered": metrics["orders_triggered"],
+            "orders_expired": metrics["orders_expired"],
+            "orders_cancelled": metrics["orders_cancelled"],
+            "position_closes": metrics["position_closes"],
+            "pair_pnl_jpy": [
+                dict({"pair": key}, **value)
+                for key, value in sorted(metrics["pair_pnl"].items())
+            ],
+            "family_pnl_jpy": [
+                dict({"family_id": key}, **value)
+                for key, value in sorted(metrics["family_pnl"].items())
+            ],
+            "capital_lock_margin_jpy_hours": metrics[
+                "capital_lock_margin_jpy_seconds"
+            ]
+            / 3600.0,
+            "open_position_count": len(state["positions"]),
+            "pending_order_count": len(state["pending_orders"]),
+            "event_count": state["event_count"],
+            "event_chain_sha256": state["event_chain_sha256"],
+            "carry_state_sha256": carry["carry_state_sha256"],
+            "carry_state": carry,
+            "raw_quote_events_included": False,
+            "live_permission": False,
+            "broker_mutation_allowed": False,
+            "three_x_guaranteed": False,
+        }
+        result["result_sha256"] = canonical_portfolio_sha256(result)
+        return result
+
+
+def _legacy_reduce_portfolio_replay(
     *,
     policy: Mapping[str, Any],
     frames: Sequence[Mapping[str, Any]],
@@ -2171,6 +2807,71 @@ def reduce_portfolio_replay(
     return result
 
 
+def reduce_portfolio_replay(
+    *,
+    policy: Mapping[str, Any],
+    frames: Sequence[Mapping[str, Any]],
+    initial_balance_jpy: int | float | None = None,
+    carry_state: Mapping[str, Any] | None = None,
+    terminal_policy: str = MONTH_END_MTM_WITH_STATE_HANDOFF,
+) -> dict[str, Any]:
+    """Batch compatibility wrapper over :class:`PortfolioReplaySession`.
+
+    Supplied post-exit snapshots are compared byte-semantically with the
+    reducer-owned streaming snapshot before their proposal batch is consumed.
+    This makes batch and incremental outputs exactly identical.
+    """
+
+    frame_rows = _sequence(frames, "frames")
+    if not frame_rows:
+        raise DojoPortfolioReplayError("frames must not be empty")
+    session = PortfolioReplaySession(
+        policy=policy,
+        initial_balance_jpy=initial_balance_jpy,
+        carry_state=carry_state,
+    )
+    for frame_index, raw_frame in enumerate(frame_rows):
+        frame = _mapping(raw_frame, f"frames[{frame_index}]")
+        _exact(
+            frame,
+            frozenset({"post_exit_snapshot", "proposal_batch"}),
+            f"frames[{frame_index}]",
+        )
+        try:
+            supplied = verify_post_exit_snapshot(frame["post_exit_snapshot"])
+        except ProtocolViolation as exc:
+            raise DojoPortfolioReplayError(
+                f"invalid post-exit snapshot: {exc}"
+            ) from exc
+        prepared = session.prepare_coordinate(
+            coordinate_id=supplied["coordinate_id"],
+            epoch=supplied["epoch"],
+            phase=supplied["phase"],
+            intrabar=supplied["intrabar"],
+            quote_watermark=supplied["quote_watermark"],
+            quotes=supplied["quotes"],
+            quote_batch_sha256_value=supplied["quote_batch_sha256"],
+        )
+        prepared_semantic = {
+            key: value for key, value in prepared.items() if key != "snapshot_sha256"
+        }
+        supplied_semantic = {
+            key: value for key, value in supplied.items() if key != "snapshot_sha256"
+        }
+        if prepared_semantic != supplied_semantic:
+            raise DojoPortfolioReplayError(
+                "supplied post-exit snapshot differs from reducer-owned state"
+            )
+        # Protocol normalization permits JSON integer/float representations that
+        # are numerically equal but hash differently.  The compatibility wrapper
+        # retains the already-verified caller representation so existing sealed
+        # proposal batches remain bound, after reducer economics matched exactly.
+        assert session._prepared is not None
+        session._prepared["snapshot"] = supplied
+        session.consume_proposal_batch(frame["proposal_batch"])
+    return session.finalize(terminal_policy=terminal_policy)
+
+
 def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Validate hashes and terminal accounting invariants of a replay result."""
 
@@ -2182,6 +2883,8 @@ def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any
             "status",
             "economic_failure_codes",
             "policy_sha256",
+            "terminal_policy",
+            "processed_coordinate_count",
             "start_epoch",
             "end_epoch",
             "duration_seconds",
@@ -2189,17 +2892,25 @@ def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any
             "end_balance_jpy",
             "start_equity_jpy",
             "end_equity_jpy",
+            "minimum_mtm_equity_jpy",
+            "minimum_free_margin_jpy",
             "period_multiple_mtm",
             "monthly_multiple_mtm",
             "max_drawdown_fraction",
             "peak_margin_jpy",
+            "peak_margin_usage_fraction",
             "margin_closeouts",
+            "margin_reject_count",
+            "ruin_event_count",
             "realized_pnl_jpy",
             "financing_cost_jpy",
             "spread_cost_jpy",
             "slippage_cost_jpy",
+            "transaction_cost_jpy",
             "attempts",
             "fills",
+            "execution_fill_count",
+            "trade_count",
             "rejections",
             "rejection_counts",
             "orders_placed",
@@ -2234,6 +2945,11 @@ def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any
         row["result_sha256"], "result.result_sha256"
     ):
         raise DojoPortfolioReplayError("result_sha256 mismatch")
+    if row["terminal_policy"] not in {
+        MONTH_END_FLAT_SETTLEMENT,
+        MONTH_END_MTM_WITH_STATE_HANDOFF,
+    }:
+        raise DojoPortfolioReplayError("result terminal_policy is unsupported")
     carry = _mapping(row["carry_state"], "result.carry_state")
     if carry.get("carry_state_sha256") != row["carry_state_sha256"]:
         raise DojoPortfolioReplayError("result carry_state_sha256 mismatch")
@@ -2252,6 +2968,27 @@ def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any
         row["end_equity_jpy"] / row["start_equity_jpy"],
         "result period_multiple_mtm",
     )
+    _assert_close(
+        row["transaction_cost_jpy"],
+        row["spread_cost_jpy"] + row["slippage_cost_jpy"],
+        "result transaction cost accounting",
+    )
+    if row["execution_fill_count"] != row["fills"] + row["position_closes"]:
+        raise DojoPortfolioReplayError("result execution fill count is inconsistent")
+    if row["trade_count"] != row["position_closes"]:
+        raise DojoPortfolioReplayError("result trade count is inconsistent")
+    if row["ruin_event_count"] > 0 and row["minimum_mtm_equity_jpy"] > 0:
+        raise DojoPortfolioReplayError("result ruin metric is inconsistent")
+    if (
+        row["start_equity_jpy"] > 0
+        and row["minimum_mtm_equity_jpy"] <= 0
+        and row["ruin_event_count"] == 0
+    ):
+        raise DojoPortfolioReplayError("result ruin metric is inconsistent")
+    if row["terminal_policy"] == MONTH_END_FLAT_SETTLEMENT and (
+        row["open_position_count"] != 0 or row["pending_order_count"] != 0
+    ):
+        raise DojoPortfolioReplayError("flat settlement retained risk")
     if (
         row["raw_quote_events_included"]
         or row["live_permission"]
@@ -2264,9 +3001,13 @@ def validate_portfolio_replay_result(result: Mapping[str, Any]) -> dict[str, Any
 
 __all__ = [
     "DojoPortfolioReplayError",
+    "MONTH_END_FLAT_SETTLEMENT",
+    "MONTH_END_MTM_WITH_STATE_HANDOFF",
     "PORTFOLIO_CARRY_CONTRACT",
+    "PORTFOLIO_COORDINATE_RECEIPT_CONTRACT",
     "PORTFOLIO_POLICY_CONTRACT",
     "PORTFOLIO_REPLAY_CONTRACT",
+    "PortfolioReplaySession",
     "admit_worker_proposals",
     "canonical_portfolio_sha256",
     "quote_batch_sha256",
