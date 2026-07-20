@@ -112,6 +112,13 @@ class Bot:
             return None
         return abs(st.closes[-1] - st.closes[-361]) / path
 
+    def seed_bar(self, pair: str, bar: dict) -> None:
+        """Warm indicators from history WITHOUT any trading side effects."""
+
+        st = self.state.get(pair)
+        if st is not None:
+            self._update(st, bar)
+
     # ---- lifecycle -------------------------------------------------------
     def on_bar_closed(self, pair: str, bar: dict, epoch: int) -> None:
         st = self.state.get(pair)

@@ -23,6 +23,11 @@ class Bot:
         configs = json.loads(os.environ["DOJO_BOT_COMBO"])
         self.hands = [LabBot(broker, cfg) for cfg in configs]
 
+    def seed_bar(self, pair: str, bar: dict) -> None:
+        for hand in self.hands:
+            if hasattr(hand, "seed_bar"):
+                hand.seed_bar(pair, bar)
+
     def on_bar_closed(self, pair: str, bar: dict, epoch: int) -> None:
         for hand in self.hands:
             hand.on_bar_closed(pair, bar, epoch)

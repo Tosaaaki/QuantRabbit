@@ -222,11 +222,52 @@ def _process_inbox(session_dir: Path, broker: VirtualBroker) -> int:
     return handled
 
 
+def _seed_bot_from_history(args, bot, pairs) -> int:
+    """Warm bot indicators from recent M1 history (no trading side effects)."""
+
+    import gzip
+    root = Path(args.seed_m1_root)
+    cutoff = time_mod.time() - args.seed_hours * 3600
+    seeded = 0
+    for pair in pairs:
+        rows = []
+        for shard in sorted(root.glob(f"*/{pair}/{pair}_M1_BA_*.jsonl.gz")):
+            with shard.open("rb") as raw:
+                with gzip.open(raw, "rt", encoding="utf-8") as handle:
+                    for line in handle:
+                        row = json.loads(line)
+                        epoch = int(datetime.fromisoformat(
+                            row["time"][:19] + "+00:00").timestamp())
+                        if epoch < cutoff:
+                            continue
+                        rows.append((epoch, row))
+        rows.sort(key=lambda r: r[0])
+        last = None
+        for epoch, row in rows:
+            if epoch == last:
+                continue
+            last = epoch
+            b, a = row["bid"], row["ask"]
+            bar = {"epoch": epoch,
+                   "bid_o": float(b["o"]), "bid_h": float(b["h"]),
+                   "bid_l": float(b["l"]), "bid_c": float(b["c"]),
+                   "ask_o": float(a["o"]), "ask_h": float(a["h"]),
+                   "ask_l": float(a["l"]), "ask_c": float(a["c"])}
+            if hasattr(bot, "seed_bar"):
+                bot.seed_bar(pair, bar)
+                seeded += 1
+    return seeded
+
+
 def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
     client = OandaReadOnlyClient()
     pairs = args.pairs.split(",")
+    if bot is not None and args.seed_m1_root and args.seed_hours > 0:
+        n = _seed_bot_from_history(args, bot, pairs)
+        broker._log("BOT_SEEDED", {"bars": n, "hours": args.seed_hours,
+                                   "root": str(args.seed_m1_root)})
     deadline = time_mod.time() + args.minutes * 60.0
     live_bars: dict[str, dict] = {}
     while time_mod.time() < deadline:
@@ -394,6 +435,10 @@ def main() -> int:
                         help="replay: advance one bar per inbox/STEP file")
     parser.add_argument("--bot", choices=["golden_burst", "golden_burst_blindspread"], default=None,
                         help="built-in worker bot (same broker/ledger)")
+    parser.add_argument("--seed-m1-root", default=None,
+                        help="live: warm bot indicators from this M1 corpus root")
+    parser.add_argument("--seed-hours", type=float, default=0.0,
+                        help="live: how many hours of history to seed")
     parser.add_argument("--bot-module", default=None,
                         help="path to ANY bot file: <file.py>[:ClassName]; the class "
                              "takes (broker) and implements on_bar_closed(pair, bar, epoch)")
