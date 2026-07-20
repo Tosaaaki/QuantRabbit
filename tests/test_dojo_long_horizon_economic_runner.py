@@ -12,6 +12,10 @@ import pytest
 import quant_rabbit.dojo_long_horizon_economic_runner as economic_runner_module
 import quant_rabbit.dojo_long_horizon_source_manifest as source_manifest_contract
 
+from quant_rabbit.dojo_builtin_strategy_runtime import (
+    build_builtin_strategy_runtime_seal,
+    builtin_strategy_runtime_factory,
+)
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
     build_month_source_slice_receipt,
@@ -328,7 +332,11 @@ def _policy(
     )
 
 
-def _runtime_rows(handoff: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def _runtime_rows(
+    handoff: Mapping[str, Any],
+    *,
+    catalog: Sequence[Mapping[str, Any]] = CATALOG,
+) -> dict[str, dict[str, Any]]:
     job = handoff["job"]
     digests = PLANS_BY_JOB[job["job_sha256"]]["implementation_binding"]["digests"]
     result = {}
@@ -341,7 +349,7 @@ def _runtime_rows(handoff: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             if bit == "1"
         ]
         policy = _policy(
-            CATALOG,
+            catalog,
             job["feed_pairs"],
             trade_pairs,
             f"{coordinate['cost_scenario'].lower()}-{coordinate['coordinate_id'][:8]}",
@@ -455,6 +463,89 @@ def test_single_source_stream_fans_out_before_incremental_economics(
     )
     assert result["partial_economics_reported"] is False
     assert result["authority"]["live_permission"] is False
+
+
+def test_sealed_builtin_strategy_catalog_runs_without_external_code(
+    tmp_path: Path,
+) -> None:
+    runtime_seal = build_builtin_strategy_runtime_seal(Path(__file__).resolve().parents[1])
+    plan = build_long_horizon_train_plan(
+        portfolio_families=tuple(
+            sorted(row["family_id"] for row in runtime_seal["worker_catalog"])
+        ),
+        source_digests=_digests(SOURCE_BINDING_IDS, 100),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, 110),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, 120),
+    )
+    schedule = build_long_horizon_stream_schedule(
+        plan,
+        worker_bindings=[
+            {
+                key: row[key]
+                for key in ("worker_id", "family_id", "config_sha256")
+            }
+            for row in runtime_seal["worker_catalog"]
+        ],
+    )
+    job = next(
+        row
+        for row in schedule["jobs"]
+        if row["source_binding_id"] == M1_CORE5_BINDING_ID
+        and row["month"] == "2020-01"
+        and row["intrabar_path"] == "OHLC"
+    )
+    state = tmp_path / "strategy-state"
+    initialize_long_horizon_execution_state(
+        state,
+        schedule=schedule,
+        plan=plan,
+        runner_binding={
+            "runner_contract": "QR_TEST_BUILTIN_STRATEGY_RUNNER_V1",
+            "runner_code_sha256": "d" * 64,
+            "result_contract": CELL_CONTRACT,
+        },
+        resource_policy={
+            "max_resident_coordinates": 160,
+            "max_rss_bytes": 2_147_483_648,
+            "max_open_files": 256,
+            "min_free_disk_bytes": 1,
+            "max_checkpoint_bytes": 8_388_608,
+            "max_terminal_bytes": 2_097_152,
+            "max_parallel_jobs": 1,
+        },
+    )
+    handoff = LongHorizonExecutionSession(
+        state, schedule=schedule, plan=plan
+    ).claim_job(job_sha256=job["job_sha256"], runner_id="builtin-strategy-test")
+    PLANS_BY_JOB[job["job_sha256"]] = plan
+    receipt, source_manifest = _write_source(tmp_path, handoff["job"])
+    result = run_long_horizon_economic_job(
+        runner_handoff=handoff,
+        plan=plan,
+        source_root=tmp_path,
+        source_manifest=source_manifest,
+        source_slice_receipt=receipt,
+        worker_catalog=runtime_seal["worker_catalog"],
+        coordinate_runtimes=_runtime_rows(
+            handoff, catalog=runtime_seal["worker_catalog"]
+        ),
+        worker_runtime_factory=builtin_strategy_runtime_factory,
+        worker_runtime_binding_sha256=runtime_seal["runtime_binding_sha256"],
+        worker_runtime_seal=runtime_seal,
+        worker_runtime_repo_root=Path(__file__).resolve().parents[1],
+    )
+    assert result["job_status"] == "COMPLETE"
+    assert result["worker_runtime_mode"] == "SEALED_BUILTIN_MULTI_STRATEGY"
+    assert result["worker_runtime_seal_sha256"] == runtime_seal[
+        "runtime_binding_sha256"
+    ]
+    assert result["worker_dependency_manifest_sha256"] == runtime_seal[
+        "dependencies_sha256"
+    ]
+    assert result["external_worker_code_loaded"] is False
+    assert result["official_evidence_eligible"] is False
+    assert result["economic_transcript_available"] is False
+    assert result["authority"]["order_authority"] == "NONE"
 
 
 def test_source_byte_drift_invalidates_every_coordinate(

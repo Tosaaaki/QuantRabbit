@@ -32,6 +32,10 @@ from quant_rabbit.dojo_long_horizon_execution import (
     RUNNER_HANDOFF_CONTRACT,
     build_long_horizon_coordinate_result,
 )
+from quant_rabbit.dojo_builtin_strategy_runtime import (
+    builtin_strategy_runtime_factory,
+    verify_builtin_strategy_runtime_seal,
+)
 from quant_rabbit.dojo_long_horizon_plan import (
     STARTING_EQUITY_JPY,
     canonical_sha256,
@@ -1242,6 +1246,8 @@ def run_long_horizon_economic_job(
     coordinate_runtimes: Mapping[str, Mapping[str, Any]],
     worker_runtime_factory: WorkerRuntimeFactory,
     worker_runtime_binding_sha256: str,
+    worker_runtime_seal: Mapping[str, Any] | None = None,
+    worker_runtime_repo_root: Path | None = None,
     carry_states_by_slot: Mapping[str, Mapping[str, Any]] | None = None,
     initial_balance_jpy: int | float = 200_000,
 ) -> dict[str, Any]:
@@ -1287,13 +1293,43 @@ def run_long_horizon_economic_job(
     runtime_sha = _sha(
         worker_runtime_binding_sha256, field="worker_runtime_binding_sha256"
     )
-    if (
-        worker_runtime_factory is not builtin_no_intent_runtime_factory
-        or runtime_sha != BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256
-    ):
+    verified_runtime_seal: dict[str, Any] | None = None
+    if worker_runtime_factory is builtin_no_intent_runtime_factory:
+        if (
+            runtime_sha != BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256
+            or worker_runtime_seal is not None
+            or worker_runtime_repo_root is not None
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                "built-in HOLD runtime binding or seal arguments are invalid"
+            )
+        worker_runtime_mode = "BUILTIN_NO_INTENT_BASELINE_ONLY"
+    elif worker_runtime_factory is builtin_strategy_runtime_factory:
+        if worker_runtime_seal is None or worker_runtime_repo_root is None:
+            raise DojoLongHorizonEconomicRunnerError(
+                "built-in strategy runtime requires its presealed dependency manifest"
+            )
+        try:
+            verified_runtime_seal = verify_builtin_strategy_runtime_seal(
+                worker_runtime_seal, repo_root=worker_runtime_repo_root
+            )
+        except ValueError as exc:
+            raise DojoLongHorizonEconomicRunnerError(
+                f"built-in strategy runtime seal is invalid: {exc}"
+            ) from exc
+        if runtime_sha != verified_runtime_seal["runtime_binding_sha256"]:
+            raise DojoLongHorizonEconomicRunnerError(
+                "built-in strategy runtime binding differs from its dependency seal"
+            )
+        if catalog != verified_runtime_seal["worker_catalog"]:
+            raise DojoLongHorizonEconomicRunnerError(
+                "worker catalog differs from the sealed built-in strategy catalog"
+            )
+        worker_runtime_mode = "SEALED_BUILTIN_MULTI_STRATEGY"
+    else:
         raise DojoLongHorizonEconomicRunnerError(
             "external in-process worker code is forbidden in the economic evidence "
-            "runner; only the capability-closed built-in HOLD baseline is available"
+            "runner; only explicitly sealed capability-closed built-ins are available"
         )
     carry_inputs = dict(carry_states_by_slot or {})
     ready_receipts = {
@@ -1377,7 +1413,7 @@ def run_long_horizon_economic_job(
                 carry_state=portfolio_carry,
             )
             worker_instances[coordinate_id] = worker_runtime_factory(
-                coordinate,
+                {**coordinate, "trade_pairs": runtime["trade_pairs"]},
                 runtime["active_worker_bindings"],
                 prior_worker_state,
             )
@@ -1764,7 +1800,17 @@ def run_long_horizon_economic_job(
         ),
         "worker_capability_isolation_enforced": True,
         "external_worker_code_loaded": False,
-        "worker_runtime_mode": "BUILTIN_NO_INTENT_BASELINE_ONLY",
+        "worker_runtime_mode": worker_runtime_mode,
+        "worker_runtime_seal_sha256": (
+            verified_runtime_seal["runtime_binding_sha256"]
+            if verified_runtime_seal is not None
+            else None
+        ),
+        "worker_dependency_manifest_sha256": (
+            verified_runtime_seal["dependencies_sha256"]
+            if verified_runtime_seal is not None
+            else None
+        ),
         "partial_economics_reported": mixed_incomplete,
         "downstream_terminal_reduction_allowed": failed_count == 0,
         "economic_transcript_available": False,
@@ -1789,6 +1835,7 @@ __all__ = [
     "EconomicWorkerRuntime",
     "WorkerRuntimeFactory",
     "builtin_no_intent_runtime_factory",
+    "builtin_strategy_runtime_factory",
     "build_month_source_slice_receipt",
     "run_long_horizon_economic_job",
     "validate_month_source_slice_receipt",

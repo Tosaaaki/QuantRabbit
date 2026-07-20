@@ -11,6 +11,10 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+from quant_rabbit.dojo_builtin_strategy_runtime import (
+    build_builtin_strategy_runtime_seal,
+    builtin_strategy_runtime_factory,
+)
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
     DojoLongHorizonEconomicRunnerError,
@@ -101,6 +105,9 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--relative-path", required=True)
     source.add_argument("--output", type=Path, required=True)
 
+    builtins = sub.add_parser("seal-builtin-strategies")
+    builtins.add_argument("--output", type=Path, required=True)
+
     run = sub.add_parser("run")
     run.add_argument("--runner-handoff", type=Path, required=True)
     run.add_argument("--plan", type=Path, required=True)
@@ -109,10 +116,19 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--source-slice-receipt", type=Path, required=True)
     run.add_argument("--worker-catalog", type=Path, required=True)
     run.add_argument("--coordinate-runtimes", type=Path, required=True)
-    run.add_argument(
+    mode = run.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--builtin-no-intent-only",
         action="store_true",
         help="Run the capability-closed built-in HOLD baseline; external Python is forbidden.",
+    )
+    mode.add_argument(
+        "--builtin-strategy-runtime-seal",
+        type=Path,
+        help=(
+            "Run only the four sealed built-in strategy families; the seal must be "
+            "created by this script before the job starts."
+        ),
     )
     run.add_argument("--carry-states", type=Path)
     run.add_argument("--output", type=Path, required=True)
@@ -121,8 +137,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    repo_root = Path(__file__).resolve().parents[1]
     try:
-        handoff = _read_json(args.runner_handoff)
+        if args.command == "seal-builtin-strategies":
+            result = build_builtin_strategy_runtime_seal(repo_root)
+        else:
+            handoff = _read_json(args.runner_handoff)
         if args.command == "seal-source-slice":
             job = handoff.get("job")
             if not isinstance(job, dict):
@@ -135,7 +155,7 @@ def main() -> int:
                 job=job,
                 source_manifest=_read_json(args.source_manifest),
             )
-        else:
+        elif args.command == "run":
             catalog_doc = _read_json(args.worker_catalog)
             runtime_doc = _read_json(args.coordinate_runtimes)
             catalog = catalog_doc.get("worker_catalog")
@@ -153,11 +173,20 @@ def main() -> int:
                         "carry wrapper schema is invalid"
                     )
                 carry = raw_carry
-            if not args.builtin_no_intent_only:
-                raise DojoLongHorizonEconomicRunnerError(
-                    "CLI permits only --builtin-no-intent-only; arbitrary worker code "
-                    "must not be loaded in the evidence process"
-                )
+            runtime_seal = None
+            runtime_repo_root = None
+            if args.builtin_no_intent_only:
+                runtime_factory = builtin_no_intent_runtime_factory
+                runtime_sha = BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256
+            else:
+                runtime_seal = _read_json(args.builtin_strategy_runtime_seal)
+                runtime_repo_root = repo_root
+                runtime_factory = builtin_strategy_runtime_factory
+                runtime_sha = runtime_seal.get("runtime_binding_sha256")
+                if not isinstance(runtime_sha, str):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "built-in strategy runtime seal has no binding SHA"
+                    )
             result = run_long_horizon_economic_job(
                 runner_handoff=handoff,
                 plan=_read_json(args.plan),
@@ -166,8 +195,10 @@ def main() -> int:
                 source_slice_receipt=_read_json(args.source_slice_receipt),
                 worker_catalog=catalog,
                 coordinate_runtimes=runtimes,
-                worker_runtime_factory=builtin_no_intent_runtime_factory,
-                worker_runtime_binding_sha256=BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
+                worker_runtime_factory=runtime_factory,
+                worker_runtime_binding_sha256=runtime_sha,
+                worker_runtime_seal=runtime_seal,
+                worker_runtime_repo_root=runtime_repo_root,
                 carry_states_by_slot=carry,
             )
         _write_exclusive(args.output, result)
@@ -176,7 +207,8 @@ def main() -> int:
                 {
                     "output": str(args.output),
                     "sha256": result.get("economic_job_result_sha256")
-                    or result.get("source_slice_receipt_sha256"),
+                    or result.get("source_slice_receipt_sha256")
+                    or result.get("runtime_binding_sha256"),
                     "live_permission": False,
                     "broker_mutation_allowed": False,
                 },
