@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build one bounded, research-only DOJO AI trainer packet artifact.
+"""Validate local inputs for one bounded DOJO AI trainer packet.
 
-The command is a file-to-file reducer.  It never calls a model, replay runner,
-broker, execution gateway, or order API, and it cannot grant live permission.
+Packet publication is deliberately disabled until an authenticated Google
+Drive connector adapter can pass an in-memory typed readback capability.  A
+JSON metadata/download-path claim cannot prove remote custody.  The command
+never calls a model, replay runner, broker, execution gateway, or order API.
 """
 
 from __future__ import annotations
@@ -27,8 +29,6 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from quant_rabbit.dojo_ai_trainer_packet import (  # noqa: E402
     MAX_BOUND_ARTIFACT_BYTES,
     DojoAITrainerPacketError,
-    build_trainer_packet,
-    canonical_packet_bytes,
 )
 from quant_rabbit.dojo_ai_tuning_state import (  # noqa: E402
     DojoAITuningStateError,
@@ -46,8 +46,10 @@ from quant_rabbit.dojo_terminal_handoff import (  # noqa: E402
 )
 
 
-RECEIPT_CONTRACT = "QR_DOJO_AI_TRAINER_PACKET_CLI_RECEIPT_V1"
-SCHEMA_VERSION = 1
+AUTHENTICATED_CONNECTOR_CAPABILITY_REQUIRED = (
+    "AUTHENTICATED_CONNECTOR_CAPABILITY_REQUIRED: packet publication requires "
+    "a same-process Google Drive connector readback adapter"
+)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -67,6 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-artifact", type=Path, required=True)
     parser.add_argument("--evaluation-artifact", type=Path, required=True)
     parser.add_argument("--cells-artifact", type=Path, required=True)
+    parser.add_argument("--sealed-study-artifact", type=Path, required=True)
     parser.add_argument("--lineage-events", type=Path, required=True)
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--tuning-state-events", type=Path, required=True)
@@ -75,7 +78,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-tuning-state-sha256", required=True)
     parser.add_argument("--handoff-receipt-events", type=Path, required=True)
     parser.add_argument("--expected-handoff-receipt-tip-sha256", required=True)
-    parser.add_argument("--drive-evidence-refs-artifact", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -264,77 +266,6 @@ def _require_terminal_handoff_binding(
         )
 
 
-def _open_output_parent(path: Path) -> tuple[int, Path]:
-    target = path.absolute()
-    if target.name in {"", ".", ".."}:
-        raise DojoAITrainerPacketCliError("output path is invalid")
-    try:
-        resolved_parent = target.parent.resolve(strict=True)
-        expected = target.parent.absolute().lstat()
-    except OSError as exc:
-        raise DojoAITrainerPacketCliError("output parent is unavailable") from exc
-    if target.parent.absolute() != resolved_parent:
-        raise DojoAITrainerPacketCliError("output parent must not traverse a symlink")
-    if not stat.S_ISDIR(expected.st_mode) or stat.S_ISLNK(expected.st_mode):
-        raise DojoAITrainerPacketCliError("output parent must be a real directory")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(resolved_parent, flags)
-        actual = os.fstat(descriptor)
-    except OSError as exc:
-        if descriptor is not None:
-            os.close(descriptor)
-        raise DojoAITrainerPacketCliError(
-            "output parent could not be opened safely"
-        ) from exc
-    assert descriptor is not None
-    if (
-        not stat.S_ISDIR(actual.st_mode)
-        or actual.st_dev != expected.st_dev
-        or actual.st_ino != expected.st_ino
-    ):
-        os.close(descriptor)
-        raise DojoAITrainerPacketCliError("output parent changed while being opened")
-    return descriptor, target
-
-
-def _write_exclusive(path: Path, payload: bytes) -> None:
-    parent_fd, target = _open_output_parent(path)
-    descriptor: int | None = None
-    created = False
-    try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(target.name, flags, 0o600, dir_fd=parent_fd)
-        created = True
-        with os.fdopen(descriptor, "wb", closefd=True) as handle:
-            descriptor = None
-            written = handle.write(payload)
-            if written != len(payload):
-                raise DojoAITrainerPacketCliError("packet output write was incomplete")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.fsync(parent_fd)
-    except FileExistsError as exc:
-        raise DojoAITrainerPacketCliError(
-            "packet output already exists; refusing to overwrite"
-        ) from exc
-    except BaseException:
-        if created:
-            try:
-                os.unlink(target.name, dir_fd=parent_fd)
-                os.fsync(parent_fd)
-            except OSError:
-                pass
-        raise
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        os.close(parent_fd)
-
-
 def _canonical_line(value: Any) -> str:
     return json.dumps(
         value,
@@ -395,6 +326,9 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     cells_artifact = _read_json_artifact(
         args.cells_artifact, label="terminal cells artifact"
     )
+    sealed_study_artifact = _read_json_artifact(
+        args.sealed_study_artifact, label="sealed study artifact"
+    )
     _require_terminal_handoff_binding(
         receipt=latest_handoff,
         lineage=before_lineage,
@@ -402,78 +336,14 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         evaluation=evaluation_artifact,
         cells=cells_artifact,
     )
-    drive_refs_artifact = _read_json_artifact(
-        args.drive_evidence_refs_artifact,
-        label="Drive evidence references artifact",
-    )
-    drive_refs = drive_refs_artifact.value
-    if not isinstance(drive_refs, list) or not drive_refs:
-        raise DojoAITrainerPacketCliError(
-            "at least one remotely verified Drive evidence reference is required"
-        )
-    packet = build_trainer_packet(
-        run=run_artifact.value,
-        evaluation=evaluation_artifact.value,
-        cells=cells_artifact.value,
-        lineage_events_dir=args.lineage_events,
-        artifact_root=args.artifact_root,
-        tuning_state=before_store["latest_state"],
-        drive_evidence_refs=drive_refs,
-    )
-    if packet["source_bindings"]["lineage_tip_sha256"] != expected_lineage_tip:
-        raise DojoAITrainerPacketCliError("packet lineage binding drifted")
-    if packet["source_bindings"]["tuning_state_sha256"] != expected_state_sha:
-        raise DojoAITrainerPacketCliError("packet tuning-state binding drifted")
-
-    # Re-read both append-only sources before publishing, so a packet is never
-    # presented as the current trainer input if either CAS surface advanced
-    # while the bounded result artifacts were being reduced.
-    after_store = verify_state_store(args.tuning_state_events)
-    after_lineage = verify_registry(
-        args.lineage_events, artifact_root=args.artifact_root
-    )
-    after_handoffs = verify_receipt_store(args.handoff_receipt_events)
-    if (
-        after_store["latest_event_sha256"] != expected_store_tip
-        or after_store["latest_state"]["state_sha256"] != expected_state_sha
-    ):
-        raise DojoAITrainerPacketCliError(
-            "tuning state changed while packet was being built"
-        )
-    if after_lineage.latest_event_sha256 != expected_lineage_tip:
-        raise DojoAITrainerPacketCliError(
-            "candidate lineage changed while packet was being built"
-        )
-    if (
-        not after_handoffs
-        or after_handoffs[-1]["receipt_sha256"] != expected_handoff_tip
-        or after_handoffs != before_handoffs
-    ):
-        raise DojoAITrainerPacketCliError(
-            "terminal hand-off receipt store changed while packet was being built"
-        )
-
-    payload = canonical_packet_bytes(packet) + b"\n"
-    _write_exclusive(args.output, payload)
-    return {
-        "contract": RECEIPT_CONTRACT,
-        "schema_version": SCHEMA_VERSION,
-        "status": "WRITTEN",
-        "output_path": str(args.output.absolute()),
-        "output_sha256": hashlib.sha256(payload).hexdigest(),
-        "output_size_bytes": len(payload),
-        "packet_sha256": packet["packet_sha256"],
-        "lineage_tip_sha256": expected_lineage_tip,
-        "tuning_store_tip_event_sha256": expected_store_tip,
-        "tuning_state_sha256": expected_state_sha,
-        "terminal_handoff_receipt_sha256": expected_handoff_tip,
-        "classification": packet["classification"],
-        "proof_eligible": False,
-        "promotion_eligible": False,
-        "live_permission": False,
-        "order_authority": "NONE",
-        "broker_mutation_allowed": False,
-    }
+    # A local JSON document containing Drive-looking metadata and paths to
+    # copied artifacts is self-authored evidence, not remote readback.  The
+    # future connector adapter must call the private typed boundary in
+    # ``dojo_drive_remote_evidence`` and then invoke ``build_trainer_packet``
+    # in the same process.  Until that adapter exists this CLI publishes
+    # nothing, even after all local CAS and full-bundle checks pass.
+    _ = sealed_study_artifact
+    raise DojoAITrainerPacketCliError(AUTHENTICATED_CONNECTOR_CAPABILITY_REQUIRED)
 
 
 def main() -> int:

@@ -812,16 +812,7 @@ def test_request_is_durable_before_reservation_and_different_retry_is_rejected(
     assert reserved["artifact_receipt"]["created_exclusively"] is False
 
     changed = json.loads(request.read_text(encoding="utf-8"))
-    changed["drive_evidence_refs"] = [
-        {
-            "artifact_kind": "REPORT",
-            "drive_file_id": "driveFile123",
-            "content_sha256": "7" * 64,
-            "content_size_bytes": 123,
-            "remote_verified": True,
-            "metadata_receipt_sha256": "8" * 64,
-        }
-    ]
+    changed["drive_evidence_refs"][0]["content_sha256"] = "7" * 64
     body = {key: value for key, value in changed.items() if key != "packet_sha256"}
     changed["packet_sha256"] = canonical_packet_sha256(body)
     changed_path = root / "artifacts" / "changed-request.json"

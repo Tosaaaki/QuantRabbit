@@ -20,7 +20,7 @@ import re
 import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from quant_rabbit.dojo_ai_tuning_state import (
     MAX_ATTEMPTS,
@@ -39,12 +39,21 @@ from quant_rabbit.dojo_bot_trainer import (
 )
 from quant_rabbit.dojo_candidate_lineage_registry import verify_registry
 
+if TYPE_CHECKING:
+    from quant_rabbit.dojo_drive_remote_evidence import _VerifiedDriveTrainerReadback
+
 
 PACKET_CONTRACT: Final = "QR_DOJO_AI_TRAINER_PACKET_V1"
 RUN_CONTRACT: Final = "QR_DOJO_BOT_TRAINER_RUN_V1"
 SCHEMA_VERSION: Final = 1
 MAX_BOUND_ARTIFACT_BYTES: Final = 64 * 1024 * 1024
-MAX_DRIVE_EVIDENCE_REFS: Final = 64
+TRAINER_READBACK_KINDS: Final = (
+    "RUN",
+    "EVALUATION",
+    "CELLS",
+    "SEALED_STUDY",
+    "TERMINAL_HANDOFF",
+)
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}\Z")
@@ -116,7 +125,8 @@ _LIMITATIONS: Final = (
     "LOCAL_LINEAGE_HAS_NO_EXTERNAL_MONOTONIC_WITNESS",
     "RAW_LEDGERS_ARE_NOT_READ_OR_INCLUDED",
     "CELL_METRICS_ARE_RECONCILED_TO_BOUND_EVALUATION_NOT_RAW_LEDGER_REPLAYED",
-    "DRIVE_REMOTE_VERIFIED_IS_AN_EXTERNAL_RECEIPT_CLAIM_NOT_INDEPENDENT_PROOF",
+    "DRIVE_EXACT_DOWNLOADED_TERMINAL_ARTIFACT_BYTES_VERIFIED",
+    "DRIVE_CUSTODY_DEPENDS_ON_AUTHENTICATED_CONNECTOR_CALL_BOUNDARY",
     "PACKET_CANNOT_AUTHOR_OR_EXECUTE_TRADES",
 )
 
@@ -197,10 +207,13 @@ _DRIVE_REF_KEYS = frozenset(
     {
         "artifact_kind",
         "drive_file_id",
+        "drive_parent_id",
         "content_sha256",
         "content_size_bytes",
+        "version",
+        "head_revision_id",
+        "readback_sha256",
         "remote_verified",
-        "metadata_receipt_sha256",
     }
 )
 _PACKET_KEYS = frozenset(
@@ -302,7 +315,7 @@ def build_trainer_packet(
     lineage_events_dir: Path,
     artifact_root: Path,
     tuning_state: Mapping[str, Any],
-    drive_evidence_refs: Sequence[Mapping[str, Any]] = (),
+    verified_drive_readback: "_VerifiedDriveTrainerReadback",
 ) -> dict[str, Any]:
     """Reduce one exact terminal TRAIN result into bounded AI input.
 
@@ -394,7 +407,26 @@ def build_trainer_packet(
             sealed_study=current_study,
         )
     )
-    normalized_drive_refs = _normalize_drive_refs(drive_evidence_refs)
+    from quant_rabbit.dojo_drive_remote_evidence import (
+        DojoDriveRemoteEvidenceError,
+        _trainer_packet_drive_evidence_refs,
+    )
+
+    try:
+        normalized_drive_refs = _normalize_drive_refs(
+            _trainer_packet_drive_evidence_refs(
+                verified_drive_readback,
+                expected_run_sha256=normalized_run["run_sha256"],
+                expected_study_sha256=current_study["study_sha256"],
+                expected_evaluation_sha256=current_evaluation["evaluation_sha256"],
+                expected_lineage_tip_sha256=lineage.latest_event_sha256,
+                expected_cell_count=len(normalized_cells),
+            )
+        )
+    except DojoDriveRemoteEvidenceError as exc:
+        raise DojoAITrainerPacketError(
+            f"typed Drive readback is invalid: {exc}"
+        ) from exc
     candidate_rows = _current_candidate_rows(
         current_study, current_evaluation, normalized_cells
     )
@@ -1137,50 +1169,80 @@ def _reduce_previous_attempt(
 def _normalize_drive_refs(value: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         raise DojoAITrainerPacketError("Drive evidence references must be an array")
-    if len(value) > MAX_DRIVE_EVIDENCE_REFS:
-        raise DojoAITrainerPacketError("too many Drive evidence references")
+    if len(value) != len(TRAINER_READBACK_KINDS):
+        raise DojoAITrainerPacketError(
+            "Drive readback must contain the exact five terminal artifacts"
+        )
     result = []
-    identities: set[tuple[str, str]] = set()
+    kinds: set[str] = set()
+    drive_ids: set[str] = set()
+    parents: set[str] = set()
+    readback_shas: set[str] = set()
     for index, item in enumerate(value):
         row = _exact_mapping(item, _DRIVE_REF_KEYS, f"Drive evidence ref {index}")
         kind = row["artifact_kind"]
-        if kind not in {"MANIFEST", "REPORT"}:
+        if kind not in TRAINER_READBACK_KINDS or kind in kinds:
             raise DojoAITrainerPacketError(
-                "Drive evidence may reference only manifests or reports"
+                "Drive readback artifact kind is duplicate or unsupported"
             )
+        kinds.add(kind)
         drive_file_id = row["drive_file_id"]
-        if not isinstance(drive_file_id, str) or not _DRIVE_ID.fullmatch(drive_file_id):
+        parent_id = row["drive_parent_id"]
+        head_revision = row["head_revision_id"]
+        if (
+            not isinstance(drive_file_id, str)
+            or not _DRIVE_ID.fullmatch(drive_file_id)
+            or drive_file_id in drive_ids
+        ):
             raise DojoAITrainerPacketError("Drive evidence file id is invalid")
+        if not isinstance(parent_id, str) or not _DRIVE_ID.fullmatch(parent_id):
+            raise DojoAITrainerPacketError("Drive evidence parent id is invalid")
+        if not isinstance(head_revision, str) or not _DRIVE_ID.fullmatch(head_revision):
+            raise DojoAITrainerPacketError("Drive head revision id is invalid")
+        drive_ids.add(drive_file_id)
+        parents.add(parent_id)
         digest = _sha(row["content_sha256"], "Drive content SHA-256")
         size = _integer(row["content_size_bytes"], "Drive content size")
         if size <= 0:
             raise DojoAITrainerPacketError("Drive evidence must be non-empty")
+        version = row["version"]
+        if (
+            not isinstance(version, str)
+            or not version.isdecimal()
+            or version.startswith("0")
+        ):
+            raise DojoAITrainerPacketError("Drive version must be a positive decimal")
         if row["remote_verified"] is not True:
             raise DojoAITrainerPacketError(
                 "Drive evidence reference is not remotely verified"
             )
-        receipt = _sha(row["metadata_receipt_sha256"], "Drive metadata receipt SHA-256")
-        identity = (kind, digest)
-        if identity in identities:
-            raise DojoAITrainerPacketError(
-                "duplicate Drive content-addressed reference"
-            )
-        identities.add(identity)
+        readback_sha = _sha(row["readback_sha256"], "Drive readback SHA-256")
+        readback_shas.add(readback_sha)
         result.append(
             {
                 "artifact_kind": kind,
                 "drive_file_id": drive_file_id,
+                "drive_parent_id": parent_id,
                 "content_sha256": digest,
                 "content_size_bytes": size,
+                "version": version,
+                "head_revision_id": head_revision,
+                "readback_sha256": readback_sha,
                 "remote_verified": True,
-                "metadata_receipt_sha256": receipt,
             }
+        )
+    if kinds != set(TRAINER_READBACK_KINDS):
+        raise DojoAITrainerPacketError(
+            "Drive readback omits a required terminal artifact"
+        )
+    if len(parents) != 1 or len(readback_shas) != 1:
+        raise DojoAITrainerPacketError(
+            "Drive readback references do not share one parent/bundle seal"
         )
     return sorted(
         result,
         key=lambda row: (
             row["artifact_kind"],
-            row["content_sha256"],
             row["drive_file_id"],
         ),
     )

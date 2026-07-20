@@ -7,10 +7,16 @@ plan/finalization receipts.  It performs no I/O and therefore cannot attest
 that any bytes or metadata actually came from Google Drive.
 
 An actual Google Drive connector/API fetch plus independent readback gate is
-still mandatory.  Outputs keep ``remote_verified=false`` and
-``external_readback_attested=false`` and cannot unblock the AI trainer or the
-conveyor resource gate.  Requiring canonical bytes merely prevents one local
-metadata claim from having multiple textual representations.
+still mandatory.  Public metadata-consistency outputs keep
+``remote_verified=false`` and ``external_readback_attested=false`` and cannot
+unblock the AI trainer or the conveyor resource gate.  Requiring canonical
+bytes merely prevents one local metadata claim from having multiple textual
+representations.
+
+The private trainer-readback boundary in this module exists only for an
+authenticated connector adapter to call with metadata and download bytes it
+fetched in the same process.  No JSON/file CLI is allowed to mint its typed
+capability: without a connector call, local files cannot prove remote custody.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any, Final
@@ -37,12 +43,82 @@ REMOTE_INDEX_CONTRACT: Final = "QR_DOJO_DRIVE_REMOTE_METADATA_CONSISTENCY_INDEX_
 SCHEMA_VERSION: Final = 1
 MAX_RECEIPT_BYTES: Final = 512 * 1024
 MAX_INDEX_BYTES: Final = 8 * 1024 * 1024
+TRAINER_READBACK_CONTRACT: Final = "QR_DOJO_DRIVE_TRAINER_READBACK_V1"
+TRAINER_READBACK_KINDS: Final = (
+    "RUN",
+    "EVALUATION",
+    "CELLS",
+    "SEALED_STUDY",
+    "TERMINAL_HANDOFF",
+)
 
 _HEX64: Final = re.compile(r"[0-9a-f]{64}\Z")
 _MD5: Final = re.compile(r"[0-9a-f]{32}\Z")
 _DRIVE_ID: Final = re.compile(r"[A-Za-z0-9_-]{10,200}\Z")
 _IDENTIFIER: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}\Z")
 _CHUNK_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._|=+-]{0,199}\Z")
+_DECIMAL: Final = re.compile(r"[1-9][0-9]{0,39}\Z")
+
+_TRAINER_READBACK_MARKER = object()
+_DRIVE_READBACK_METADATA_KEYS: Final = frozenset(
+    {
+        "id",
+        "name",
+        "size",
+        "md5Checksum",
+        "modifiedTime",
+        "parents",
+        "trashed",
+        "version",
+        "headRevisionId",
+    }
+)
+_TRAINER_READBACK_KEYS: Final = frozenset(
+    {
+        "contract",
+        "schema_version",
+        "classification",
+        "run_sha256",
+        "study_sha256",
+        "evaluation_sha256",
+        "terminal_handoff_receipt_sha256",
+        "lineage_tip_sha256",
+        "fixed_denominator",
+        "expected_artifact_kinds",
+        "downloaded_artifact_count",
+        "readback_at_utc",
+        "objects",
+        "download_bytes_match_local_artifacts",
+        "drive_metadata_revision_bound",
+        "drive_parents_bound",
+        "drive_trashed_false",
+        "external_readback_attested",
+        "remote_verified",
+        "trainer_packet_eligible",
+        "proof_eligible",
+        "promotion_eligible",
+        "live_permission",
+        "order_authority",
+        "broker_mutation_allowed",
+        "resource_gate_unblock_allowed",
+        "readback_sha256",
+    }
+)
+_TRAINER_READBACK_OBJECT_KEYS: Final = frozenset(
+    {
+        "artifact_kind",
+        "drive_file_id",
+        "drive_parent_id",
+        "drive_file_name",
+        "content_sha256",
+        "content_size_bytes",
+        "md5_checksum",
+        "modified_time",
+        "version",
+        "head_revision_id",
+        "trashed",
+    }
+)
 
 _AUTHORITY = {
     "source_deleted": False,
@@ -370,6 +446,279 @@ class DriveMetadataConsistencyResult:
     broker_mutation_allowed: bool = False
     trainer_unblock_allowed: bool = False
     resource_gate_unblock_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class _DriveDownloadedArtifact:
+    """One connector-fetched Drive file resource plus its downloaded bytes.
+
+    ``metadata`` must be the selected Google Drive file-resource fields from
+    the same readback operation as ``downloaded_bytes``.  A metadata-only JSON
+    claim is deliberately insufficient: the verifier recomputes both hashes
+    and requires the downloaded bytes to equal the independently opened local
+    terminal artifact byte-for-byte.
+    """
+
+    artifact_kind: str
+    metadata: Mapping[str, Any]
+    downloaded_bytes: bytes
+
+
+@dataclass(frozen=True)
+class _VerifiedDriveTrainerReadback:
+    """Exact five-artifact Drive readback admitted for one trainer packet.
+
+    The private marker makes this an in-process validator result rather than a
+    deserializable capability.  Packet construction must call
+    :func:`_trainer_packet_drive_evidence_refs`, which rechecks the marker, seal,
+    fixed denominator, terminal hashes and current lineage tip.
+    """
+
+    evidence: Mapping[str, Any]
+    _validation_marker: object = field(repr=False, compare=False)
+
+
+def _verify_authenticated_drive_trainer_readback(
+    *,
+    run: Mapping[str, Any],
+    evaluation: Mapping[str, Any],
+    cells: Sequence[Mapping[str, Any]],
+    sealed_study: Mapping[str, Any],
+    terminal_handoff_receipt: Mapping[str, Any],
+    lineage: CandidateLineageSnapshot,
+    expected_parent_id: str,
+    local_artifact_bytes: Mapping[str, bytes],
+    readbacks: Sequence[_DriveDownloadedArtifact],
+    readback_at_utc: datetime | str,
+) -> _VerifiedDriveTrainerReadback:
+    """Private adapter seam for exact authenticated Drive downloads.
+
+    The fixed denominator is rebuilt from ``sealed_study`` + ``cells`` and the
+    evaluation is reconstructed before any Drive metadata is considered.  All
+    five required artifacts must then have exact local/download byte equality,
+    matching Drive MD5/size, one expected parent, ``trashed=false``, and both a
+    monotonically identified Drive version and head revision.
+
+    This private boundary is not an attestation source by itself.  Its caller
+    must be an authenticated Drive connector adapter that obtained ``metadata``
+    and ``downloaded_bytes`` in the same process and operation.  It is kept
+    private so a JSON/file CLI cannot turn self-authored metadata into
+    ``remote_verified=true``.  Unlike legacy metadata-consistency receipts, no
+    caller-authored ``remote_verified`` field is accepted as input.
+    """
+
+    # Lazy import avoids a module cycle: the trainer packet imports the typed
+    # result class but the Drive verifier reuses the trainer's exact reducer.
+    from quant_rabbit.dojo_ai_trainer_packet import (
+        DojoAITrainerPacketError,
+        validate_terminal_result_bundle,
+    )
+    from quant_rabbit.dojo_bot_trainer import DojoBotTrainerError, verify_sealed_study
+
+    try:
+        verified_study = verify_sealed_study(
+            sealed_study, sealed_study["source_digests"]
+        )
+        normalized_run, normalized_evaluation, normalized_cells = (
+            validate_terminal_result_bundle(
+                run=run,
+                evaluation=evaluation,
+                cells=cells,
+                sealed_study=verified_study,
+            )
+        )
+    except (KeyError, ValueError, DojoBotTrainerError, DojoAITrainerPacketError) as exc:
+        raise DojoDriveRemoteEvidenceError(
+            f"terminal readback denominator is invalid: {exc}"
+        ) from exc
+
+    lineage_binding = _lineage_binding(lineage, normalized_run)
+    handoff_binding = _handoff_binding(
+        terminal_handoff_receipt, normalized_run, lineage_binding
+    )
+    parent_id = _drive_id(expected_parent_id, "expected Drive parent id")
+    observed_at = _utc_text(readback_at_utc, "readback_at_utc")
+    observed_instant = _utc(observed_at, "readback_at_utc")
+    handoff_instant = _utc(
+        terminal_handoff_receipt.get("recorded_at_utc"),
+        "terminal handoff recorded_at_utc",
+    )
+    if observed_instant < handoff_instant:
+        raise DojoDriveRemoteEvidenceError("Drive readback predates terminal handoff")
+
+    if not isinstance(local_artifact_bytes, Mapping):
+        raise DojoDriveRemoteEvidenceError("local artifact bytes must be an object")
+    if set(local_artifact_bytes) != set(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "local Drive readback denominator must contain all five artifact kinds"
+        )
+    expected_values: dict[str, Any] = {
+        "RUN": normalized_run,
+        "EVALUATION": normalized_evaluation,
+        "CELLS": _clone(cells),
+        "SEALED_STUDY": verified_study,
+        "TERMINAL_HANDOFF": verify_handoff_receipt(terminal_handoff_receipt),
+    }
+    local_bytes: dict[str, bytes] = {}
+    for kind in TRAINER_READBACK_KINDS:
+        raw = local_artifact_bytes[kind]
+        if not isinstance(raw, bytes) or not raw:
+            raise DojoDriveRemoteEvidenceError(
+                f"local {kind} artifact must be nonempty exact bytes"
+            )
+        parsed = _parse_strict_json_bytes(raw, f"local {kind} artifact")
+        if parsed != expected_values[kind]:
+            raise DojoDriveRemoteEvidenceError(
+                f"local {kind} bytes diverge from the verified terminal bundle"
+            )
+        local_bytes[kind] = raw
+
+    if not isinstance(readbacks, Sequence) or isinstance(
+        readbacks, (str, bytes, bytearray)
+    ):
+        raise DojoDriveRemoteEvidenceError("Drive readbacks must be an array")
+    if len(readbacks) != len(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive readback denominator omits or adds a terminal artifact"
+        )
+    by_kind: dict[str, _DriveDownloadedArtifact] = {}
+    for item in readbacks:
+        if not isinstance(item, _DriveDownloadedArtifact):
+            raise DojoDriveRemoteEvidenceError("Drive readback has the wrong type")
+        kind = item.artifact_kind
+        if kind not in TRAINER_READBACK_KINDS or kind in by_kind:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive readback artifact kind is duplicate or unsupported"
+            )
+        by_kind[kind] = item
+    if set(by_kind) != set(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive readback denominator omits a terminal artifact"
+        )
+
+    objects: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    seen_revisions: set[tuple[str, str]] = set()
+    for kind in TRAINER_READBACK_KINDS:
+        item = by_kind[kind]
+        downloaded = item.downloaded_bytes
+        if not isinstance(downloaded, bytes) or not downloaded:
+            raise DojoDriveRemoteEvidenceError(
+                f"downloaded {kind} artifact must be nonempty exact bytes"
+            )
+        if downloaded != local_bytes[kind]:
+            raise DojoDriveRemoteEvidenceError(
+                f"downloaded {kind} bytes differ from the local terminal artifact"
+            )
+        metadata = _normalize_drive_readback_metadata(
+            item.metadata,
+            expected_parent_id=parent_id,
+            downloaded_bytes=downloaded,
+        )
+        modified = _utc(metadata["modified_time"], f"{kind} modified_time")
+        if modified < handoff_instant or modified > observed_instant:
+            raise DojoDriveRemoteEvidenceError(
+                f"Drive {kind} modified time is outside handoff/readback bounds"
+            )
+        if (
+            metadata["drive_file_id"] in seen_ids
+            or metadata["drive_file_name"] in seen_names
+            or (metadata["drive_file_id"], metadata["version"]) in seen_revisions
+        ):
+            raise DojoDriveRemoteEvidenceError(
+                "Drive readback reuses a file, name, or revision"
+            )
+        seen_ids.add(metadata["drive_file_id"])
+        seen_names.add(metadata["drive_file_name"])
+        seen_revisions.add((metadata["drive_file_id"], metadata["version"]))
+        objects.append({"artifact_kind": kind, **metadata})
+
+    body = {
+        "contract": TRAINER_READBACK_CONTRACT,
+        "schema_version": SCHEMA_VERSION,
+        "classification": "WORN_HISTORICAL_TRAIN_DIAGNOSTIC_ONLY",
+        "run_sha256": normalized_run["run_sha256"],
+        "study_sha256": verified_study["study_sha256"],
+        "evaluation_sha256": normalized_evaluation["evaluation_sha256"],
+        "terminal_handoff_receipt_sha256": handoff_binding["receipt_sha256"],
+        "lineage_tip_sha256": lineage_binding["lineage_tip_sha256"],
+        "fixed_denominator": _clone(normalized_run["fixed_denominator"]),
+        "expected_artifact_kinds": list(TRAINER_READBACK_KINDS),
+        "downloaded_artifact_count": len(objects),
+        "readback_at_utc": observed_at,
+        "objects": objects,
+        "download_bytes_match_local_artifacts": True,
+        "drive_metadata_revision_bound": True,
+        "drive_parents_bound": True,
+        "drive_trashed_false": True,
+        "external_readback_attested": True,
+        "remote_verified": True,
+        "trainer_packet_eligible": True,
+        "proof_eligible": False,
+        "promotion_eligible": False,
+        "live_permission": False,
+        "order_authority": "NONE",
+        "broker_mutation_allowed": False,
+        "resource_gate_unblock_allowed": False,
+    }
+    evidence = {**body, "readback_sha256": canonical_json_sha256(body)}
+    _verify_trainer_readback_evidence(evidence)
+    return _VerifiedDriveTrainerReadback(
+        evidence=_clone(evidence),
+        _validation_marker=_TRAINER_READBACK_MARKER,
+    )
+
+
+def _trainer_packet_drive_evidence_refs(
+    value: _VerifiedDriveTrainerReadback,
+    *,
+    expected_run_sha256: str,
+    expected_study_sha256: str,
+    expected_evaluation_sha256: str,
+    expected_lineage_tip_sha256: str,
+    expected_cell_count: int,
+) -> list[dict[str, Any]]:
+    """Reduce a same-process verified readback into packet-safe references."""
+
+    if (
+        not isinstance(value, _VerifiedDriveTrainerReadback)
+        or value._validation_marker is not _TRAINER_READBACK_MARKER
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "trainer packet requires the typed Drive readback validator output"
+        )
+    evidence = _verify_trainer_readback_evidence(value.evidence)
+    denominator = evidence["fixed_denominator"]
+    if (
+        evidence["run_sha256"] != _sha(expected_run_sha256, "expected run SHA-256")
+        or evidence["study_sha256"]
+        != _sha(expected_study_sha256, "expected study SHA-256")
+        or evidence["evaluation_sha256"]
+        != _sha(expected_evaluation_sha256, "expected evaluation SHA-256")
+        or evidence["lineage_tip_sha256"]
+        != _sha(expected_lineage_tip_sha256, "expected lineage tip SHA-256")
+        or denominator["expected_cell_count"]
+        != _positive_integer(expected_cell_count, "expected cell count")
+        or denominator["observed_cell_count"] != expected_cell_count
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "typed Drive readback is foreign to the current trainer result"
+        )
+    return [
+        {
+            "artifact_kind": item["artifact_kind"],
+            "drive_file_id": item["drive_file_id"],
+            "drive_parent_id": item["drive_parent_id"],
+            "content_sha256": item["content_sha256"],
+            "content_size_bytes": item["content_size_bytes"],
+            "version": item["version"],
+            "head_revision_id": item["head_revision_id"],
+            "readback_sha256": evidence["readback_sha256"],
+            "remote_verified": True,
+        }
+        for item in evidence["objects"]
+    ]
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -1052,6 +1401,188 @@ def _coordinate_sort_key(value: Any) -> tuple[str, str, str]:
     return (coordinate.candidate_id, coordinate.intrabar, coordinate.cost_arm)
 
 
+def _normalize_drive_readback_metadata(
+    value: Any,
+    *,
+    expected_parent_id: str,
+    downloaded_bytes: bytes,
+) -> dict[str, Any]:
+    """Normalize selected Drive v3 file fields against the downloaded payload."""
+
+    row = _exact(value, _DRIVE_READBACK_METADATA_KEYS, "Drive readback metadata")
+    parents = row["parents"]
+    if (
+        not isinstance(parents, list)
+        or len(parents) != 1
+        or _drive_id(parents[0], "Drive readback parent") != expected_parent_id
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive readback parents do not equal the expected single parent"
+        )
+    if row["trashed"] is not False:
+        raise DojoDriveRemoteEvidenceError("Drive readback object is trashed")
+    size = _decimal_integer(row["size"], "Drive readback size")
+    if size != len(downloaded_bytes):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive readback size differs from downloaded bytes"
+        )
+    md5 = hashlib.md5(downloaded_bytes, usedforsecurity=False).hexdigest()
+    if _md5(row["md5Checksum"], "Drive readback MD5") != md5:
+        raise DojoDriveRemoteEvidenceError(
+            "Drive readback MD5 differs from downloaded bytes"
+        )
+    version = _decimal_text(row["version"], "Drive readback version")
+    head_revision = _drive_id(row["headRevisionId"], "Drive readback head revision id")
+    return {
+        "drive_file_id": _drive_id(row["id"], "Drive readback file id"),
+        "drive_parent_id": expected_parent_id,
+        "drive_file_name": _filename(row["name"], "Drive readback filename"),
+        "content_sha256": hashlib.sha256(downloaded_bytes).hexdigest(),
+        "content_size_bytes": size,
+        "md5_checksum": md5,
+        "modified_time": _utc_text(row["modifiedTime"], "Drive modifiedTime"),
+        "version": version,
+        "head_revision_id": head_revision,
+        "trashed": False,
+    }
+
+
+def _verify_trainer_readback_evidence(value: Any) -> dict[str, Any]:
+    row = _exact(value, _TRAINER_READBACK_KEYS, "Drive trainer readback evidence")
+    claimed = _sha(row["readback_sha256"], "Drive trainer readback SHA-256")
+    body = {key: item for key, item in row.items() if key != "readback_sha256"}
+    if canonical_json_sha256(body) != claimed:
+        raise DojoDriveRemoteEvidenceError("Drive trainer readback SHA-256 mismatch")
+    denominator = _exact(
+        row["fixed_denominator"],
+        _RUN_DENOMINATOR_KEYS,
+        "Drive trainer fixed denominator",
+    )
+    expected = _positive_integer(
+        denominator["expected_cell_count"], "Drive trainer expected cell count"
+    )
+    failed = _nonnegative_integer(
+        denominator["failed_cell_count"],
+        "Drive trainer failed cell count",
+    )
+    execution_complete = denominator["execution_success_complete"]
+    if (
+        _positive_integer(
+            denominator["observed_cell_count"],
+            "Drive trainer observed cell count",
+        )
+        != expected
+        or _nonnegative_integer(
+            denominator["dropped_cell_count"],
+            "Drive trainer dropped cell count",
+        )
+        != 0
+        or denominator["coordinate_receipts_complete"] is not True
+        or not isinstance(execution_complete, bool)
+        or execution_complete is not (failed == 0)
+        or row["contract"] != TRAINER_READBACK_CONTRACT
+        or row["schema_version"] != SCHEMA_VERSION
+        or row["classification"] != "WORN_HISTORICAL_TRAIN_DIAGNOSTIC_ONLY"
+        or row["expected_artifact_kinds"] != list(TRAINER_READBACK_KINDS)
+        or row["downloaded_artifact_count"] != len(TRAINER_READBACK_KINDS)
+        or isinstance(row["downloaded_artifact_count"], bool)
+        or row["download_bytes_match_local_artifacts"] is not True
+        or row["drive_metadata_revision_bound"] is not True
+        or row["drive_parents_bound"] is not True
+        or row["drive_trashed_false"] is not True
+        or row["external_readback_attested"] is not True
+        or row["remote_verified"] is not True
+        or row["trainer_packet_eligible"] is not True
+        or row["proof_eligible"] is not False
+        or row["promotion_eligible"] is not False
+        or row["live_permission"] is not False
+        or row["order_authority"] != "NONE"
+        or row["broker_mutation_allowed"] is not False
+        or row["resource_gate_unblock_allowed"] is not False
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive trainer readback contract or authority boundary drifted"
+        )
+    for field_name in (
+        "run_sha256",
+        "study_sha256",
+        "evaluation_sha256",
+        "terminal_handoff_receipt_sha256",
+        "lineage_tip_sha256",
+    ):
+        _sha(row[field_name], f"Drive trainer {field_name}")
+    _utc_text(row["readback_at_utc"], "Drive trainer readback_at_utc")
+    objects = row["objects"]
+    if not isinstance(objects, list) or len(objects) != len(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive trainer readback object denominator is incomplete"
+        )
+    kinds: list[str] = []
+    ids: set[str] = set()
+    names: set[str] = set()
+    parents: set[str] = set()
+    revisions: set[tuple[str, str]] = set()
+    for raw in objects:
+        item = _exact(raw, _TRAINER_READBACK_OBJECT_KEYS, "Drive trainer object")
+        kind = item["artifact_kind"]
+        if kind not in TRAINER_READBACK_KINDS:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive trainer readback object kind is unsupported"
+            )
+        kinds.append(kind)
+        file_id = _drive_id(item["drive_file_id"], "Drive trainer file id")
+        name = _filename(item["drive_file_name"], "Drive trainer filename")
+        if file_id in ids or name in names:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive trainer readback reuses file identity"
+            )
+        ids.add(file_id)
+        names.add(name)
+        parents.add(_drive_id(item["drive_parent_id"], "Drive trainer parent id"))
+        _sha(item["content_sha256"], "Drive trainer content SHA-256")
+        _positive_integer(item["content_size_bytes"], "Drive trainer content size")
+        _md5(item["md5_checksum"], "Drive trainer MD5")
+        _utc_text(item["modified_time"], "Drive trainer modified time")
+        version = _decimal_text(item["version"], "Drive trainer version")
+        head_revision = _drive_id(
+            item["head_revision_id"], "Drive trainer head revision"
+        )
+        revision = (file_id, f"{version}:{head_revision}")
+        if revision in revisions:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive trainer readback reuses a file revision"
+            )
+        revisions.add(revision)
+        if item["trashed"] is not False:
+            raise DojoDriveRemoteEvidenceError("Drive trainer object is trashed")
+    if kinds != list(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive trainer readback object order/denominator drifted"
+        )
+    if len(parents) != 1:
+        raise DojoDriveRemoteEvidenceError(
+            "Drive trainer readback objects do not share one parent"
+        )
+    return _clone(row)
+
+
+def _parse_strict_json_bytes(raw: bytes, label: str) -> Any:
+    if not isinstance(raw, bytes) or not raw:
+        raise DojoDriveRemoteEvidenceError(f"{label} must be nonempty exact bytes")
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_pairs,
+            parse_constant=_reject_constant,
+        )
+    except DojoDriveRemoteEvidenceError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise DojoDriveRemoteEvidenceError(f"{label} is not strict JSON") from exc
+    _validate_json(value, label)
+    return value
+
+
 def _parse_canonical_artifact(raw: bytes, maximum: int, label: str) -> Any:
     if not isinstance(raw, bytes):
         raise DojoDriveRemoteEvidenceError(f"{label} must be exact bytes")
@@ -1220,6 +1751,25 @@ def _positive_integer(value: Any, label: str) -> int:
     return result
 
 
+def _nonnegative_integer(value: Any, label: str) -> int:
+    result = _integer(value, label)
+    if result < 0:
+        raise DojoDriveRemoteEvidenceError(f"{label} must be nonnegative")
+    return result
+
+
+def _decimal_text(value: Any, label: str) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str) or _DECIMAL.fullmatch(value) is None:
+        raise DojoDriveRemoteEvidenceError(f"{label} must be a positive decimal")
+    return value
+
+
+def _decimal_integer(value: Any, label: str) -> int:
+    return int(_decimal_text(value, label))
+
+
 def _utc_text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise DojoDriveRemoteEvidenceError(f"{label} is invalid")
@@ -1251,6 +1801,8 @@ __all__ = [
     "REMOTE_RECEIPT_CONTRACT",
     "SCHEMA_VERSION",
     "DriveMetadataConsistencyResult",
+    "TRAINER_READBACK_CONTRACT",
+    "TRAINER_READBACK_KINDS",
     "canonical_artifact_bytes",
     "canonical_json_bytes",
     "canonical_json_sha256",

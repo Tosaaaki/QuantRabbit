@@ -8,6 +8,7 @@ import pytest
 
 from quant_rabbit.dojo_ai_trainer_packet import (
     PACKET_CONTRACT,
+    TRAINER_READBACK_KINDS,
     _ALLOWED_MUTATIONS,
     _EVALUATION_OBLIGATIONS,
     _FORBIDDEN_MUTATIONS,
@@ -295,7 +296,23 @@ def _packet(baseline: dict[str, Any]) -> dict[str, Any]:
         "ohlc_olhc_comparisons": [],
         "failed_coordinates": [],
         "previous_attempts": [],
-        "drive_evidence_refs": [],
+        "drive_evidence_refs": sorted(
+            [
+                {
+                    "artifact_kind": kind,
+                    "drive_file_id": f"nextStudyDriveFile{index:02d}",
+                    "drive_parent_id": "nextStudyDriveParent",
+                    "content_sha256": f"{index}" * 64,
+                    "content_size_bytes": 1000 + index,
+                    "version": str(400 + index),
+                    "head_revision_id": f"nextStudyRevision{index:02d}",
+                    "readback_sha256": "9" * 64,
+                    "remote_verified": True,
+                }
+                for index, kind in enumerate(TRAINER_READBACK_KINDS, start=1)
+            ],
+            key=lambda row: (row["artifact_kind"], row["drive_file_id"]),
+        ),
         "limitations": list(_LIMITATIONS),
         **SEALED_AUTHORITY,
     }

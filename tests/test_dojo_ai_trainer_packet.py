@@ -28,6 +28,19 @@ from quant_rabbit.dojo_candidate_lineage_registry import (
     bind_result,
     initialize_registry,
     seal_study_attempt,
+    verify_registry,
+)
+from quant_rabbit.dojo_drive_remote_evidence import (
+    TRAINER_READBACK_KINDS,
+    _DriveDownloadedArtifact,
+    _VerifiedDriveTrainerReadback,
+    _verify_authenticated_drive_trainer_readback,
+)
+from quant_rabbit.dojo_terminal_handoff import (
+    ABSENT_CAS_TOKEN,
+    LINEAGE_PRESENT_AT_HANDOFF,
+    canonical_json_bytes as canonical_handoff_bytes,
+    coordinate_terminal_handoff,
 )
 
 
@@ -454,6 +467,66 @@ def _bind_inputs(
         expected_tip_sha256=snapshot.latest_event_sha256,
         event_at_utc="2026-07-20T00:00:02Z",
     )
+    terminal = tmp_path / "terminal"
+    run_path = _write_json(tmp_path, "terminal/run.json", run)
+    terminal_evaluation_path = _write_json(
+        tmp_path, "terminal/evaluation.json", evaluation
+    )
+    cells_path = _write_json(tmp_path, "terminal/cells.json", cells)
+    handoff = coordinate_terminal_handoff(
+        terminal_dir=terminal,
+        sealed_study_path=study_path,
+        lineage_events_dir=events,
+        artifact_root=tmp_path,
+        receipt_events_dir=tmp_path / "handoff-events",
+        expected_lineage_tip_sha256=snapshot.latest_event_sha256,
+        expected_receipt_tip_sha256=ABSENT_CAS_TOKEN,
+        binding_timing_classification=LINEAGE_PRESENT_AT_HANDOFF,
+        event_at_utc="2026-07-20T00:00:03Z",
+    )
+    snapshot = verify_registry(events, artifact_root=tmp_path)
+    local = {
+        "RUN": run_path.read_bytes(),
+        "EVALUATION": terminal_evaluation_path.read_bytes(),
+        "CELLS": cells_path.read_bytes(),
+        "SEALED_STUDY": study_path.read_bytes(),
+        "TERMINAL_HANDOFF": canonical_handoff_bytes(handoff) + b"\n",
+    }
+    parent_id = "drivePacketParent123"
+    readbacks = []
+    for index, kind in enumerate(TRAINER_READBACK_KINDS, start=1):
+        raw = local[kind]
+        readbacks.append(
+            _DriveDownloadedArtifact(
+                artifact_kind=kind,
+                metadata={
+                    "id": f"drivePacketFile{index:02d}",
+                    "name": f"packet-{index:02d}-{kind.lower()}.json",
+                    "size": str(len(raw)),
+                    "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+                    "modifiedTime": f"2026-07-20T00:0{index + 3}:00Z",
+                    "parents": [parent_id],
+                    "trashed": False,
+                    "version": str(200 + index),
+                    "headRevisionId": f"packetRevision{index:02d}",
+                },
+                downloaded_bytes=raw,
+            )
+        )
+    # Simulate the future authenticated connector adapter at its private
+    # in-process boundary.  The file CLI cannot mint this capability.
+    verified_drive_readback = _verify_authenticated_drive_trainer_readback(
+        run=run,
+        evaluation=evaluation,
+        cells=cells,
+        sealed_study=sealed,
+        terminal_handoff_receipt=handoff,
+        lineage=snapshot,
+        expected_parent_id=parent_id,
+        local_artifact_bytes=local,
+        readbacks=readbacks,
+        readback_at_utc="2026-07-20T00:10:00Z",
+    )
     tuning_state = initialize_tuning_state(
         events, artifact_root=tmp_path, sealed_study=sealed
     )
@@ -464,6 +537,7 @@ def _bind_inputs(
         "lineage_events_dir": events,
         "artifact_root": tmp_path,
         "tuning_state": tuning_state,
+        "verified_drive_readback": verified_drive_readback,
     }
 
 
@@ -484,17 +558,7 @@ def _build(inputs: dict, **overrides) -> dict:
 def test_packet_contains_full_grid_unknowns_and_no_raw_references(
     packet_inputs: dict,
 ) -> None:
-    drive = [
-        {
-            "artifact_kind": "REPORT",
-            "drive_file_id": "driveFile123",
-            "content_sha256": "6" * 64,
-            "content_size_bytes": 321,
-            "remote_verified": True,
-            "metadata_receipt_sha256": "7" * 64,
-        }
-    ]
-    packet = _build(packet_inputs, drive_evidence_refs=drive)
+    packet = _build(packet_inputs)
 
     assert len(packet["candidates"]) == 1
     assert len(packet["cells"]) == 4
@@ -511,9 +575,11 @@ def test_packet_contains_full_grid_unknowns_and_no_raw_references(
     assert "ledger.jsonl" not in serialized
     assert "cells_path" not in serialized
     assert (
-        "DRIVE_REMOTE_VERIFIED_IS_AN_EXTERNAL_RECEIPT_CLAIM_NOT_INDEPENDENT_PROOF"
+        "DRIVE_EXACT_DOWNLOADED_TERMINAL_ARTIFACT_BYTES_VERIFIED"
         in packet["limitations"]
     )
+    assert len(packet["drive_evidence_refs"]) == 5
+    assert all(row["remote_verified"] is True for row in packet["drive_evidence_refs"])
     assert packet["live_permission"] is False
     assert verify_trainer_packet(packet) == packet
 
@@ -548,27 +614,19 @@ def test_holdout_live_and_nonterminal_inputs_are_rejected(packet_inputs: dict) -
             _build(packet_inputs, run=run)
 
 
-def test_drive_refs_reject_ledgers_paths_and_unverified_content(
+def test_drive_refs_require_same_process_typed_validator_output(
     packet_inputs: dict,
 ) -> None:
-    base = {
-        "artifact_kind": "LEDGER",
-        "drive_file_id": "driveFile123",
-        "content_sha256": "6" * 64,
-        "content_size_bytes": 321,
-        "remote_verified": True,
-        "metadata_receipt_sha256": "7" * 64,
-    }
-    with pytest.raises(DojoAITrainerPacketError, match="only manifests or reports"):
-        _build(packet_inputs, drive_evidence_refs=[base])
+    with pytest.raises(DojoAITrainerPacketError, match="typed Drive readback"):
+        _build(packet_inputs, verified_drive_readback=[{"remote_verified": True}])
 
-    extra_path = {**base, "artifact_kind": "REPORT", "path": "/tmp/report"}
-    with pytest.raises(DojoAITrainerPacketError, match="schema mismatch"):
-        _build(packet_inputs, drive_evidence_refs=[extra_path])
-
-    unverified = {**base, "artifact_kind": "MANIFEST", "remote_verified": False}
-    with pytest.raises(DojoAITrainerPacketError, match="not remotely verified"):
-        _build(packet_inputs, drive_evidence_refs=[unverified])
+    valid = packet_inputs["verified_drive_readback"]
+    forged = _VerifiedDriveTrainerReadback(
+        evidence=valid.evidence,
+        _validation_marker=object(),
+    )
+    with pytest.raises(DojoAITrainerPacketError, match="typed Drive readback"):
+        _build(packet_inputs, verified_drive_readback=forged)
 
 
 def test_packet_tamper_and_nan_are_rejected(packet_inputs: dict) -> None:
