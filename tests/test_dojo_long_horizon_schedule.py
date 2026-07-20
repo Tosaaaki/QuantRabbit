@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-import quant_rabbit.dojo_long_horizon_schedule as schedule_module
 from quant_rabbit.dojo_long_horizon_plan import (
     IMPLEMENTATION_DIGEST_KEYS,
     M1_CORE5_BINDING_ID,
@@ -83,6 +82,16 @@ def test_each_job_requires_one_stream_fanned_out_before_decisions(
     assert all(
         job["runtime_batch_chain_receipt_required"] is True for job in schedule["jobs"]
     )
+    for job in schedule["jobs"]:
+        assert job["price_stream_id"] == canonical_sha256(
+            {
+                "source_binding_id": job["source_binding_id"],
+                "month": job["month"],
+                "intrabar_path": job["intrabar_path"],
+                "source_digest_sha256": job["source_digest_sha256"],
+                "corpus_digest_sha256": job["corpus_digest_sha256"],
+            }
+        )
     assert (
         schedule["execution_contract"][
             "runner_implementation_verified_by_this_artifact"
@@ -152,7 +161,7 @@ def test_lopo_coordinate_removes_exact_exposure_not_the_feed(schedule: dict) -> 
     assert all("JPY" not in pair.split("_") for pair in currency_fold_pairs)
 
 
-def test_m1_rectangles_remain_distinct_and_keep_declared_overlap(
+def test_m1_rectangles_keep_overlaps_as_distinct_full_weight_contexts(
     schedule: dict,
 ) -> None:
     core = next(
@@ -183,13 +192,17 @@ def test_m1_rectangles_remain_distinct_and_keep_declared_overlap(
             and row["cost_scenario"] == "BASE"
         )
 
-    core_replica = precision(core, "USD_JPY")
-    full_replica = precision(full, "USD_JPY")
-    assert core_replica["replica_group_id"] == full_replica["replica_group_id"]
-    assert core_replica["aggregation_weight"] == 0.5
-    assert full_replica["aggregation_weight"] == 0.5
-    assert core_replica["replica_expected_count"] == 2
-    assert core_replica["replica_paired_consistency_required"] is True
+    core_context = precision(core, "USD_JPY")
+    full_context = precision(full, "USD_JPY")
+    assert core_context["coordinate_id"] != full_context["coordinate_id"]
+    assert core_context["replica_group_id"] is None
+    assert full_context["replica_group_id"] is None
+    assert core_context["aggregation_weight"] == 1.0
+    assert full_context["aggregation_weight"] == 1.0
+    assert core_context["replica_expected_count"] == 1
+    assert full_context["replica_expected_count"] == 1
+    assert core_context["replica_paired_consistency_required"] is False
+    assert full_context["replica_paired_consistency_required"] is False
 
     non_overlap = next(
         job
@@ -203,13 +216,14 @@ def test_m1_rectangles_remain_distinct_and_keep_declared_overlap(
     assert ordinary["replica_expected_count"] == 1
     assert ordinary["replica_paired_consistency_required"] is False
 
-    assert schedule["effective_weighted_result_coordinate_count"] == 31_392
-    assert schedule["expected_effective_weighted_result_coordinate_count"] == 31_392
-    replica_contract = schedule["m1_replica_contract"]
-    assert replica_contract["overlap_pair_month_count"] == 5 * 18 == 90
-    assert replica_contract["raw_overlap_replica_coordinate_count"] == 1_440
-    assert replica_contract["effective_overlap_result_count"] == 720
-    assert replica_contract["paired_terminal_consistency_required"] is True
+    assert schedule["effective_weighted_result_coordinate_count"] == 32_112
+    assert schedule["expected_effective_weighted_result_coordinate_count"] == 32_112
+    context_contract = schedule["m1_context_contract"]
+    assert context_contract["overlap_pair_month_count"] == 5 * 18 == 90
+    assert context_contract["raw_overlap_context_coordinate_count"] == 1_440
+    assert context_contract["effective_overlap_result_count"] == 1_440
+    assert context_contract["paired_terminal_consistency_required"] is False
+    assert context_contract["aggregation_weight_per_context"] == 1.0
 
 
 def test_continuous_and_independent_accounts_are_separate_coordinates(
@@ -362,49 +376,13 @@ def test_worker_config_mutation_changes_every_execution_identity(
     changed_workers = tuple({**row} for row in WORKERS)
     changed_workers[0]["config_sha256"] = "d" * 64
     changed_worker_set_sha256 = canonical_sha256({"bindings": list(changed_workers)})
-    _, changed_active_variants_sha256 = schedule_module._active_worker_variants(
-        changed_workers, families=FAMILIES
-    )
     assert changed_worker_set_sha256 != schedule["worker_set"]["worker_set_sha256"]
     original_job = schedule["jobs"][0]
-    changed_stream_body = {
-        "plan_sha256": plan["plan_sha256"],
-        "worker_set_sha256": changed_worker_set_sha256,
-        "active_worker_variants_sha256": changed_active_variants_sha256,
-        "source_binding_id": original_job["source_binding_id"],
-        "month": original_job["month"],
-        "intrabar_path": original_job["intrabar_path"],
-        "source_digest_sha256": original_job["source_digest_sha256"],
-        "corpus_digest_sha256": original_job["corpus_digest_sha256"],
-    }
-    changed_price_stream_id = canonical_sha256(changed_stream_body)
-    changed_coordinates = schedule_module._m5_coordinates(
-        plan=plan,
-        source_binding_id=original_job["source_binding_id"],
-        month=original_job["month"],
-        intrabar_path=original_job["intrabar_path"],
-        price_stream_id=changed_price_stream_id,
-        feed_pairs=original_job["feed_pairs"],
-        worker_rows=changed_workers,
-        plan_sha256=plan["plan_sha256"],
-        worker_set_sha256=changed_worker_set_sha256,
-        month_ordinal=0,
-        month_count=78,
+    changed_schedule = build_long_horizon_stream_schedule(
+        plan, worker_bindings=changed_workers
     )
-    changed_coordinate_ids = [row["coordinate_id"] for row in changed_coordinates]
-    changed_job_body = {
-        key: value for key, value in original_job.items() if key != "job_sha256"
-    }
-    changed_job_body.update(
-        {
-            "worker_set_sha256": changed_worker_set_sha256,
-            "active_worker_variants_sha256": changed_active_variants_sha256,
-            "price_stream_id": changed_price_stream_id,
-            "coordinates": changed_coordinates,
-            "coordinate_ids_sha256": canonical_sha256(changed_coordinate_ids),
-        }
-    )
-    changed_job_sha256 = canonical_sha256(changed_job_body)
+    changed_job = changed_schedule["jobs"][0]
+    changed_coordinates = changed_job["coordinates"]
     original_coordinate = next(
         row
         for row in original_job["coordinates"]
@@ -419,8 +397,8 @@ def test_worker_config_mutation_changes_every_execution_identity(
         and row["evaluation_mode"] == "CONTINUOUS_ACCOUNT"
         and row["cost_scenario"] == "BASE"
     )
-    assert changed_price_stream_id != original_job["price_stream_id"]
-    assert changed_job_sha256 != original_job["job_sha256"]
+    assert changed_job["price_stream_id"] == original_job["price_stream_id"]
+    assert changed_job["job_sha256"] != original_job["job_sha256"]
     assert changed_coordinate["coordinate_id"] != original_coordinate["coordinate_id"]
     assert (
         changed_coordinate["continuous_account_chain_id"]

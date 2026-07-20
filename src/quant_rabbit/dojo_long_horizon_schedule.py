@@ -29,19 +29,21 @@ from quant_rabbit.dojo_long_horizon_plan import (
 )
 
 
-CONTRACT: Final = "QR_DOJO_LONG_HORIZON_STREAM_SCHEDULE_V1"
+CONTRACT: Final = "QR_DOJO_LONG_HORIZON_STREAM_SCHEDULE_V2"
 # This is an artifact schema identity, not a market/risk tuning constant.
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 # These are fan-out resource bounds, not market or sizing parameters.  Thirty-
 # two total accounts keeps one stream job reviewable; eight variants per family
 # prevents one causal family from consuming the complete research budget.  A
 # measured runner resource profile should replace them if these limits change.
 MAX_WORKERS: Final = 32
 MAX_WORKERS_PER_FAMILY: Final = 8
-# Two predeclared M1 rectangles intentionally repeat core-five observations in
-# 2025-01..2026-06.  Each replica therefore contributes one half so the pair is
-# one effective result while both raw coordinates remain mandatory.
-M1_OVERLAP_REPLICA_WEIGHT: Final = 0.5
+# The two M1 rectangles overlap in pair/month labels, but they expose different
+# synchronized market contexts (core-five versus all 28 pairs).  A worker may
+# legitimately use those surrounding quotes for features, conversion or shared
+# capital allocation, so the observations are not interchangeable replicas.
+# Every raw coordinate therefore remains one full result in the denominator.
+M1_CONTEXT_WEIGHT: Final = 1.0
 _ZERO_SHA256: Final = "0" * 64
 _SHA256_RE: Final = re.compile(r"[0-9a-f]{64}\Z")
 _WORKER_ID_RE: Final = re.compile(r"[a-z][a-z0-9_.-]{0,127}\Z")
@@ -70,7 +72,7 @@ def _execution_contract() -> dict[str, bool]:
         "account_state_shared_between_coordinates": False,
         "continuous_account_state_chained_across_months": True,
         "independent_month_state_reset": True,
-        "m1_overlap_replica_pairing_required": True,
+        "m1_overlapping_rectangles_are_distinct_contexts": True,
         "continuous_predecessor_state_slot_required_after_first_month": True,
         "runtime_terminal_manifest_per_coordinate_required": True,
         "runner_implementation_verified_by_this_artifact": False,
@@ -490,8 +492,6 @@ def _m1_coordinates(
     worker_set_sha256: str,
     month_ordinal: int,
     month_count: int,
-    overlap_pairs: frozenset[str],
-    overlap_months: frozenset[str],
 ) -> list[dict[str, Any]]:
     families = list(plan["portfolio"]["families"])
     modes = [row["mode"] for row in plan["evaluation"]["modes"]]
@@ -500,17 +500,6 @@ def _m1_coordinates(
     for precision_pair in feed_pairs:
         for mode in modes:
             for scenario in scenarios:
-                is_overlap = precision_pair in overlap_pairs and month in overlap_months
-                replica_material = {
-                    "plan_sha256": plan_sha256,
-                    "worker_set_sha256": worker_set_sha256,
-                    "phase": "PRECISION_M1",
-                    "month": month,
-                    "evaluation_mode": mode,
-                    "intrabar_path": intrabar_path,
-                    "cost_scenario": scenario,
-                    "precision_pair": precision_pair,
-                }
                 result.append(
                     _coordinate(
                         phase="PRECISION_M1",
@@ -533,12 +522,10 @@ def _m1_coordinates(
                         worker_set_sha256=worker_set_sha256,
                         month_ordinal=month_ordinal,
                         month_count=month_count,
-                        replica_group_id=canonical_sha256(replica_material),
-                        replica_expected_count=2 if is_overlap else 1,
-                        aggregation_weight=(
-                            M1_OVERLAP_REPLICA_WEIGHT if is_overlap else 1.0
-                        ),
-                        replica_paired_consistency_required=is_overlap,
+                        replica_group_id=None,
+                        replica_expected_count=1,
+                        aggregation_weight=M1_CONTEXT_WEIGHT,
+                        replica_paired_consistency_required=False,
                     )
                 )
     return result
@@ -601,16 +588,15 @@ def build_long_horizon_stream_schedule(
     )
     jobs: list[dict[str, Any]] = []
     all_coordinate_ids: list[str] = []
-    aggregation_half_units = 0
     for source in _source_specs(sealed_plan):
         source_month_count = len(source["months"])
         for month_ordinal, month in enumerate(source["months"]):
             month_from, month_to = _month_bounds(month)
             for path in paths:
+                # Source identity deliberately excludes worker, allocator and
+                # strategy/plan hashes.  Execution identity remains bound by
+                # the coordinate ids and job_sha256 below.
                 stream_body = {
-                    "plan_sha256": plan_sha256,
-                    "worker_set_sha256": worker_set_sha256,
-                    "active_worker_variants_sha256": active_worker_variants_sha256,
                     "source_binding_id": source["source_binding_id"],
                     "month": month,
                     "intrabar_path": path,
@@ -645,15 +631,9 @@ def build_long_horizon_stream_schedule(
                         worker_set_sha256=worker_set_sha256,
                         month_ordinal=month_ordinal,
                         month_count=source_month_count,
-                        overlap_pairs=overlap_pairs,
-                        overlap_months=overlap_months,
                     )
                 coordinate_ids = [row["coordinate_id"] for row in coordinates]
                 all_coordinate_ids.extend(coordinate_ids)
-                aggregation_half_units += sum(
-                    1 if row["aggregation_weight"] == M1_OVERLAP_REPLICA_WEIGHT else 2
-                    for row in coordinates
-                )
                 job_body = {
                     "plan_sha256": plan_sha256,
                     "worker_set_sha256": worker_set_sha256,
@@ -688,23 +668,14 @@ def build_long_horizon_stream_schedule(
         raise DojoLongHorizonScheduleError(
             "expanded coordinate count differs from the sealed denominator"
         )
-    if aggregation_half_units % 2:
-        raise DojoLongHorizonScheduleError(
-            "effective aggregation denominator is not an integer"
-        )
-    effective_coordinate_count = aggregation_half_units // 2
+    effective_coordinate_count = len(all_coordinate_ids)
     denominator = sealed_plan["exact_denominator"]
     mode_count = len(sealed_plan["evaluation"]["modes"])
     scenario_count = len(sealed_plan["evaluation"]["cost_scenarios"])
-    expected_effective = denominator["portfolio_result_cell_count"] + (
-        denominator["m1_precision_unique_pair_month_cell_count"]
-        * mode_count
-        * len(paths)
-        * scenario_count
-    )
+    expected_effective = denominator["total_required_result_cell_count"]
     if effective_coordinate_count != expected_effective:
         raise DojoLongHorizonScheduleError(
-            "effective weighted denominator differs from the sealed unique denominator"
+            "effective weighted denominator differs from the sealed fixed denominator"
         )
     overlap_pair_month_count = len(overlap_pairs) * len(overlap_months)
     m1_dimension_count = mode_count * len(paths) * scenario_count
@@ -725,18 +696,20 @@ def build_long_horizon_stream_schedule(
         "expected_result_coordinate_count": expected,
         "effective_weighted_result_coordinate_count": effective_coordinate_count,
         "expected_effective_weighted_result_coordinate_count": expected_effective,
-        "m1_replica_contract": {
+        "m1_context_contract": {
             "overlap_pairs": sorted(overlap_pairs),
             "overlap_months": sorted(overlap_months),
             "overlap_pair_month_count": overlap_pair_month_count,
-            "replicas_per_overlap_coordinate": 2,
-            "aggregation_weight_per_replica": M1_OVERLAP_REPLICA_WEIGHT,
-            "raw_overlap_replica_coordinate_count": overlap_pair_month_count
+            "contexts_per_overlap_pair_month": 2,
+            "aggregation_weight_per_context": M1_CONTEXT_WEIGHT,
+            "raw_overlap_context_coordinate_count": overlap_pair_month_count
             * m1_dimension_count
             * 2,
             "effective_overlap_result_count": overlap_pair_month_count
-            * m1_dimension_count,
-            "paired_terminal_consistency_required": True,
+            * m1_dimension_count
+            * 2,
+            "paired_terminal_consistency_required": False,
+            "reason": "CORE5_AND_FULL28_EXPOSE_DIFFERENT_SYNCHRONIZED_FEED_CONTEXTS",
         },
         "jobs": jobs,
         "all_coordinate_ids_sha256": canonical_sha256(all_coordinate_ids),
@@ -766,7 +739,7 @@ def validate_long_horizon_stream_schedule(
         "expected_result_coordinate_count",
         "effective_weighted_result_coordinate_count",
         "expected_effective_weighted_result_coordinate_count",
-        "m1_replica_contract",
+        "m1_context_contract",
         "jobs",
         "all_coordinate_ids_sha256",
         "authority",
@@ -799,7 +772,7 @@ __all__ = [
     "CONTRACT",
     "MAX_WORKERS",
     "MAX_WORKERS_PER_FAMILY",
-    "M1_OVERLAP_REPLICA_WEIGHT",
+    "M1_CONTEXT_WEIGHT",
     "DojoLongHorizonScheduleError",
     "build_long_horizon_stream_schedule",
     "validate_long_horizon_stream_schedule",
