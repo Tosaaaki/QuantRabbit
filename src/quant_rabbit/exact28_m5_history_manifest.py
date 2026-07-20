@@ -932,9 +932,33 @@ def _validate_task_and_file(
         file_sha256=str(scan["file_sha256"]),
     )
     fetch_script = Path(str(receipt.get("fetch_script_path") or ""))
-    if fetch_script.resolve(strict=True) != expected_fetch_script:
-        raise HistoricalM5ManifestError("M5 receipt fetch script path is not canonical")
-    if receipt.get("fetch_script_sha256") != expected_fetch_sha256:
+    if not fetch_script.is_absolute() or fetch_script.is_symlink():
+        raise HistoricalM5ManifestError(
+            "M5 receipt fetch script path is not a real absolute file"
+        )
+    try:
+        resolved_fetch_script = fetch_script.resolve(strict=True)
+    except OSError as exc:
+        raise HistoricalM5ManifestError(
+            "M5 receipt fetch script is unavailable"
+        ) from exc
+    if not resolved_fetch_script.is_file():
+        raise HistoricalM5ManifestError(
+            "M5 receipt fetch script is not a regular file"
+        )
+    executed_fetch_sha256 = _s5._sha256_bytes(
+        _s5._read_stable_bytes(resolved_fetch_script)
+    )
+    # Acquisition may intentionally execute a staged, read-only copy of the
+    # canonical fetcher.  The implementation identity is its exact bytes, not
+    # the host-specific absolute path.  Requiring path equality made valid
+    # receipts from isolated acquisition worktrees impossible to seal even
+    # when the executed bytes and the current canonical bytes were identical.
+    # The receipt-ledger hash still binds the actual execution path for audit.
+    if (
+        receipt.get("fetch_script_sha256") != expected_fetch_sha256
+        or executed_fetch_sha256 != expected_fetch_sha256
+    ):
         raise HistoricalM5ManifestError("M5 receipt fetch script digest drifted")
 
     body: dict[str, Any] = {

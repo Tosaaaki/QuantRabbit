@@ -375,22 +375,49 @@ class Exact28M5HistoryManifestTest(unittest.TestCase):
                     period_to_utc=time_to,
                 )
 
-    def test_rejects_counterfeit_fetch_script_path_even_with_matching_hash(self) -> None:
+    def test_accepts_staged_fetch_script_copy_with_identical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             original = Path(__file__).resolve().parents[1] / "scripts/oanda_history_fetch.py"
-            counterfeit_dir = base / "counterfeit"
-            counterfeit_dir.mkdir()
-            counterfeit = counterfeit_dir / "oanda_history_fetch.py"
-            shutil.copyfile(original, counterfeit)
+            staged_dir = base / "staged"
+            staged_dir.mkdir()
+            staged = staged_dir / "oanda_history_fetch.py"
+            shutil.copyfile(original, staged)
             root = base / "history"
             root.mkdir()
             time_from, time_to, _summary = _make_exact28_root(
                 root,
-                fetch_script_path=counterfeit,
+                fetch_script_path=staged,
             )
 
-            with self.assertRaisesRegex(HistoricalM5ManifestError, "not canonical"):
+            manifest = build_exact28_m5_history_manifest(
+                root,
+                period_from_utc=time_from,
+                period_to_utc=time_to,
+            )
+
+            self.assertTrue(manifest["complete_exact28_annual_shard_coverage"])
+            self.assertEqual(
+                manifest["endpoint_identity"]["fetch_script_sha256"],
+                hashlib.sha256(original.read_bytes()).hexdigest(),
+            )
+
+    def test_rejects_staged_fetch_script_with_different_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            original = Path(__file__).resolve().parents[1] / "scripts/oanda_history_fetch.py"
+            staged_dir = base / "staged"
+            staged_dir.mkdir()
+            staged = staged_dir / "oanda_history_fetch.py"
+            staged.write_bytes(original.read_bytes() + b"\n# modified staged fetcher\n")
+            root = base / "history"
+            root.mkdir()
+            time_from, time_to, _summary = _make_exact28_root(
+                root,
+                fetch_script_path=staged,
+            )
+
+            with self.assertRaisesRegex(HistoricalM5ManifestError, "digest drifted"):
                 build_exact28_m5_history_manifest(
                     root,
                     period_from_utc=time_from,
