@@ -33,6 +33,9 @@ from quant_rabbit.dojo_shared_worker_protocol import (
 PORTFOLIO_POLICY_CONTRACT: Final = "QR_DOJO_SHARED_PORTFOLIO_POLICY_V1"
 PORTFOLIO_REPLAY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"
 PORTFOLIO_CARRY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_CARRY_V1"
+PORTFOLIO_CHECKPOINT_CONTRACT: Final = (
+    "QR_DOJO_SHARED_ACCOUNT_INTRA_JOB_CHECKPOINT_V1"
+)
 PORTFOLIO_COORDINATE_RECEIPT_CONTRACT: Final = (
     "QR_DOJO_SHARED_PORTFOLIO_COORDINATE_RECEIPT_V1"
 )
@@ -1621,7 +1624,10 @@ def _new_state(initial_balance_jpy: float, policy_sha256: str) -> dict[str, Any]
 
 
 def _state_from_carry(
-    carry: Mapping[str, Any], policy: Mapping[str, Any]
+    carry: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    *,
+    reset_reporting_window: bool = True,
 ) -> dict[str, Any]:
     row = _mapping(carry, "carry_state")
     expected = frozenset(
@@ -1902,6 +1908,12 @@ def _state_from_carry(
     )
     equity = _account_equity(state, state["last_quotes"], _policy_indexes(policy))
     _assert_close(equity, row["equity_jpy"], "carry_state.equity_jpy")
+    if not reset_reporting_window:
+        # Intra-job resume must preserve the exact reporting denominator and
+        # accumulated economics.  The ordinary month-to-month carry path below
+        # intentionally resets them; keeping this opt-in branch separate
+        # preserves that V1 behavior.
+        return state
     # A carry transfers economic state, not the preceding reporting window.
     # Long-horizon month cells must start at their own month-open MTM equity and
     # report only this segment's fills/costs/drawdown while preserving positions,
@@ -2331,6 +2343,79 @@ class PortfolioReplaySession:
         body["coordinate_receipt_sha256"] = canonical_portfolio_sha256(body)
         return body
 
+    def export_checkpoint(self) -> dict[str, Any]:
+        """Export an exact, causal intra-job resume boundary.
+
+        Unlike the month-to-month carry contract, this checkpoint deliberately
+        preserves the current reporting window, accumulated metrics, event
+        chain, and processed-coordinate denominator.  Export is allowed only
+        after a complete coordinate transaction, never between quote
+        preparation and proposal allocation and never after finalization.
+        """
+
+        if self._prepared is not None:
+            raise DojoPortfolioReplayError(
+                "cannot checkpoint an unacknowledged prepared snapshot"
+            )
+        if self._final_result is not None:
+            raise DojoPortfolioReplayError("cannot checkpoint a finalized session")
+        state_kind = "ACTIVE_EXACT_STATE"
+        initial_balance: float | None = None
+        carry: dict[str, Any] | None
+        if self.state["last_coordinate"] is None:
+            if self._processed_coordinate_count != 0:
+                raise DojoPortfolioReplayError(
+                    "fresh checkpoint has a non-zero processed denominator"
+                )
+            state_kind = "FRESH_INITIAL_BALANCE"
+            initial_balance = float(self.state["balance_jpy"])
+            expected = _new_state(initial_balance, self.policy["policy_sha256"])
+            if self.state != expected:
+                raise DojoPortfolioReplayError(
+                    "fresh checkpoint state differs from the canonical origin"
+                )
+            carry = None
+        else:
+            carry = _carry_artifact(
+                self.state,
+                self.state["last_quotes"],
+                self.indexes,
+            )
+        body: dict[str, Any] = {
+            "contract": PORTFOLIO_CHECKPOINT_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "policy_sha256": self.policy["policy_sha256"],
+            "processed_coordinate_count": self._processed_coordinate_count,
+            "state_kind": state_kind,
+            "initial_balance_jpy": initial_balance,
+            "exact_carry_state": carry,
+            "terminal": False,
+            "live_permission": False,
+            "broker_mutation_allowed": False,
+            "order_authority": "NONE",
+        }
+        body["checkpoint_sha256"] = canonical_portfolio_sha256(body)
+        return _copy(body)
+
+    @classmethod
+    def restore_checkpoint(
+        cls,
+        *,
+        policy: Mapping[str, Any],
+        checkpoint: Mapping[str, Any],
+    ) -> PortfolioReplaySession:
+        """Restore exactly the state exported by :meth:`export_checkpoint`."""
+
+        verified_policy = verify_portfolio_policy(policy)
+        verified_checkpoint = verify_portfolio_replay_checkpoint(
+            policy=verified_policy,
+            checkpoint=checkpoint,
+        )
+        return _restore_portfolio_replay_checkpoint(
+            policy=verified_policy,
+            checkpoint=verified_checkpoint,
+        )
+
     def finalize(
         self,
         *,
@@ -2468,6 +2553,112 @@ class PortfolioReplaySession:
         }
         result["result_sha256"] = canonical_portfolio_sha256(result)
         return result
+
+
+_CHECKPOINT_KEYS = frozenset(
+    {
+        "contract",
+        "schema_version",
+        "policy_sha256",
+        "processed_coordinate_count",
+        "state_kind",
+        "initial_balance_jpy",
+        "exact_carry_state",
+        "terminal",
+        "live_permission",
+        "broker_mutation_allowed",
+        "order_authority",
+        "checkpoint_sha256",
+    }
+)
+
+
+def _restore_portfolio_replay_checkpoint(
+    *,
+    policy: Mapping[str, Any],
+    checkpoint: Mapping[str, Any],
+) -> PortfolioReplaySession:
+    """Construct a session from an already verified exact checkpoint."""
+
+    row = checkpoint
+    if row["state_kind"] == "FRESH_INITIAL_BALANCE":
+        session = PortfolioReplaySession(
+            policy=policy,
+            initial_balance_jpy=row["initial_balance_jpy"],
+        )
+    else:
+        session = PortfolioReplaySession.__new__(PortfolioReplaySession)
+        session.policy = verify_portfolio_policy(policy)
+        session.indexes = _policy_indexes(session.policy)
+        session.state = _state_from_carry(
+            row["exact_carry_state"],
+            session.policy,
+            reset_reporting_window=False,
+        )
+        session._prepared = None
+        session._final_result = None
+        session._terminal_policy = None
+    session._processed_coordinate_count = row["processed_coordinate_count"]
+    return session
+
+
+def verify_portfolio_replay_checkpoint(
+    *,
+    policy: Mapping[str, Any],
+    checkpoint: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Verify one exact intra-job checkpoint without changing V1 carry semantics."""
+
+    verified_policy = verify_portfolio_policy(policy)
+    row = dict(_mapping(checkpoint, "checkpoint"))
+    _exact(row, _CHECKPOINT_KEYS, "checkpoint")
+    unsigned = {key: item for key, item in row.items() if key != "checkpoint_sha256"}
+    if (
+        row["contract"] != PORTFOLIO_CHECKPOINT_CONTRACT
+        or row["schema_version"] != SCHEMA_VERSION
+        or _sha(row["policy_sha256"], "checkpoint.policy_sha256")
+        != verified_policy["policy_sha256"]
+        or canonical_portfolio_sha256(unsigned)
+        != _sha(row["checkpoint_sha256"], "checkpoint.checkpoint_sha256")
+        or row["terminal"] is not False
+        or row["live_permission"] is not False
+        or row["broker_mutation_allowed"] is not False
+        or row["order_authority"] != "NONE"
+    ):
+        raise DojoPortfolioReplayError(
+            "checkpoint contract, policy, digest, or authority boundary is invalid"
+        )
+    processed = _integer(
+        row["processed_coordinate_count"],
+        "checkpoint.processed_coordinate_count",
+    )
+    state_kind = row["state_kind"]
+    if state_kind == "FRESH_INITIAL_BALANCE":
+        if row["exact_carry_state"] is not None or processed != 0:
+            raise DojoPortfolioReplayError("fresh checkpoint shape is invalid")
+        _positive(row["initial_balance_jpy"], "checkpoint.initial_balance_jpy")
+    elif state_kind == "ACTIVE_EXACT_STATE":
+        if row["initial_balance_jpy"] is not None:
+            raise DojoPortfolioReplayError("active checkpoint shape is invalid")
+        state = _state_from_carry(
+            _mapping(row["exact_carry_state"], "checkpoint.exact_carry_state"),
+            verified_policy,
+            reset_reporting_window=False,
+        )
+        if state["last_coordinate"] is None or processed > state["coordinate_seq"]:
+            raise DojoPortfolioReplayError(
+                "active checkpoint coordinate denominator is impossible"
+            )
+    else:
+        raise DojoPortfolioReplayError("checkpoint.state_kind is unsupported")
+    restored = _restore_portfolio_replay_checkpoint(
+        policy=verified_policy,
+        checkpoint=row,
+    )
+    rebuilt = restored.export_checkpoint()
+    if rebuilt != row:
+        raise DojoPortfolioReplayError("checkpoint is not the canonical exact state")
+    return _copy(row)
 
 
 def _legacy_reduce_portfolio_replay(
@@ -3004,6 +3195,7 @@ __all__ = [
     "MONTH_END_FLAT_SETTLEMENT",
     "MONTH_END_MTM_WITH_STATE_HANDOFF",
     "PORTFOLIO_CARRY_CONTRACT",
+    "PORTFOLIO_CHECKPOINT_CONTRACT",
     "PORTFOLIO_COORDINATE_RECEIPT_CONTRACT",
     "PORTFOLIO_POLICY_CONTRACT",
     "PORTFOLIO_REPLAY_CONTRACT",
@@ -3014,5 +3206,6 @@ __all__ = [
     "reduce_portfolio_replay",
     "seal_portfolio_policy",
     "validate_portfolio_replay_result",
+    "verify_portfolio_replay_checkpoint",
     "verify_portfolio_policy",
 ]

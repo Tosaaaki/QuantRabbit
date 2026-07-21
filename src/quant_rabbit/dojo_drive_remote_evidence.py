@@ -15,8 +15,12 @@ representations.
 
 The private trainer-readback boundary in this module exists only for an
 authenticated connector adapter to call with metadata and download bytes it
-fetched in the same process.  No JSON/file CLI is allowed to mint its typed
-capability: without a connector call, local files cannot prove remote custody.
+fetched in the same process.  ``GoogleDriveV3TrainerReadbackConnector`` is the
+sole production adapter: it accepts an already-authenticated Drive v3 service,
+performs only metadata/revision GETs, and never accepts credentials, local
+paths, or caller-authored metadata.  No JSON/file CLI is allowed to mint the
+typed capability: without a connector call, local files cannot prove remote
+custody.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ REMOTE_INDEX_CONTRACT: Final = "QR_DOJO_DRIVE_REMOTE_METADATA_CONSISTENCY_INDEX_
 SCHEMA_VERSION: Final = 1
 MAX_RECEIPT_BYTES: Final = 512 * 1024
 MAX_INDEX_BYTES: Final = 8 * 1024 * 1024
+MAX_TRAINER_READBACK_ARTIFACT_BYTES: Final = 64 * 1024 * 1024
 TRAINER_READBACK_CONTRACT: Final = "QR_DOJO_DRIVE_TRAINER_READBACK_V1"
 TRAINER_READBACK_KINDS: Final = (
     "RUN",
@@ -76,6 +81,9 @@ _DRIVE_READBACK_METADATA_KEYS: Final = frozenset(
 )
 _DRIVE_READBACK_METADATA_FIELDS: Final = tuple(
     sorted(_DRIVE_READBACK_METADATA_KEYS)
+)
+_DRIVE_READBACK_METADATA_FIELDS_QUERY: Final = ",".join(
+    _DRIVE_READBACK_METADATA_FIELDS
 )
 _TRAINER_READBACK_KEYS: Final = frozenset(
     {
@@ -472,8 +480,7 @@ class _AuthenticatedDriveReadbackConnector(ABC):
 
     A plain mapping/list loaded from JSON cannot satisfy this boundary.  The
     production implementation must be owned by the orchestration host and call
-    its authenticated Google Drive connector directly; local Python in this
-    repository deliberately provides no concrete implementation or factory.
+    its already-authenticated Google Drive service directly.
 
     This is a process trust boundary, not a cryptographic remote signature.
     Arbitrary local code can always fabricate an implementation, so packet
@@ -493,6 +500,134 @@ class _AuthenticatedDriveReadbackConnector(ABC):
     @abstractmethod
     def completed_at_utc(self) -> str:
         """Return the host-observed completion time for this readback batch."""
+
+
+class GoogleDriveV3TrainerReadbackConnector(_AuthenticatedDriveReadbackConnector):
+    """Read exact Drive revisions through an already-authenticated v3 service.
+
+    The constructor deliberately accepts only the service object.  In
+    particular, this class has no credential-file, local-path, metadata, upload,
+    mutation, or deletion surface.  For every artifact it performs this exact
+    sequence in the current process::
+
+        files.get(metadata) -> revisions.get(headRevisionId, media)
+            -> files.get(metadata)
+
+    ``completed_at_utc`` then compare-and-swaps every file against one final
+    ``files.get`` snapshot before recording the batch completion time.  This
+    closes the interval in which an earlier artifact could otherwise change
+    while the remaining four artifacts were downloaded.
+
+    This is still a process trust boundary, not a Google signature.  The host
+    is responsible for constructing the supplied service with read-only Drive
+    credentials; the adapter itself never creates or loads credentials.
+    """
+
+    def __init__(self, drive_service: Any) -> None:
+        if drive_service is None:
+            raise TypeError("an already-authenticated Drive v3 service is required")
+        self.__drive_service = drive_service
+        self.__observations: list[tuple[str, tuple[str, ...], dict[str, Any]]] = []
+        self.__completed_at: str | None = None
+
+    def read_revision(
+        self,
+        *,
+        artifact_kind: str,
+        drive_file_id: str,
+        metadata_fields: tuple[str, ...],
+    ) -> _DriveConnectorArtifactReadback:
+        if self.__completed_at is not None:
+            raise RuntimeError("Drive trainer readback batch is already complete")
+        expected_index = len(self.__observations)
+        if expected_index >= len(TRAINER_READBACK_KINDS):
+            raise RuntimeError("Drive trainer readback denominator is already full")
+        if artifact_kind != TRAINER_READBACK_KINDS[expected_index]:
+            raise ValueError("Drive trainer artifacts must use the fixed order")
+        file_id = _drive_id(drive_file_id, "Drive trainer file id")
+        if tuple(metadata_fields) != _DRIVE_READBACK_METADATA_FIELDS:
+            raise ValueError("Drive trainer metadata field set is fixed")
+        if any(observed_id == file_id for observed_id, _, _ in self.__observations):
+            raise ValueError("Drive trainer file id is duplicated")
+
+        metadata_before = self.__get_file_metadata(file_id)
+        if metadata_before.get("id") != file_id:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive metadata returned another file id"
+            )
+        if metadata_before.get("trashed") is not False:
+            raise DojoDriveRemoteEvidenceError("Drive readback object is trashed")
+        size = _decimal_integer(metadata_before.get("size"), "Drive readback size")
+        if size > MAX_TRAINER_READBACK_ARTIFACT_BYTES:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive trainer artifact exceeds the bounded download size"
+            )
+        revision_id = _drive_id(
+            metadata_before.get("headRevisionId"),
+            "Drive readback head revision id",
+        )
+        downloaded = self.__get_revision_media(file_id, revision_id)
+        if not isinstance(downloaded, bytes) or not downloaded:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive revision media must be nonempty exact bytes"
+            )
+        if len(downloaded) > MAX_TRAINER_READBACK_ARTIFACT_BYTES:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive trainer revision exceeds the bounded download size"
+            )
+        metadata_after = self.__get_file_metadata(file_id)
+        self.__observations.append(
+            (file_id, _DRIVE_READBACK_METADATA_FIELDS, metadata_after)
+        )
+        return _DriveConnectorArtifactReadback(
+            artifact_kind=artifact_kind,
+            metadata_before=metadata_before,
+            metadata_after=metadata_after,
+            downloaded_bytes=downloaded,
+        )
+
+    def completed_at_utc(self) -> str:
+        if self.__completed_at is not None:
+            return self.__completed_at
+        if len(self.__observations) != len(TRAINER_READBACK_KINDS):
+            raise RuntimeError("Drive trainer readback denominator is incomplete")
+        for file_id, fields, metadata_after in self.__observations:
+            if fields != _DRIVE_READBACK_METADATA_FIELDS:
+                raise RuntimeError("Drive trainer metadata field set drifted")
+            coordinator_metadata = self.__get_file_metadata(file_id)
+            if coordinator_metadata != metadata_after:
+                raise DojoDriveRemoteEvidenceError(
+                    "Drive revision changed before batch completion"
+                )
+        self.__completed_at = (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z")
+        )
+        return self.__completed_at
+
+    def __get_file_metadata(self, file_id: str) -> dict[str, Any]:
+        request = self.__drive_service.files().get(
+            fileId=file_id,
+            fields=_DRIVE_READBACK_METADATA_FIELDS_QUERY,
+            supportsAllDrives=True,
+        )
+        result = request.execute()
+        row = _exact(result, _DRIVE_READBACK_METADATA_KEYS, "Drive v3 metadata")
+        return _clone(row)
+
+    def __get_revision_media(self, file_id: str, revision_id: str) -> bytes:
+        request = self.__drive_service.revisions().get(
+            fileId=file_id,
+            revisionId=revision_id,
+            alt="media",
+        )
+        result = request.execute()
+        if not isinstance(result, bytes):
+            raise DojoDriveRemoteEvidenceError(
+                "Drive v3 revision download did not return exact bytes"
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -684,9 +819,13 @@ def _verify_authenticated_drive_trainer_readback(
                 f"Drive {kind} connector returned another file id"
             )
         modified = _utc(metadata["modified_time"], f"{kind} modified_time")
-        if modified < handoff_instant or modified > observed_instant:
+        if modified > observed_instant:
             raise DojoDriveRemoteEvidenceError(
-                f"Drive {kind} modified time is outside handoff/readback bounds"
+                f"Drive {kind} modified time postdates Drive readback"
+            )
+        if kind == "TERMINAL_HANDOFF" and modified < handoff_instant:
+            raise DojoDriveRemoteEvidenceError(
+                "Drive TERMINAL_HANDOFF modified time predates terminal handoff"
             )
         if (
             metadata["drive_file_id"] in seen_ids
@@ -1868,6 +2007,7 @@ __all__ = [
     "REMOTE_RECEIPT_CONTRACT",
     "SCHEMA_VERSION",
     "DriveMetadataConsistencyResult",
+    "GoogleDriveV3TrainerReadbackConnector",
     "TRAINER_READBACK_CONTRACT",
     "TRAINER_READBACK_KINDS",
     "canonical_artifact_bytes",
