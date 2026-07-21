@@ -9,7 +9,7 @@
 ボット（戦略ワーカー）とAIエージェントの両方が同じ口座・同じ約定エンジンで取引できる。
 目的: 戦略・裁量の候補を、**実弾前に・嘘の入り込めない条件で**審判すること。
 
-- 場所: git worktree `/private/tmp/QuantRabbit-episode-outcome`（branch `codex/episode-s5-outcome`）
+- 場所: git worktree `/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome`（branch `codex/episode-s5-outcome`）
 - 本体repo（`/Users/tossaki/App/QuantRabbit`）とはブランチが別。混ぜない。
 
 ## 2. 構成ファイル
@@ -23,6 +23,7 @@
 | `scripts/run-dojo-lab.py` | 宣言済みグリッド一括審判（TRAIN→VAL→OLHCブラケット） |
 | `scripts/run-pair-adaptation-lab.py` | ペア別幾何適応（screen→専用服→VAL/S5処刑）。換算フィード同席は`feed_pairs()`が担保 |
 | `scripts/run-live-shadow-environment.py` | 受動シャドー環境（黄金日MomentumBurst観測用・二重出口簿記） |
+| `scripts/run-dojo-forward-cycle.sh` | W_FADE + W_SPIKE_FADE の恒久ライブペーパー起動契約（12時間、`ORDER AUTHORITY: NONE`） |
 | `scripts/oanda_history_fetch_m1.py` | M1取得（凍結fetcherの削除ガード準拠派生。原本 `oanda_history_fetch.py` は編集禁止） |
 | `docs/virtual_market_environment.md` | エージェント操作書（inbox JSONプロトコル） |
 | `docs/design_weakness_ledger_20260718.md` | **W1〜W55 全審判記録（正本）。必読** |
@@ -38,7 +39,7 @@
 ## 4. 実行例
 
 ```bash
-cd /private/tmp/QuantRabbit-episode-outcome
+cd /Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome
 # ボット入り高速リプレイ（強化関門）
 DOJO_BOT_CONFIG='{"signal":"range_fade_limit","pairs":["USD_JPY"],"tp_pips":6,"sl_pips":null,"ceiling_min":480,"max_concurrent":3,"per_pos_lev":4.3,"atr_floor_pips":1.0,"fade_atr":1.2,"eff_max":0.2}' \
 PYTHONPATH=src /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
@@ -51,6 +52,15 @@ PYTHONPATH=src /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
 QR_OANDA_ENV_FILE=/Users/tossaki/App/QuantRabbit-live/.env.local ... --feed live --minutes 480
 ```
 台帳集計: ledger.jsonl の EXIT_*/CLOSE/MARGIN_* 行の pl_jpy を日次合算（既存ラボスクリプトの report() を流用）。
+
+### 恒久forward運用（2026-07-22引き継ぎ）
+
+- supervisor: detached screen `qr-dojo-episode-s5-forward`
+- session: `research/data/dojo_forward_20260720`
+- launcher: `./scripts/run-dojo-forward-cycle.sh`
+- Codex monitor: `qr-dojo-episode-s5-forward-monitor`（30分ごと。正常な`SESSION_STOP`とledger/snapshot SHA一致時だけ次周回を起動）
+- snapshotはstate更新ごとに原子的保存し、`ledger_sha`がterminal SHAと違えば再開をfail-closedする。起動時にledger全hash-chainを再検証する。
+- 2026-07-22の旧cycle 4は、再起動時に8h天井をリセットしていたため前向き証拠として無効。`T000184` / `T000207` / `T000229` の後続決済もcarry-repairとして分離する。クリーンなpost-fix成績は `trade_id > T000229` の新規約定から数える。
 
 ## 5. 確定済みの結論（W37〜W55、詳細は台帳）
 
