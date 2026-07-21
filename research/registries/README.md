@@ -65,8 +65,11 @@
     room; a four-capital-slot common TRAIN sparring arena is separate from unopened holdout
     examination and prospective-forward arenas
   - exact G2 baseline binding rejects the existing six families and any resealed duplicate
-  - the external AI trainer may reserve at most one design only after a changed terminal/material
-    cost+MTM+margin+LOPO TRAIN result; unchanged results are a semantic no-op
+  - the queue is currently a planning catalog, not an operational reservation authority:
+    its V1 transition state has no authenticated receipt chain or lock-backed compare-and-swap
+  - the external AI trainer must not reserve or complete a design until that control plane exists;
+    it may prepare an unreserved proposal only after a changed terminal/material
+    cost+MTM+margin+LOPO TRAIN result, while unchanged results remain a semantic no-op
   - holdout/prospective opening, monthly-target backsolving, proof, promotion, live permission,
     broker mutation, and QuantRabbit model API calls remain forbidden
 

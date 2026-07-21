@@ -137,9 +137,13 @@ def test_resource_boundary_active_health_and_semantic_noop() -> None:
     required = 20 * 1024**3 + 1280
     blocked = _raw_observation(free_bytes=required - 1)
     blocked_state = _observed_state(blocked)
-    assert plan_heartbeat(blocked_state, policy=policy)["action"] == (
-        "RESOURCE_BACKPRESSURE"
-    )
+    blocked_decision = plan_heartbeat(blocked_state, policy=policy)
+    assert blocked_decision["action"] == "RUN_CONTROL_NOT_AUTHORIZED"
+    assert blocked_decision["phase"] == "RESOURCE_ONLY"
+    assert blocked_decision["reasons"] == [
+        "RUN_CONTROL_NOT_AUTHORIZED",
+        "INSUFFICIENT_FREE_BYTES",
+    ]
 
     running = _raw_observation(process_state="RUNNING")
     state = _observed_state(running)
@@ -166,6 +170,54 @@ def test_resource_boundary_active_health_and_semantic_noop() -> None:
         seal_observation(running, policy=policy)
 
 
+def test_idle_resource_gate_never_grants_unreserved_run_control() -> None:
+    policy = _policy()
+    state = _observed_state(_raw_observation())
+
+    decision = plan_heartbeat(
+        state,
+        policy=policy,
+        evaluated_at_utc="2026-07-22T00:02:00Z",
+    )
+
+    assert decision["action"] == "RUN_CONTROL_NOT_AUTHORIZED"
+    assert decision["phase"] == "RESOURCE_ONLY"
+    assert decision["obligation_id"] is None
+    assert decision["operation_id"] is None
+    assert decision["permissions"]["manual_run_start_eligible"] is False
+    assert decision["permissions"]["work_reservation_allowed"] is False
+    assert decision["resource_gate"]["start_allowed"] is True
+
+
+def test_status_evaluation_fails_closed_on_stale_observation_without_state_write() -> (
+    None
+):
+    policy = _policy()
+    state = _observed_state(_raw_observation())
+    original = copy.deepcopy(state)
+
+    exact_boundary = plan_heartbeat(
+        state,
+        policy=policy,
+        evaluated_at_utc="2026-07-22T00:03:00Z",
+    )
+    stale = plan_heartbeat(
+        state,
+        policy=policy,
+        evaluated_at_utc="2026-07-22T00:03:01Z",
+    )
+
+    assert "HEALTH_OBSERVATION_STALE" not in exact_boundary["reasons"]
+    assert stale["action"] == "RUN_CONTROL_NOT_AUTHORIZED"
+    assert stale["phase"] == "RESOURCE_ONLY"
+    assert stale["reasons"] == [
+        "RUN_CONTROL_NOT_AUTHORIZED",
+        "HEALTH_OBSERVATION_STALE",
+    ]
+    assert stale["permissions"]["manual_run_start_eligible"] is False
+    assert state == original
+
+
 def test_terminal_validation_and_review_are_each_recorded_exactly_once() -> None:
     policy = _policy()
     state = _observed_state(
@@ -186,9 +238,7 @@ def test_failed_validation_is_not_retried_or_promoted_to_terminal_review() -> No
     state = _observed_state(
         _raw_observation(process_state="EXITED", terminal_sha=SHA_C)
     )
-    state = _reserve_and_complete(
-        state, result_sha=SHA_A, outcome="FAILED", minute=2
-    )
+    state = _reserve_and_complete(state, result_sha=SHA_A, outcome="FAILED", minute=2)
     review = plan_heartbeat(state, policy=policy)
     assert review["action"] == "REVIEW_REQUIRED"
     assert review["phase"] == "TERMINAL_VALIDATION_FAILED"
@@ -291,9 +341,7 @@ def test_state_tampering_is_rejected() -> None:
 
 def test_event_type_cannot_mislabel_an_observation_transition() -> None:
     policy = _policy()
-    initial = initial_state(
-        policy=policy, initialized_at_utc="2026-07-22T00:00:00Z"
-    )
+    initial = initial_state(policy=policy, initialized_at_utc="2026-07-22T00:00:00Z")
     genesis = build_event(
         sequence=0,
         previous_event_sha256=GENESIS_SHA256,

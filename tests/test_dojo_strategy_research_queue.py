@@ -20,6 +20,7 @@ from quant_rabbit.dojo_strategy_research_queue import (
     load_research_queue,
     main,
     plan_reservation,
+    resolve_queue_room_binding,
     validate_research_queue,
     validate_reservation_state,
     validate_trigger,
@@ -184,6 +185,29 @@ def test_candidates_are_novel_and_bind_causal_falsifiable_economics() -> None:
     }
     assert len(arena_roots) == 3
     assert arena_roots.isdisjoint(room_roots)
+
+
+def test_queue_room_binding_is_canonical_and_unique() -> None:
+    queue = _queue()
+    binding = resolve_queue_room_binding(queue, dojo_room_id="room-03")
+
+    candidate = queue["candidates"][2]
+    assert binding == {
+        "contract": "QR_DOJO_STRATEGY_QUEUE_ROOM_BINDING_V1",
+        "queue_contract": queue["contract"],
+        "queue_id": queue["queue_id"],
+        "queue_artifact_sha256": queue["artifact_sha256"],
+        "dojo_room_id": "room-03",
+        "canonical_candidate_id": candidate["candidate_id"],
+        "canonical_candidate_sha256": candidate["candidate_sha256"],
+        "canonical_family": "g8_relative_strength_risk_budget",
+    }
+
+    with pytest.raises(
+        DojoStrategyResearchQueueError,
+        match="exactly one canonical queue candidate",
+    ):
+        resolve_queue_room_binding(queue, dojo_room_id="room-ai-01")
 
 
 def test_mutated_or_g2_duplicate_queue_fails_even_if_resealed() -> None:

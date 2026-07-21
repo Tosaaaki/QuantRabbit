@@ -300,8 +300,7 @@ def _proposal_rows(
             "supports_dynamic_tp_sl": family
             in {"session_open_range_break", "weekend_gap_recovery"},
             "supports_breakeven_overlay": True,
-            "supports_atr_trailing_overlay": family
-            != ASIA_SWEEP_RECLAIM_BE_FAMILY,
+            "supports_atr_trailing_overlay": family != ASIA_SWEEP_RECLAIM_BE_FAMILY,
             "m5_close_only": family == ASIA_SWEEP_RECLAIM_BE_FAMILY,
             "proposal_on_next_batch_only": family == ASIA_SWEEP_RECLAIM_BE_FAMILY,
             "dependency_algorithm_sha256": dependency_algorithm_sha256,
@@ -678,6 +677,8 @@ def _validate_worker_pair_state(value: Any, *, cadence_seconds: int) -> None:
             "range_high",
             "range_low",
             "reclaim_close",
+            "signal_high",
+            "signal_low",
             "swept_level",
         }:
             raise DojoTunedStrategyRuntimeError(
@@ -704,17 +705,21 @@ def _validate_worker_pair_state(value: Any, *, cadence_seconds: int) -> None:
             )
         range_high = _finite_or_none(pending["range_high"], field="range_high")
         range_low = _finite_or_none(pending["range_low"], field="range_low")
-        reclaim_close = _finite_or_none(
-            pending["reclaim_close"], field="reclaim_close"
-        )
+        reclaim_close = _finite_or_none(pending["reclaim_close"], field="reclaim_close")
+        signal_high = _finite_or_none(pending["signal_high"], field="signal_high")
+        signal_low = _finite_or_none(pending["signal_low"], field="signal_low")
         swept_level = _finite_or_none(pending["swept_level"], field="swept_level")
         if (
             range_high is None
             or range_low is None
             or reclaim_close is None
+            or signal_high is None
+            or signal_low is None
             or swept_level is None
             or range_high <= range_low
-            or min(range_low, reclaim_close, swept_level) <= 0
+            or min(range_low, reclaim_close, signal_high, signal_low, swept_level) <= 0
+            or signal_low > reclaim_close
+            or signal_high < reclaim_close
             or (side == "SHORT" and swept_level != range_high)
             or (side == "LONG" and swept_level != range_low)
             or not range_low < reclaim_close < range_high
@@ -750,6 +755,74 @@ def _validate_worker_pair_state(value: Any, *, cadence_seconds: int) -> None:
             raise DojoTunedStrategyRuntimeError("invalid position overlay values")
         if not isinstance(overlay["breakeven_done"], bool):
             raise DojoTunedStrategyRuntimeError("invalid breakeven overlay flag")
+
+
+def _validate_asia_sweep_reclaim_pending_causality(
+    *,
+    runtime_state: Mapping[str, Any],
+    market_pair_state: Mapping[str, Any],
+    worker_pair_state: Mapping[str, Any],
+    cadence_seconds: int,
+) -> None:
+    """Bind a carried Asia signal to the exact completed market candle."""
+
+    pending = worker_pair_state["asia_sweep_reclaim_pending"]
+    if pending is None:
+        return
+    signal_epoch = pending["signal_close_epoch"]
+    if (
+        runtime_state["last_phase"] != "C"
+        or runtime_state["last_epoch"] != signal_epoch
+        or market_pair_state["last_closed_epoch"] != signal_epoch
+        or market_pair_state["last_bar_epoch"] != signal_epoch
+        or market_pair_state["forming"] is not None
+        or not market_pair_state["recent_bar_epochs"]
+        or market_pair_state["recent_bar_epochs"][-1] != signal_epoch
+    ):
+        raise DojoTunedStrategyRuntimeError(
+            "Asia sweep/reclaim pending is detached from the last completed candle"
+        )
+    if (
+        market_pair_state["session_day"] != pending["session_day"]
+        or datetime.fromtimestamp(signal_epoch, _UTC)
+        .astimezone(_LONDON)
+        .date()
+        .isoformat()
+        != pending["session_day"]
+        or not _session_range_complete(market_pair_state, cadence=cadence_seconds)
+        or market_pair_state["session_range_high"] != pending["range_high"]
+        or market_pair_state["session_range_low"] != pending["range_low"]
+    ):
+        raise DojoTunedStrategyRuntimeError(
+            "Asia sweep/reclaim pending is detached from its session range"
+        )
+    if (
+        not market_pair_state["highs"]
+        or not market_pair_state["lows"]
+        or not market_pair_state["closes"]
+        or market_pair_state["last_bar_close"] != pending["reclaim_close"]
+        or market_pair_state["closes"][-1] != pending["reclaim_close"]
+        or market_pair_state["highs"][-1] != pending["signal_high"]
+        or market_pair_state["lows"][-1] != pending["signal_low"]
+    ):
+        raise DojoTunedStrategyRuntimeError(
+            "Asia sweep/reclaim pending is detached from its signal bar"
+        )
+    signal_high = market_pair_state["highs"][-1]
+    signal_low = market_pair_state["lows"][-1]
+    swept_high = signal_high > pending["range_high"]
+    swept_low = signal_low < pending["range_low"]
+    expected_side = (
+        "SHORT"
+        if swept_high and not swept_low
+        else "LONG"
+        if swept_low and not swept_high
+        else None
+    )
+    if expected_side is None or pending["side"] != expected_side:
+        raise DojoTunedStrategyRuntimeError(
+            "Asia sweep/reclaim pending side differs from its signal bar"
+        )
 
 
 def _strict_prior_state(
@@ -867,10 +940,15 @@ def _strict_prior_state(
             or set(worker["pairs"]) != set(trade_pairs)
         ):
             raise DojoTunedStrategyRuntimeError("prior worker identity drifted")
-        for pair_state in worker["pairs"].values():
-            _validate_worker_pair_state(
-                pair_state, cadence_seconds=cadence_seconds
-            )
+        for pair, pair_state in worker["pairs"].items():
+            _validate_worker_pair_state(pair_state, cadence_seconds=cadence_seconds)
+            if binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY:
+                _validate_asia_sweep_reclaim_pending_causality(
+                    runtime_state=detached,
+                    market_pair_state=detached["market_pairs"][pair],
+                    worker_pair_state=pair_state,
+                    cadence_seconds=cadence_seconds,
+                )
     return detached
 
 
@@ -1469,6 +1547,8 @@ def _stage_asia_sweep_reclaim(
         "range_high": range_high,
         "range_low": range_low,
         "reclaim_close": reclaim_close,
+        "signal_high": float(bar["h"]),
+        "signal_low": float(bar["l"]),
         "swept_level": range_high if side == "SHORT" else range_low,
     }
 
@@ -1858,10 +1938,13 @@ class _TunedStrategyRuntime:
                 raise DojoTunedStrategyRuntimeError(
                     "active worker is outside the sealed tuned catalog"
                 )
-        if any(
-            binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY
-            for binding in self._bindings
-        ) and granularity != "M5":
+        if (
+            any(
+                binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY
+                for binding in self._bindings
+            )
+            and granularity != "M5"
+        ):
             raise DojoTunedStrategyRuntimeError(
                 "asia_sweep_reclaim_be requires sealed M5 coordinates"
             )

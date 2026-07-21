@@ -28,12 +28,17 @@ from typing import Any, Final
 
 ROOM_REGISTRY_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_REGISTRY_V1"
 ROOM_RECEIPT_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_RECEIPT_V1"
+QUEUE_BOUND_ROOM_RECEIPT_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_RECEIPT_V2"
 ROOM_DENOMINATOR_CONTRACT: Final = "QR_DOJO_ROOM_FIXED_TRAIN_DENOMINATOR_V1"
 COMMON_SPARRING_HANDOFF_CONTRACT: Final = "QR_DOJO_COMMON_SPARRING_HANDOFF_V1"
+QUEUE_BOUND_COMMON_SPARRING_HANDOFF_CONTRACT: Final = (
+    "QR_DOJO_COMMON_SPARRING_HANDOFF_V2"
+)
 COMMON_SPARRING_DENOMINATOR_CONTRACT: Final = (
     "QR_DOJO_COMMON_SPARRING_FIXED_DENOMINATOR_V1"
 )
 SCHEMA_VERSION: Final = 1
+QUEUE_BOUND_SCHEMA_VERSION: Final = 2
 TAXONOMY_REVISION: Final = "DOJO_ONE_THESIS_PER_ROOM_TAXONOMY_V1"
 ROOM_ARTIFACT_ROOT: Final = "research/dojo/training_rooms"
 COMMON_SPARRING_SLOTS: Final = 4
@@ -228,8 +233,8 @@ INITIAL_ROOM_TAXONOMY: Final = (
     TrainingRoomTaxonomy(
         "room-03",
         "g8_relative_strength_risk_budget",
-        "Allocate four shared-risk seats to strongest-versus-weakest G8 pairs from closed D1 strength.",
-        "CAUSAL_MULTI_PAIR_CLOSED_D1_AND_PORTFOLIO_STATE",
+        "Allocate four shared-risk seats to strongest-versus-weakest G8 pairs from closed H1 strength.",
+        "CAUSAL_MULTI_PAIR_CLOSED_H1_AND_PORTFOLIO_STATE",
         "DETERMINISTIC_PORTFOLIO_WORKER_NO_MODEL_CONTEXT",
     ),
     TrainingRoomTaxonomy(
@@ -348,9 +353,7 @@ def build_training_room_registry(
         "contract": ROOM_REGISTRY_CONTRACT,
         "schema_version": SCHEMA_VERSION,
         "registry_id": _identifier(registry_id, field="registry_id"),
-        "registry_revision": _identifier(
-            registry_revision, field="registry_revision"
-        ),
+        "registry_revision": _identifier(registry_revision, field="registry_revision"),
         "taxonomy_revision": TAXONOMY_REVISION,
         "taxonomy_readme": ROOM_TAXONOMY_README,
         "taxonomy_readme_sha256": canonical_room_sha256(ROOM_TAXONOMY_README),
@@ -438,8 +441,14 @@ def build_training_room_receipt(
     failed_coordinate_count: int,
     budget_consumed: Mapping[str, Any],
     artifact_relative_path: str,
+    research_queue: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Seal one room-local terminal TRAIN receipt."""
+    """Seal one room-local terminal TRAIN receipt.
+
+    Passing ``research_queue`` opts into the queue-bound V2 contract.  V2 is
+    required for queue candidates admitted to a queue-bound common sparring
+    handoff; legacy V1 receipts remain readable but cannot satisfy that gate.
+    """
 
     normalized_registry = validate_training_room_registry(registry)
     room = _registry_room(normalized_registry, room_id)
@@ -478,15 +487,50 @@ def build_training_room_receipt(
             "room_denominator_sha256"
         ],
     )
-    consumed = _normalize_budget_consumed(
-        budget_consumed, room["search_budget"]
-    )
+    queue_binding: dict[str, Any] | None = None
+    if research_queue is not None:
+        from quant_rabbit.dojo_strategy_research_queue import (
+            DojoStrategyResearchQueueError,
+            resolve_queue_room_binding,
+        )
+
+        try:
+            canonical_binding = resolve_queue_room_binding(
+                research_queue, dojo_room_id=room_id
+            )
+        except DojoStrategyResearchQueueError as exc:
+            raise DojoTrainingRoomError(
+                "queue-bound receipt requires one canonical room candidate"
+            ) from exc
+        expected_local_candidate_id = (
+            f"{room_id}:{canonical_binding['canonical_candidate_id']}"
+        )
+        if normalized_candidate["candidate_id"] != expected_local_candidate_id:
+            raise DojoTrainingRoomError(
+                "room candidate differs from the canonical queue candidate"
+            )
+        if room["strategy_family"] != canonical_binding["canonical_family"]:
+            raise DojoTrainingRoomError(
+                "room strategy family differs from the canonical queue family"
+            )
+        queue_binding = {
+            **canonical_binding,
+            "room_local_candidate_id": normalized_candidate["candidate_id"],
+            "registry_strategy_family": room["strategy_family"],
+        }
+    consumed = _normalize_budget_consumed(budget_consumed, room["search_budget"])
     artifact_path = _artifact_path_in_namespace(
         artifact_relative_path, room["artifact_namespace"]
     )
     body = {
-        "contract": ROOM_RECEIPT_CONTRACT,
-        "schema_version": SCHEMA_VERSION,
+        "contract": (
+            QUEUE_BOUND_ROOM_RECEIPT_CONTRACT
+            if queue_binding is not None
+            else ROOM_RECEIPT_CONTRACT
+        ),
+        "schema_version": (
+            QUEUE_BOUND_SCHEMA_VERSION if queue_binding is not None else SCHEMA_VERSION
+        ),
         "registry_id": normalized_registry["registry_id"],
         "registry_revision": normalized_registry["registry_revision"],
         "registry_sha256": normalized_registry["registry_sha256"],
@@ -498,9 +542,7 @@ def build_training_room_receipt(
         "shared_bindings_sha256": normalized_registry["shared_bindings"][
             "shared_bindings_sha256"
         ],
-        "fixed_train_denominator": _strict_clone(
-            room["fixed_train_denominator"]
-        ),
+        "fixed_train_denominator": _strict_clone(room["fixed_train_denominator"]),
         "terminal": {
             "status": terminal_status,
             "expected_coordinate_count": expected_count,
@@ -511,6 +553,11 @@ def build_training_room_receipt(
             "eligible_for_common_sparring": terminal_validated,
         },
         "candidate": normalized_candidate,
+        **(
+            {"research_queue_binding": queue_binding}
+            if queue_binding is not None
+            else {}
+        ),
         "budget_consumed": consumed,
         "stage": "WORN_HISTORICAL_TRAIN_ONLY",
         "holdout_exam_result": False,
@@ -521,12 +568,20 @@ def build_training_room_receipt(
 
 
 def validate_training_room_receipt(
-    value: Mapping[str, Any], *, registry: Mapping[str, Any]
+    value: Mapping[str, Any],
+    *,
+    registry: Mapping[str, Any],
+    research_queue: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebuild one room receipt and reject every schema or binding drift."""
 
     normalized_registry = validate_training_room_registry(registry)
     row = _strict_clone(value)
+    queue_bound = row.get("contract") == QUEUE_BOUND_ROOM_RECEIPT_CONTRACT
+    if queue_bound != (research_queue is not None):
+        raise DojoTrainingRoomError(
+            "queue-bound V2 receipt and research queue must be supplied together"
+        )
     terminal = _mapping(row.get("terminal"), field="terminal")
     candidate = _mapping(row.get("candidate"), field="candidate")
     cross_parent = candidate.get("cross_room_parent")
@@ -548,6 +603,7 @@ def validate_training_room_receipt(
         failed_coordinate_count=terminal.get("failed_coordinate_count"),
         budget_consumed=row.get("budget_consumed"),
         artifact_relative_path=row.get("artifact_relative_path"),
+        research_queue=research_queue,
     )
     if row != expected:
         raise DojoTrainingRoomError("room receipt differs from canonical V1")
@@ -561,6 +617,7 @@ def build_common_sparring_handoff(
     handoff_revision: str,
     room_receipts: Sequence[Mapping[str, Any]],
     fixed_denominator: Mapping[str, Any],
+    research_queue: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preregister common sparring from at most one validated candidate/room."""
 
@@ -569,10 +626,31 @@ def build_common_sparring_handoff(
         raise DojoTrainingRoomError(
             "common sparring requires at least one room receipt"
         )
-    receipts = [
-        validate_training_room_receipt(receipt, registry=normalized_registry)
-        for receipt in room_receipts
-    ]
+    queue_bindings: dict[str, dict[str, Any]] = {}
+    if research_queue is not None:
+        from quant_rabbit.dojo_strategy_research_queue import validate_research_queue
+
+        queue = validate_research_queue(research_queue)
+        queue_bindings = {
+            candidate["dojo_room_id"]: {
+                "canonical_candidate_id": candidate["candidate_id"],
+                "canonical_candidate_sha256": candidate["candidate_sha256"],
+                "canonical_family": candidate["family"],
+            }
+            for candidate in queue["candidates"]
+        }
+    receipts: list[dict[str, Any]] = []
+    for receipt_value in room_receipts:
+        receipt_row = _mapping(receipt_value, field="room receipt")
+        receipt_room_id = receipt_row.get("room_id")
+        receipt_queue = research_queue if receipt_room_id in queue_bindings else None
+        receipts.append(
+            validate_training_room_receipt(
+                receipt_row,
+                registry=normalized_registry,
+                research_queue=receipt_queue,
+            )
+        )
     by_room: dict[str, dict[str, Any]] = {}
     candidate_ids: set[str] = set()
     for receipt in receipts:
@@ -602,6 +680,7 @@ def build_common_sparring_handoff(
         if receipt is None:
             continue
         candidate = receipt["candidate"]
+        queue_binding = receipt.get("research_queue_binding")
         candidates.append(
             {
                 "room_id": room_id,
@@ -614,15 +693,26 @@ def build_common_sparring_handoff(
                 "room_train_result_is_selection_provenance_only": True,
                 "common_sparring_denominator_reexecution_required": True,
                 "common_sparring_result_sha256": None,
+                **(
+                    {
+                        "research_queue_binding": _strict_clone(queue_binding),
+                    }
+                    if queue_binding is not None
+                    else {}
+                ),
             }
         )
     body = {
-        "contract": COMMON_SPARRING_HANDOFF_CONTRACT,
-        "schema_version": SCHEMA_VERSION,
-        "handoff_id": _identifier(handoff_id, field="handoff_id"),
-        "handoff_revision": _identifier(
-            handoff_revision, field="handoff_revision"
+        "contract": (
+            QUEUE_BOUND_COMMON_SPARRING_HANDOFF_CONTRACT
+            if research_queue is not None
+            else COMMON_SPARRING_HANDOFF_CONTRACT
         ),
+        "schema_version": (
+            QUEUE_BOUND_SCHEMA_VERSION if research_queue is not None else SCHEMA_VERSION
+        ),
+        "handoff_id": _identifier(handoff_id, field="handoff_id"),
+        "handoff_revision": _identifier(handoff_revision, field="handoff_revision"),
         "registry_id": normalized_registry["registry_id"],
         "registry_revision": normalized_registry["registry_revision"],
         "registry_sha256": normalized_registry["registry_sha256"],
@@ -637,6 +727,18 @@ def build_common_sparring_handoff(
         },
         "candidate_count": len(candidates),
         "candidates": candidates,
+        **(
+            {
+                "research_queue_binding": {
+                    "queue_contract": queue["contract"],
+                    "queue_id": queue["queue_id"],
+                    "queue_artifact_sha256": queue["artifact_sha256"],
+                    "bound_room_ids": sorted(queue_bindings),
+                }
+            }
+            if research_queue is not None
+            else {}
+        ),
         "status": "PREREGISTERED_NOT_EXECUTED",
         "room_train_results_reused_as_sparring_results": False,
         "parameters_mutable_in_common_sparring": False,
@@ -653,6 +755,7 @@ def validate_common_sparring_handoff(
     *,
     registry: Mapping[str, Any],
     room_receipts: Sequence[Mapping[str, Any]],
+    research_queue: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebuild a handoff from its receipts and fixed denominator core."""
 
@@ -666,11 +769,10 @@ def validate_common_sparring_handoff(
         fixed_denominator={
             key: denominator.get(key) for key in _DENOMINATOR_INPUT_KEYS
         },
+        research_queue=research_queue,
     )
     if row != expected:
-        raise DojoTrainingRoomError(
-            "common sparring handoff differs from canonical V1"
-        )
+        raise DojoTrainingRoomError("common sparring handoff differs from canonical V1")
     return row
 
 
@@ -809,9 +911,7 @@ def _normalize_candidate(
         parent = _exact_mapping(
             cross_parent, _CROSS_ROOM_PARENT_KEYS, field="cross_room_parent"
         )
-        source_room_id = _identifier(
-            parent["source_room_id"], field="source_room_id"
-        )
+        source_room_id = _identifier(parent["source_room_id"], field="source_room_id")
         if source_room_id == room_id or source_room_id not in _TAXONOMY_BY_ID:
             raise DojoTrainingRoomError(
                 "cross-room parent must name another registered room"
@@ -896,9 +996,7 @@ def _artifact_path_in_namespace(value: Any, namespace: str) -> str:
     try:
         path.relative_to(namespace_path)
     except ValueError as exc:
-        raise DojoTrainingRoomError(
-            "artifact path escapes the room namespace"
-        ) from exc
+        raise DojoTrainingRoomError("artifact path escapes the room namespace") from exc
     return path.as_posix()
 
 
@@ -925,12 +1023,12 @@ def _strict_clone(value: Any) -> Any:
             )
         )
     except (TypeError, ValueError) as exc:
-        raise DojoTrainingRoomError(
-            "contract must contain strict JSON values"
-        ) from exc
+        raise DojoTrainingRoomError("contract must contain strict JSON values") from exc
 
 
-def _exact_mapping(value: Any, keys: set[str] | frozenset[str], *, field: str) -> dict[str, Any]:
+def _exact_mapping(
+    value: Any, keys: set[str] | frozenset[str], *, field: str
+) -> dict[str, Any]:
     row = _mapping(value, field=field)
     if set(row) != set(keys):
         raise DojoTrainingRoomError(f"{field} schema is not exact")
@@ -938,17 +1036,13 @@ def _exact_mapping(value: Any, keys: set[str] | frozenset[str], *, field: str) -
 
 
 def _mapping(value: Any, *, field: str) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or any(
-        not isinstance(key, str) for key in value
-    ):
+    if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
         raise DojoTrainingRoomError(f"{field} must be an object")
     return dict(value)
 
 
 def _sequence(value: Any, *, field: str) -> list[Any]:
-    if not isinstance(value, Sequence) or isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         raise DojoTrainingRoomError(f"{field} must be an array")
     return list(value)
 

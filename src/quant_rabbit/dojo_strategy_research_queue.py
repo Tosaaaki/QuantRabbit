@@ -36,6 +36,7 @@ STATUS: Final = "DESIGN_BACKLOG_NOT_EXECUTED"
 EVIDENCE_CLASS: Final = "WORN_HISTORICAL_TRAIN_ONLY"
 SELECTION_BASIS: Final = "ROBUST_POST_COST_EVIDENCE_ONLY"
 ROOM_ISOLATION_CONTRACT: Final = "QR_DOJO_STRATEGY_RESEARCH_ROOM_ISOLATION_V1"
+QUEUE_ROOM_BINDING_CONTRACT: Final = "QR_DOJO_STRATEGY_QUEUE_ROOM_BINDING_V1"
 
 _SHA256_RE: Final = re.compile(r"[0-9a-f]{64}\Z")
 _ZERO_SHA256: Final = "0" * 64
@@ -674,6 +675,42 @@ def validate_research_queue(value: Mapping[str, Any]) -> dict[str, Any]:
             "research queue differs from the exact immutable V1 contract"
         )
     return expected
+
+
+def resolve_queue_room_binding(
+    value: Mapping[str, Any], *, dojo_room_id: str
+) -> dict[str, Any]:
+    """Return the one canonical queue candidate bound to ``dojo_room_id``.
+
+    Training-room receipts use this small projection instead of trusting a
+    caller-supplied candidate name or family.  The complete immutable queue is
+    validated first, so the projection is anchored to both the queue artifact
+    and the candidate content address.
+    """
+
+    queue = validate_research_queue(value)
+    if not isinstance(dojo_room_id, str) or not dojo_room_id:
+        raise DojoStrategyResearchQueueError("dojo_room_id must be a string")
+    matches = [
+        candidate
+        for candidate in queue["candidates"]
+        if candidate["dojo_room_id"] == dojo_room_id
+    ]
+    if len(matches) != 1:
+        raise DojoStrategyResearchQueueError(
+            "dojo room must bind exactly one canonical queue candidate"
+        )
+    candidate = matches[0]
+    return {
+        "contract": QUEUE_ROOM_BINDING_CONTRACT,
+        "queue_contract": queue["contract"],
+        "queue_id": queue["queue_id"],
+        "queue_artifact_sha256": queue["artifact_sha256"],
+        "dojo_room_id": dojo_room_id,
+        "canonical_candidate_id": candidate["candidate_id"],
+        "canonical_candidate_sha256": candidate["candidate_sha256"],
+        "canonical_family": candidate["family"],
+    }
 
 
 def registry_relative_path() -> str:

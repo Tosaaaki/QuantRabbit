@@ -277,9 +277,7 @@ def test_completed_m5_reclaim_proposes_only_at_exact_next_open(intrabar: str) ->
     seal, runtime = _runtime()
     bindings = seal["worker_catalog"]
     clock = [0]
-    _feed_complete_asia_range(
-        runtime, bindings, intrabar=intrabar, clock=clock
-    )
+    _feed_complete_asia_range(runtime, bindings, intrabar=intrabar, clock=clock)
 
     signal_epoch = START_EPOCH + 96 * 300
     signal_results = _feed_bar(
@@ -374,6 +372,47 @@ def test_downside_sweep_reclaim_proposes_long_at_next_ask() -> None:
 
     assert intent["parameters"]["side"] == "LONG"
     assert intent["parameters"]["entry_price"] == 145.035
+
+
+def test_carry_rejects_rehashed_pending_with_opposite_side() -> None:
+    seal, runtime = _runtime()
+    bindings = seal["worker_catalog"]
+    clock = [0]
+    _feed_complete_asia_range(runtime, bindings, intrabar="OHLC", clock=clock)
+    signal_epoch = START_EPOCH + 96 * 300
+    _feed_bar(
+        runtime,
+        bindings,
+        epoch=signal_epoch,
+        intrabar="OHLC",
+        o=145.15,
+        h=145.25,
+        low=145.10,
+        c=145.18,
+        clock=clock,
+    )
+    tampered_state = runtime.export_state()
+    pending = next(iter(tampered_state["workers"].values()))["pairs"]["USD_JPY"][
+        "asia_sweep_reclaim_pending"
+    ]
+    assert pending["side"] == "SHORT"
+
+    # Preserve the pending row's old structural checks while reversing the
+    # trade. A caller could reserialize/rehash this state before the next O;
+    # restore must derive direction from the authenticated market bar instead.
+    pending["side"] = "LONG"
+    pending["swept_level"] = pending["range_low"]
+
+    factory = build_tuned_strategy_runtime_factory(seal, repo_root=REPO_ROOT)
+    with pytest.raises(
+        DojoTunedStrategyRuntimeError,
+        match="pending side differs from its signal bar",
+    ):
+        factory(
+            {"trade_pairs": ["USD_JPY"], "granularity": "M5", "bar_seconds": 300},
+            bindings,
+            tampered_state,
+        )
 
 
 def test_skipping_the_immediate_next_open_burns_the_staged_signal() -> None:

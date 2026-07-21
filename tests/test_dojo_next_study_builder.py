@@ -9,6 +9,7 @@ import pytest
 from quant_rabbit.dojo_ai_trainer_packet import (
     PACKET_CONTRACT,
     TRAINER_READBACK_KINDS,
+    TRAINER_READBACK_PARENT_GROUPS,
     _ALLOWED_MUTATIONS,
     _EVALUATION_OBLIGATIONS,
     _FORBIDDEN_MUTATIONS,
@@ -301,7 +302,11 @@ def _packet(baseline: dict[str, Any]) -> dict[str, Any]:
                 {
                     "artifact_kind": kind,
                     "drive_file_id": f"nextStudyDriveFile{index:02d}",
-                    "drive_parent_id": "nextStudyDriveParent",
+                    "drive_parent_id": (
+                        "nextStudyRunArtifactsParent"
+                        if kind in TRAINER_READBACK_PARENT_GROUPS["RUN_ARTIFACTS"]
+                        else "nextStudyManifestArtifactsParent"
+                    ),
                     "content_sha256": f"{index}" * 64,
                     "content_size_bytes": 1000 + index,
                     "version": str(400 + index),

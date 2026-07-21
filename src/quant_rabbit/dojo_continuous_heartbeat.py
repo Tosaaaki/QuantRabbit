@@ -25,17 +25,13 @@ STATE_CONTRACT: Final = "QR_DOJO_CONTINUOUS_HEARTBEAT_STATE_V1"
 EVENT_CONTRACT: Final = "QR_DOJO_CONTINUOUS_HEARTBEAT_EVENT_V1"
 DECISION_CONTRACT: Final = "QR_DOJO_CONTINUOUS_HEARTBEAT_DECISION_V1"
 LOCAL_PROBE_CONTRACT: Final = "QR_DOJO_CONTINUOUS_HEARTBEAT_LOCAL_PROBE_V1"
-LOCAL_RUN_STATUS_CONTRACT: Final = (
-    "QR_DOJO_CONTINUOUS_HEARTBEAT_LOCAL_RUN_STATUS_V1"
-)
+LOCAL_RUN_STATUS_CONTRACT: Final = "QR_DOJO_CONTINUOUS_HEARTBEAT_LOCAL_RUN_STATUS_V1"
 SCHEMA_VERSION: Final = 1
 GENESIS_SHA256: Final = "0" * 64
 
 _SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}\Z")
-_PROCESS_STATES: Final = frozenset(
-    {"IDLE", "RESERVED", "RUNNING", "EXITED", "MISSING"}
-)
+_PROCESS_STATES: Final = frozenset({"IDLE", "RESERVED", "RUNNING", "EXITED", "MISSING"})
 _ACTIONS: Final = frozenset(
     {
         "NO_OBSERVATION",
@@ -45,6 +41,7 @@ _ACTIONS: Final = frozenset(
         "REVIEW_REQUIRED",
         "WAIT_FOR_RESERVED_WORK",
         "RESOURCE_BACKPRESSURE",
+        "RUN_CONTROL_NOT_AUTHORIZED",
         "MANUAL_RUN_START_ELIGIBLE",
         "TERMINAL_REVIEWED",
         "REVIEW_RECORDED",
@@ -250,10 +247,8 @@ def verify_policy(value: Mapping[str, Any]) -> dict[str, Any]:
     _exact(resources, _RESOURCE_POLICY_KEYS, "policy.resource_gate")
     if (
         row["contract"] != POLICY_CONTRACT
-        or _integer(row["schema_version"], "policy.schema_version")
-        != SCHEMA_VERSION
-        or canonical_sha256(body)
-        != _sha(row["policy_sha256"], "policy.policy_sha256")
+        or _integer(row["schema_version"], "policy.schema_version") != SCHEMA_VERSION
+        or canonical_sha256(body) != _sha(row["policy_sha256"], "policy.policy_sha256")
         or row["classification"] != "RESEARCH_HEALTH_CONTROL_ONLY"
         or row["authority"] != _NO_AUTHORITY
     ):
@@ -317,8 +312,7 @@ def verify_local_probe_manifest(
         or row["authority"] != _NO_AUTHORITY
         or canonical_sha256(body)
         != _sha(row["probe_sha256"], "local_probe.probe_sha256")
-        or row["probe_sha256"]
-        != verified_policy["local_probe_manifest_sha256"]
+        or row["probe_sha256"] != verified_policy["local_probe_manifest_sha256"]
     ):
         raise DojoContinuousHeartbeatError(
             "local probe contract, authority, digest, or policy binding is invalid"
@@ -415,9 +409,10 @@ def build_local_observation(
             status["updated_at_utc"].replace("Z", "+00:00")
         )
         age_seconds = (observed_time - updated_time).total_seconds()
-        if age_seconds < 0 or age_seconds > verified_policy[
-            "max_observation_age_seconds"
-        ]:
+        if (
+            age_seconds < 0
+            or age_seconds > verified_policy["max_observation_age_seconds"]
+        ):
             raise DojoContinuousHeartbeatError(
                 "active local run status is stale or from the future"
             )
@@ -498,7 +493,11 @@ def verify_observation(
 ) -> dict[str, Any]:
     row = dict(_mapping(value, "observation"))
     _exact(row, _OBSERVATION_KEYS, "observation")
-    raw = {key: item for key, item in row.items() if key not in {"semantic_sha256", "observation_sha256"}}
+    raw = {
+        key: item
+        for key, item in row.items()
+        if key not in {"semantic_sha256", "observation_sha256"}
+    }
     rebuilt = seal_observation(raw, policy=policy)
     if rebuilt != row:
         raise DojoContinuousHeartbeatError("observation content or digest is invalid")
@@ -583,11 +582,15 @@ def verify_state(
     observation = row["latest_observation"]
     if observation is None:
         if row["latest_semantic_sha256"] is not None:
-            raise DojoContinuousHeartbeatError("state semantic exists without observation")
+            raise DojoContinuousHeartbeatError(
+                "state semantic exists without observation"
+            )
     else:
         verified_observation = verify_observation(observation, policy=verified_policy)
         if row["latest_semantic_sha256"] != verified_observation["semantic_sha256"]:
-            raise DojoContinuousHeartbeatError("state observation semantic binding drifted")
+            raise DojoContinuousHeartbeatError(
+                "state observation semantic binding drifted"
+            )
     lease = row["active_lease"]
     if lease is not None:
         _validate_lease(lease)
@@ -625,9 +628,10 @@ def apply_observation(
         observed["observed_at_utc"].replace("Z", "+00:00")
     )
     age_seconds = (transition_time - observed_time).total_seconds()
-    if age_seconds < 0 or age_seconds > verify_policy(policy)[
-        "max_observation_age_seconds"
-    ]:
+    if (
+        age_seconds < 0
+        or age_seconds > verify_policy(policy)["max_observation_age_seconds"]
+    ):
         raise DojoContinuousHeartbeatError(
             "observation is stale or later than its transition"
         )
@@ -646,9 +650,13 @@ def apply_observation(
 
 
 def plan_heartbeat(
-    state: Mapping[str, Any], *, policy: Mapping[str, Any]
+    state: Mapping[str, Any],
+    *,
+    policy: Mapping[str, Any],
+    evaluated_at_utc: str | None = None,
 ) -> dict[str, Any]:
-    current = verify_state(state, policy=policy)
+    verified_policy = verify_policy(policy)
+    current = verify_state(state, policy=verified_policy)
     observation = current["latest_observation"]
     if observation is None:
         return _decision(
@@ -659,7 +667,7 @@ def plan_heartbeat(
             reasons=["HEALTH_OBSERVATION_REQUIRED"],
             resource_gate=None,
         )
-    gate = resource_start_gate(observation["resources"], policy=policy)
+    gate = resource_start_gate(observation["resources"], policy=verified_policy)
     if current["active_lease"] is not None:
         lease = current["active_lease"]
         return _decision(
@@ -723,9 +731,7 @@ def plan_heartbeat(
                 ),
                 resource_gate=gate,
             )
-        review_id = (
-            f"review-terminal:{terminal_sha}:{validation['result_sha256']}"
-        )
+        review_id = f"review-terminal:{terminal_sha}:{validation['result_sha256']}"
         review = _recorded(current, review_id)
         if review is None:
             return _decision(
@@ -787,6 +793,45 @@ def plan_heartbeat(
                 if review["outcome"] == "SUCCESS"
                 else ["FAILURE_REVIEW_WORKER_FAILED_NO_AUTORETRY"]
             ),
+            resource_gate=gate,
+        )
+    stale_observation = False
+    if evaluated_at_utc is not None:
+        evaluated = datetime.fromisoformat(
+            _utc(evaluated_at_utc, "evaluated_at_utc").replace("Z", "+00:00")
+        )
+        observed = datetime.fromisoformat(
+            observation["observed_at_utc"].replace("Z", "+00:00")
+        )
+        age_seconds = (evaluated - observed).total_seconds()
+        stale_observation = (
+            age_seconds < 0
+            or age_seconds > verified_policy["max_observation_age_seconds"]
+        )
+    authority = verified_policy["authority"]
+    if (
+        authority["process_start_allowed"] is not True
+        or authority["runner_invocation_allowed"] is not True
+    ):
+        reasons = ["RUN_CONTROL_NOT_AUTHORIZED"]
+        if stale_observation:
+            reasons.append("HEALTH_OBSERVATION_STALE")
+        reasons.extend(gate["reasons"])
+        return _decision(
+            current,
+            action="RUN_CONTROL_NOT_AUTHORIZED",
+            phase="RESOURCE_ONLY",
+            obligation_id=None,
+            reasons=reasons,
+            resource_gate=gate,
+        )
+    if stale_observation:
+        return _decision(
+            current,
+            action="RESOURCE_BACKPRESSURE",
+            phase="RESOURCE_BACKPRESSURE",
+            obligation_id=None,
+            reasons=["HEALTH_OBSERVATION_STALE"],
             resource_gate=gate,
         )
     if not gate["start_allowed"]:
@@ -879,9 +924,10 @@ def complete_reserved_work(
         raise DojoContinuousHeartbeatError("outcome must be SUCCESS or FAILED")
     body = _next_state(current, transition_at_utc=completed_at_utc)
     body["active_lease"] = None
-    if len(body["completed_obligations"]) >= verify_policy(policy)[
-        "max_completed_obligations"
-    ]:
+    if (
+        len(body["completed_obligations"])
+        >= verify_policy(policy)["max_completed_obligations"]
+    ):
         raise DojoContinuousHeartbeatError("completed obligation registry is full")
     completion = {
         "operation_id": operation,
@@ -938,7 +984,11 @@ def build_event(
         allow_zero=True,
     )
     if expected_sequence == 0:
-        if event_type != "INITIALIZED" or prior_state is not None or previous_event != GENESIS_SHA256:
+        if (
+            event_type != "INITIALIZED"
+            or prior_state is not None
+            or previous_event != GENESIS_SHA256
+        ):
             raise DojoContinuousHeartbeatError("genesis event shape is invalid")
         operation_id = None
         input_sha = verified_state["policy_sha256"]
@@ -952,7 +1002,9 @@ def build_event(
             raise DojoContinuousHeartbeatError("non-genesis event requires prior state")
         prior = verify_state(prior_state, policy=policy)
         if verified_state["previous_state_sha256"] != prior["state_sha256"]:
-            raise DojoContinuousHeartbeatError("event state transition is not contiguous")
+            raise DojoContinuousHeartbeatError(
+                "event state transition is not contiguous"
+            )
         lease = verified_state["active_lease"] or prior["active_lease"]
         operation_id = lease["operation_id"] if lease is not None else None
         input_sha = prior["state_sha256"]
@@ -974,9 +1026,10 @@ def build_event(
                     "observation event carries a non-observation transition"
                 )
         elif event_type == "WORK_RESERVED":
-            if prior["active_lease"] is not None or verified_state[
-                "active_lease"
-            ] is None:
+            if (
+                prior["active_lease"] is not None
+                or verified_state["active_lease"] is None
+            ):
                 raise DojoContinuousHeartbeatError(
                     "reservation event does not acquire the single lease"
                 )
@@ -991,12 +1044,9 @@ def build_event(
                     "completion event does not consume the single lease once"
                 )
             completion = verified_state["completed_obligations"][-1]
-            expected_outcome = (
-                "SUCCESS" if event_type == "WORK_COMPLETED" else "FAILED"
-            )
+            expected_outcome = "SUCCESS" if event_type == "WORK_COMPLETED" else "FAILED"
             if (
-                completion["operation_id"]
-                != prior["active_lease"]["operation_id"]
+                completion["operation_id"] != prior["active_lease"]["operation_id"]
                 or completion["outcome"] != expected_outcome
             ):
                 raise DojoContinuousHeartbeatError(
@@ -1077,9 +1127,11 @@ def _decision(
             **_NO_AUTHORITY,
         },
     }
-    if operation_id is None and obligation_id is not None and body[
-        "permissions"
-    ]["work_reservation_allowed"]:
+    if (
+        operation_id is None
+        and obligation_id is not None
+        and body["permissions"]["work_reservation_allowed"]
+    ):
         operation_id = canonical_sha256(
             {
                 "policy_sha256": state["policy_sha256"],
@@ -1139,12 +1191,18 @@ def _validate_run(value: Any) -> dict[str, Any]:
     if row["economics_fields_present"] is not False:
         raise DojoContinuousHeartbeatError("active-run health must exclude economics")
     if terminal is not None and failure is not None:
-        raise DojoContinuousHeartbeatError("terminal and failure are mutually exclusive")
+        raise DojoContinuousHeartbeatError(
+            "terminal and failure are mutually exclusive"
+        )
     if process_state == "IDLE":
-        if any(
-            item is not None
-            for item in (run_id, process_identity, checkpoint, terminal, failure)
-        ) or expected != 0 or completed != 0:
+        if (
+            any(
+                item is not None
+                for item in (run_id, process_identity, checkpoint, terminal, failure)
+            )
+            or expected != 0
+            or completed != 0
+        ):
             raise DojoContinuousHeartbeatError("idle run retains active evidence")
     else:
         _identifier(run_id, "run.run_id")
@@ -1164,9 +1222,7 @@ def _validate_run(value: Any) -> dict[str, Any]:
 def _validate_resources(value: Any) -> dict[str, int]:
     row = dict(_mapping(value, "observation.resources"))
     _exact(row, _RESOURCE_KEYS, "observation.resources")
-    return {
-        key: _integer(item, f"resources.{key}") for key, item in row.items()
-    }
+    return {key: _integer(item, f"resources.{key}") for key, item in row.items()}
 
 
 def _validate_lease(value: Any) -> dict[str, Any]:

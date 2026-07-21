@@ -11,6 +11,7 @@ import os
 import stat
 import sys
 from collections.abc import Iterator, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
@@ -55,6 +56,8 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--state-dir", type=Path, required=True)
         if name in {"init", "tick", "tick-local", "reserve", "complete"}:
             command.add_argument("--event-at-utc", required=True)
+        if name == "status":
+            command.add_argument("--evaluated-at-utc")
         if name == "tick":
             command.add_argument("--observation", type=Path, required=True)
         if name == "tick-local":
@@ -136,9 +139,7 @@ def _exclusive_lease(state_dir: Path) -> Iterator[None]:
         raise DojoContinuousHeartbeatError("cannot open heartbeat lease") from exc
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise DojoContinuousHeartbeatError(
-                "heartbeat lease must be a regular file"
-            )
+            raise DojoContinuousHeartbeatError("heartbeat lease must be a regular file")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -221,7 +222,9 @@ def _append_event(
     try:
         descriptor = os.open(path, flags, 0o600)
     except OSError as exc:
-        raise DojoContinuousHeartbeatError("event append target already exists") from exc
+        raise DojoContinuousHeartbeatError(
+            "event append target already exists"
+        ) from exc
     payload = canonical_json_bytes(event) + b"\n"
     try:
         offset = 0
@@ -362,9 +365,7 @@ def _tick_with_observation(
         )
 
 
-def _tick_local(
-    args: argparse.Namespace, policy: Mapping[str, Any]
-) -> dict[str, Any]:
+def _tick_local(args: argparse.Namespace, policy: Mapping[str, Any]) -> dict[str, Any]:
     observation = _observe_local(
         argparse.Namespace(
             probe=args.probe,
@@ -385,10 +386,7 @@ def _reserve(args: argparse.Namespace, policy: Mapping[str, Any]) -> dict[str, A
         state, prior_event, event_count = _load_chain(args.state_dir, policy=policy)
         decision = plan_heartbeat(state, policy=policy)
         active = state["active_lease"]
-        if (
-            active is not None
-            and active["operation_id"] == args.expected_operation_id
-        ):
+        if active is not None and active["operation_id"] == args.expected_operation_id:
             return _result(
                 command="reserve",
                 status="ALREADY_RESERVED",
@@ -466,6 +464,7 @@ def _complete(args: argparse.Namespace, policy: Mapping[str, Any]) -> dict[str, 
 
 
 def _status(args: argparse.Namespace, policy: Mapping[str, Any]) -> dict[str, Any]:
+    evaluated_at_utc = args.evaluated_at_utc or datetime.now(timezone.utc).isoformat()
     with _exclusive_lease(args.state_dir):
         state, event, _ = _load_chain(args.state_dir, policy=policy)
         return _result(
@@ -474,7 +473,11 @@ def _status(args: argparse.Namespace, policy: Mapping[str, Any]) -> dict[str, An
             event_appended=False,
             state=state,
             event=event,
-            decision=plan_heartbeat(state, policy=policy),
+            decision=plan_heartbeat(
+                state,
+                policy=policy,
+                evaluated_at_utc=evaluated_at_utc,
+            ),
         )
 
 

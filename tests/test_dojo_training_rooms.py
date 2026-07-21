@@ -8,6 +8,8 @@ from quant_rabbit.dojo_strategy_research_queue import build_research_queue
 from quant_rabbit.dojo_training_rooms import (
     COMMON_SPARRING_SLOTS,
     INITIAL_ROOM_TAXONOMY,
+    QUEUE_BOUND_COMMON_SPARRING_HANDOFF_CONTRACT,
+    QUEUE_BOUND_ROOM_RECEIPT_CONTRACT,
     ROOM_TAXONOMY_README,
     DojoTrainingRoomError,
     build_common_sparring_handoff,
@@ -46,14 +48,10 @@ def room_controls() -> dict:
                 "max_parameter_revisions": 8,
                 "max_model_calls": 12 if taxonomy.room_id == "room-ai-01" else 0,
             },
-            "artifact_namespace": (
-                f"research/dojo/training_rooms/{taxonomy.room_id}"
-            ),
+            "artifact_namespace": (f"research/dojo/training_rooms/{taxonomy.room_id}"),
             "fixed_train_denominator": {
                 "denominator_id": f"{taxonomy.room_id}:train-denominator-v1",
-                "coordinate_set_sha256": _sha(
-                    f"coordinates:{taxonomy.room_id}"
-                ),
+                "coordinate_set_sha256": _sha(f"coordinates:{taxonomy.room_id}"),
                 "expected_coordinate_count": 96,
             },
         }
@@ -82,6 +80,16 @@ def _candidate(room_id: str, *, cross_room_parent=None) -> dict:
     }
 
 
+def _queued_candidate(room_id: str) -> dict:
+    queue = build_research_queue()
+    queue_candidate = next(
+        row for row in queue["candidates"] if row["dojo_room_id"] == room_id
+    )
+    candidate = _candidate(room_id)
+    candidate["candidate_id"] = f"{room_id}:{queue_candidate['candidate_id']}"
+    return candidate
+
+
 def _receipt(
     registry: dict,
     room_id: str,
@@ -93,9 +101,7 @@ def _receipt(
         registry=registry,
         room_id=room_id,
         candidate=candidate or _candidate(room_id),
-        terminal_status=(
-            "TERMINAL_VALIDATED" if validated else "TERMINAL_REJECTED"
-        ),
+        terminal_status=("TERMINAL_VALIDATED" if validated else "TERMINAL_REJECTED"),
         candidate_gate_passed=validated,
         observed_coordinate_count=96,
         failed_coordinate_count=0,
@@ -132,26 +138,27 @@ def test_taxonomy_and_readme_fix_one_thesis_per_room() -> None:
         "room-03": "g8_relative_strength_risk_budget",
         "room-ai-01": "ai_discretionary_exit_capital_recycle",
     }
-    assert {room.room_id: room.strategy_family for room in INITIAL_ROOM_TAXONOMY} == expected
+    assert {
+        room.room_id: room.strategy_family for room in INITIAL_ROOM_TAXONOMY
+    } == expected
     assert len({room.thesis for room in INITIAL_ROOM_TAXONOMY}) == len(expected)
     assert all(room_id in ROOM_TAXONOMY_README for room_id in expected)
-    ai = next(
-        room for room in INITIAL_ROOM_TAXONOMY if room.room_id == "room-ai-01"
-    )
+    ai = next(room for room in INITIAL_ROOM_TAXONOMY if room.room_id == "room-ai-01")
     assert ai.decision_context_policy == (
         "ONE_DECISION_ONE_FRESH_CONTEXT_NO_CROSS_DECISION_HISTORY"
     )
     assert "room-00" not in ROOM_TAXONOMY_README
+    portfolio = next(
+        room for room in INITIAL_ROOM_TAXONOMY if room.room_id == "room-03"
+    )
+    assert "H1" in portfolio.thesis
+    assert portfolio.input_class == ("CAUSAL_MULTI_PAIR_CLOSED_H1_AND_PORTFOLIO_STATE")
 
 
 def test_new_room_ids_and_families_match_the_content_addressed_research_queue() -> None:
     queue = build_research_queue()
-    queued = {
-        row["dojo_room_id"]: row["family"] for row in queue["candidates"]
-    }
-    taxonomy = {
-        room.room_id: room.strategy_family for room in INITIAL_ROOM_TAXONOMY
-    }
+    queued = {row["dojo_room_id"]: row["family"] for row in queue["candidates"]}
+    taxonomy = {room.room_id: room.strategy_family for room in INITIAL_ROOM_TAXONOMY}
 
     assert queued == {
         "room-01": "asia_sweep_reclaim_be",
@@ -169,12 +176,11 @@ def test_registry_isolates_lineage_budget_namespace_and_train_denominator(
     assert normalized["room_count"] == 10
     assert len({room["trainer_lineage"]["lineage_id"] for room in rooms}) == 10
     assert len({room["artifact_namespace"] for room in rooms}) == 10
-    assert len(
-        {room["fixed_train_denominator"]["denominator_id"] for room in rooms}
-    ) == 10
+    assert (
+        len({room["fixed_train_denominator"]["denominator_id"] for room in rooms}) == 10
+    )
     assert all(
-        room["fixed_train_denominator"]["room_id"] == room["room_id"]
-        for room in rooms
+        room["fixed_train_denominator"]["room_id"] == room["room_id"] for room in rooms
     )
     assert normalized["sharing_policy"]["allowed_shared_components"] == [
         "SOURCE_BINDING",
@@ -227,6 +233,100 @@ def test_terminal_room_receipt_binds_room_and_has_no_authority(registry: dict) -
     assert normalized["authority"]["order_authority"] == "NONE"
 
 
+def test_queue_bound_receipt_and_sparring_reject_noncanonical_room_candidate(
+    registry: dict,
+) -> None:
+    queue = build_research_queue()
+    good = build_training_room_receipt(
+        registry=registry,
+        room_id="room-01",
+        candidate=_queued_candidate("room-01"),
+        terminal_status="TERMINAL_VALIDATED",
+        candidate_gate_passed=True,
+        observed_coordinate_count=96,
+        failed_coordinate_count=0,
+        budget_consumed={
+            "attempts": 1,
+            "hypotheses": 1,
+            "parameter_revisions": 1,
+            "model_calls": 0,
+        },
+        artifact_relative_path=(
+            "research/dojo/training_rooms/room-01/queue-terminal.json"
+        ),
+        research_queue=queue,
+    )
+    assert good["contract"] == QUEUE_BOUND_ROOM_RECEIPT_CONTRACT
+    assert good["research_queue_binding"]["canonical_candidate_id"] == (
+        "asia_sweep_reclaim_be"
+    )
+    assert good["research_queue_binding"]["canonical_family"] == (
+        "asia_sweep_reclaim_be"
+    )
+    assert (
+        validate_training_room_receipt(good, registry=registry, research_queue=queue)
+        == good
+    )
+
+    with pytest.raises(
+        DojoTrainingRoomError, match="differs from the canonical queue candidate"
+    ):
+        build_training_room_receipt(
+            registry=registry,
+            room_id="room-01",
+            candidate={
+                **_queued_candidate("room-01"),
+                "candidate_id": "room-01:not-the-queued-candidate",
+            },
+            terminal_status="TERMINAL_VALIDATED",
+            candidate_gate_passed=True,
+            observed_coordinate_count=96,
+            failed_coordinate_count=0,
+            budget_consumed={
+                "attempts": 1,
+                "hypotheses": 1,
+                "parameter_revisions": 1,
+                "model_calls": 0,
+            },
+            artifact_relative_path=(
+                "research/dojo/training_rooms/room-01/forged-terminal.json"
+            ),
+            research_queue=queue,
+        )
+
+    unbound_v1 = _receipt(
+        registry,
+        "room-01",
+        candidate={
+            **_queued_candidate("room-01"),
+            "candidate_id": "room-01:not-the-queued-candidate",
+        },
+    )
+    with pytest.raises(DojoTrainingRoomError, match="V2 receipt"):
+        build_common_sparring_handoff(
+            registry=registry,
+            handoff_id="queue-bound-common-sparring-v2",
+            handoff_revision="revision-2",
+            room_receipts=[unbound_v1],
+            fixed_denominator=_common_denominator(),
+            research_queue=queue,
+        )
+
+    handoff = build_common_sparring_handoff(
+        registry=registry,
+        handoff_id="queue-bound-common-sparring-v2",
+        handoff_revision="revision-2",
+        room_receipts=[good],
+        fixed_denominator=_common_denominator(),
+        research_queue=queue,
+    )
+    assert handoff["contract"] == QUEUE_BOUND_COMMON_SPARRING_HANDOFF_CONTRACT
+    assert (
+        handoff["candidates"][0]["research_queue_binding"]
+        == good["research_queue_binding"]
+    )
+
+
 def test_cross_room_parameter_inspiration_requires_new_hypothesis_and_revision(
     registry: dict,
 ) -> None:
@@ -252,9 +352,9 @@ def test_cross_room_parameter_inspiration_requires_new_hypothesis_and_revision(
     }
     assert receipt["candidate"]["hypothesis_id"].startswith("room-02:")
     assert receipt["candidate"]["revision_id"].startswith("room-02:")
-    assert receipt["candidate"]["terminal_result_sha256"] != parent[
-        "source_result_sha256"
-    ]
+    assert (
+        receipt["candidate"]["terminal_result_sha256"] != parent["source_result_sha256"]
+    )
 
     invalid = _candidate("room-02", cross_room_parent=parent)
     invalid["hypothesis_id"] = parent["source_hypothesis_id"]
