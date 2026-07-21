@@ -40,6 +40,11 @@ from quant_rabbit.dojo_economic_transcript import (
     build_economic_transcript_header,
     build_fixed_denominator_reexecution_attestation,
 )
+from quant_rabbit.dojo_economic_transcript_v2 import DojoEconomicSegmentError
+from quant_rabbit.dojo_long_horizon_v2_transcript import (
+    CompactEconomicTranscriptV2Recorder,
+    DojoLongHorizonV2TranscriptError,
+)
 from quant_rabbit.dojo_builtin_strategy_runtime import (
     builtin_strategy_runtime_factory,
     verify_builtin_strategy_runtime_seal,
@@ -77,6 +82,14 @@ MAX_WORKER_STATE_BYTES: Final = 1024 * 1024
 MAX_RESULT_BYTES: Final = 16 * 1024 * 1024
 MAX_REEXECUTION_ATTESTATION_BYTES: Final = 1024 * 1024
 GENESIS_BATCH_CHAIN_SHA256: Final = "0" * 64
+ECONOMIC_TRANSCRIPT_V1_JSONL: Final = "V1_JSONL"
+ECONOMIC_TRANSCRIPT_V3_COMPACT: Final = "V3_COMPACT_SEGMENTS"
+# Compatibility symbol for the module filename and integration task name.  The
+# emitted outer segment contract is V3 after the checkpoint-origin hardening.
+ECONOMIC_TRANSCRIPT_V2_COMPACT: Final = ECONOMIC_TRANSCRIPT_V3_COMPACT
+_ECONOMIC_TRANSCRIPT_FORMATS: Final = frozenset(
+    {ECONOMIC_TRANSCRIPT_V1_JSONL, ECONOMIC_TRANSCRIPT_V3_COMPACT}
+)
 BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256: Final = canonical_sha256(
     {
         "contract": "QR_DOJO_BUILTIN_NO_INTENT_WORKER_RUNTIME_V1",
@@ -339,6 +352,55 @@ def _reexecute_transcript_in_separate_process(path: Path) -> dict[str, Any]:
     return dict(row)
 
 
+def _reexecute_v2_chain_in_separate_process(
+    paths: Sequence[Path], *, coordinate_id: str, terminal_policy: str
+) -> dict[str, Any]:
+    """Run the compact-chain auditor outside the producing runner process."""
+
+    segment_paths = [Path(path) for path in paths]
+    if not segment_paths:
+        raise DojoLongHorizonEconomicRunnerError(
+            "terminal compact transcript has no segment files"
+        )
+    repository_root = Path(__file__).resolve().parents[2]
+    source_root = repository_root / "src"
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath = str(source_root)
+    if inherited_pythonpath:
+        pythonpath = os.pathsep.join((pythonpath, inherited_pythonpath))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.dojo_economic_transcript_v2_auditor",
+            "--coordinate-id",
+            coordinate_id,
+            "--terminal-policy",
+            terminal_policy,
+            *[str(path) for path in segment_paths],
+        ],
+        cwd=repository_root,
+        env={**os.environ, "PYTHONPATH": pythonpath},
+        check=False,
+        capture_output=True,
+    )
+    if (
+        completed.returncode != 0
+        or completed.stderr
+        or not completed.stdout
+        or len(completed.stdout) > MAX_REEXECUTION_ATTESTATION_BYTES
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "separate-process compact transcript reexecution failed"
+        )
+    return dict(
+        _strict_json_line(
+            completed.stdout,
+            field="compact transcript reexecution attestation",
+        )
+    )
+
+
 def _failure_stage(code: str) -> str:
     return {
         "WORKER_RUNTIME_INITIALIZATION_FAILURE": "RUNTIME_INITIALIZATION",
@@ -351,10 +413,80 @@ def _failure_stage(code: str) -> str:
     }.get(code, "UNKNOWN_FAILURE_STAGE")
 
 
+def _build_v2_fixed_denominator_attestation(
+    *,
+    expected_coordinate_ids: Sequence[str],
+    attestations_by_coordinate: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Bind one successful compact-chain reexecution for every fixed cell."""
+
+    expected = list(expected_coordinate_ids)
+    if not expected or expected != sorted(set(expected)):
+        raise DojoLongHorizonEconomicRunnerError(
+            "compact fixed denominator must be non-empty, unique, and sorted"
+        )
+    supplied = dict(attestations_by_coordinate)
+    if set(supplied) != set(expected):
+        raise DojoLongHorizonEconomicRunnerError(
+            "compact reexecution attestations do not equal the fixed denominator"
+        )
+    failed: list[str] = []
+    attestation_hashes: dict[str, str] = {}
+    result_hashes: dict[str, str] = {}
+    for coordinate_id in expected:
+        row = dict(supplied[coordinate_id])
+        claimed = row.pop("reexecution_attestation_sha256", None)
+        if (
+            row.get("contract")
+            != "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_REEXECUTION_ATTESTATION_V3"
+            or row.get("schema_version") != 3
+            or row.get("coordinate_id") != coordinate_id
+            or not isinstance(claimed, str)
+            or canonical_sha256(row) != claimed
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                f"compact reexecution attestation is invalid: {coordinate_id}"
+            )
+        attestation_hashes[coordinate_id] = claimed
+        if row.get("status") != "VERIFIED_COMPLETE":
+            failed.append(coordinate_id)
+        else:
+            result_hashes[coordinate_id] = _sha(
+                row.get("portfolio_result_sha256"),
+                field=f"compact attestation {coordinate_id} result",
+            )
+    body: dict[str, Any] = {
+        "contract": "QR_DOJO_FIXED_DENOMINATOR_ECONOMIC_REEXECUTION_V3",
+        "schema_version": 3,
+        "expected_coordinate_ids": expected,
+        "coordinate_count": len(expected),
+        "verified_complete_count": len(expected) - len(failed),
+        "verified_failed_count": len(failed),
+        "status": "VERIFIED_COMPLETE" if not failed else "INCOMPLETE_FAILED",
+        "failed_coordinate_ids": failed,
+        "attestation_sha256_by_coordinate": attestation_hashes,
+        "portfolio_result_sha256_by_coordinate": result_hashes if not failed else {},
+        "downstream_terminal_reduction_allowed": not failed,
+        "partial_economics_reported": False,
+        "external_monotonic_anchor_configured": False,
+        "fork_absence_proven": False,
+        "official_evidence_eligible": False,
+        "live_permission": False,
+        "broker_mutation_allowed": False,
+        "order_authority": "NONE",
+    }
+    body["fixed_denominator_attestation_sha256"] = canonical_sha256(body)
+    return body
+
+
 def _transcript_call(action: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
     try:
         return action(*args, **kwargs)
-    except DojoEconomicTranscriptError as exc:
+    except (
+        DojoEconomicTranscriptError,
+        DojoEconomicSegmentError,
+        DojoLongHorizonV2TranscriptError,
+    ) as exc:
         raise DojoLongHorizonEconomicRunnerError(
             "economic transcript recording failed closed"
         ) from exc
@@ -1431,6 +1563,7 @@ def run_long_horizon_economic_job(
     worker_runtime_repo_root: Path | None = None,
     carry_states_by_slot: Mapping[str, Mapping[str, Any]] | None = None,
     initial_balance_jpy: int | float = 200_000,
+    economic_transcript_format: str = ECONOMIC_TRANSCRIPT_V1_JSONL,
 ) -> dict[str, Any]:
     """Execute one fresh handoff without materializing source frames.
 
@@ -1440,6 +1573,10 @@ def run_long_horizon_economic_job(
     """
 
     handoff = _verify_runner_handoff(runner_handoff)
+    if economic_transcript_format not in _ECONOMIC_TRANSCRIPT_FORMATS:
+        raise DojoLongHorizonEconomicRunnerError(
+            "economic transcript format is unsupported"
+        )
     job = handoff["job"]
     claim = handoff["claim"]
     verified_plan = validate_long_horizon_train_plan(plan)
@@ -1552,6 +1689,11 @@ def run_long_horizon_economic_job(
         raise DojoLongHorizonEconomicRunnerError(
             "economic carry inputs do not equal the ready predecessor denominator"
         )
+    if economic_transcript_format == ECONOMIC_TRANSCRIPT_V2_COMPACT and expected_slots:
+        raise DojoLongHorizonEconomicRunnerError(
+            "compact V2 month genesis requires a fresh initial balance until a "
+            "content-addressed predecessor-chain binding is implemented"
+        )
 
     try:
         from quant_rabbit.dojo_portfolio_replay_reducer import PortfolioReplaySession
@@ -1562,7 +1704,9 @@ def run_long_horizon_economic_job(
 
     sessions: dict[str, Any] = {}
     worker_instances: dict[str, EconomicWorkerRuntime] = {}
-    transcript_recorders: dict[str, EconomicTranscriptRecorder] = {}
+    transcript_recorders: dict[
+        str, EconomicTranscriptRecorder | CompactEconomicTranscriptV2Recorder
+    ] = {}
     transcript_paths: dict[str, Path] = {}
     terminal_transcript_ids: set[str] = set()
     predecessor_sha: dict[str, str | None] = {}
@@ -1619,7 +1763,11 @@ def run_long_horizon_economic_job(
             predecessor_sha[coordinate_id] = None
         transcript_id = canonical_sha256(
             {
-                "contract": "QR_DOJO_LONG_HORIZON_TRANSCRIPT_ID_V1",
+                "contract": (
+                    "QR_DOJO_LONG_HORIZON_TRANSCRIPT_ID_V1"
+                    if economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL
+                    else "QR_DOJO_LONG_HORIZON_TRANSCRIPT_ID_V2"
+                ),
                 "job_sha256": job["job_sha256"],
                 "claim_sha256": claim["claim_sha256"],
                 "coordinate_id": coordinate_id,
@@ -1632,6 +1780,9 @@ def run_long_horizon_economic_job(
             }
         )
         transcript_path = evidence_root / f"{transcript_id}.economic.jsonl"
+        expected_quote_batch_count = receipt["row_count"] * len(
+            _PHASES[job["intrabar_path"]]
+        )
         input_bindings = {
             "job_sha256": job["job_sha256"],
             "claim_sha256": claim["claim_sha256"],
@@ -1659,38 +1810,57 @@ def run_long_horizon_economic_job(
                 else verified_carry["source_batch_chain_sha256"]
             ),
         }
-        header = _transcript_call(
-            build_economic_transcript_header,
-            transcript_id=transcript_id,
-            coordinate_id=coordinate_id,
-            portfolio_policy=runtime["portfolio_policy"],
-            input_bindings=input_bindings,
-            terminal_policy=coordinate["terminal_policy"],
-            expected_quote_batch_count=(
-                receipt["row_count"] * len(_PHASES[job["intrabar_path"]])
-            ),
-            initial_balance_jpy=initial if portfolio_carry is None else None,
-            predecessor_portfolio_carry_state=portfolio_carry,
-        )
-        try:
-            transcript_recorders[coordinate_id] = _transcript_call(
-                EconomicTranscriptRecorder,
-                transcript_path,
-                header,
-            )
-        except Exception:
-            # Preserve every already-created incomplete file as fail-closed
-            # crash evidence, but do not leak its descriptor to the caller.
-            for recorder in transcript_recorders.values():
-                recorder.close()
-            raise
-        transcript_paths[coordinate_id] = transcript_path
         try:
             sessions[coordinate_id] = PortfolioReplaySession(
                 policy=runtime["portfolio_policy"],
                 initial_balance_jpy=initial if portfolio_carry is None else None,
                 carry_state=portfolio_carry,
             )
+        except Exception:
+            for recorder in transcript_recorders.values():
+                recorder.close()
+            raise
+        try:
+            if economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL:
+                header = _transcript_call(
+                    build_economic_transcript_header,
+                    transcript_id=transcript_id,
+                    coordinate_id=coordinate_id,
+                    portfolio_policy=runtime["portfolio_policy"],
+                    input_bindings=input_bindings,
+                    terminal_policy=coordinate["terminal_policy"],
+                    expected_quote_batch_count=expected_quote_batch_count,
+                    initial_balance_jpy=(
+                        initial if portfolio_carry is None else None
+                    ),
+                    predecessor_portfolio_carry_state=portfolio_carry,
+                )
+                transcript_recorders[coordinate_id] = _transcript_call(
+                    EconomicTranscriptRecorder,
+                    transcript_path,
+                    header,
+                )
+                transcript_paths[coordinate_id] = transcript_path
+            else:
+                transcript_recorders[coordinate_id] = _transcript_call(
+                    CompactEconomicTranscriptV2Recorder,
+                    evidence_root=evidence_root,
+                    transcript_id=transcript_id,
+                    job_sha256=job["job_sha256"],
+                    source_slice_receipt_sha256=receipt[
+                        "source_slice_receipt_sha256"
+                    ],
+                    portfolio_policy=runtime["portfolio_policy"],
+                    expected_quote_batch_count=expected_quote_batch_count,
+                    session=sessions[coordinate_id],
+                )
+            # Preserve every already-created incomplete file as fail-closed
+            # crash evidence, but do not leak its descriptor to the caller.
+        except Exception:
+            for recorder in transcript_recorders.values():
+                recorder.close()
+            raise
+        try:
             worker_instances[coordinate_id] = worker_runtime_factory(
                 {
                     **coordinate,
@@ -2128,29 +2298,124 @@ def run_long_horizon_economic_job(
         )
     attestations_by_coordinate: dict[str, dict[str, Any]] = {}
     transcript_artifacts: list[dict[str, Any]] = []
-    for coordinate_id in expected_coordinate_ids:
-        transcript_path = transcript_paths[coordinate_id]
-        attestation = _reexecute_transcript_in_separate_process(transcript_path)
-        attestation_path = transcript_path.with_suffix(".attestation.json")
-        _write_exclusive_json(attestation_path, attestation)
-        attestations_by_coordinate[coordinate_id] = attestation
-        transcript_artifacts.append(
-            {
-                "coordinate_id": coordinate_id,
-                "transcript_filename": transcript_path.name,
-                "transcript_file_sha256": attestation["transcript_file_sha256"],
-                "reexecution_attestation_filename": attestation_path.name,
-                "reexecution_attestation_sha256": attestation[
-                    "reexecution_attestation_sha256"
-                ],
-                "reexecution_status": attestation["status"],
-            }
+    if economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL:
+        for coordinate_id in expected_coordinate_ids:
+            transcript_path = transcript_paths[coordinate_id]
+            attestation = _reexecute_transcript_in_separate_process(transcript_path)
+            attestation_path = transcript_path.with_suffix(".attestation.json")
+            _write_exclusive_json(attestation_path, attestation)
+            attestations_by_coordinate[coordinate_id] = attestation
+            transcript_artifacts.append(
+                {
+                    "coordinate_id": coordinate_id,
+                    "transcript_format": ECONOMIC_TRANSCRIPT_V1_JSONL,
+                    "transcript_filename": transcript_path.name,
+                    "transcript_file_sha256": attestation[
+                        "transcript_file_sha256"
+                    ],
+                    "transcript_file_bytes": transcript_path.stat(
+                        follow_symlinks=False
+                    ).st_size,
+                    "reexecution_attestation_filename": attestation_path.name,
+                    "reexecution_attestation_sha256": attestation[
+                        "reexecution_attestation_sha256"
+                    ],
+                    "reexecution_status": attestation["status"],
+                }
+            )
+        fixed_attestation = _transcript_call(
+            build_fixed_denominator_reexecution_attestation,
+            expected_coordinate_ids=expected_coordinate_ids,
+            attestations_by_coordinate=attestations_by_coordinate,
         )
-    fixed_attestation = _transcript_call(
-        build_fixed_denominator_reexecution_attestation,
-        expected_coordinate_ids=expected_coordinate_ids,
-        attestations_by_coordinate=attestations_by_coordinate,
-    )
+    else:
+        for coordinate_id in expected_coordinate_ids:
+            recorder = transcript_recorders[coordinate_id]
+            if not isinstance(recorder, CompactEconomicTranscriptV2Recorder):
+                raise DojoLongHorizonEconomicRunnerError(
+                    "compact transcript recorder identity drifted"
+                )
+            manifest = recorder.manifest
+            if manifest["terminal_status"] == "COMPLETE":
+                attestation = _reexecute_v2_chain_in_separate_process(
+                    recorder.segment_paths,
+                    coordinate_id=coordinate_id,
+                    terminal_policy=runtimes[coordinate_id]["coordinate"][
+                        "terminal_policy"
+                    ],
+                )
+                result = portfolio_results.get(coordinate_id)
+                if (
+                    result is None
+                    or attestation["portfolio_result_sha256"]
+                    != result["result_sha256"]
+                    or attestation["source_batch_chain_sha256"] != batch_chain
+                ):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "compact independent result differs from runner economics"
+                    )
+            else:
+                failure_body: dict[str, Any] = {
+                    "contract": (
+                        "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_"
+                        "REEXECUTION_ATTESTATION_V3"
+                    ),
+                    "schema_version": 3,
+                    "status": "FAILED_PREFIX_RETAINED_NOT_REEXECUTED",
+                    "transcript_id": manifest["transcript_id"],
+                    "coordinate_id": coordinate_id,
+                    "job_sha256": manifest["job_sha256"],
+                    "policy_sha256": manifest["policy_sha256"],
+                    "manifest_sha256": manifest["manifest_sha256"],
+                    "completed_coordinate_count": manifest[
+                        "completed_quote_batch_count"
+                    ],
+                    "failure_code": manifest["failure_code"],
+                    "failure_stage": manifest["failure_stage"],
+                    "failure_evidence_sha256": manifest[
+                        "failure_evidence_sha256"
+                    ],
+                    "transcript_integrity_passed": False,
+                    "independent_economic_reexecution_passed": False,
+                    "partial_economics_reported": False,
+                    "external_monotonic_anchor_configured": False,
+                    "fork_absence_proven": False,
+                    "official_evidence_eligible": False,
+                    "live_permission": False,
+                    "broker_mutation_allowed": False,
+                    "order_authority": "NONE",
+                }
+                failure_body["reexecution_attestation_sha256"] = canonical_sha256(
+                    failure_body
+                )
+                attestation = failure_body
+            attestation_path = recorder.manifest_path.with_suffix(
+                ".attestation.json"
+            )
+            _write_exclusive_json(attestation_path, attestation)
+            attestations_by_coordinate[coordinate_id] = attestation
+            transcript_artifacts.append(
+                {
+                    "coordinate_id": coordinate_id,
+                    "transcript_format": ECONOMIC_TRANSCRIPT_V2_COMPACT,
+                    "manifest_filename": recorder.manifest_path.name,
+                    "manifest_sha256": manifest["manifest_sha256"],
+                    "segment_count": manifest["segment_count"],
+                    "segments_sha256": manifest["segments_sha256"],
+                    "segment_file_bytes": sum(
+                        row["segment_file_bytes"] for row in manifest["segments"]
+                    ),
+                    "reexecution_attestation_filename": attestation_path.name,
+                    "reexecution_attestation_sha256": attestation[
+                        "reexecution_attestation_sha256"
+                    ],
+                    "reexecution_status": attestation["status"],
+                }
+            )
+        fixed_attestation = _build_v2_fixed_denominator_attestation(
+            expected_coordinate_ids=expected_coordinate_ids,
+            attestations_by_coordinate=attestations_by_coordinate,
+        )
     fixed_attestation_path = evidence_root / (
         f"{job['job_sha256']}.{claim['claim_sha256']}.fixed-denominator-attestation.json"
     )
@@ -2162,7 +2427,9 @@ def run_long_horizon_economic_job(
         and failed_count == 0
     )
     official_evidence_eligible = (
-        independent_reexecution_passed and source_quote_coverage_proved
+        independent_reexecution_passed
+        and source_quote_coverage_proved
+        and economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL
     )
     body = {
         "contract": ECONOMIC_JOB_RESULT_CONTRACT,
@@ -2223,6 +2490,20 @@ def run_long_horizon_economic_job(
         "partial_economics_reported": False,
         "downstream_terminal_reduction_allowed": failed_count == 0,
         "economic_transcript_available": True,
+        "economic_transcript_format": economic_transcript_format,
+        "economic_transcript_payload_bytes": sum(
+            row.get("transcript_file_bytes", row.get("segment_file_bytes", 0))
+            for row in transcript_artifacts
+        ),
+        "economic_transcript_account_quote_replication_factor": len(
+            expected_coordinate_ids
+        ),
+        # The V2 vertical slice removes the four-record/fsync V1 envelope and
+        # implicit HOLD batches, but its current segment contract still embeds
+        # one quote copy per account coordinate.  Never misreport that remaining
+        # storage multiplier as cross-account source deduplication.
+        "economic_transcript_cross_account_source_quote_sharing": False,
+        "compact_v2_cross_account_source_deduplication_proved": False,
         "economic_transcript_artifacts": transcript_artifacts,
         "economic_transcript_artifacts_sha256": canonical_sha256(transcript_artifacts),
         "fixed_denominator_reexecution_attestation": fixed_attestation,
@@ -2238,7 +2519,13 @@ def run_long_horizon_economic_job(
         "proof_classification": (
             "INDEPENDENTLY_REEXECUTED_WORN_TRAIN"
             if official_evidence_eligible
-            else "FAIL_CLOSED_INCOMPLETE_ECONOMIC_EVIDENCE"
+            else (
+                "INDEPENDENTLY_REEXECUTED_UNANCHORED_WORN_TRAIN"
+                if independent_reexecution_passed
+                and source_quote_coverage_proved
+                and economic_transcript_format == ECONOMIC_TRANSCRIPT_V3_COMPACT
+                else "FAIL_CLOSED_INCOMPLETE_ECONOMIC_EVIDENCE"
+            )
         ),
         "authority": _authority(),
     }
@@ -2254,6 +2541,9 @@ __all__ = [
     "BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256",
     "ECONOMIC_CARRY_CONTRACT",
     "ECONOMIC_JOB_RESULT_CONTRACT",
+    "ECONOMIC_TRANSCRIPT_V1_JSONL",
+    "ECONOMIC_TRANSCRIPT_V2_COMPACT",
+    "ECONOMIC_TRANSCRIPT_V3_COMPACT",
     "SOURCE_SLICE_CONTRACT",
     "DojoLongHorizonEconomicRunnerError",
     "EconomicWorkerRuntime",

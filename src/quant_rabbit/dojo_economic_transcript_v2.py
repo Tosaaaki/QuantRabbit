@@ -3,14 +3,18 @@
 V1 writes four durable records for every replay coordinate.  This module began
 as the V2 compact foundation and now publishes V3 artifacts: V3 adds an exact
 checkpoint-origin denominator and requires a fresh-balance chain genesis.
-It keeps the same independent reducer truth while publishing one
-immutable, canonical document for a bounded coordinate batch.  HOLD is never
-stored as a second representation: only proposals containing an intent appear
-in ``non_hold_proposals`` and every omitted sealed active worker is expanded to
-the one canonical empty proposal during verification.
+It keeps the same independent reducer truth while publishing one immutable,
+canonical document for a bounded account-local coordinate batch.  HOLD is
+never stored as a second representation: only proposals containing an intent
+appear in ``non_hold_proposals`` and every omitted sealed active worker is
+expanded to the one canonical empty proposal during verification.  V3 does not
+yet share quote/snapshot source material across separate account coordinates;
+callers must expose that remaining replication rather than describe this local
+grouping as cross-account source deduplication.
 
 Segments are research-only.  They expose no broker, model, allocation, or live
-authority.  The long-horizon runner is intentionally not wired here yet.
+authority.  The long-horizon runner has an explicit fresh-month compact opt-in;
+continuous carry remains fail-closed until a predecessor-chain binding exists.
 """
 
 from __future__ import annotations

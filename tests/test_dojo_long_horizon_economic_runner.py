@@ -20,6 +20,8 @@ from quant_rabbit.dojo_bot_catalog import AUTHORITY_INVARIANTS, validate_bot_con
 from quant_rabbit.dojo_bot_trainer import PROPOSAL_CONTRACT, seal_candidate_proposal
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
+    ECONOMIC_TRANSCRIPT_V1_JSONL,
+    ECONOMIC_TRANSCRIPT_V2_COMPACT,
     build_month_source_slice_receipt,
     builtin_no_intent_runtime_factory,
     run_long_horizon_economic_job,
@@ -520,6 +522,84 @@ def test_single_source_stream_fans_out_before_incremental_economics(
             worker_runtime_factory=builtin_no_intent_runtime_factory,
             worker_runtime_binding_sha256=RUNTIME_SHA,
         )
+
+
+def test_compact_v2_differential_economics_and_measured_disk_growth(
+    tmp_path: Path, sealed_handoff: dict[str, Any]
+) -> None:
+    receipt, source_manifest = _write_source(tmp_path, sealed_handoff["job"])
+    v1_root = tmp_path / "economic-v1"
+    v2_root = tmp_path / "economic-v2"
+    v1_root.mkdir()
+    v2_root.mkdir()
+    common = {
+        "runner_handoff": sealed_handoff,
+        "plan": PLANS_BY_JOB[sealed_handoff["job"]["job_sha256"]],
+        "source_root": tmp_path,
+        "source_manifest": source_manifest,
+        "source_slice_receipt": receipt,
+        "worker_catalog": CATALOG,
+        "coordinate_runtimes": _runtime_rows(sealed_handoff),
+        "worker_runtime_factory": builtin_no_intent_runtime_factory,
+        "worker_runtime_binding_sha256": RUNTIME_SHA,
+    }
+    v1 = run_long_horizon_economic_job(
+        **common,
+        economic_evidence_root=v1_root,
+        economic_transcript_format=ECONOMIC_TRANSCRIPT_V1_JSONL,
+    )
+    v2 = run_long_horizon_economic_job(
+        **common,
+        economic_evidence_root=v2_root,
+        economic_transcript_format=ECONOMIC_TRANSCRIPT_V2_COMPACT,
+    )
+
+    assert v2["portfolio_results_by_coordinate"] == v1[
+        "portfolio_results_by_coordinate"
+    ]
+    assert v2["coordinate_results"] == v1["coordinate_results"]
+    assert v2["compact_evidence_rows"] == v1["compact_evidence_rows"]
+    assert v2["independent_economic_reexecution_passed"] is True
+    assert v2["official_evidence_eligible"] is False
+    assert v2["proof_classification"] == (
+        "INDEPENDENTLY_REEXECUTED_UNANCHORED_WORN_TRAIN"
+    )
+    assert v2["fixed_denominator_reexecution_attestation"]["status"] == (
+        "VERIFIED_COMPLETE"
+    )
+    assert v2["economic_transcript_format"] == ECONOMIC_TRANSCRIPT_V2_COMPACT
+    assert v2["economic_transcript_cross_account_source_quote_sharing"] is False
+    assert v2["compact_v2_cross_account_source_deduplication_proved"] is False
+    assert v2["authority"]["order_authority"] == "NONE"
+    assert v2["authority"]["live_permission"] is False
+    assert not list(v2_root.glob("*.economic.jsonl"))
+    assert all(
+        (v2_root / row["manifest_filename"]).is_file()
+        and row["segment_count"] >= 1
+        and row["reexecution_status"] == "VERIFIED_COMPLETE"
+        for row in v2["economic_transcript_artifacts"]
+    )
+
+    v1_transcript_bytes = sum(
+        path.stat().st_size for path in v1_root.glob("*.economic.jsonl")
+    )
+    v2_segment_bytes = sum(
+        path.stat().st_size for path in v2_root.glob("*.economic-v2.json")
+    )
+    assert v1_transcript_bytes > 0
+    assert v2_segment_bytes > 0
+    v1_total_evidence_bytes = sum(
+        path.stat().st_size for path in v1_root.iterdir() if path.is_file()
+    )
+    v2_total_evidence_bytes = sum(
+        path.stat().st_size for path in v2_root.iterdir() if path.is_file()
+    )
+    assert v2_segment_bytes < v1_transcript_bytes
+    measured_ratio = v2_total_evidence_bytes / v1_total_evidence_bytes
+    # This assertion is deliberately modest: the current V2 contract removes
+    # the per-event envelopes and explicit HOLD proposal batches, but still
+    # duplicates source quotes across account coordinates.
+    assert measured_ratio < 0.8
 
 
 def test_sealed_builtin_strategy_catalog_runs_without_external_code(
