@@ -18,7 +18,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
@@ -453,7 +453,7 @@ def record_model_response(
         if prior_invocation["invocation_id"] != invocation_key
         for row in prior_invocation["submissions"]
     }
-    raw_submissions = _chargeable_submission_inputs(
+    raw_submissions = normalize_model_response_submissions(
         submissions,
         response_sha256=response_digest,
         invocation_id=invocation_key,
@@ -517,6 +517,38 @@ def record_model_response(
             updated["phase"] = "REVIEW_REQUIRED"
             updated["terminal_reason"] = "PROPOSAL_BUDGET_EXHAUSTED_WITHOUT_CANDIDATE"
     return _seal_next_state(updated, parent=value, transition_at_utc=event_time)
+
+
+def normalize_model_response_submissions(
+    submissions: Any,
+    *,
+    response_sha256: str,
+    invocation_id: str,
+    forbidden_submission_ids: Collection[str] = (),
+) -> list[dict[str, Any]]:
+    """Derive the complete budget-consuming denominator for one model response.
+
+    Downstream study materialization uses the same function to recompute the
+    denominator from exact raw response bytes.  A caller-provided winner subset
+    therefore cannot retain a matching response-input digest.
+    """
+
+    response_digest = _sha(response_sha256, "response_sha256")
+    invocation_key = _identifier(invocation_id, "invocation_id")
+    if not isinstance(forbidden_submission_ids, Collection) or isinstance(
+        forbidden_submission_ids, (str, bytes, bytearray)
+    ):
+        raise DojoAITuningStateError("forbidden_submission_ids must be a collection")
+    forbidden = {
+        _identifier(value, "forbidden_submission_id")
+        for value in forbidden_submission_ids
+    }
+    return _chargeable_submission_inputs(
+        submissions,
+        response_sha256=response_digest,
+        invocation_id=invocation_key,
+        forbidden_submission_ids=forbidden,
+    )
 
 
 def reserve_run_dispatch(
@@ -2395,6 +2427,7 @@ __all__ = [
     "initialize_tuning_state",
     "mark_incomplete_run",
     "mark_run_dispatched",
+    "normalize_model_response_submissions",
     "record_model_response",
     "reserve_model_invocation",
     "reserve_run_dispatch",

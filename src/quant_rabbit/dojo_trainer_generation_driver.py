@@ -373,19 +373,28 @@ def reduce_model_response_to_next_study(
         raise DojoTrainerGenerationDriverError(
             "MODEL_ADAPTER_NOT_CONFIGURED: no reservation transition exists"
         )
-    raw_response = _bytes(response_bytes, "response_bytes")
+    raw_response = _response_bytes(response_bytes)
     recorded = _utc(recorded_at_utc, "recorded_at_utc")
     if not isinstance(submissions, Sequence) or isinstance(
         submissions, (str, bytes, bytearray)
     ):
         raise DojoTrainerGenerationDriverError("submissions must be a sequence")
+    parsed_response, response_parse_status = _strict_model_response(raw_response)
+    response_is_array = isinstance(parsed_response, list)
+    raw_response_rows = parsed_response if response_is_array else raw_response
+    caller_submissions_match = response_is_array and _json_equal(
+        list(submissions), parsed_response
+    )
     try:
         response_state = record_model_response(
             plan.reservation_state,
             expected_parent_state_sha256=plan.reservation_state["state_sha256"],
             invocation_id=receipt["invocation_id"],
             response_sha256=hashlib.sha256(raw_response).hexdigest(),
-            submissions=list(submissions),
+            # Raw response bytes are the sole proposal denominator.  The
+            # caller-supplied parsed view is compatibility/audit evidence only
+            # and can neither omit a losing row nor add a candidate.
+            submissions=raw_response_rows,
             event_at_utc=recorded,
         )
     except ValueError as exc:
@@ -394,6 +403,8 @@ def reduce_model_response_to_next_study(
         ) from exc
 
     try:
+        if response_parse_status != "STRICT_JSON_ARRAY" or not caller_submissions_match:
+            raise ValueError("raw response and caller submission denominator differ")
         sealed_study: dict[str, Any] | None = materialize_next_study(
             response_state,
             request_artifacts={
@@ -420,6 +431,7 @@ def reduce_model_response_to_next_study(
     ]
     status_after = status_artifact(response_state)
     budget_before = receipt["budget"]
+    expected_charge = max(1, len(parsed_response)) if response_is_array else 1
     if (
         status_after["attempts_consumed"]
         != budget_before["attempts_consumed_before"] + 1
@@ -428,6 +440,7 @@ def reduce_model_response_to_next_study(
         or status_after["proposal_slots_consumed"]
         != budget_before["proposal_slots_consumed_before"]
         + invocation["proposal_slot_charge"]
+        or invocation["proposal_slot_charge"] != expected_charge
     ):
         raise DojoTrainerGenerationDriverError(
             "response state did not consume the sealed attempt, invocation, and proposal budgets"
@@ -448,6 +461,10 @@ def reduce_model_response_to_next_study(
         ).hexdigest(),
         "response_sha256": hashlib.sha256(raw_response).hexdigest(),
         "response_size_bytes": len(raw_response),
+        "response_parse_status": response_parse_status,
+        "raw_response_row_count": len(parsed_response) if response_is_array else None,
+        "submissions_source": "STRICT_RAW_RESPONSE_BYTES",
+        "caller_submissions_match_raw_response": caller_submissions_match,
         "response_state_sha256": response_state["state_sha256"],
         "status": "NEXT_STUDY_SEALED" if study_sealed else "REVIEW_REQUIRED",
         "blockers": (
@@ -821,9 +838,57 @@ def _canonical_bytes(value: Any) -> bytes:
         ) from exc
 
 
+def _strict_model_response(raw: bytes) -> tuple[Any, str]:
+    """Parse model bytes once without turning malformed output into a free retry."""
+
+    def reject_constant(token: str) -> None:
+        raise ValueError(f"non-finite JSON token is forbidden: {token}")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key is forbidden")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+        _validate_json(value, "model_response")
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        DojoTrainerGenerationDriverError,
+    ):
+        return None, "INVALID_STRICT_JSON"
+    if not isinstance(value, list):
+        return value, "STRICT_JSON_NON_ARRAY"
+    return value, "STRICT_JSON_ARRAY"
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    try:
+        return _canonical_bytes(left) == _canonical_bytes(right)
+    except DojoTrainerGenerationDriverError:
+        return False
+
+
 def _bytes(value: Any, field: str) -> bytes:
     if not isinstance(value, bytes) or not value:
         raise DojoTrainerGenerationDriverError(f"{field} must be non-empty bytes")
+    return value
+
+
+def _response_bytes(value: Any) -> bytes:
+    if not isinstance(value, bytes):
+        raise DojoTrainerGenerationDriverError("response_bytes must be bytes")
     return value
 
 

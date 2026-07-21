@@ -614,9 +614,19 @@ def _source_parent_binding(
                 "pair": pair,
                 "physical_shard_id": row["physical_shard_id"],
                 "coverage_cell_sha256": coverage_sha,
-                "row_count": row["row_count"],
-                "first_observed_utc": row["first_observed_utc"],
-                "last_observed_utc": row["last_observed_utc"],
+                "row_count": _integer(
+                    row.get("row_count"),
+                    field="source pair-month coverage.row_count",
+                    minimum=1,
+                ),
+                "first_observed_utc": _identifier(
+                    row.get("first_observed_utc"),
+                    field="source pair-month coverage.first_observed_utc",
+                ),
+                "last_observed_utc": _identifier(
+                    row.get("last_observed_utc"),
+                    field="source pair-month coverage.last_observed_utc",
+                ),
                 "missing_slot_legitimacy_proved": row.get(
                     "missing_slot_legitimacy_proved"
                 ),
@@ -625,17 +635,47 @@ def _source_parent_binding(
                 ),
             }
         )
-    quote_coverage_complete = all(
-        row["missing_slot_legitimacy_proved"] is True
-        and row["calendar_open_quote_coverage_proved"] is True
+    unproved_pairs = [
+        row["pair"]
         for row in parent_rows
-    )
+        if row["missing_slot_legitimacy_proved"] is not True
+        or row["calendar_open_quote_coverage_proved"] is not True
+    ]
+    if unproved_pairs:
+        raise DojoLongHorizonEconomicRunnerError(
+            "source quote coverage/calendar-gap legitimacy is unproved for the "
+            "sealed pair-month denominator"
+        )
+
+    # The economic row contract requires every feed pair at the same epoch.  A
+    # prepared source slice is verified against the exact parent epoch sets by
+    # ``_parent_price_rows``.  Reject manifest-level contradictions before any
+    # normalized source or transcript is opened, rather than discovering them
+    # after a full economic replay.
+    row_counts = {row["row_count"] for row in parent_rows}
+    observed_bounds = {
+        (
+            _parse_parent_time(row["first_observed_utc"]),
+            _parse_parent_time(row["last_observed_utc"]),
+        )
+        for row in parent_rows
+    }
+    if len(row_counts) != 1 or len(observed_bounds) != 1:
+        raise DojoLongHorizonEconomicRunnerError(
+            "pair epoch contract is inconsistent across the sealed pair-month "
+            "denominator; synchronized economic replay is forbidden"
+        )
+    first_epoch, last_epoch = next(iter(observed_bounds))
+    if first_epoch > last_epoch:
+        raise DojoLongHorizonEconomicRunnerError(
+            "pair epoch contract has inverted observed bounds"
+        )
     return {
         "source_manifest_sha256": manifest_sha,
         "parent_binding_physical_shard_ids_sha256": physical_ids_sha,
         "parent_month_coverage_cells": parent_rows,
         "parent_month_coverage_cells_sha256": canonical_sha256(parent_rows),
-        "parent_quote_coverage_complete": quote_coverage_complete,
+        "parent_quote_coverage_complete": True,
     }
 
 
@@ -850,6 +890,9 @@ def build_month_source_slice_receipt(
     once, hashes it while consuming it, and rejects any receipt drift at EOF.
     """
 
+    # Manifest coverage and the pair-epoch preconditions must be proved before
+    # opening what may be a large normalized source slice.
+    parent = _source_parent_binding(source_manifest, job=job)
     path = _safe_source_path(source_root, relative_path)
     digest = hashlib.sha256()
     previous: int | None = None
@@ -867,7 +910,6 @@ def build_month_source_slice_receipt(
             normalized_rows.append(row)
     if count == 0 or first is None or previous is None:
         raise DojoLongHorizonEconomicRunnerError("source shard is empty")
-    parent = _source_parent_binding(source_manifest, job=job)
     parent_rows = _parent_price_rows(source_manifest, job=job, parent=parent)
     derivation_sha = _verify_normalized_prices(normalized_rows, parent_rows)
     body = {

@@ -853,10 +853,10 @@ def test_mixed_failure_suppresses_success_economic_hashes_from_job_result(
     )
 
 
-def test_unproved_calendar_gap_coverage_fails_every_cell(
+def test_unproved_calendar_gap_coverage_rejects_before_economic_transcripts(
     tmp_path: Path, sealed_handoff: dict[str, Any]
 ) -> None:
-    _receipt, source_manifest = _write_source(tmp_path, sealed_handoff["job"])
+    receipt, source_manifest = _write_source(tmp_path, sealed_handoff["job"])
     coverage_rows = source_manifest["bindings"][0]["month_pair_coverage"]
     for index, row in enumerate(coverage_rows):
         body = {
@@ -881,34 +881,80 @@ def test_unproved_calendar_gap_coverage_fails_every_cell(
         **manifest_body,
         "source_manifest_sha256": canonical_sha256(manifest_body),
     }
-    receipt = build_month_source_slice_receipt(
-        source_root=tmp_path,
-        relative_path="2020-01.jsonl",
-        job=sealed_handoff["job"],
-        source_manifest=source_manifest,
-    )
-    result = run_long_horizon_economic_job(
-        runner_handoff=sealed_handoff,
-        plan=PLANS_BY_JOB[sealed_handoff["job"]["job_sha256"]],
-        source_root=tmp_path,
-        source_manifest=source_manifest,
-        source_slice_receipt=receipt,
-        economic_evidence_root=_economic_evidence_root(tmp_path),
-        worker_catalog=CATALOG,
-        coordinate_runtimes=_runtime_rows(sealed_handoff),
-        worker_runtime_factory=builtin_no_intent_runtime_factory,
-        worker_runtime_binding_sha256=RUNTIME_SHA,
-    )
-    assert result["job_status"] == "INCOMPLETE_FAILED"
-    assert result["complete_coordinate_count"] == 0
-    assert result["portfolio_results_by_coordinate"] == {}
-    assert result["partial_economics_reported"] is False
-    assert result["source_quote_coverage_proved"] is False
-    assert result["independent_economic_reexecution_passed"] is False
-    assert result["official_evidence_eligible"] is False
-    assert {row["failure"]["code"] for row in result["coordinate_results"]} == {
-        "SOURCE_QUOTE_COVERAGE_UNPROVEN"
+    with pytest.raises(
+        ValueError,
+        match="source quote coverage/calendar-gap legitimacy is unproved",
+    ):
+        build_month_source_slice_receipt(
+            source_root=tmp_path,
+            relative_path="must-not-be-opened.jsonl",
+            job=sealed_handoff["job"],
+            source_manifest=source_manifest,
+        )
+
+    evidence_root = _economic_evidence_root(tmp_path)
+    with pytest.raises(
+        ValueError,
+        match="source quote coverage/calendar-gap legitimacy is unproved",
+    ):
+        run_long_horizon_economic_job(
+            runner_handoff=sealed_handoff,
+            plan=PLANS_BY_JOB[sealed_handoff["job"]["job_sha256"]],
+            source_root=tmp_path,
+            source_manifest=source_manifest,
+            source_slice_receipt=receipt,
+            economic_evidence_root=evidence_root,
+            worker_catalog=CATALOG,
+            coordinate_runtimes=_runtime_rows(sealed_handoff),
+            worker_runtime_factory=builtin_no_intent_runtime_factory,
+            worker_runtime_binding_sha256=RUNTIME_SHA,
+        )
+    assert list(evidence_root.iterdir()) == []
+
+
+def test_pair_epoch_contract_mismatch_rejects_before_economic_transcripts(
+    tmp_path: Path, sealed_handoff: dict[str, Any]
+) -> None:
+    receipt, source_manifest = _write_source(tmp_path, sealed_handoff["job"])
+    coverage_rows = source_manifest["bindings"][0]["month_pair_coverage"]
+    drifted = coverage_rows[0]
+    drifted_body = {
+        **{
+            key: value
+            for key, value in drifted.items()
+            if key != "coverage_cell_sha256"
+        },
+        "row_count": drifted["row_count"] + 1,
     }
+    coverage_rows[0] = {
+        **drifted_body,
+        "coverage_cell_sha256": canonical_sha256(drifted_body),
+    }
+    manifest_body = {
+        key: value
+        for key, value in source_manifest.items()
+        if key != "source_manifest_sha256"
+    }
+    source_manifest = {
+        **manifest_body,
+        "source_manifest_sha256": canonical_sha256(manifest_body),
+    }
+    evidence_root = _economic_evidence_root(tmp_path)
+
+    with pytest.raises(ValueError, match="pair epoch contract is inconsistent"):
+        run_long_horizon_economic_job(
+            runner_handoff=sealed_handoff,
+            plan=PLANS_BY_JOB[sealed_handoff["job"]["job_sha256"]],
+            source_root=tmp_path,
+            source_manifest=source_manifest,
+            source_slice_receipt=receipt,
+            economic_evidence_root=evidence_root,
+            worker_catalog=CATALOG,
+            coordinate_runtimes=_runtime_rows(sealed_handoff),
+            worker_runtime_factory=builtin_no_intent_runtime_factory,
+            worker_runtime_binding_sha256=RUNTIME_SHA,
+        )
+    assert list(evidence_root.iterdir()) == []
 
 
 def test_external_python_worker_is_rejected_before_factory_side_effect(

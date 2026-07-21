@@ -782,7 +782,46 @@ def test_rejects_request_response_and_accepted_membership_drift() -> None:
     invocation = state["attempts"][-1]["invocations"][0]
     invocation["response_sha256"] = _raw_sha(changed_response)
     _rehash_state(state)
-    with pytest.raises(DojoNextStudyBuilderError, match="absent"):
+    with pytest.raises(DojoNextStudyBuilderError, match="response denominator"):
+        materialize_next_study(
+            state,
+            request_artifacts=requests,
+            response_artifacts=responses,
+            prompt_artifact=prompt,
+        )
+
+
+def test_rejects_omitted_raw_response_row_from_charged_denominator() -> None:
+    state, requests, responses, prompt, _ = _fixture(candidate_count=1)
+    raw = json.loads(responses["model-a2-1"])
+    raw.append(
+        {
+            "submission_id": "omitted-loser",
+            "raw_proposal_sha256": "0" * 64,
+            "proposal": None,
+            "validation_errors": ["MODEL_PROPOSAL_UNPARSEABLE"],
+        }
+    )
+    changed_response = _json_bytes(raw)
+    responses["model-a2-1"] = changed_response
+    invocation = state["attempts"][-1]["invocations"][0]
+    invocation["response_sha256"] = _raw_sha(changed_response)
+    invocation["response_input_sha256"] = _sha(
+        {
+            "response_sha256": invocation["response_sha256"],
+            "submissions": [
+                {
+                    "submission_id": "submission-0",
+                    "raw_proposal_sha256": raw[0]["raw_proposal_sha256"],
+                    "proposal": raw[0]["proposal"],
+                    "validation_errors": [],
+                }
+            ],
+        }
+    )
+    _rehash_state(state)
+
+    with pytest.raises(DojoNextStudyBuilderError, match="response denominator"):
         materialize_next_study(
             state,
             request_artifacts=requests,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -423,6 +424,119 @@ def test_external_response_is_charged_and_duplicate_is_not_in_denominator(
     assert captured["response_artifacts"] == {
         plan.receipt["invocation_id"]: response
     }
+
+
+def test_raw_response_rows_cannot_be_omitted_from_caller_submissions(
+    monkeypatch,
+) -> None:
+    plan, _ = _plan(monkeypatch, adapter=True)
+    assert plan.reservation_state is not None
+    raw_rows = [
+        {"submission_id": "winner"},
+        {"submission_id": "omitted-loser"},
+    ]
+    response = json.dumps(raw_rows, separators=(",", ":")).encode() + b"\n"
+    captured: dict = {}
+    response_state = copy.deepcopy(plan.reservation_state)
+    response_state["state_sha256"] = "a" * 64
+    response_state["attempts"][-1]["invocations"][-1].update(
+        {
+            "proposal_slot_charge": 2,
+            "submissions": [
+                {
+                    "submission_id": "winner",
+                    "status": "ACCEPTED",
+                    "candidate_id": "qr-a2-winner",
+                },
+                {
+                    "submission_id": "omitted-loser",
+                    "status": "INVALID",
+                    "candidate_id": None,
+                },
+            ],
+        }
+    )
+
+    def record(value, **kwargs):
+        captured.update(kwargs)
+        return copy.deepcopy(response_state)
+
+    monkeypatch.setattr(driver, "record_model_response", record)
+    monkeypatch.setattr(
+        driver,
+        "materialize_next_study",
+        lambda *args, **kwargs: pytest.fail(
+            "mismatched caller view must not seal a study"
+        ),
+    )
+
+    reduced = driver.reduce_model_response_to_next_study(
+        plan,
+        response_bytes=response,
+        submissions=[raw_rows[0]],
+        recorded_at_utc="2026-07-20T00:01:00Z",
+    )
+
+    assert captured["submissions"] == raw_rows
+    assert (
+        reduced.response_state["attempts"][-1]["invocations"][-1][
+            "proposal_slot_charge"
+        ]
+        == 2
+    )
+    assert reduced.receipt["proposal_slot_charge"] == 2
+    assert reduced.receipt["raw_response_row_count"] == 2
+    assert reduced.receipt["caller_submissions_match_raw_response"] is False
+    assert reduced.receipt["submissions_source"] == "STRICT_RAW_RESPONSE_BYTES"
+    assert reduced.receipt["status"] == "REVIEW_REQUIRED"
+    assert reduced.sealed_study is None
+
+
+def test_empty_raw_response_consumes_one_slot_and_cannot_seal_study(
+    monkeypatch,
+) -> None:
+    plan, _ = _plan(monkeypatch, adapter=True)
+    assert plan.reservation_state is not None
+    captured: dict = {}
+    response_state = copy.deepcopy(plan.reservation_state)
+    response_state["state_sha256"] = "b" * 64
+    response_state["attempts"][-1]["invocations"][-1].update(
+        {
+            "proposal_slot_charge": 1,
+            "submissions": [
+                {
+                    "submission_id": "invalid-empty-response",
+                    "status": "INVALID",
+                    "candidate_id": None,
+                }
+            ],
+        }
+    )
+
+    def record(value, **kwargs):
+        captured.update(kwargs)
+        return copy.deepcopy(response_state)
+
+    monkeypatch.setattr(driver, "record_model_response", record)
+    monkeypatch.setattr(
+        driver,
+        "materialize_next_study",
+        lambda *args, **kwargs: pytest.fail("empty response must not seal a study"),
+    )
+
+    reduced = driver.reduce_model_response_to_next_study(
+        plan,
+        response_bytes=b"",
+        submissions=[],
+        recorded_at_utc="2026-07-20T00:01:00Z",
+    )
+
+    assert captured["submissions"] == b""
+    assert reduced.receipt["response_parse_status"] == "INVALID_STRICT_JSON"
+    assert reduced.receipt["raw_response_row_count"] is None
+    assert reduced.receipt["proposal_slot_charge"] == 1
+    assert reduced.receipt["status"] == "REVIEW_REQUIRED"
+    assert reduced.sealed_study is None
 
 
 def test_response_without_adapter_or_safe_study_fails_closed(monkeypatch) -> None:

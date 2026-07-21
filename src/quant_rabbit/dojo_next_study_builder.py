@@ -32,6 +32,7 @@ from quant_rabbit.dojo_ai_tuning_state import (
     MAX_STATE_STORE_EVENT_BYTES,
     DojoAITuningStateError,
     fixed_envelope_from_sealed_study,
+    normalize_model_response_submissions,
     verify_tuning_state,
 )
 from quant_rabbit.dojo_bot_catalog import (
@@ -141,6 +142,7 @@ def materialize_next_study(
     accepted_invocation_id = next(iter(accepted_invocation_ids))
     _verify_response_artifacts(attempt, response_artifacts)
     _verify_accepted_response_membership(
+        state,
         attempt,
         accepted_invocation_id=accepted_invocation_id,
         response_raw=response_artifacts[accepted_invocation_id],
@@ -387,6 +389,7 @@ def _verify_response_artifacts(
 
 
 def _verify_accepted_response_membership(
+    state: Mapping[str, Any],
     attempt: Mapping[str, Any],
     *,
     accepted_invocation_id: str,
@@ -395,6 +398,37 @@ def _verify_accepted_response_membership(
     value = _strict_json(response_raw, label="accepted model response")
     if not isinstance(value, list):
         raise DojoNextStudyBuilderError("accepted model response is not an array")
+    invocation = next(
+        row
+        for row in attempt["invocations"]
+        if row["invocation_id"] == accepted_invocation_id
+    )
+    forbidden_submission_ids = [
+        submission["submission_id"]
+        for prior_attempt in state["attempts"][:-1]
+        for prior_invocation in prior_attempt["invocations"]
+        for submission in prior_invocation["submissions"]
+    ]
+    normalized_inputs = normalize_model_response_submissions(
+        value,
+        response_sha256=invocation["response_sha256"],
+        invocation_id=invocation["invocation_id"],
+        forbidden_submission_ids=forbidden_submission_ids,
+    )
+    expected_input_sha256 = _canonical_sha(
+        {
+            "response_sha256": invocation["response_sha256"],
+            "submissions": normalized_inputs,
+        }
+    )
+    if (
+        invocation["response_input_sha256"] != expected_input_sha256
+        or len(normalized_inputs) != len(invocation["submissions"])
+        or invocation["proposal_slot_charge"] != len(normalized_inputs)
+    ):
+        raise DojoNextStudyBuilderError(
+            "raw model response denominator differs from charged submissions"
+        )
     raw_by_id: dict[str, Mapping[str, Any]] = {}
     for index, item in enumerate(value):
         if not isinstance(item, Mapping):
@@ -407,11 +441,6 @@ def _verify_accepted_response_membership(
                 "accepted model response repeats a submission id"
             )
         raw_by_id[submission_id] = item
-    invocation = next(
-        row
-        for row in attempt["invocations"]
-        if row["invocation_id"] == accepted_invocation_id
-    )
     accepted = [row for row in invocation["submissions"] if row["status"] == "ACCEPTED"]
     for stored in accepted:
         raw = raw_by_id.get(stored["submission_id"])
