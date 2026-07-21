@@ -68,6 +68,7 @@ class VBPosition:
     opened_ts: str
     tp_price: Optional[float] = None
     sl_price: Optional[float] = None
+    strategy_tag: Optional[str] = None
 
 
 @dataclass
@@ -80,6 +81,7 @@ class VBOrder:
     tp_pips: Optional[float] = None
     sl_pips: Optional[float] = None
     kind: str = "LIMIT"  # LIMIT (at level or better) / STOP (breakout trigger)
+    strategy_tag: Optional[str] = None
 
 
 @dataclass
@@ -249,7 +251,8 @@ class VirtualBroker:
     # ---- agent actions ---------------------------------------------------
     def market_order(self, pair: str, side: str, units: float,
                      tp_pips: Optional[float] = None,
-                     sl_pips: Optional[float] = None) -> str:
+                     sl_pips: Optional[float] = None,
+                     strategy_tag: Optional[str] = None) -> str:
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
         if units <= 0:
@@ -272,10 +275,12 @@ class VirtualBroker:
         self.positions[trade_id] = VBPosition(
             trade_id=trade_id, pair=pair, side=side, units=units,
             entry_price=entry, opened_ts=ts, tp_price=tp, sl_price=sl,
+            strategy_tag=strategy_tag,
         )
         self._log("FILL_MARKET", {
             "trade_id": trade_id, "pair": pair, "side": side, "units": units,
             "entry": entry, "tp": tp, "sl": sl,
+            "strategy_tag": strategy_tag,
             "quote": {"bid": bid, "ask": ask, "ts": ts},
         })
         self._enforce_margin_after_action()
@@ -283,7 +288,8 @@ class VirtualBroker:
 
     def limit_order(self, pair: str, side: str, units: float, price: float,
                     tp_pips: Optional[float] = None,
-                    sl_pips: Optional[float] = None) -> str:
+                    sl_pips: Optional[float] = None,
+                    strategy_tag: Optional[str] = None) -> str:
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
         if units <= 0 or price <= 0:
@@ -292,16 +298,19 @@ class VirtualBroker:
         self.orders[order_id] = VBOrder(
             order_id=order_id, pair=pair, side=side, units=units,
             limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips,
+            strategy_tag=strategy_tag,
         )
         self._log("ORDER_LIMIT", {
             "order_id": order_id, "pair": pair, "side": side,
             "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
+            "strategy_tag": strategy_tag,
         })
         return order_id
 
     def stop_order(self, pair: str, side: str, units: float, price: float,
                    tp_pips: Optional[float] = None,
-                   sl_pips: Optional[float] = None) -> str:
+                   sl_pips: Optional[float] = None,
+                   strategy_tag: Optional[str] = None) -> str:
         """Breakout entry: LONG fills once the real ask reaches price (at
         the level or WORSE when gapped); SHORT once the real bid does."""
 
@@ -313,18 +322,23 @@ class VirtualBroker:
         self.orders[order_id] = VBOrder(
             order_id=order_id, pair=pair, side=side, units=units,
             limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips, kind="STOP",
+            strategy_tag=strategy_tag,
         )
         self._log("ORDER_STOP", {
             "order_id": order_id, "pair": pair, "side": side,
             "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
+            "strategy_tag": strategy_tag,
         })
         return order_id
 
     def cancel_order(self, order_id: str) -> None:
-        if order_id not in self.orders:
+        order = self.orders.get(order_id)
+        if order is None:
             raise VirtualBrokerError(f"unknown order: {order_id}")
         del self.orders[order_id]
-        self._log("ORDER_CANCEL", {"order_id": order_id})
+        self._log("ORDER_CANCEL", {
+            "order_id": order_id, "strategy_tag": order.strategy_tag,
+        })
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> float:
         pos = self.positions.get(trade_id)
@@ -348,7 +362,8 @@ class VirtualBroker:
             pos.units -= close_units
         self._log("CLOSE", {
             "trade_id": trade_id, "units": close_units, "price": price,
-            "pl_jpy": round(pl, 2), "quote": {"bid": bid, "ask": ask, "ts": ts},
+            "pl_jpy": round(pl, 2), "strategy_tag": pos.strategy_tag,
+            "quote": {"bid": bid, "ask": ask, "ts": ts},
         })
         return pl
 
@@ -359,7 +374,10 @@ class VirtualBroker:
             raise VirtualBrokerError(f"unknown trade: {trade_id}")
         pos.tp_price = tp_price
         pos.sl_price = sl_price
-        self._log("SET_EXIT", {"trade_id": trade_id, "tp": tp_price, "sl": sl_price})
+        self._log("SET_EXIT", {
+            "trade_id": trade_id, "tp": tp_price, "sl": sl_price,
+            "strategy_tag": pos.strategy_tag,
+        })
 
     # ---- feed ------------------------------------------------------------
     def on_quote(self, pair: str, bid: float, ask: float, ts: str) -> list[dict[str, Any]]:
@@ -407,12 +425,14 @@ class VirtualBroker:
             self.positions[trade_id] = VBPosition(
                 trade_id=trade_id, pair=pair, side=order.side, units=order.units,
                 entry_price=filled_price, opened_ts=ts, tp_price=tp, sl_price=sl,
+                strategy_tag=order.strategy_tag,
             )
             del self.orders[order_id]
             event = {
                 "event": "FILL_LIMIT", "order_id": order_id, "trade_id": trade_id,
                 "pair": pair, "side": order.side, "units": order.units,
-                "price": filled_price, "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "price": filled_price, "strategy_tag": order.strategy_tag,
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
             }
             self._log("FILL_LIMIT", event)
             events.append(event)
@@ -444,7 +464,8 @@ class VirtualBroker:
             del self.positions[trade_id]
             event = {
                 "event": f"EXIT_{reason}", "trade_id": trade_id, "price": exit_price,
-                "pl_jpy": round(pl, 2), "quote": {"bid": bid, "ask": ask, "ts": ts},
+                "pl_jpy": round(pl, 2), "strategy_tag": pos.strategy_tag,
+                "quote": {"bid": bid, "ask": ask, "ts": ts},
             }
             self._log(f"EXIT_{reason}", event)
             events.append(event)
@@ -470,7 +491,8 @@ class VirtualBroker:
             self.balance_jpy += pl
             del self.positions[trade_id]
             event = {"event": "MARGIN_CLOSEOUT", "trade_id": trade_id,
-                     "price": price, "pl_jpy": round(pl, 2)}
+                     "price": price, "pl_jpy": round(pl, 2),
+                     "strategy_tag": pos.strategy_tag}
             self._log("MARGIN_CLOSEOUT", event)
             events.append(event)
         return events

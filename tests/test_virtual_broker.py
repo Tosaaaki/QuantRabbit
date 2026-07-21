@@ -139,6 +139,28 @@ def test_snapshot_restore_roundtrip(broker, tmp_path):
     assert b2.balance_jpy == broker.balance_jpy
 
 
+def test_strategy_tag_survives_order_fill_exit_ledger_and_snapshot(broker):
+    oid = broker.limit_order(
+        "USD_JPY", "LONG", 1_000, price=149.95, tp_pips=5,
+        strategy_tag="W_FADE",
+    )
+    order = broker.orders[oid]
+    assert order.strategy_tag == "W_FADE"
+
+    fill = broker.on_quote("USD_JPY", 149.92, 149.94, "t1")[0]
+    trade_id = fill["trade_id"]
+    assert fill["strategy_tag"] == "W_FADE"
+    assert broker.positions[trade_id].strategy_tag == "W_FADE"
+    assert broker.snapshot()["positions"][0]["strategy_tag"] == "W_FADE"
+
+    exit_event = broker.on_quote("USD_JPY", 149.99, 150.01, "t2")[0]
+    assert exit_event["event"] == "EXIT_TP"
+    assert exit_event["strategy_tag"] == "W_FADE"
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    tagged = [record for record in records if record["payload"].get("strategy_tag")]
+    assert {record["payload"]["strategy_tag"] for record in tagged} == {"W_FADE"}
+
+
 def test_snapshot_ledger_checkpoint_mismatch_fails_closed(broker, tmp_path):
     broker.market_order("USD_JPY", "LONG", 1_000)
     snap = broker.snapshot()

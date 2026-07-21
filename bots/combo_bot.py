@@ -21,7 +21,21 @@ from lab_bot import Bot as LabBot
 class Bot:
     def __init__(self, broker: VirtualBroker):
         configs = json.loads(os.environ["DOJO_BOT_COMBO"])
-        self.hands = [LabBot(broker, cfg) for cfg in configs]
+        if not isinstance(configs, list) or not configs:
+            raise ValueError("DOJO_BOT_COMBO must be a non-empty config list")
+        normalized = []
+        tags = []
+        for raw in configs:
+            if not isinstance(raw, dict):
+                raise ValueError("each combo hand config must be an object")
+            cfg = dict(raw)
+            tag = str(cfg.get("strategy_tag") or cfg.get("strategy_id") or cfg["signal"])
+            cfg["strategy_tag"] = tag
+            normalized.append(cfg)
+            tags.append(tag)
+        if len(tags) != len(set(tags)):
+            raise ValueError("combo strategy_tag values must be unique")
+        self.hands = [LabBot(broker, cfg) for cfg in normalized]
 
     def seed_bar(self, pair: str, bar: dict) -> None:
         for hand in self.hands:

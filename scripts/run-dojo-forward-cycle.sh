@@ -8,7 +8,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 session_dir="${repo_root}/research/data/dojo_forward_20260720"
 
 export QR_OANDA_ENV_FILE="/Users/tossaki/App/QuantRabbit-live/.env.local"
-export DOJO_BOT_COMBO='[{"signal":"range_fade_limit","pairs":["USD_JPY"],"tp_pips":6,"sl_pips":null,"ceiling_min":480,"max_concurrent":3,"per_pos_lev":4.3,"atr_floor_pips":1.0,"fade_atr":1.2,"eff_max":0.2},{"signal":"spike_fade","pairs":["USD_JPY"],"tp_atr":3.0,"sl_pips":null,"ceiling_min":480,"max_concurrent":2,"per_pos_lev":4.3,"atr_floor_pips":1.0,"fade_atr":1.2,"eff_max":0.2}]'
+export DOJO_BOT_COMBO='[{"strategy_tag":"W_FADE","signal":"range_fade_limit","pairs":["USD_JPY"],"tp_pips":6,"sl_pips":null,"ceiling_min":480,"max_concurrent":3,"per_pos_lev":4.3,"atr_floor_pips":1.0,"fade_atr":1.2,"eff_max":0.2},{"strategy_tag":"W_SPIKE","signal":"spike_fade","pairs":["USD_JPY"],"tp_atr":3.0,"sl_pips":null,"ceiling_min":480,"max_concurrent":2,"per_pos_lev":4.3,"atr_floor_pips":1.0,"fade_atr":1.2,"eff_max":0.2}]'
 export PYTHONPATH="${repo_root}/src"
 
 exec /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \

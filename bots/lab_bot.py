@@ -55,6 +55,9 @@ class Bot:
         cfg = cfg or json.loads(os.environ["DOJO_BOT_CONFIG"])
         self.pairs = cfg.get("pairs", ["USD_JPY"])
         self.signal = cfg["signal"]
+        self.strategy_tag = str(
+            cfg.get("strategy_tag") or cfg.get("strategy_id") or self.signal
+        )
         self.tp_pips = float(cfg.get("tp_pips", 0) or 0)
         self.tp_atr = cfg.get("tp_atr")  # scale-free take: TP = tp_atr x ATR
         self.sl_pips = cfg.get("sl_pips")
@@ -69,6 +72,18 @@ class Bot:
                                       self.max_concurrent * len(self.pairs)))
         self.state: dict[str, _PairState] = {p: _PairState() for p in self.pairs}
         self._owner: dict[str, str] = {}  # trade_id -> pair
+
+    def _market_order(self, *args, **kwargs) -> str:
+        kwargs["strategy_tag"] = self.strategy_tag
+        return self.broker.market_order(*args, **kwargs)
+
+    def _limit_order(self, *args, **kwargs) -> str:
+        kwargs["strategy_tag"] = self.strategy_tag
+        return self.broker.limit_order(*args, **kwargs)
+
+    def _stop_order(self, *args, **kwargs) -> str:
+        kwargs["strategy_tag"] = self.strategy_tag
+        return self.broker.stop_order(*args, **kwargs)
 
     # ---- incremental indicators -----------------------------------------
     def _update(self, st: "_PairState", bar: dict) -> None:
@@ -129,9 +144,14 @@ class Bot:
         prior_l3 = min(st.lows3) if len(st.lows3) == 3 else None
         self._update(st, bar)
 
-        # adopt limit fills into this pair's book; ceiling exits
+        # Adopt only this hand's tagged fills.  Shared combo hands must not
+        # seize or time-close one another's positions after a restart.
         for trade_id, pos in list(self.broker.positions.items()):
-            if trade_id not in self._owner and pos.pair == pair:
+            if (
+                trade_id not in self._owner
+                and pos.pair == pair
+                and pos.strategy_tag == self.strategy_tag
+            ):
                 self._owner[trade_id] = pair
                 opened_epoch = self.broker._ts_epoch(pos.opened_ts)
                 # A session restart must not reset the declared hard ceiling.
@@ -192,7 +212,7 @@ class Bot:
             if units <= 0:
                 return
             try:
-                tid = self.broker.market_order(
+                tid = self._market_order(
                     pair, trend, units, tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_trades[tid] = epoch
                 self._owner[tid] = pair
@@ -214,7 +234,7 @@ class Bot:
             if units <= 0:
                 return
             try:
-                oid = self.broker.limit_order(
+                oid = self._limit_order(
                     pair, trend, units, price=round(price, digits),
                     tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_orders = [oid]
@@ -244,7 +264,7 @@ class Bot:
                 return
             for side, price in (("LONG", box_h + 2 * pip), ("SHORT", box_l - 2 * pip)):
                 try:
-                    oid = self.broker.stop_order(
+                    oid = self._stop_order(
                         pair, side, units, price=round(price, digits),
                         tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders.append(oid)
@@ -272,7 +292,7 @@ class Bot:
             side = "SHORT" if up_spike else "LONG"
             edge = (bar["bid_h"] + bar["ask_h"]) / 2 if up_spike else (bar["bid_l"] + bar["ask_l"]) / 2
             try:
-                oid = self.broker.limit_order(
+                oid = self._limit_order(
                     pair, side, units, price=round(edge, digits),
                     tp_pips=tp_pips, sl_pips=self.sl_pips)
                 st.my_orders = [oid]
@@ -292,7 +312,7 @@ class Bot:
                 if abs(level - mid_c) > 40 * pip:  # only near levels
                     continue
                 try:
-                    oid = self.broker.limit_order(pair, side, units,
+                    oid = self._limit_order(pair, side, units,
                         price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders.append(oid)
                 except VirtualBrokerError: pass
@@ -312,7 +332,7 @@ class Bot:
                 if abs(level - mid_c) > 25 * pip or abs(level - mid_c) < 3 * pip:
                     continue
                 try:
-                    oid = self.broker.limit_order(pair, side, units,
+                    oid = self._limit_order(pair, side, units,
                         price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders.append(oid)
                 except VirtualBrokerError: pass
@@ -330,13 +350,13 @@ class Bot:
             broke_dn = (st.today_low or mid_c) < st.prev_day_low and mid_c < st.prev_day_low
             if broke_up:
                 try:
-                    oid = self.broker.limit_order(pair, "LONG", units,
+                    oid = self._limit_order(pair, "LONG", units,
                         price=round(st.prev_day_high, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders = [oid]
                 except VirtualBrokerError: pass
             elif broke_dn:
                 try:
-                    oid = self.broker.limit_order(pair, "SHORT", units,
+                    oid = self._limit_order(pair, "SHORT", units,
                         price=round(st.prev_day_low, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders = [oid]
                 except VirtualBrokerError: pass
@@ -351,11 +371,11 @@ class Bot:
             if units <= 0: return
             try:
                 if dev <= -k:
-                    tid = self.broker.market_order(pair, "LONG", units,
+                    tid = self._market_order(pair, "LONG", units,
                         tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_trades[tid] = epoch; self._owner[tid] = pair
                 elif dev >= k:
-                    tid = self.broker.market_order(pair, "SHORT", units,
+                    tid = self._market_order(pair, "SHORT", units,
                         tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_trades[tid] = epoch; self._owner[tid] = pair
             except VirtualBrokerError: pass
@@ -385,7 +405,7 @@ class Bot:
             if units <= 0: return
             try:
                 side = "LONG" if triggered_l else "SHORT"
-                tid = self.broker.market_order(pair, side, units,
+                tid = self._market_order(pair, side, units,
                     tp_pips=None, sl_pips=self.sl_pips)
                 st.my_trades[tid] = epoch; self._owner[tid] = pair
                 st.peak = mid_c; st.trough = mid_c
@@ -406,7 +426,7 @@ class Bot:
             for mult in layers:
                 for side, price in (("LONG", mid_c - dist * mult), ("SHORT", mid_c + dist * mult)):
                     try:
-                        oid = self.broker.limit_order(pair, side, units,
+                        oid = self._limit_order(pair, side, units,
                             price=round(price, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
                         st.my_orders.append(oid)
                     except VirtualBrokerError: pass
@@ -427,7 +447,7 @@ class Bot:
                 return
             for side, price in (("LONG", mid_c - dist), ("SHORT", mid_c + dist)):
                 try:
-                    oid = self.broker.limit_order(
+                    oid = self._limit_order(
                         pair, side, units, price=round(price, digits),
                         tp_pips=tp_pips, sl_pips=self.sl_pips)
                     st.my_orders.append(oid)
