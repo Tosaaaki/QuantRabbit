@@ -133,7 +133,13 @@ class Bot:
         for trade_id, pos in list(self.broker.positions.items()):
             if trade_id not in self._owner and pos.pair == pair:
                 self._owner[trade_id] = pair
-                st.my_trades[trade_id] = epoch
+                opened_epoch = self.broker._ts_epoch(pos.opened_ts)
+                # A session restart must not reset the declared hard ceiling.
+                # Missing/corrupt persistence is treated as already due rather
+                # than silently granting another full holding window.
+                st.my_trades[trade_id] = (
+                    opened_epoch if opened_epoch is not None else epoch - self.ceiling_s
+                )
         for trade_id in list(st.my_trades):
             if trade_id not in self.broker.positions:
                 del st.my_trades[trade_id]
