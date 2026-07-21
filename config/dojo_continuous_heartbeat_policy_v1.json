@@ -1,0 +1,30 @@
+{
+  "authority": {
+    "broker_mutation_allowed": false,
+    "drive_access_allowed": false,
+    "filesystem_delete_allowed": false,
+    "live_permission": false,
+    "model_invocation_allowed": false,
+    "order_authority": "NONE",
+    "process_start_allowed": false,
+    "runner_invocation_allowed": false
+  },
+  "classification": "RESEARCH_HEALTH_CONTROL_ONLY",
+  "contract": "QR_DOJO_CONTINUOUS_HEARTBEAT_POLICY_V1",
+  "health_cadence_seconds": 60,
+  "local_probe_manifest_sha256": "18d1a3651e379db08b21849f64c29e281f3c61623d5f7c0e9888bd186e482a4d",
+  "max_completed_obligations": 256,
+  "max_event_count": 4096,
+  "max_observation_age_seconds": 120,
+  "policy_id": "dojo-continuous-heartbeat-local-v1",
+  "policy_sha256": "3d3404df763f77629f8da920c333b9c576574a1da81d0e7cec0d45809b93b3f9",
+  "resource_gate": {
+    "disk_reserve_bytes": 21474836480,
+    "predicted_output_denominator": 4,
+    "predicted_output_numerator": 5,
+    "require_active_trainer_zero": true,
+    "require_compression_upload_idle": true,
+    "require_remote_unverified_generation_zero": true
+  },
+  "schema_version": 1
+}

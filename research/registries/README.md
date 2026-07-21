@@ -55,6 +55,20 @@
   - state `STARTED`, sealed days `0/14`
   - precommit canonical SHA-256 `b5240ca36ce84dd00945d8d307bf65ceb2f2b0688849b0d102680436fb22b06a`
   - start receipt SHA-256 `36fc12db99e81a7a3f6a3cb0b539ee9b55e4bd87c2d4ae58b537ac1a72591a2e`
+- New-strategy research queue V1:
+  `dojo_strategy_research_queue_v1-bcaed95081ed609fa9faba1f23b134fa25a3777855c1e0b1ab9aa7f07430aa6f.json`
+  - three unexecuted designs: Asia sweep/reclaim + BE, H1 Donchian break + ATR trail,
+    and G8 relative-strength risk-budget allocation
+  - room-01/02/03 isolate strategy, thesis, input class, trainer lineage, search budget,
+    parameters/results, and artifact root; only evaluator/cost/risk/source contracts are shared
+  - cross-room result or parameter reuse creates a new hypothesis and debits the destination
+    room; a four-capital-slot common TRAIN sparring arena is separate from unopened holdout
+    examination and prospective-forward arenas
+  - exact G2 baseline binding rejects the existing six families and any resealed duplicate
+  - the external AI trainer may reserve at most one design only after a changed terminal/material
+    cost+MTM+margin+LOPO TRAIN result; unchanged results are a semantic no-op
+  - holdout/prospective opening, monthly-target backsolving, proof, promotion, live permission,
+    broker mutation, and QuantRabbit model API calls remain forbidden
 
 No registry in this directory grants live permission. A filename, self-declared status, or public SHA alone is not
 trusted evidence.

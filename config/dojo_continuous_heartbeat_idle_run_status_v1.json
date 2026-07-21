@@ -1,0 +1,27 @@
+{
+  "authority": {
+    "broker_mutation_allowed": false,
+    "drive_access_allowed": false,
+    "filesystem_delete_allowed": false,
+    "live_permission": false,
+    "model_invocation_allowed": false,
+    "order_authority": "NONE",
+    "process_start_allowed": false,
+    "runner_invocation_allowed": false
+  },
+  "contract": "QR_DOJO_CONTINUOUS_HEARTBEAT_LOCAL_RUN_STATUS_V1",
+  "run": {
+    "checkpoint_sha256": null,
+    "completed_coordinate_count": 0,
+    "economics_fields_present": false,
+    "expected_coordinate_count": 0,
+    "failure_artifact_sha256": null,
+    "process_identity_sha256": null,
+    "process_state": "IDLE",
+    "run_id": null,
+    "terminal_bundle_sha256": null
+  },
+  "schema_version": 1,
+  "status_sha256": "5a48ca09290a8d383c8db95d87989d9a28fa0aa8536f3da52769b82147f2a769",
+  "updated_at_utc": "2026-07-22T00:00:00Z"
+}

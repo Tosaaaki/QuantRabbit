@@ -29,12 +29,19 @@ from zoneinfo import ZoneInfo
 from quant_rabbit.dojo_bot_catalog import bot_config_sha256, validate_bot_config
 from quant_rabbit.dojo_bot_trainer import seal_candidate_proposal
 from quant_rabbit.dojo_lab_provenance import canonical_strategy_owner_id
+from quant_rabbit.dojo_strategy_catalog_revision_v2 import (
+    FAMILY as ASIA_SWEEP_RECLAIM_BE_FAMILY,
+    PROPOSAL_CONTRACT as REVISION_V2_PROPOSAL_CONTRACT,
+    seal_candidate_proposal as seal_revision_v2_candidate_proposal,
+    strategy_config_sha256 as revision_v2_config_sha256,
+    validate_asia_sweep_reclaim_be_config,
+)
 
 
-RUNTIME_SEAL_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_SEAL_V1"
-RUNTIME_STATE_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_STATE_V1"
-SCHEMA_VERSION: Final = 1
-ALGORITHM_REVISION: Final = "DECLARATIVE_LAB_FAMILY_POST_EXIT_ADAPTER_V2"
+RUNTIME_SEAL_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_SEAL_V2"
+RUNTIME_STATE_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_STATE_V2"
+SCHEMA_VERSION: Final = 2
+ALGORITHM_REVISION: Final = "DECLARATIVE_LAB_FAMILY_POST_EXIT_ADAPTER_V3"
 GENESIS_SNAPSHOT_SHA256: Final = "0" * 64
 MAX_WORKERS: Final = 32
 MAX_DEPENDENCY_BYTES: Final = 8 * 1024 * 1024
@@ -61,6 +68,7 @@ _FAMILY_CAPABILITIES: Final = {
     "range_fade_limit": "EFFICIENCY_RANGE_FADE_LIMIT_V1",
     "session_open_range_break": "LONDON_00_08_RANGE_BREAK_MARKET_V1",
     "weekend_gap_recovery": "NY_17_WEEKEND_GAP_RECOVERY_MARKET_V1",
+    ASIA_SWEEP_RECLAIM_BE_FAMILY: "ASIA_RANGE_SWEEP_M5_CLOSE_RECLAIM_NEXT_OPEN_BE_V1",
 }
 
 _PENDING_FAMILIES: Final = frozenset(
@@ -82,6 +90,7 @@ _DEPENDENCY_PATHS: Final = (
     "src/quant_rabbit/dojo_bot_trainer.py",
     "src/quant_rabbit/dojo_lab_provenance.py",
     "src/quant_rabbit/dojo_shared_worker_protocol.py",
+    "src/quant_rabbit/dojo_strategy_catalog_revision_v2.py",
     "src/quant_rabbit/dojo_tuned_strategy_runtime.py",
 )
 
@@ -230,6 +239,20 @@ def _timeframe_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def _seal_runtime_candidate_proposal(
+    raw: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Seal one legacy or explicit revision-V2 proposal without cross-admission."""
+
+    if raw.get("contract") == REVISION_V2_PROPOSAL_CONTRACT:
+        proposal = seal_revision_v2_candidate_proposal(raw)
+        config = validate_asia_sweep_reclaim_be_config(proposal["config"])
+        return proposal, config, revision_v2_config_sha256(config)
+    proposal = seal_candidate_proposal(raw)
+    config = validate_bot_config(proposal["config"])
+    return proposal, config, bot_config_sha256(config)
+
+
 def _proposal_rows(
     candidate_proposals: Sequence[Mapping[str, Any]],
     *,
@@ -251,8 +274,7 @@ def _proposal_rows(
                 f"candidate_proposals[{index}] was not sealed by the trainer builder"
             )
         try:
-            proposal = seal_candidate_proposal(raw)
-            config = validate_bot_config(proposal["config"])
+            proposal, config, config_sha = _seal_runtime_candidate_proposal(raw)
         except ValueError as exc:
             raise DojoTunedStrategyRuntimeError(
                 f"candidate_proposals[{index}] is invalid"
@@ -268,7 +290,6 @@ def _proposal_rows(
             raise DojoTunedStrategyRuntimeError(
                 f"family has no tuned runtime implementation: {family}"
             )
-        config_sha = bot_config_sha256(config)
         capability_body = {
             "algorithm_revision": ALGORITHM_REVISION,
             "family_id": family,
@@ -279,7 +300,10 @@ def _proposal_rows(
             "supports_dynamic_tp_sl": family
             in {"session_open_range_break", "weekend_gap_recovery"},
             "supports_breakeven_overlay": True,
-            "supports_atr_trailing_overlay": True,
+            "supports_atr_trailing_overlay": family
+            != ASIA_SWEEP_RECLAIM_BE_FAMILY,
+            "m5_close_only": family == ASIA_SWEEP_RECLAIM_BE_FAMILY,
+            "proposal_on_next_batch_only": family == ASIA_SWEEP_RECLAIM_BE_FAMILY,
             "dependency_algorithm_sha256": dependency_algorithm_sha256,
             "timeframe_profiles_sha256": timeframe_profiles_sha256,
         }
@@ -287,7 +311,12 @@ def _proposal_rows(
             {
                 "worker_id": worker_id,
                 "owner_id": canonical_strategy_owner_id(
-                    config, namespace="dojo-long-tuned-v1"
+                    config,
+                    namespace=(
+                        "dojo-long-tuned-v2"
+                        if family == ASIA_SWEEP_RECLAIM_BE_FAMILY
+                        else "dojo-long-tuned-v1"
+                    ),
                 ),
                 "family_id": family,
                 "config_sha256": config_sha,
@@ -367,8 +396,16 @@ def build_tuned_strategy_runtime_seal(
         }
         for row in workers
     ]
-    proposals = [seal_candidate_proposal(raw) for raw in candidate_proposals]
+    proposals = [
+        _seal_runtime_candidate_proposal(raw)[0] for raw in candidate_proposals
+    ]
     proposals.sort(key=lambda row: row["candidate_id"])
+    supported_families = sorted(
+        family
+        for family in _FAMILY_CAPABILITIES
+        if family != ASIA_SWEEP_RECLAIM_BE_FAMILY
+        or any(row["family"] == ASIA_SWEEP_RECLAIM_BE_FAMILY for row in proposals)
+    )
     body = {
         "contract": RUNTIME_SEAL_CONTRACT,
         "schema_version": SCHEMA_VERSION,
@@ -384,8 +421,8 @@ def build_tuned_strategy_runtime_seal(
         "workers_sha256": _sha256(workers),
         "trainer_candidate_proposals": proposals,
         "trainer_candidate_proposals_sha256": _sha256(proposals),
-        "supported_family_allowlist": sorted(_FAMILY_CAPABILITIES),
-        "supported_family_allowlist_sha256": _sha256(sorted(_FAMILY_CAPABILITIES)),
+        "supported_family_allowlist": supported_families,
+        "supported_family_allowlist_sha256": _sha256(supported_families),
         "timeframe_profiles": profiles,
         "timeframe_profiles_sha256": profiles_sha,
         "dependencies": dependencies,
@@ -498,6 +535,8 @@ def _empty_worker_pair_state() -> dict[str, Any]:
     return {
         "session_attempted_day": None,
         "weekend_evaluated_open_epoch": None,
+        "asia_sweep_reclaim_attempted_day": None,
+        "asia_sweep_reclaim_pending": None,
         "position_overlays": {},
     }
 
@@ -617,7 +656,7 @@ def _validate_pair_state(value: Any, *, profile: Mapping[str, Any]) -> None:
             raise DojoTunedStrategyRuntimeError(f"invalid prior {key}")
 
 
-def _validate_worker_pair_state(value: Any) -> None:
+def _validate_worker_pair_state(value: Any, *, cadence_seconds: int) -> None:
     if not isinstance(value, Mapping) or set(value) != set(_empty_worker_pair_state()):
         raise DojoTunedStrategyRuntimeError(
             "prior worker-local pair state schema is not exact"
@@ -626,6 +665,63 @@ def _validate_worker_pair_state(value: Any) -> None:
         value["session_attempted_day"], str
     ):
         raise DojoTunedStrategyRuntimeError("invalid session attempt day")
+    asia_attempted = value["asia_sweep_reclaim_attempted_day"]
+    if asia_attempted is not None and not isinstance(asia_attempted, str):
+        raise DojoTunedStrategyRuntimeError("invalid Asia sweep/reclaim attempt day")
+    pending = value["asia_sweep_reclaim_pending"]
+    if pending is not None:
+        if not isinstance(pending, Mapping) or set(pending) != {
+            "side",
+            "session_day",
+            "signal_close_epoch",
+            "entry_due_epoch",
+            "range_high",
+            "range_low",
+            "reclaim_close",
+            "swept_level",
+        }:
+            raise DojoTunedStrategyRuntimeError(
+                "invalid Asia sweep/reclaim pending schema"
+            )
+        side = pending["side"]
+        session_day = pending["session_day"]
+        signal_epoch = pending["signal_close_epoch"]
+        due_epoch = pending["entry_due_epoch"]
+        if (
+            side not in {"LONG", "SHORT"}
+            or not isinstance(session_day, str)
+            or not session_day
+            or isinstance(signal_epoch, bool)
+            or not isinstance(signal_epoch, int)
+            or signal_epoch < 0
+            or isinstance(due_epoch, bool)
+            or not isinstance(due_epoch, int)
+            or due_epoch != signal_epoch + cadence_seconds
+            or asia_attempted != session_day
+        ):
+            raise DojoTunedStrategyRuntimeError(
+                "invalid Asia sweep/reclaim pending identity"
+            )
+        range_high = _finite_or_none(pending["range_high"], field="range_high")
+        range_low = _finite_or_none(pending["range_low"], field="range_low")
+        reclaim_close = _finite_or_none(
+            pending["reclaim_close"], field="reclaim_close"
+        )
+        swept_level = _finite_or_none(pending["swept_level"], field="swept_level")
+        if (
+            range_high is None
+            or range_low is None
+            or reclaim_close is None
+            or swept_level is None
+            or range_high <= range_low
+            or min(range_low, reclaim_close, swept_level) <= 0
+            or (side == "SHORT" and swept_level != range_high)
+            or (side == "LONG" and swept_level != range_low)
+            or not range_low < reclaim_close < range_high
+        ):
+            raise DojoTunedStrategyRuntimeError(
+                "invalid Asia sweep/reclaim pending prices"
+            )
     evaluated = value["weekend_evaluated_open_epoch"]
     if evaluated is not None and (
         isinstance(evaluated, bool) or not isinstance(evaluated, int) or evaluated < 0
@@ -772,7 +868,9 @@ def _strict_prior_state(
         ):
             raise DojoTunedStrategyRuntimeError("prior worker identity drifted")
         for pair_state in worker["pairs"].values():
-            _validate_worker_pair_state(pair_state)
+            _validate_worker_pair_state(
+                pair_state, cadence_seconds=cadence_seconds
+            )
     return detached
 
 
@@ -1329,6 +1427,126 @@ def _target_distance(config: Mapping[str, Any], *, atr: float, pip: float) -> fl
     raise DojoTunedStrategyRuntimeError("family has no fixed target distance")
 
 
+def _stage_asia_sweep_reclaim(
+    *,
+    pair_state: Mapping[str, Any],
+    worker_pair_state: dict[str, Any],
+    bar: Mapping[str, float],
+    context: Mapping[str, Any],
+    epoch: int,
+    cadence: int,
+) -> None:
+    """Record a completed-M5 signal for the next candle only."""
+
+    minute = int(context["session_minute"])
+    session_day = str(context["session_day"])
+    if (
+        not (_SESSION_RANGE_END_MINUTE <= minute < _SESSION_ENTRY_END_MINUTE)
+        or worker_pair_state["asia_sweep_reclaim_attempted_day"] == session_day
+        or worker_pair_state["asia_sweep_reclaim_pending"] is not None
+        or not _session_range_complete(pair_state, cadence=cadence)
+    ):
+        return
+    range_high = float(pair_state["session_range_high"])
+    range_low = float(pair_state["session_range_low"])
+    reclaim_close = float(bar["c"])
+    if not range_low < reclaim_close < range_high:
+        return
+    swept_high = float(bar["h"]) > range_high
+    swept_low = float(bar["l"]) < range_low
+    if not swept_high and not swept_low:
+        return
+    worker_pair_state["asia_sweep_reclaim_attempted_day"] = session_day
+    if swept_high == swept_low:
+        # A candle that swept both sides has no unambiguous directional thesis.
+        return
+    side = "SHORT" if swept_high else "LONG"
+    worker_pair_state["asia_sweep_reclaim_pending"] = {
+        "side": side,
+        "session_day": session_day,
+        "signal_close_epoch": epoch,
+        "entry_due_epoch": epoch + cadence,
+        "range_high": range_high,
+        "range_low": range_low,
+        "reclaim_close": reclaim_close,
+        "swept_level": range_high if side == "SHORT" else range_low,
+    }
+
+
+def _asia_sweep_reclaim_pending_intent(
+    *,
+    binding: Mapping[str, str],
+    config: Mapping[str, Any],
+    pair_state: Mapping[str, Any],
+    worker_pair_state: dict[str, Any],
+    snapshot: Mapping[str, Any],
+    pair: str,
+    quotes: Mapping[str, Mapping[str, Any]],
+    allow_new_risk: bool,
+) -> dict[str, Any] | None:
+    """Consume a staged signal at the exact next M5 O evaluation point."""
+
+    pending = worker_pair_state["asia_sweep_reclaim_pending"]
+    if pending is None:
+        return None
+    worker_pair_state["asia_sweep_reclaim_pending"] = None
+    epoch = int(snapshot["epoch"])
+    phase = snapshot["phase"]
+    session_day = datetime.fromtimestamp(epoch, _UTC).astimezone(_LONDON).date()
+    if (
+        phase != "O"
+        or epoch != int(pending["entry_due_epoch"])
+        or session_day.isoformat() != pending["session_day"]
+        or not allow_new_risk
+    ):
+        return None
+    atr = pair_state["atr"]
+    if atr is None or float(atr) <= 0:
+        return None
+    atr = float(atr)
+    pip = _pip(pair)
+    if atr / pip < float(config["atr_floor_pips"]):
+        return None
+    quote = quotes[pair]
+    side = str(pending["side"])
+    entry = float(quote["ask"] if side == "LONG" else quote["bid"])
+    target_distance = _target_distance(config, atr=atr, pip=pip)
+    sl_pips = config["sl_pips"]
+    if sl_pips is None:
+        return None
+    sl_distance = float(sl_pips) * pip
+    spread = float(quote["ask"]) - float(quote["bid"])
+    if (
+        target_distance <= 0
+        or sl_distance <= 0
+        or spread > target_distance * _SPREAD_TO_TARGET_CAP
+    ):
+        return None
+    entry = _round_price(pair, entry)
+    units = _units(
+        config,
+        pair=pair,
+        entry_price=entry,
+        equity_jpy=float(snapshot["account"]["equity_jpy"]),
+        quotes=quotes,
+    )
+    if units is None:
+        return None
+    return _new_risk_intent(
+        binding=binding,
+        snapshot=snapshot,
+        pair=pair,
+        action="MARKET",
+        side=side,
+        entry_price=entry,
+        tp_distance=target_distance,
+        sl_distance=sl_distance,
+        units=units,
+        hard_hold_seconds=int(config["ceiling_min"]) * 60,
+        reason="ASIA_SWEEP_RECLAIM_BE_NEXT_M5_OPEN",
+    )
+
+
 def _family_intent(
     *,
     binding: Mapping[str, str],
@@ -1562,6 +1780,9 @@ def _family_intent(
         ):
             return None
         action = "MARKET"
+    elif family == ASIA_SWEEP_RECLAIM_BE_FAMILY:
+        # This family is staged at C and consumed at the following O in propose().
+        return None
     else:  # pragma: no cover - seal construction makes this unreachable
         raise DojoTunedStrategyRuntimeError("unreachable tuned family")
 
@@ -1637,6 +1858,13 @@ class _TunedStrategyRuntime:
                 raise DojoTunedStrategyRuntimeError(
                     "active worker is outside the sealed tuned catalog"
                 )
+        if any(
+            binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY
+            for binding in self._bindings
+        ) and granularity != "M5":
+            raise DojoTunedStrategyRuntimeError(
+                "asia_sweep_reclaim_be requires sealed M5 coordinates"
+            )
         trade_pairs = coordinate.get("trade_pairs")
         if (
             isinstance(trade_pairs, (str, bytes))
@@ -1761,14 +1989,30 @@ class _TunedStrategyRuntime:
                     continue
                 quote = quotes[pair]
                 consumed = closed_pairs.get(pair)
-                if phase != "C" or consumed is None:
-                    continue
-                bar, context = consumed
                 market_pair_state = self._state["market_pairs"][pair]
                 worker_pair_state = worker_state["pairs"][pair]
                 pair_positions = _owned_positions(
                     snapshot, worker_id=binding["worker_id"], pair=pair
                 )
+                if binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY:
+                    pending_candidate = _asia_sweep_reclaim_pending_intent(
+                        binding=binding,
+                        config=config,
+                        pair_state=market_pair_state,
+                        worker_pair_state=worker_pair_state,
+                        snapshot=snapshot,
+                        pair=pair,
+                        quotes=quotes,
+                        allow_new_risk=remaining_global > 0
+                        and len(pair_positions)
+                        < int(config["max_concurrent_per_pair"]),
+                    )
+                    if pending_candidate is not None:
+                        new_risk.append(pending_candidate)
+                        remaining_global -= 1
+                if phase != "C" or consumed is None:
+                    continue
+                bar, context = consumed
                 risk_reducing.extend(
                     _exit_overlay_intents(
                         binding=binding,
@@ -1797,6 +2041,16 @@ class _TunedStrategyRuntime:
                                     reason="REPRICE_CLOSED_BAR",
                                 )
                             )
+                if binding["family_id"] == ASIA_SWEEP_RECLAIM_BE_FAMILY:
+                    _stage_asia_sweep_reclaim(
+                        pair_state=market_pair_state,
+                        worker_pair_state=worker_pair_state,
+                        bar=bar,
+                        context=context,
+                        epoch=epoch,
+                        cadence=self._cadence,
+                    )
+                    continue
                 if remaining_global <= 0 or len(pair_positions) >= int(
                     config["max_concurrent_per_pair"]
                 ):

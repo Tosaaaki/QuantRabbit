@@ -1,0 +1,515 @@
+{
+  "artifact_sha256": "bcaed95081ed609fa9faba1f23b134fa25a3777855c1e0b1ab9aa7f07430aa6f",
+  "authority": {
+    "automatic_deployment_allowed": false,
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false,
+    "proof_eligible": false,
+    "trainer_may_change_live_configuration": false
+  },
+  "baseline_binding": {
+    "artifact_sha256": "7a12ece80923d3cc2eb173fc166117b9e8d2100ba5e59100af60b1c9c5bbdfbb",
+    "contract": "QR_DOJO_G2_BASELINE_REVISION_V1",
+    "duplicate_family_admission_allowed": false,
+    "existing_families": [
+      "spike_fade",
+      "burst",
+      "pullback_limit",
+      "prev_day_extreme_fade",
+      "round_number_fade",
+      "mean_revert_24h"
+    ],
+    "existing_worker_ids": [
+      "g2-01-spike-fade-control",
+      "g2-02-burst",
+      "g2-03-pullback-limit",
+      "g2-04-prev-day-extreme-fade",
+      "g2-05-round-number-fade",
+      "g2-06-mean-revert-24h"
+    ]
+  },
+  "candidates": [
+    {
+      "authority": {
+        "automatic_deployment_allowed": false,
+        "broker_mutation_allowed": false,
+        "live_permission": false,
+        "order_authority": "NONE",
+        "promotion_eligible": false,
+        "proof_eligible": false,
+        "trainer_may_change_live_configuration": false
+      },
+      "candidate_id": "asia_sweep_reclaim_be",
+      "candidate_sha256": "df01ab64ebb841fa8113a769e628a602c87764ebff1a746e6f5d432267ab735c",
+      "causal_inputs": [
+        "completed M5 bid/ask candles available before the decision epoch",
+        "a predeclared DST-aware session calendar and completed Asia range",
+        "entry-time ATR computed only from completed bars",
+        "the next executable bid/ask quote after close-confirmed reclaim",
+        "post-entry MFE and completed bars only for the break-even transition"
+      ],
+      "design_kind": "SESSION_LIQUIDITY_RECLAIM_WITH_CONDITIONAL_BREAKEVEN",
+      "dojo_room_id": "room-01",
+      "economics_requirements": {
+        "base_and_stress_cost_arms_required": true,
+        "continuous_account_mtm_after_each_action_required": true,
+        "financing_through_forced_close_required": true,
+        "hedge_net_margin_replay_required": true,
+        "lopo_required": true,
+        "lopo_unit": "PAIR",
+        "margin_reject_and_closeout_events_required": true,
+        "missing_cost_mtm_margin_or_lopo_is_terminal_reject": true,
+        "positive_main_and_every_lopo_required_for_survival": true,
+        "recorded_bid_ask_required": true,
+        "ruin_and_drawdown_distribution_required": true,
+        "slippage_on_every_adverse_fill_path_required": true,
+        "terminal_open_exposure_mtm_or_forced_close_required": true
+      },
+      "falsification_conditions": [
+        "worst intrabar path is non-positive after STRESS costs",
+        "the reclaim arm does not beat its session-matched no-sweep control",
+        "BREAKEVEN is non-positive and does not improve the FIXED downside tail",
+        "any required continuous MTM margin or pair-LOPO result is missing",
+        "any pair-LOPO terminal result is non-positive"
+      ],
+      "family": "asia_sweep_reclaim_be",
+      "forbidden_inputs": [
+        "the decision bar's not-yet-observed high low or close",
+        "a later session range or later reclaim outcome",
+        "future spread fill MFE MAE TP SL or answer labels"
+      ],
+      "hypothesis": "A completed Asia-session range sweep that closes back inside the range has post-cost reversal edge when entered only on the next executable quote and protected by a one-way break-even transition.",
+      "implementation_dependencies": [
+        "DST-aware Asia session range detector over completed bars",
+        "next-quote reclaim entry vehicle in the economic runner",
+        "BREAKEVEN exit overlay that never loosens an existing stop",
+        "compact continuous-MTM transcript and independent scorer"
+      ],
+      "independent_window_requirement": {
+        "burn_registry_check_required": true,
+        "candidate_and_evaluator_sealed_before_window_read": true,
+        "chronological_non_overlap_required": true,
+        "global_untouched_holdout_claim_allowed": false,
+        "historical_holdout_access_allowed": false,
+        "next_window_role": "SEPARATELY_PREREGISTERED_INDEPENDENT_TRAIN_DIAGNOSTIC",
+        "opened_window_must_be_burned_after_one_evaluation": true,
+        "prospective_data_access_allowed": false,
+        "reason": "The available 2024-2026 historical corpus is worn; independence is lineage-local TRAIN discipline and must not be relabeled as proof.",
+        "required": true
+      },
+      "minimum_train": {
+        "active_months_min": 18,
+        "base_and_stress_cost_arms_required": true,
+        "both_intrabar_paths_required": true,
+        "chronological_months_min": 24,
+        "coverage_floor_rationale": "Two calendar years plus a third year boundary and 18 active months expose session and volatility seasonality before redesign.",
+        "distinct_calendar_years_min": 3,
+        "evidence_class": "WORN_HISTORICAL_TRAIN_ONLY",
+        "fixed_denominator_required": true,
+        "observation_floor": {
+          "count_min": 250,
+          "name": "closed_trades"
+        },
+        "pair_count_min": 8,
+        "train_is_hypothesis_generation_not_edge_proof": true,
+        "zero_trade_is_failure": true
+      },
+      "novelty": {
+        "comparison_controls": [
+          "same entry with FIXED exit",
+          "session-matched no-sweep control"
+        ],
+        "distinguishing_mechanism": "session-bounded liquidity sweep plus close-confirmed reclaim and stateful break-even; not an unconditional spike, previous-day, round-number, pullback, burst, or 24-hour mean-reversion signal",
+        "not_a_g2_family": true
+      },
+      "room_isolation": {
+        "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/train/room-01-asia_sweep_reclaim_be",
+        "contract": "QR_DOJO_STRATEGY_RESEARCH_ROOM_ISOLATION_V1",
+        "dojo_room_id": "room-01",
+        "input_class": "SESSION_RANGE_SWEEP_RECLAIM_CAUSAL_M5",
+        "room_private_fields": [
+          "strategy",
+          "thesis",
+          "input_class",
+          "trainer_lineage",
+          "search_budget",
+          "artifact_root",
+          "parameters",
+          "results"
+        ],
+        "search_budget": {
+          "borrow_from_other_rooms_allowed": false,
+          "budget_change_requires_new_queue_version": true,
+          "budget_id": "dojo-room-01-asia_sweep_reclaim_be-search-budget-v1",
+          "failed_or_rejected_slot_refunded": false,
+          "proposal_slots_consumed": 0,
+          "proposal_slots_max": 4,
+          "scope": "ROOM_ONLY"
+        },
+        "shared_contracts_only": [
+          "EVALUATOR_CONTRACT",
+          "COST_CONTRACT",
+          "RISK_CONTRACT",
+          "SOURCE_CONTRACT"
+        ],
+        "strategy_identity": "asia_sweep_reclaim_be",
+        "trainer_lineage_id": "dojo-room-01-asia_sweep_reclaim_be-lineage-v1"
+      },
+      "status": "DESIGN_BACKLOG_NOT_EXECUTED"
+    },
+    {
+      "authority": {
+        "automatic_deployment_allowed": false,
+        "broker_mutation_allowed": false,
+        "live_permission": false,
+        "order_authority": "NONE",
+        "promotion_eligible": false,
+        "proof_eligible": false,
+        "trainer_may_change_live_configuration": false
+      },
+      "candidate_id": "h1_donchian_break_atr_trailing",
+      "candidate_sha256": "f4feae4b33780d872024a0a7e8651f0597e3843045602884c496d5e56e40cdc5",
+      "causal_inputs": [
+        "completed H1 bid/ask candles and a predeclared Donchian lookback",
+        "completed H1 ATR history available at signal close",
+        "the first executable M5 or finer bid/ask quote after the H1 close",
+        "completed post-entry bars for one-way ATR trailing updates"
+      ],
+      "design_kind": "CLOSE_CONFIRMED_H1_BREAKOUT_WITH_ATR_TRAILING",
+      "dojo_room_id": "room-02",
+      "economics_requirements": {
+        "base_and_stress_cost_arms_required": true,
+        "continuous_account_mtm_after_each_action_required": true,
+        "financing_through_forced_close_required": true,
+        "hedge_net_margin_replay_required": true,
+        "lopo_required": true,
+        "lopo_unit": "PAIR",
+        "margin_reject_and_closeout_events_required": true,
+        "missing_cost_mtm_margin_or_lopo_is_terminal_reject": true,
+        "positive_main_and_every_lopo_required_for_survival": true,
+        "recorded_bid_ask_required": true,
+        "ruin_and_drawdown_distribution_required": true,
+        "slippage_on_every_adverse_fill_path_required": true,
+        "terminal_open_exposure_mtm_or_forced_close_required": true
+      },
+      "falsification_conditions": [
+        "worst intrabar path is non-positive after STRESS costs",
+        "ATR_TRAILING is non-positive and fails to improve FIXED tail loss",
+        "breakout profits are concentrated in one pair or one calendar regime",
+        "any required continuous MTM margin or pair-LOPO result is missing",
+        "any pair-LOPO terminal result is non-positive"
+      ],
+      "family": "h1_donchian_break_atr_trailing",
+      "forbidden_inputs": [
+        "the breaking H1 bar before its close",
+        "same-bar post-entry extremes when entry occurs inside that bar",
+        "future ATR peak trough spread or breakout follow-through labels"
+      ],
+      "hypothesis": "A close-confirmed H1 Donchian breakout has a fat-tail continuation edge when entered on the next executable quote and exited by a completed-bar ATR trail that never widens.",
+      "implementation_dependencies": [
+        "causal H1 aggregation with exact close boundaries",
+        "versioned Donchian close-break detector",
+        "ATR_TRAILING overlay updated only from completed bars",
+        "gap-through stop and next-quote execution accounting",
+        "compact continuous-MTM transcript and independent scorer"
+      ],
+      "independent_window_requirement": {
+        "burn_registry_check_required": true,
+        "candidate_and_evaluator_sealed_before_window_read": true,
+        "chronological_non_overlap_required": true,
+        "global_untouched_holdout_claim_allowed": false,
+        "historical_holdout_access_allowed": false,
+        "next_window_role": "SEPARATELY_PREREGISTERED_INDEPENDENT_TRAIN_DIAGNOSTIC",
+        "opened_window_must_be_burned_after_one_evaluation": true,
+        "prospective_data_access_allowed": false,
+        "reason": "The available 2024-2026 historical corpus is worn; independence is lineage-local TRAIN discipline and must not be relabeled as proof.",
+        "required": true
+      },
+      "minimum_train": {
+        "active_months_min": 24,
+        "base_and_stress_cost_arms_required": true,
+        "both_intrabar_paths_required": true,
+        "chronological_months_min": 36,
+        "coverage_floor_rationale": "Slow H1 breakouts need three years, four year labels, and at least 24 active months to expose trend and range regimes.",
+        "distinct_calendar_years_min": 4,
+        "evidence_class": "WORN_HISTORICAL_TRAIN_ONLY",
+        "fixed_denominator_required": true,
+        "observation_floor": {
+          "count_min": 200,
+          "name": "closed_trades"
+        },
+        "pair_count_min": 8,
+        "train_is_hypothesis_generation_not_edge_proof": true,
+        "zero_trade_is_failure": true
+      },
+      "novelty": {
+        "comparison_controls": [
+          "same entry with FIXED exit",
+          "same entry with BREAKEVEN exit"
+        ],
+        "distinguishing_mechanism": "multi-hour channel close confirmation plus stateful volatility trail; unlike the G2 short-horizon burst family and all fade arms",
+        "not_a_g2_family": true
+      },
+      "room_isolation": {
+        "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/train/room-02-h1_donchian_break_atr_trailing",
+        "contract": "QR_DOJO_STRATEGY_RESEARCH_ROOM_ISOLATION_V1",
+        "dojo_room_id": "room-02",
+        "input_class": "CLOSE_CONFIRMED_DONCHIAN_CAUSAL_H1",
+        "room_private_fields": [
+          "strategy",
+          "thesis",
+          "input_class",
+          "trainer_lineage",
+          "search_budget",
+          "artifact_root",
+          "parameters",
+          "results"
+        ],
+        "search_budget": {
+          "borrow_from_other_rooms_allowed": false,
+          "budget_change_requires_new_queue_version": true,
+          "budget_id": "dojo-room-02-h1_donchian_break_atr_trailing-search-budget-v1",
+          "failed_or_rejected_slot_refunded": false,
+          "proposal_slots_consumed": 0,
+          "proposal_slots_max": 4,
+          "scope": "ROOM_ONLY"
+        },
+        "shared_contracts_only": [
+          "EVALUATOR_CONTRACT",
+          "COST_CONTRACT",
+          "RISK_CONTRACT",
+          "SOURCE_CONTRACT"
+        ],
+        "strategy_identity": "h1_donchian_break_atr_trailing",
+        "trainer_lineage_id": "dojo-room-02-h1_donchian_break_atr_trailing-lineage-v1"
+      },
+      "status": "DESIGN_BACKLOG_NOT_EXECUTED"
+    },
+    {
+      "authority": {
+        "automatic_deployment_allowed": false,
+        "broker_mutation_allowed": false,
+        "live_permission": false,
+        "order_authority": "NONE",
+        "promotion_eligible": false,
+        "proof_eligible": false,
+        "trainer_may_change_live_configuration": false
+      },
+      "candidate_id": "g8_relative_strength_risk_budget",
+      "candidate_sha256": "b30d352763ab7e45dc5649ca6739f9541156c3f1fdd8e70d543e82e0c7bb27a9",
+      "causal_inputs": [
+        "a synchronized exact-28-pair completed-H1 bid/ask matrix",
+        "currency strength derived only from returns ending before rebalance",
+        "pre-rebalance spread ATR margin and currency-exposure state",
+        "trailing realized covariance from completed returns only",
+        "the next executable bid/ask quote after a fixed rebalance epoch"
+      ],
+      "design_kind": "CROSS_SECTIONAL_G8_STRENGTH_WITH_PORTFOLIO_RISK_BUDGET",
+      "dojo_room_id": "room-03",
+      "economics_requirements": {
+        "base_and_stress_cost_arms_required": true,
+        "continuous_account_mtm_after_each_action_required": true,
+        "financing_through_forced_close_required": true,
+        "hedge_net_margin_replay_required": true,
+        "lopo_required": true,
+        "lopo_unit": "CURRENCY",
+        "margin_reject_and_closeout_events_required": true,
+        "missing_cost_mtm_margin_or_lopo_is_terminal_reject": true,
+        "positive_main_and_every_lopo_required_for_survival": true,
+        "recorded_bid_ask_required": true,
+        "ruin_and_drawdown_distribution_required": true,
+        "slippage_on_every_adverse_fill_path_required": true,
+        "terminal_open_exposure_mtm_or_forced_close_required": true
+      },
+      "falsification_conditions": [
+        "worst intrabar path is non-positive after STRESS costs",
+        "risk-budget allocation does not beat equal-risk post-cost productivity",
+        "positive return depends on one currency or one rebalance regime",
+        "gross margin risk or shared-currency exposure is understated",
+        "any required continuous MTM margin or currency-LOPO result is missing",
+        "any currency-LOPO terminal result is non-positive"
+      ],
+      "family": "g8_relative_strength_risk_budget",
+      "forbidden_inputs": [
+        "unsynchronized later quotes from another pair at the same epoch",
+        "future cross-sectional ranks covariance returns or fills",
+        "netting away gross margin stop risk or shared currency exposure"
+      ],
+      "hypothesis": "Closed-H1 cross-sectional G8 currency strength can allocate a fixed portfolio risk budget across independent strong-versus-weak legs with better post-cost capital productivity than isolated signals.",
+      "implementation_dependencies": [
+        "causal synchronized exact-28 H1 feature matrix",
+        "currency-level strength decomposition without duplicate pair votes",
+        "order-independent gross risk margin and currency-shadow allocator",
+        "dependence-aware slot and per-currency exposure limits",
+        "compact portfolio MTM transcript and currency-LOPO scorer"
+      ],
+      "independent_window_requirement": {
+        "burn_registry_check_required": true,
+        "candidate_and_evaluator_sealed_before_window_read": true,
+        "chronological_non_overlap_required": true,
+        "global_untouched_holdout_claim_allowed": false,
+        "historical_holdout_access_allowed": false,
+        "next_window_role": "SEPARATELY_PREREGISTERED_INDEPENDENT_TRAIN_DIAGNOSTIC",
+        "opened_window_must_be_burned_after_one_evaluation": true,
+        "prospective_data_access_allowed": false,
+        "reason": "The available 2024-2026 historical corpus is worn; independence is lineage-local TRAIN discipline and must not be relabeled as proof.",
+        "required": true
+      },
+      "minimum_train": {
+        "active_months_min": 24,
+        "base_and_stress_cost_arms_required": true,
+        "both_intrabar_paths_required": true,
+        "chronological_months_min": 36,
+        "coverage_floor_rationale": "Cross-sectional allocation requires the complete G8 graph and several trend, carry, and correlation regimes before redesign.",
+        "distinct_calendar_years_min": 4,
+        "evidence_class": "WORN_HISTORICAL_TRAIN_ONLY",
+        "fixed_denominator_required": true,
+        "observation_floor": {
+          "count_min": 300,
+          "name": "portfolio_rebalance_decisions"
+        },
+        "pair_count_min": 28,
+        "train_is_hypothesis_generation_not_edge_proof": true,
+        "zero_trade_is_failure": true
+      },
+      "novelty": {
+        "comparison_controls": [
+          "equal-risk selected-leg allocation",
+          "cash/no-trade control"
+        ],
+        "distinguishing_mechanism": "portfolio-level cross-sectional currency ranking and shared risk-budget allocation rather than a single-pair entry pattern",
+        "not_a_g2_family": true
+      },
+      "room_isolation": {
+        "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/train/room-03-g8_relative_strength_risk_budget",
+        "contract": "QR_DOJO_STRATEGY_RESEARCH_ROOM_ISOLATION_V1",
+        "dojo_room_id": "room-03",
+        "input_class": "SYNCHRONIZED_EXACT28_CROSS_SECTIONAL_CAUSAL_H1",
+        "room_private_fields": [
+          "strategy",
+          "thesis",
+          "input_class",
+          "trainer_lineage",
+          "search_budget",
+          "artifact_root",
+          "parameters",
+          "results"
+        ],
+        "search_budget": {
+          "borrow_from_other_rooms_allowed": false,
+          "budget_change_requires_new_queue_version": true,
+          "budget_id": "dojo-room-03-g8_relative_strength_risk_budget-search-budget-v1",
+          "failed_or_rejected_slot_refunded": false,
+          "proposal_slots_consumed": 0,
+          "proposal_slots_max": 4,
+          "scope": "ROOM_ONLY"
+        },
+        "shared_contracts_only": [
+          "EVALUATOR_CONTRACT",
+          "COST_CONTRACT",
+          "RISK_CONTRACT",
+          "SOURCE_CONTRACT"
+        ],
+        "strategy_identity": "g8_relative_strength_risk_budget",
+        "trainer_lineage_id": "dojo-room-03-g8_relative_strength_risk_budget-lineage-v1"
+      },
+      "status": "DESIGN_BACKLOG_NOT_EXECUTED"
+    }
+  ],
+  "contract": "QR_DOJO_STRATEGY_RESEARCH_QUEUE_V1",
+  "queue_id": "dojo-new-strategy-research-v1",
+  "reservation_policy": {
+    "eligible_trigger_kinds": [
+      "MATERIAL_RESULT_CHANGE",
+      "TERMINAL_RESULT"
+    ],
+    "holdout_opening_allowed": false,
+    "max_active_reservations": 1,
+    "max_new_reservations_per_trigger": 1,
+    "prospective_window_opening_allowed": false,
+    "quant_rabbit_model_api_calls_allowed": false,
+    "reservation_actor": "EXTERNAL_AI_TRAINER_SUPERVISOR",
+    "reservation_is_execution_permission": false,
+    "reservation_is_proof_or_promotion": false,
+    "reservation_order": [
+      "asia_sweep_reclaim_be",
+      "h1_donchian_break_atr_trailing",
+      "g8_relative_strength_risk_budget"
+    ],
+    "selection_basis": "ROBUST_POST_COST_EVIDENCE_ONLY",
+    "target_multiple_backsolve_allowed": false,
+    "terminal_economics_complete_required": true,
+    "unchanged_semantic_result_action": "NO_OP_RESULT_UNCHANGED"
+  },
+  "room_isolation_contract": {
+    "common_sparring_arena": {
+      "admitted_room_ids": [
+        "room-01",
+        "room-02",
+        "room-03"
+      ],
+      "allocator_and_slot_order_presealed_required": true,
+      "arena_id": "dojo-common-sparring-arena-v1",
+      "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/common-sparring-arena",
+      "max_concurrent_positions_per_room": 1,
+      "proof_eligible": false,
+      "role": "WORN_HISTORICAL_TRAIN_PORTFOLIO_COMPARISON_ONLY",
+      "room_owned_positions_and_results_remain_isolated": true,
+      "same_evaluator_cost_risk_source_contracts_required": true,
+      "shared_capital_slots": 4,
+      "target_multiple_backsolve_allowed": false
+    },
+    "contract": "QR_DOJO_STRATEGY_RESEARCH_ROOM_ISOLATION_V1",
+    "cross_room_result_or_parameter_copy_policy": {
+      "copy_is_new_hypothesis": true,
+      "destination_room_budget_debit_required": true,
+      "new_candidate_id_required": true,
+      "new_candidate_sha256_required": true,
+      "silent_parameter_inheritance_allowed": false,
+      "source_room_result_inheritance_allowed": false
+    },
+    "holdout_examination_arena": {
+      "admission_requires_new_preregistration": true,
+      "arena_id": "dojo-holdout-examination-arena-v1",
+      "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/holdout-examination-arena",
+      "currently_open": false,
+      "live_permission": false,
+      "separate_from_train_and_sparring": true,
+      "trainer_access_allowed": false
+    },
+    "prospective_forward_arena": {
+      "arena_id": "dojo-prospective-forward-arena-v1",
+      "artifact_root": "research/strategy_rooms/dojo-new-strategy-research-v1/prospective-forward-arena",
+      "currently_open": false,
+      "fixed_candidate_and_evaluator_required_before_start": true,
+      "live_permission": false,
+      "separate_from_train_sparring_and_holdout": true,
+      "trainer_access_allowed": false
+    },
+    "room_ids": [
+      "room-01",
+      "room-02",
+      "room-03"
+    ],
+    "room_private_fields": [
+      "strategy",
+      "thesis",
+      "input_class",
+      "trainer_lineage",
+      "search_budget",
+      "artifact_root",
+      "parameters",
+      "results"
+    ],
+    "shared_contracts_only": [
+      "EVALUATOR_CONTRACT",
+      "COST_CONTRACT",
+      "RISK_CONTRACT",
+      "SOURCE_CONTRACT"
+    ]
+  },
+  "schema_version": 1,
+  "status": "DESIGN_BACKLOG_NOT_EXECUTED"
+}

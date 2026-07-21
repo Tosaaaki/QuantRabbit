@@ -1,0 +1,24 @@
+{
+  "active_trainer_marker_directory": "/Users/tossaki/.codex/automations/dojo-historical-heartbeat/runtime/active-trainers",
+  "archive_temp_bytes": 0,
+  "authority": {
+    "broker_mutation_allowed": false,
+    "drive_access_allowed": false,
+    "filesystem_delete_allowed": false,
+    "live_permission": false,
+    "model_invocation_allowed": false,
+    "order_authority": "NONE",
+    "process_start_allowed": false,
+    "runner_invocation_allowed": false
+  },
+  "compression_upload_marker_directory": "/Users/tossaki/.codex/automations/dojo-historical-heartbeat/runtime/compression-upload-active",
+  "contract": "QR_DOJO_CONTINUOUS_HEARTBEAT_LOCAL_PROBE_V1",
+  "predicted_next_output_bytes": 10737418240,
+  "probe_id": "dojo-historical-heartbeat-local-v1",
+  "probe_sha256": "18d1a3651e379db08b21849f64c29e281f3c61623d5f7c0e9888bd186e482a4d",
+  "remote_unverified_generation_marker_directory": "/Users/tossaki/.codex/automations/dojo-historical-heartbeat/runtime/remote-unverified-generations",
+  "run_status_path": "/Users/tossaki/.codex/automations/dojo-historical-heartbeat/runtime/run-status.json",
+  "schema_version": 1,
+  "state_root": "/Users/tossaki/.codex/automations/dojo-historical-heartbeat/runtime",
+  "storage_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval"
+}
