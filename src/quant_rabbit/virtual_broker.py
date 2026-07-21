@@ -98,9 +98,29 @@ class VirtualBroker:
 
     def __post_init__(self) -> None:
         if self.ledger_path.exists():
+            expected_prev = "0" * 64
             with self.ledger_path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    self._prev_sha = json.loads(line)["sha"]
+                for line_number, line in enumerate(handle, 1):
+                    try:
+                        record = json.loads(line)
+                        body = {
+                            key: record[key]
+                            for key in ("ts_utc", "event", "payload", "prev_sha")
+                        }
+                    except (json.JSONDecodeError, KeyError) as exc:
+                        raise VirtualBrokerError(
+                            f"invalid ledger record at line {line_number}"
+                        ) from exc
+                    if record["prev_sha"] != expected_prev:
+                        raise VirtualBrokerError(
+                            f"ledger prev_sha mismatch at line {line_number}"
+                        )
+                    if record.get("sha") != _sha(body):
+                        raise VirtualBrokerError(
+                            f"ledger sha mismatch at line {line_number}"
+                        )
+                    expected_prev = record["sha"]
+            self._prev_sha = expected_prev
         self._handle = self.ledger_path.open("a", encoding="utf-8")
 
     # ---- ledger ----------------------------------------------------------
@@ -462,9 +482,17 @@ class VirtualBroker:
             "seq": self._seq,
             "positions": [vars(p) for p in self.positions.values()],
             "orders": [vars(o) for o in self.orders.values()],
+            "ledger_sha": self._prev_sha,
         }
 
-    def restore(self, snap: dict[str, Any]) -> None:
+    def restore(
+        self, snap: dict[str, Any], *, require_ledger_match: bool = False
+    ) -> None:
+        checkpoint_sha = snap.get("ledger_sha")
+        if require_ledger_match and checkpoint_sha != self._prev_sha:
+            raise VirtualBrokerError(
+                "broker snapshot does not match the ledger terminal sha"
+            )
         self.balance_jpy = float(snap["balance_jpy"])
         self._seq = int(snap["seq"])
         self.positions = {

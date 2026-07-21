@@ -155,6 +155,12 @@ POLL_SECONDS = 5.0
 STALE_QUOTE_MAX_S = 90.0
 
 
+def _write_broker_snapshot(session_dir: Path, broker: VirtualBroker) -> None:
+    tmp = session_dir / ".broker_snapshot.json.tmp"
+    tmp.write_text(json.dumps(broker.snapshot(), ensure_ascii=False, sort_keys=True))
+    os.replace(tmp, session_dir / "broker_snapshot.json")
+
+
 def _write_state(session_dir: Path, broker: VirtualBroker, sim_time: str,
                  mode: str, note: str = "") -> None:
     state = {
@@ -173,6 +179,10 @@ def _write_state(session_dir: Path, broker: VirtualBroker, sim_time: str,
     tmp = session_dir / ".state.json.tmp"
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
     os.replace(tmp, session_dir / "state.json")
+    # Keep the resumable account checkpoint close to the atomically-written
+    # runtime state.  A crash after a ledger mutation still fails closed via
+    # ledger_sha instead of silently restoring an older account.
+    _write_broker_snapshot(session_dir, broker)
 
 
 def _process_inbox(session_dir: Path, broker: VirtualBroker) -> int:
@@ -467,7 +477,10 @@ def main() -> int:
         financing_pips_per_day=args.financing_pips_day)
     snap_path = session_dir / "broker_snapshot.json"
     if snap_path.exists():
-        broker.restore(json.loads(snap_path.read_text()))
+        snap = json.loads(snap_path.read_text())
+        broker.restore(snap, require_ledger_match="ledger_sha" in snap)
+        if snap.get("recovery"):
+            broker._log("SESSION_RECOVERY", snap["recovery"])
     broker._log("SESSION_START", {
         "contract": "QR_VIRTUAL_MARKET_SESSION_V1",
         "feed": args.feed, "pairs": args.pairs, "balance": broker.balance_jpy,
@@ -497,10 +510,8 @@ def main() -> int:
         else:
             run_replay(args, broker, session_dir, bot=bot)
     finally:
-        tmp = session_dir / ".broker_snapshot.json.tmp"
-        tmp.write_text(json.dumps(broker.snapshot(), ensure_ascii=False, sort_keys=True))
-        os.replace(tmp, snap_path)
         broker._log("SESSION_STOP", {"account": broker.account() if broker.last_quotes else None})
+        _write_broker_snapshot(session_dir, broker)
     print(json.dumps({"status": "SESSION_DONE",
                       "account": broker.account() if broker.last_quotes else None},
                      sort_keys=True))

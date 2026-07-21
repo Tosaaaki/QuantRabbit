@@ -109,6 +109,19 @@ def test_ledger_chain_integrity(broker, tmp_path):
         prev = rec["sha"]
 
 
+def test_existing_ledger_hash_corruption_fails_closed(broker):
+    broker.market_order("USD_JPY", "LONG", 1_000)
+    records = [json.loads(line) for line in broker.ledger_path.read_text().splitlines()]
+    records[0]["payload"]["tampered"] = True
+    broker._handle.close()
+    broker.ledger_path.write_text(
+        "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n"
+    )
+
+    with pytest.raises(VirtualBrokerError, match="ledger sha mismatch"):
+        VirtualBroker(broker.ledger_path)
+
+
 def test_invalid_quote_refused(broker):
     with pytest.raises(VirtualBrokerError, match="invalid quote"):
         broker.on_quote("USD_JPY", 150.05, 150.01, "t1")  # ask < bid
@@ -124,6 +137,15 @@ def test_snapshot_restore_roundtrip(broker, tmp_path):
     assert b2.account()["open_positions"] == 1
     assert b2.account()["resting_orders"] == 1
     assert b2.balance_jpy == broker.balance_jpy
+
+
+def test_snapshot_ledger_checkpoint_mismatch_fails_closed(broker, tmp_path):
+    broker.market_order("USD_JPY", "LONG", 1_000)
+    snap = broker.snapshot()
+    other = VirtualBroker(ledger_path=tmp_path / "other.jsonl")
+
+    with pytest.raises(VirtualBrokerError, match="terminal sha"):
+        other.restore(snap, require_ledger_match=True)
 
 
 def test_stop_order_triggers_only_on_breakout(broker):
