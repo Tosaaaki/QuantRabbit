@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -465,3 +466,114 @@ def test_checkpoint_tamper_and_explicit_hold_fail_closed(tmp_path: Path) -> None
             batches=[segment["batches"][0], batch],
             terminal_segment=segment["terminal_segment"],
         )
+
+
+def test_resealed_lower_checkpoint_denominator_and_active_genesis_fail_closed(
+    tmp_path: Path,
+) -> None:
+    base_root = tmp_path / "base"
+    base_root.mkdir()
+    _, _, _, checkpoint_1, policy = _make_segments(base_root)
+
+    lowered = copy.deepcopy(checkpoint_1)
+    lowered["processed_coordinate_count"] = 0
+    lowered["checkpoint_sha256"] = canonical_portfolio_sha256(
+        {key: value for key, value in lowered.items() if key != "checkpoint_sha256"}
+    )
+    with pytest.raises(
+        DojoPortfolioReplayError, match="coordinate origin or denominator"
+    ):
+        verify_portfolio_replay_checkpoint(policy=policy, checkpoint=lowered)
+
+    # An attacker can define a different local job origin and produce a
+    # self-consistent active checkpoint.  It is valid as an intra-job resume
+    # primitive, but V2 has no predecessor-anchor contract, so it must never be
+    # accepted as transcript genesis.
+    active_genesis = copy.deepcopy(checkpoint_1)
+    active_genesis["origin_coordinate_seq"] = active_genesis["exact_carry_state"][
+        "coordinate_seq"
+    ]
+    active_genesis["processed_coordinate_count"] = 0
+    active_genesis["checkpoint_sha256"] = canonical_portfolio_sha256(
+        {
+            key: value
+            for key, value in active_genesis.items()
+            if key != "checkpoint_sha256"
+        }
+    )
+    verified_active = verify_portfolio_replay_checkpoint(
+        policy=policy,
+        checkpoint=active_genesis,
+    )
+    session = PortfolioReplaySession.restore_checkpoint(
+        policy=policy,
+        checkpoint=verified_active,
+    )
+    source_chain = "0" * 64
+    rows: list[dict[str, Any]] = []
+    epoch = 1_704_067_200
+    for ordinal, (phase, bid) in enumerate((("L", 144.8), ("C", 145.1))):
+        row, source_chain = _batch_row(
+            session=session,
+            ordinal=ordinal,
+            epoch=epoch,
+            phase=phase,
+            watermark=ordinal + 3,
+            bid=bid,
+            source_offset_start=ordinal * 100,
+            prior_source_chain=source_chain,
+            open_market=False,
+        )
+        rows.append(row)
+    active_root = tmp_path / "active-genesis.json"
+    EconomicSegmentWriter(active_root).publish(
+        transcript_id="forged-active-genesis",
+        job_sha256="3" * 64,
+        segment_index=0,
+        prior_segment_sha256="0" * 64,
+        portfolio_policy=policy,
+        source_slice_receipt_sha256="4" * 64,
+        source_offset_start=0,
+        source_offset_end_exclusive=200,
+        prior_source_batch_chain_sha256="0" * 64,
+        expected_job_coordinate_count=2,
+        segment_coordinate_start=0,
+        start_checkpoint=active_genesis,
+        terminal_checkpoint=session.export_checkpoint(),
+        batches=rows,
+        terminal_segment=True,
+    )
+    with pytest.raises(DojoEconomicSegmentError, match="fresh initial balance"):
+        verify_economic_segment_chain([active_root], require_terminal=True)
+
+
+def test_chain_releases_each_decoded_segment_before_reading_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import quant_rabbit.dojo_economic_transcript_v2 as module
+
+    path_0, path_1, _, _, _ = _make_segments(tmp_path)
+    decoded = [verify_economic_segment(path_0), verify_economic_segment(path_1)]
+
+    class TrackedSegment(dict[str, Any]):
+        pass
+
+    live_refs: list[weakref.ReferenceType[TrackedSegment]] = []
+    call_count = 0
+
+    def tracked_verify(path: Path) -> dict[str, Any]:
+        nonlocal call_count
+        if live_refs:
+            assert live_refs[-1]() is None
+        row = TrackedSegment(copy.deepcopy(decoded[call_count]))
+        call_count += 1
+        live_refs.append(weakref.ref(row))
+        return row
+
+    monkeypatch.setattr(module, "verify_economic_segment", tracked_verify)
+    attestation = module.verify_economic_segment_chain(
+        [path_0, path_1], require_terminal=True
+    )
+    assert attestation["status"] == "VERIFIED_TERMINAL"
+    assert call_count == 2
+    assert live_refs[-1]() is None

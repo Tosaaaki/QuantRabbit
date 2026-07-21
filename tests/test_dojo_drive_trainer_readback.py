@@ -16,6 +16,7 @@ from quant_rabbit.dojo_drive_remote_evidence import (
     _AuthenticatedDriveReadbackConnector,
     _DriveConnectorArtifactReadback,
     _VerifiedDriveTrainerReadback,
+    canonical_json_sha256,
     _trainer_packet_drive_evidence_refs,
     _verify_authenticated_drive_trainer_readback,
 )
@@ -27,7 +28,20 @@ from test_dojo_terminal_handoff import (
 )
 
 
-PARENT_ID = "driveTrainerParent123"
+RUN_PARENT_ID = "driveTrainerRunParent123"
+MANIFEST_PARENT_ID = "driveTrainerManifestParent123"
+
+
+def _parent_id(kind: str) -> str:
+    return (
+        RUN_PARENT_ID
+        if kind in {"RUN", "EVALUATION", "CELLS"}
+        else MANIFEST_PARENT_ID
+    )
+
+
+def _parent_ids() -> dict[str, str]:
+    return {kind: _parent_id(kind) for kind in TRAINER_READBACK_KINDS}
 
 
 class _FakeDriveRequest:
@@ -102,7 +116,7 @@ def _drive_v3_service_fixture() -> tuple[
             "size": str(len(raw)),
             "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
             "modifiedTime": f"2026-07-20T01:0{index}:00Z",
-            "parents": [PARENT_ID],
+            "parents": [_parent_id(kind)],
             "trashed": False,
             "version": str(index),
             "headRevisionId": revision_id,
@@ -165,7 +179,7 @@ def _readback_fixture(root: Path) -> dict:
             "size": str(len(raw)),
             "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
             "modifiedTime": f"2026-07-20T01:0{index + 2}:00Z",
-            "parents": [PARENT_ID],
+            "parents": [_parent_id(kind)],
             "trashed": False,
             "version": str(100 + index),
             "headRevisionId": f"driveRevision{index:02d}",
@@ -199,7 +213,7 @@ def _verify(fixture: dict) -> _VerifiedDriveTrainerReadback:
         sealed_study=fixture["sealed"],
         terminal_handoff_receipt=fixture["handoff"],
         lineage=fixture["lineage_snapshot"],
-        expected_parent_id=PARENT_ID,
+        expected_parent_ids=_parent_ids(),
         local_artifact_bytes=fixture["local"],
         drive_file_ids=fixture["drive_file_ids"],
         connector=fixture["connector"],
@@ -228,9 +242,42 @@ def test_exact_downloaded_terminal_artifacts_create_typed_packet_evidence(
     )
     assert {row["artifact_kind"] for row in refs} == set(TRAINER_READBACK_KINDS)
     assert len({row["readback_sha256"] for row in refs}) == 1
+    parents = {
+        row["artifact_kind"]: row["drive_parent_id"] for row in refs
+    }
+    assert parents == _parent_ids()
     assert [call[0] for call in fixture["connector"].calls] == list(
         TRAINER_READBACK_KINDS
     )
+
+
+def test_typed_readback_rejects_post_verification_nested_mutation(
+    tmp_path: Path,
+) -> None:
+    fixture = _readback_fixture(tmp_path / "post-verification-mutation")
+    verified = _verify(fixture)
+    verified.evidence["objects"][0]["drive_file_id"] = "substituteDriveFile999"
+    body = {
+        key: value
+        for key, value in verified.evidence.items()
+        if key != "readback_sha256"
+    }
+    verified.evidence["readback_sha256"] = canonical_json_sha256(body)
+
+    with pytest.raises(
+        DojoDriveRemoteEvidenceError,
+        match="changed after connector verification",
+    ):
+        _trainer_packet_drive_evidence_refs(
+            verified,
+            expected_run_sha256=fixture["run"]["run_sha256"],
+            expected_study_sha256=fixture["sealed"]["study_sha256"],
+            expected_evaluation_sha256=fixture["evaluation"]["evaluation_sha256"],
+            expected_lineage_tip_sha256=(
+                fixture["lineage_snapshot"].latest_event_sha256
+            ),
+            expected_cell_count=4,
+        )
 
 
 def test_concrete_drive_v3_connector_reads_exact_head_revisions_and_cas_rechecks(
@@ -323,6 +370,48 @@ def test_concrete_connector_rejects_caller_selected_metadata_fields_without_io(
             metadata_fields=("id", "headRevisionId"),
         )
     assert service.calls == []
+
+
+def test_parent_denominator_must_bind_exact_two_fixed_groups_before_io(
+    tmp_path: Path,
+) -> None:
+    fixture = _readback_fixture(tmp_path / "parent-denominator")
+    with pytest.raises(
+        DojoDriveRemoteEvidenceError,
+        match="two distinct fixed run/manifest groups",
+    ):
+        _verify_authenticated_drive_trainer_readback(
+            run=fixture["run"],
+            evaluation=fixture["evaluation"],
+            cells=fixture["cells"],
+            sealed_study=fixture["sealed"],
+            terminal_handoff_receipt=fixture["handoff"],
+            lineage=fixture["lineage_snapshot"],
+            expected_parent_ids={
+                kind: RUN_PARENT_ID for kind in TRAINER_READBACK_KINDS
+            },
+            local_artifact_bytes=fixture["local"],
+            drive_file_ids=fixture["drive_file_ids"],
+            connector=fixture["connector"],
+        )
+    assert fixture["connector"].calls == []
+
+
+def test_readback_rejects_manifest_artifact_in_run_parent(
+    tmp_path: Path,
+) -> None:
+    fixture = _readback_fixture(tmp_path / "manifest-in-run-parent")
+    first = fixture["readbacks"]["SEALED_STUDY"]
+    metadata = copy.deepcopy(first.metadata_before)
+    metadata["parents"] = [RUN_PARENT_ID]
+    fixture["readbacks"]["SEALED_STUDY"] = _DriveConnectorArtifactReadback(
+        artifact_kind="SEALED_STUDY",
+        metadata_before=copy.deepcopy(metadata),
+        metadata_after=copy.deepcopy(metadata),
+        downloaded_bytes=first.downloaded_bytes,
+    )
+    with pytest.raises(DojoDriveRemoteEvidenceError, match="parents do not equal"):
+        _verify(fixture)
 
 
 def test_concrete_connector_rejects_nonbyte_revision_media() -> None:

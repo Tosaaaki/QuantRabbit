@@ -513,7 +513,16 @@ def _bind_inputs(
         "SEALED_STUDY": study_path.read_bytes(),
         "TERMINAL_HANDOFF": canonical_handoff_bytes(handoff) + b"\n",
     }
-    parent_id = "drivePacketParent123"
+    run_parent_id = "drivePacketRunParent123"
+    manifest_parent_id = "drivePacketManifestParent123"
+    parent_ids = {
+        kind: (
+            run_parent_id
+            if kind in {"RUN", "EVALUATION", "CELLS"}
+            else manifest_parent_id
+        )
+        for kind in TRAINER_READBACK_KINDS
+    }
     readbacks = {}
     drive_file_ids = {}
     for index, kind in enumerate(TRAINER_READBACK_KINDS, start=1):
@@ -525,7 +534,7 @@ def _bind_inputs(
             "size": str(len(raw)),
             "md5Checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
             "modifiedTime": f"2026-07-20T00:0{index + 3}:00Z",
-            "parents": [parent_id],
+            "parents": [parent_ids[kind]],
             "trashed": False,
             "version": str(200 + index),
             "headRevisionId": f"packetRevision{index:02d}",
@@ -546,7 +555,7 @@ def _bind_inputs(
         sealed_study=sealed,
         terminal_handoff_receipt=handoff,
         lineage=snapshot,
-        expected_parent_id=parent_id,
+        expected_parent_ids=parent_ids,
         local_artifact_bytes=local,
         drive_file_ids=drive_file_ids,
         connector=_FakeAuthenticatedConnector(readbacks),
@@ -666,6 +675,24 @@ def test_packet_tamper_and_nan_are_rejected(packet_inputs: dict) -> None:
     cells = [cell, *packet_inputs["cells"][1:]]
     with pytest.raises(DojoAITrainerPacketError, match="non-finite"):
         _build(packet_inputs, cells=cells)
+
+    regrouped = copy.deepcopy(packet)
+    run_parent = next(
+        row["drive_parent_id"]
+        for row in regrouped["drive_evidence_refs"]
+        if row["artifact_kind"] == "RUN"
+    )
+    next(
+        row
+        for row in regrouped["drive_evidence_refs"]
+        if row["artifact_kind"] == "SEALED_STUDY"
+    )["drive_parent_id"] = run_parent
+    regrouped_body = {
+        key: value for key, value in regrouped.items() if key != "packet_sha256"
+    }
+    regrouped["packet_sha256"] = canonical_packet_sha256(regrouped_body)
+    with pytest.raises(DojoAITrainerPacketError, match="fixed parent groups"):
+        verify_trainer_packet(regrouped)
 
 
 def test_rehashed_success_cell_metric_injection_cannot_replace_bound_truth(

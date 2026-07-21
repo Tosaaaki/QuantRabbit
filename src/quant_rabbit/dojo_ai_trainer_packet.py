@@ -54,6 +54,10 @@ TRAINER_READBACK_KINDS: Final = (
     "SEALED_STUDY",
     "TERMINAL_HANDOFF",
 )
+TRAINER_READBACK_PARENT_GROUPS: Final = {
+    "RUN_ARTIFACTS": ("RUN", "EVALUATION", "CELLS"),
+    "MANIFEST_ARTIFACTS": ("SEALED_STUDY", "TERMINAL_HANDOFF"),
+}
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}\Z")
@@ -1176,7 +1180,7 @@ def _normalize_drive_refs(value: Sequence[Mapping[str, Any]]) -> list[dict[str, 
     result = []
     kinds: set[str] = set()
     drive_ids: set[str] = set()
-    parents: set[str] = set()
+    parent_by_kind: dict[str, str] = {}
     readback_shas: set[str] = set()
     for index, item in enumerate(value):
         row = _exact_mapping(item, _DRIVE_REF_KEYS, f"Drive evidence ref {index}")
@@ -1200,7 +1204,7 @@ def _normalize_drive_refs(value: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         if not isinstance(head_revision, str) or not _DRIVE_ID.fullmatch(head_revision):
             raise DojoAITrainerPacketError("Drive head revision id is invalid")
         drive_ids.add(drive_file_id)
-        parents.add(parent_id)
+        parent_by_kind[kind] = parent_id
         digest = _sha(row["content_sha256"], "Drive content SHA-256")
         size = _integer(row["content_size_bytes"], "Drive content size")
         if size <= 0:
@@ -1235,9 +1239,22 @@ def _normalize_drive_refs(value: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         raise DojoAITrainerPacketError(
             "Drive readback omits a required terminal artifact"
         )
-    if len(parents) != 1 or len(readback_shas) != 1:
+    run_parents = {
+        parent_by_kind[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["RUN_ARTIFACTS"]
+    }
+    manifest_parents = {
+        parent_by_kind[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["MANIFEST_ARTIFACTS"]
+    }
+    if (
+        len(run_parents) != 1
+        or len(manifest_parents) != 1
+        or run_parents == manifest_parents
+        or len(readback_shas) != 1
+    ):
         raise DojoAITrainerPacketError(
-            "Drive readback references do not share one parent/bundle seal"
+            "Drive readback references do not match fixed parent groups/bundle seal"
         )
     return sorted(
         result,

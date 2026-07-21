@@ -1,7 +1,9 @@
 """Compact batch-major DOJO economic transcript segments.
 
-V1 writes four durable records for every replay coordinate.  This V2
-foundation keeps the same independent reducer truth while publishing one
+V1 writes four durable records for every replay coordinate.  This module began
+as the V2 compact foundation and now publishes V3 artifacts: V3 adds an exact
+checkpoint-origin denominator and requires a fresh-balance chain genesis.
+It keeps the same independent reducer truth while publishing one
 immutable, canonical document for a bounded coordinate batch.  HOLD is never
 stored as a second representation: only proposals containing an intent appear
 in ``non_hold_proposals`` and every omitted sealed active worker is expanded to
@@ -39,16 +41,16 @@ from quant_rabbit.dojo_shared_worker_protocol import (
 )
 
 
-ECONOMIC_SEGMENT_CONTRACT: Final = "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_V2"
+ECONOMIC_SEGMENT_CONTRACT: Final = "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_V3"
 ECONOMIC_SEGMENT_CHAIN_ATTESTATION_CONTRACT: Final = (
-    "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_CHAIN_ATTESTATION_V2"
+    "QR_DOJO_ECONOMIC_TRANSCRIPT_SEGMENT_CHAIN_ATTESTATION_V3"
 )
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 GENESIS_SHA256: Final = "0" * 64
 IMPLICIT_NO_INTENT_SEMANTICS: Final = (
     "OMITTED_ACTIVE_WORKER_IS_CANONICAL_EMPTY_PROPOSAL"
 )
-# One file-data fsync is the V2 durability boundary for an already complete
+# One file-data fsync is the V3 durability boundary for an already complete
 # in-memory segment.  A future atomic-directory publication protocol should
 # replace this constant together with a schema revision, never silently.
 PUBLICATION_FSYNC_COUNT: Final = 1
@@ -739,13 +741,17 @@ def verify_economic_segment(path: Path) -> dict[str, Any]:
 def verify_economic_segment_chain(
     paths: Sequence[Path], *, require_terminal: bool = False
 ) -> dict[str, Any]:
-    """Verify a single linear segment chain and exact checkpoint continuity."""
+    """Verify a linear chain while retaining at most one decoded segment.
+
+    The first segment must start at the reducer's canonical fresh-balance
+    checkpoint.  V3 does not define an externally anchored predecessor
+    contract, so accepting an active checkpoint as genesis would let a caller
+    discard an economic prefix and reseal its local coordinate denominator.
+    """
 
     segment_paths = list(_sequence(paths, "segment paths"))
     if not segment_paths:
         raise DojoEconomicSegmentError("segment chain must not be empty")
-    segments = [verify_economic_segment(Path(path)) for path in segment_paths]
-    first = segments[0]
     expected_prior = GENESIS_SHA256
     expected_index = 0
     expected_coordinate_start = 0
@@ -753,28 +759,60 @@ def verify_economic_segment_chain(
     previous_terminal_checkpoint: dict[str, Any] | None = None
     previous_source_chain: str | None = None
     seen: set[str] = set()
-    for index, segment in enumerate(segments):
+    first_bindings: dict[str, Any] | None = None
+    last_bindings: dict[str, Any] | None = None
+    for index, path in enumerate(segment_paths):
+        # Decode, independently replay, and release each full transcript
+        # segment before opening the next one.  Only the prior checkpoint and
+        # scalar chain bindings survive the loop boundary.
+        segment = verify_economic_segment(Path(path))
         denominator = segment["coordinate_denominator"]
         source_range = segment["source_range"]
         if segment["segment_sha256"] in seen:
             raise DojoEconomicSegmentError("duplicate segment digest in chain")
         seen.add(segment["segment_sha256"])
         if (
-            segment["transcript_id"] != first["transcript_id"]
-            or segment["job_sha256"] != first["job_sha256"]
-            or segment["policy_sha256"] != first["policy_sha256"]
-            or source_range["source_slice_receipt_sha256"]
-            != first["source_range"]["source_slice_receipt_sha256"]
-            or denominator["expected_job_coordinate_count"]
-            != first["coordinate_denominator"]["expected_job_coordinate_count"]
-        ):
-            raise DojoEconomicSegmentError("segment chain immutable binding drifted")
-        if (
             segment["segment_index"] != expected_index
             or segment["prior_segment_sha256"] != expected_prior
             or denominator["segment_coordinate_start"] != expected_coordinate_start
         ):
             raise DojoEconomicSegmentError("segment chain is reordered, forked, or gapped")
+        if index == 0:
+            start_checkpoint = segment["start_checkpoint"]
+            if (
+                start_checkpoint["state_kind"] != "FRESH_INITIAL_BALANCE"
+                or start_checkpoint["origin_coordinate_seq"] != 0
+                or start_checkpoint["processed_coordinate_count"] != 0
+            ):
+                raise DojoEconomicSegmentError(
+                    "segment chain genesis is not a fresh initial balance"
+                )
+            first_bindings = {
+                "transcript_id": segment["transcript_id"],
+                "job_sha256": segment["job_sha256"],
+                "policy_sha256": segment["policy_sha256"],
+                "source_slice_receipt_sha256": source_range[
+                    "source_slice_receipt_sha256"
+                ],
+                "expected_job_coordinate_count": denominator[
+                    "expected_job_coordinate_count"
+                ],
+            }
+        elif first_bindings is None:  # pragma: no cover - loop invariant
+            raise DojoEconomicSegmentError("segment chain genesis is missing")
+        else:
+            if (
+                segment["transcript_id"] != first_bindings["transcript_id"]
+                or segment["job_sha256"] != first_bindings["job_sha256"]
+                or segment["policy_sha256"] != first_bindings["policy_sha256"]
+                or source_range["source_slice_receipt_sha256"]
+                != first_bindings["source_slice_receipt_sha256"]
+                or denominator["expected_job_coordinate_count"]
+                != first_bindings["expected_job_coordinate_count"]
+            ):
+                raise DojoEconomicSegmentError(
+                    "segment chain immutable binding drifted"
+                )
         if index == 0:
             expected_source_offset = source_range["offset_start"]
         if source_range["offset_start"] != expected_source_offset:
@@ -786,7 +824,7 @@ def verify_economic_segment_chain(
             raise DojoEconomicSegmentError(
                 "segment checkpoint or source-chain handoff differs"
             )
-        if index < len(segments) - 1 and segment["terminal_segment"]:
+        if index < len(segment_paths) - 1 and segment["terminal_segment"]:
             raise DojoEconomicSegmentError("records follow a terminal segment")
         expected_prior = segment["segment_sha256"]
         expected_index += 1
@@ -794,24 +832,40 @@ def verify_economic_segment_chain(
         expected_source_offset = source_range["offset_end_exclusive"]
         previous_terminal_checkpoint = segment["terminal_checkpoint"]
         previous_source_chain = segment["terminal_source_batch_chain_sha256"]
-    terminal = segments[-1]["terminal_segment"]
+        last_bindings = {
+            "segment_sha256": segment["segment_sha256"],
+            "terminal_checkpoint_sha256": segment["terminal_checkpoint_sha256"],
+            "terminal_source_batch_chain_sha256": segment[
+                "terminal_source_batch_chain_sha256"
+            ],
+            "terminal_segment": segment["terminal_segment"],
+        }
+        # Avoid retaining the previous decoded transcript while the next file
+        # is read.  The exact checkpoint handoff is the only structured state
+        # intentionally kept across iterations.
+        del denominator, source_range, segment
+    if first_bindings is None or last_bindings is None:  # pragma: no cover
+        raise DojoEconomicSegmentError("segment chain is empty")
+    terminal = last_bindings["terminal_segment"]
     if require_terminal and not terminal:
         raise DojoEconomicSegmentError("segment chain is not terminal")
     body: dict[str, Any] = {
         "contract": ECONOMIC_SEGMENT_CHAIN_ATTESTATION_CONTRACT,
         "schema_version": SCHEMA_VERSION,
         "status": "VERIFIED_TERMINAL" if terminal else "VERIFIED_RESUMABLE_PREFIX",
-        "transcript_id": first["transcript_id"],
-        "job_sha256": first["job_sha256"],
-        "policy_sha256": first["policy_sha256"],
-        "segment_count": len(segments),
-        "segment_chain_tip_sha256": segments[-1]["segment_sha256"],
+        "transcript_id": first_bindings["transcript_id"],
+        "job_sha256": first_bindings["job_sha256"],
+        "policy_sha256": first_bindings["policy_sha256"],
+        "segment_count": len(segment_paths),
+        "segment_chain_tip_sha256": last_bindings["segment_sha256"],
         "completed_coordinate_count": expected_coordinate_start,
-        "expected_job_coordinate_count": first["coordinate_denominator"][
+        "expected_job_coordinate_count": first_bindings[
             "expected_job_coordinate_count"
         ],
-        "terminal_checkpoint_sha256": segments[-1]["terminal_checkpoint_sha256"],
-        "terminal_source_batch_chain_sha256": segments[-1][
+        "terminal_checkpoint_sha256": last_bindings[
+            "terminal_checkpoint_sha256"
+        ],
+        "terminal_source_batch_chain_sha256": last_bindings[
             "terminal_source_batch_chain_sha256"
         ],
         "terminal_segment": terminal,

@@ -34,7 +34,7 @@ PORTFOLIO_POLICY_CONTRACT: Final = "QR_DOJO_SHARED_PORTFOLIO_POLICY_V1"
 PORTFOLIO_REPLAY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_PORTFOLIO_REPLAY_V1"
 PORTFOLIO_CARRY_CONTRACT: Final = "QR_DOJO_SHARED_ACCOUNT_CARRY_V1"
 PORTFOLIO_CHECKPOINT_CONTRACT: Final = (
-    "QR_DOJO_SHARED_ACCOUNT_INTRA_JOB_CHECKPOINT_V1"
+    "QR_DOJO_SHARED_ACCOUNT_INTRA_JOB_CHECKPOINT_V2"
 )
 PORTFOLIO_COORDINATE_RECEIPT_CONTRACT: Final = (
     "QR_DOJO_SHARED_PORTFOLIO_COORDINATE_RECEIPT_V1"
@@ -2016,6 +2016,11 @@ class PortfolioReplaySession:
             self.state = _state_from_carry(carry_state, self.policy)
         self._prepared: dict[str, Any] | None = None
         self._processed_coordinate_count = 0
+        # ``state.coordinate_seq`` can already be non-zero when a replay job
+        # starts from a month-to-month carry.  Preserve that immutable origin
+        # so a checkpoint's job-local denominator is an exact consequence of
+        # reducer state rather than a separately resealable counter.
+        self._checkpoint_origin_coordinate_seq = self.state["coordinate_seq"]
         self._final_result: dict[str, Any] | None = None
         self._terminal_policy: str | None = None
 
@@ -2359,6 +2364,13 @@ class PortfolioReplaySession:
             )
         if self._final_result is not None:
             raise DojoPortfolioReplayError("cannot checkpoint a finalized session")
+        if (
+            self.state["coordinate_seq"] - self._checkpoint_origin_coordinate_seq
+            != self._processed_coordinate_count
+        ):
+            raise DojoPortfolioReplayError(
+                "checkpoint denominator differs from its reducer coordinate origin"
+            )
         state_kind = "ACTIVE_EXACT_STATE"
         initial_balance: float | None = None
         carry: dict[str, Any] | None
@@ -2385,6 +2397,7 @@ class PortfolioReplaySession:
             "contract": PORTFOLIO_CHECKPOINT_CONTRACT,
             "schema_version": SCHEMA_VERSION,
             "policy_sha256": self.policy["policy_sha256"],
+            "origin_coordinate_seq": self._checkpoint_origin_coordinate_seq,
             "processed_coordinate_count": self._processed_coordinate_count,
             "state_kind": state_kind,
             "initial_balance_jpy": initial_balance,
@@ -2560,6 +2573,7 @@ _CHECKPOINT_KEYS = frozenset(
         "contract",
         "schema_version",
         "policy_sha256",
+        "origin_coordinate_seq",
         "processed_coordinate_count",
         "state_kind",
         "initial_balance_jpy",
@@ -2598,6 +2612,7 @@ def _restore_portfolio_replay_checkpoint(
         session._prepared = None
         session._final_result = None
         session._terminal_policy = None
+    session._checkpoint_origin_coordinate_seq = row["origin_coordinate_seq"]
     session._processed_coordinate_count = row["processed_coordinate_count"]
     return session
 
@@ -2628,13 +2643,21 @@ def verify_portfolio_replay_checkpoint(
         raise DojoPortfolioReplayError(
             "checkpoint contract, policy, digest, or authority boundary is invalid"
         )
+    origin_coordinate_seq = _integer(
+        row["origin_coordinate_seq"],
+        "checkpoint.origin_coordinate_seq",
+    )
     processed = _integer(
         row["processed_coordinate_count"],
         "checkpoint.processed_coordinate_count",
     )
     state_kind = row["state_kind"]
     if state_kind == "FRESH_INITIAL_BALANCE":
-        if row["exact_carry_state"] is not None or processed != 0:
+        if (
+            row["exact_carry_state"] is not None
+            or origin_coordinate_seq != 0
+            or processed != 0
+        ):
             raise DojoPortfolioReplayError("fresh checkpoint shape is invalid")
         _positive(row["initial_balance_jpy"], "checkpoint.initial_balance_jpy")
     elif state_kind == "ACTIVE_EXACT_STATE":
@@ -2645,9 +2668,13 @@ def verify_portfolio_replay_checkpoint(
             verified_policy,
             reset_reporting_window=False,
         )
-        if state["last_coordinate"] is None or processed > state["coordinate_seq"]:
+        if (
+            state["last_coordinate"] is None
+            or origin_coordinate_seq > state["coordinate_seq"]
+            or processed != state["coordinate_seq"] - origin_coordinate_seq
+        ):
             raise DojoPortfolioReplayError(
-                "active checkpoint coordinate denominator is impossible"
+                "active checkpoint coordinate origin or denominator is impossible"
             )
     else:
         raise DojoPortfolioReplayError("checkpoint.state_kind is unsupported")

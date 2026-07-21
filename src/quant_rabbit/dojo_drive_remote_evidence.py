@@ -57,6 +57,10 @@ TRAINER_READBACK_KINDS: Final = (
     "SEALED_STUDY",
     "TERMINAL_HANDOFF",
 )
+TRAINER_READBACK_PARENT_GROUPS: Final = {
+    "RUN_ARTIFACTS": ("RUN", "EVALUATION", "CELLS"),
+    "MANIFEST_ARTIFACTS": ("SEALED_STUDY", "TERMINAL_HANDOFF"),
+}
 
 _HEX64: Final = re.compile(r"[0-9a-f]{64}\Z")
 _MD5: Final = re.compile(r"[0-9a-f]{32}\Z")
@@ -642,6 +646,9 @@ class _VerifiedDriveTrainerReadback:
 
     evidence: Mapping[str, Any]
     _validation_marker: object = field(repr=False, compare=False)
+    _sealed_evidence_bytes: bytes = field(
+        default=b"", repr=False, compare=False
+    )
 
 
 def _verify_authenticated_drive_trainer_readback(
@@ -652,7 +659,7 @@ def _verify_authenticated_drive_trainer_readback(
     sealed_study: Mapping[str, Any],
     terminal_handoff_receipt: Mapping[str, Any],
     lineage: CandidateLineageSnapshot,
-    expected_parent_id: str,
+    expected_parent_ids: Mapping[str, str],
     local_artifact_bytes: Mapping[str, bytes],
     drive_file_ids: Mapping[str, str],
     connector: _AuthenticatedDriveReadbackConnector,
@@ -662,8 +669,9 @@ def _verify_authenticated_drive_trainer_readback(
     The fixed denominator is rebuilt from ``sealed_study`` + ``cells`` and the
     evaluation is reconstructed before any Drive metadata is considered.  All
     five required artifacts must then have exact local/download byte equality,
-    matching Drive MD5/size, one expected parent, ``trashed=false``, and both a
-    monotonically identified Drive version and head revision.
+    matching Drive MD5/size, the exact per-kind run/manifest parent binding,
+    ``trashed=false``, and both a monotonically identified Drive version and
+    head revision.
 
     This private boundary is not an attestation source by itself.  Its caller
     must supply a host-owned :class:`_AuthenticatedDriveReadbackConnector` that
@@ -703,7 +711,36 @@ def _verify_authenticated_drive_trainer_readback(
     handoff_binding = _handoff_binding(
         terminal_handoff_receipt, normalized_run, lineage_binding
     )
-    parent_id = _drive_id(expected_parent_id, "expected Drive parent id")
+    if not isinstance(expected_parent_ids, Mapping):
+        raise DojoDriveRemoteEvidenceError(
+            "expected Drive parent ids must be an object"
+        )
+    if set(expected_parent_ids) != set(TRAINER_READBACK_KINDS):
+        raise DojoDriveRemoteEvidenceError(
+            "expected Drive parent ids omit or add a terminal artifact"
+        )
+    parent_ids = {
+        kind: _drive_id(
+            expected_parent_ids[kind], f"expected {kind} Drive parent id"
+        )
+        for kind in TRAINER_READBACK_KINDS
+    }
+    run_parent_ids = {
+        parent_ids[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["RUN_ARTIFACTS"]
+    }
+    manifest_parent_ids = {
+        parent_ids[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["MANIFEST_ARTIFACTS"]
+    }
+    if (
+        len(run_parent_ids) != 1
+        or len(manifest_parent_ids) != 1
+        or run_parent_ids == manifest_parent_ids
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "Drive trainer parents must bind two distinct fixed run/manifest groups"
+        )
     if not isinstance(connector, _AuthenticatedDriveReadbackConnector):
         raise DojoDriveRemoteEvidenceError(
             "authenticated Drive connector adapter capability is required"
@@ -801,12 +838,12 @@ def _verify_authenticated_drive_trainer_readback(
             )
         metadata_before = _normalize_drive_readback_metadata(
             item.metadata_before,
-            expected_parent_id=parent_id,
+            expected_parent_id=parent_ids[kind],
             downloaded_bytes=downloaded,
         )
         metadata_after = _normalize_drive_readback_metadata(
             item.metadata_after,
-            expected_parent_id=parent_id,
+            expected_parent_id=parent_ids[kind],
             downloaded_bytes=downloaded,
         )
         if metadata_before != metadata_after:
@@ -870,9 +907,11 @@ def _verify_authenticated_drive_trainer_readback(
     }
     evidence = {**body, "readback_sha256": canonical_json_sha256(body)}
     _verify_trainer_readback_evidence(evidence)
+    sealed_evidence = _clone(evidence)
     return _VerifiedDriveTrainerReadback(
-        evidence=_clone(evidence),
+        evidence=sealed_evidence,
         _validation_marker=_TRAINER_READBACK_MARKER,
+        _sealed_evidence_bytes=canonical_json_bytes(sealed_evidence),
     )
 
 
@@ -893,6 +932,14 @@ def _trainer_packet_drive_evidence_refs(
     ):
         raise DojoDriveRemoteEvidenceError(
             "trainer packet requires the typed Drive readback validator output"
+        )
+    if (
+        not isinstance(value._sealed_evidence_bytes, bytes)
+        or not value._sealed_evidence_bytes
+        or canonical_json_bytes(value.evidence) != value._sealed_evidence_bytes
+    ):
+        raise DojoDriveRemoteEvidenceError(
+            "typed Drive readback changed after connector verification"
         )
     evidence = _verify_trainer_readback_evidence(value.evidence)
     denominator = evidence["fixed_denominator"]
@@ -1726,7 +1773,7 @@ def _verify_trainer_readback_evidence(value: Any) -> dict[str, Any]:
     kinds: list[str] = []
     ids: set[str] = set()
     names: set[str] = set()
-    parents: set[str] = set()
+    parent_by_kind: dict[str, str] = {}
     revisions: set[tuple[str, str]] = set()
     for raw in objects:
         item = _exact(raw, _TRAINER_READBACK_OBJECT_KEYS, "Drive trainer object")
@@ -1744,7 +1791,9 @@ def _verify_trainer_readback_evidence(value: Any) -> dict[str, Any]:
             )
         ids.add(file_id)
         names.add(name)
-        parents.add(_drive_id(item["drive_parent_id"], "Drive trainer parent id"))
+        parent_by_kind[kind] = _drive_id(
+            item["drive_parent_id"], "Drive trainer parent id"
+        )
         _sha(item["content_sha256"], "Drive trainer content SHA-256")
         _positive_integer(item["content_size_bytes"], "Drive trainer content size")
         _md5(item["md5_checksum"], "Drive trainer MD5")
@@ -1765,9 +1814,21 @@ def _verify_trainer_readback_evidence(value: Any) -> dict[str, Any]:
         raise DojoDriveRemoteEvidenceError(
             "Drive trainer readback object order/denominator drifted"
         )
-    if len(parents) != 1:
+    run_parents = {
+        parent_by_kind[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["RUN_ARTIFACTS"]
+    }
+    manifest_parents = {
+        parent_by_kind[kind]
+        for kind in TRAINER_READBACK_PARENT_GROUPS["MANIFEST_ARTIFACTS"]
+    }
+    if (
+        len(run_parents) != 1
+        or len(manifest_parents) != 1
+        or run_parents == manifest_parents
+    ):
         raise DojoDriveRemoteEvidenceError(
-            "Drive trainer readback objects do not share one parent"
+            "Drive trainer readback objects do not match fixed run/manifest parent groups"
         )
     return _clone(row)
 
@@ -2010,6 +2071,7 @@ __all__ = [
     "GoogleDriveV3TrainerReadbackConnector",
     "TRAINER_READBACK_CONTRACT",
     "TRAINER_READBACK_KINDS",
+    "TRAINER_READBACK_PARENT_GROUPS",
     "canonical_artifact_bytes",
     "canonical_json_bytes",
     "canonical_json_sha256",
