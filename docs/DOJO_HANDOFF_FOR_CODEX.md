@@ -70,7 +70,7 @@ QR_OANDA_ENV_FILE=/Users/tossaki/App/QuantRabbit-live/.env.local ... --feed live
 - 旧replay runnerは`--source-manifest`をsession contractへhash保存するだけで、実際のreaderはroot配下をglobしていた。重複shardやroot階層の違いで結果が変わる測定欠陥だった。修正後はmanifest記載ファイル以外を読めず、各実ファイルSHAも実行前に再検証する。
 - 固定比較`episode-s5-entry-guards-replay-20260722-v1`の結果: 2% JST日次equity DD停止はVAL/S5の複数経路でnet/PF/DDを悪化させたため`REJECT`。長期LONG中のSHORT禁止はS5 net/PFを改善したが、TRAINが基準`+155,609.72円`から`-120,731.70円`へ反転し、VAL_OLHCのDD/最悪日も悪化したため`TEST`止まり。どちらも正式waveへ入れない。
 - manifest固定後の現行W_FADE基準はTRAIN `+155,609.72円`、VAL OHLC `-88,169.30円` / OLHC `-59,591.34円`、S5 stress OHLC `+13,512.57円` / OLHC `+17,507.15円`。旧scoreboardのVALプラス値を同一証拠として引用しない。
-- 4室context smoke v1（08:00Z開始）は起動許容時刻を越えたため未起動。窓を黙ってスライドせず、別ID`episode-s5-entry-context-smoke-20260722-v2`、固定窓`[2026-07-22T08:20:00Z, 2026-07-22T14:20:00Z)`として再登録した。diagnostic onlyで、正式5日waveのregistry/windowは変更しない。
+- 4室context smoke v1（08:00Z開始）は起動許容時刻を越えたため未起動。v2（08:20Z開始）はmacOS同梱`screen`が`-Logfile`を受理せず、1室も起動する前にfail-closedした。非互換オプションを除去して回帰testを追加し、別ID`episode-s5-entry-context-smoke-20260722-v3`、固定窓`[2026-07-22T08:30:00Z, 2026-07-22T14:30:00Z)`として再登録した。diagnostic onlyで、正式5日waveのregistry/windowは変更しない。
 
 ## 5. 確定済みの結論（W37〜W55、詳細は台帳）
 
