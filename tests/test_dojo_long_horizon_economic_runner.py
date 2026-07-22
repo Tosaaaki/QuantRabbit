@@ -57,6 +57,7 @@ from quant_rabbit.dojo_long_horizon_plan import (
     IMPLEMENTATION_DIGEST_KEYS,
     M1_CORE5_BINDING_ID,
     M5_BINDING_ID,
+    RAPID_G2_ROOM_2025H1_PROFILE,
     SOURCE_BINDING_IDS,
     build_long_horizon_train_plan,
     canonical_sha256,
@@ -245,7 +246,7 @@ def _write_source(
         physical_rows.append(
             {
                 "physical_shard_id": physical_id,
-                "root_kind": "M1",
+                "root_kind": job["granularity"],
                 "relative_path": raw_path.name,
                 "file_size_bytes": len(raw_bytes),
                 "file_sha256": hashlib.sha256(raw_bytes).hexdigest(),
@@ -751,6 +752,129 @@ def test_single_source_stream_fans_out_before_incremental_economics(
         "VERIFIED_COMPLETE"
     )
     assert len(result["economic_transcript_artifacts"]) == 20
+
+
+def test_one_m5_stream_fans_out_to_six_isolated_rooms_and_two_cost_arms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    room_bindings = [
+        {"room_id": f"room-g2-{index:02d}", "family_id": family}
+        for index, family in enumerate(
+            (
+                "spike_fade",
+                "burst",
+                "pullback_limit",
+                "prev_day_extreme_fade",
+                "round_number_fade",
+                "mean_revert_24h",
+            ),
+            1,
+        )
+    ]
+    workers = tuple(
+        {
+            "worker_id": f"room_worker_{index:02d}",
+            "family_id": binding["family_id"],
+            "config_sha256": f"{index:064x}",
+        }
+        for index, binding in enumerate(room_bindings, 1)
+    )
+    catalog = [
+        {**worker, "owner_id": f"room_owner_{index:02d}"}
+        for index, worker in enumerate(workers, 1)
+    ]
+    families = tuple(sorted(row["family_id"] for row in room_bindings))
+    plan = build_long_horizon_train_plan(
+        portfolio_families=families,
+        source_digests=_digests(SOURCE_BINDING_IDS, 200),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, 210),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, 220),
+        study_profile=RAPID_G2_ROOM_2025H1_PROFILE,
+        room_bindings=room_bindings,
+    )
+    schedule = build_long_horizon_stream_schedule(plan, worker_bindings=workers)
+    job = next(
+        row
+        for row in schedule["jobs"]
+        if row["source_binding_id"] == M5_BINDING_ID
+        and row["month"] == "2025-01"
+        and row["intrabar_path"] == "OHLC"
+    )
+    state = tmp_path / "room-state"
+    initialize_long_horizon_execution_state(
+        state,
+        schedule=schedule,
+        plan=plan,
+        runner_binding={
+            "runner_contract": "QR_TEST_ROOM_FANOUT_RUNNER_V1",
+            "runner_code_sha256": "d" * 64,
+            "result_contract": CELL_CONTRACT,
+        },
+        resource_policy={
+            "max_resident_coordinates": 144,
+            "max_rss_bytes": 2_147_483_648,
+            "max_open_files": 256,
+            "min_free_disk_bytes": 1,
+            "max_checkpoint_bytes": 8_388_608,
+            "max_terminal_bytes": 2_097_152,
+            "max_parallel_jobs": 1,
+        },
+    )
+    handoff = LongHorizonExecutionSession(
+        state, schedule=schedule, plan=plan
+    ).claim_job(job_sha256=job["job_sha256"], runner_id="room-fanout-test")
+    PLANS_BY_JOB[job["job_sha256"]] = plan
+    first_epoch = int(datetime(2025, 1, 2, tzinfo=timezone.utc).timestamp())
+    receipt, source_manifest = _write_source(
+        tmp_path,
+        handoff["job"],
+        rows=[
+            _exact28_source_row(first_epoch, 0.0),
+            _exact28_source_row(first_epoch + 300, 0.0001),
+        ],
+    )
+    import quant_rabbit.dojo_long_horizon_economic_runner as runner
+
+    real_open = runner.os.open
+    source_path = (tmp_path / receipt["relative_path"]).resolve()
+    source_open_count = 0
+
+    def counted_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        nonlocal source_open_count
+        if Path(path).resolve() == source_path:
+            source_open_count += 1
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "open", counted_open)
+    result = run_long_horizon_economic_job(
+        runner_handoff=handoff,
+        plan=plan,
+        source_root=tmp_path,
+        source_manifest=source_manifest,
+        source_slice_receipt=receipt,
+        economic_evidence_root=_economic_evidence_root(tmp_path),
+        worker_catalog=catalog,
+        coordinate_runtimes=_runtime_rows(handoff, catalog=catalog),
+        worker_runtime_factory=builtin_no_intent_runtime_factory,
+        worker_runtime_binding_sha256=RUNTIME_SHA,
+    )
+
+    assert source_open_count == result["source_open_count"] == 1
+    assert result["coordinate_result_count"] == 12
+    assert result["complete_coordinate_count"] == 12
+    assert result["failed_coordinate_count"] == 0
+    assert len(result["portfolio_results_by_coordinate"]) == 12
+    assert {
+        coordinate["fold_label"] for coordinate in handoff["job"]["coordinates"]
+    } == {binding["room_id"] for binding in room_bindings}
+    assert all(
+        coordinate["active_worker_count"] == 1
+        for coordinate in handoff["job"]["coordinates"]
+    )
+    assert all(
+        replay["processed_coordinate_count"] == 8
+        for replay in result["portfolio_results_by_coordinate"].values()
+    )
 
 
 def test_sparse_observed_union_reexecutes_without_synthetic_or_carry_fills(

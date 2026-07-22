@@ -7,6 +7,7 @@ from quant_rabbit.dojo_long_horizon_plan import (
     M1_CORE5_BINDING_ID,
     M1_FULL28_BINDING_ID,
     M5_BINDING_ID,
+    RAPID_G2_ROOM_2025H1_PROFILE,
     RAPID_2025H1_PROFILE,
     SOURCE_BINDING_IDS,
     build_long_horizon_train_plan,
@@ -27,6 +28,23 @@ WORKERS = (
     {"worker_id": "range-v1", "family_id": "range_fade", "config_sha256": "b" * 64},
     {"worker_id": "spike-v1", "family_id": "spike_fade", "config_sha256": "c" * 64},
 )
+G2_ROOM_BINDINGS = (
+    {"room_id": "room-g2-01", "family_id": "spike_fade"},
+    {"room_id": "room-g2-02", "family_id": "burst"},
+    {"room_id": "room-g2-03", "family_id": "pullback_limit"},
+    {"room_id": "room-g2-04", "family_id": "prev_day_extreme_fade"},
+    {"room_id": "room-g2-05", "family_id": "round_number_fade"},
+    {"room_id": "room-g2-06", "family_id": "mean_revert_24h"},
+)
+G2_ROOM_WORKERS = tuple(
+    {
+        "worker_id": f"worker-{row['room_id']}",
+        "family_id": row["family_id"],
+        "config_sha256": f"{index:064x}",
+    }
+    for index, row in enumerate(G2_ROOM_BINDINGS, start=1)
+)
+G2_ROOM_FAMILIES = tuple(sorted(row["family_id"] for row in G2_ROOM_BINDINGS))
 
 
 def _digests(keys: tuple[str, ...], offset: int) -> dict[str, str]:
@@ -95,6 +113,59 @@ def test_rapid_profile_is_independent_month_family_screen_at_2025_start() -> Non
         row["stage"] for row in rapid["jobs"][0]["coordinates"]
     } == {"PORTFOLIO_MAIN"}
     assert validate_long_horizon_stream_schedule(rapid, plan=rapid_plan) == rapid
+
+
+def test_room_profile_fans_six_isolated_accounts_per_cost_from_one_stream() -> None:
+    room_plan = build_long_horizon_train_plan(
+        portfolio_families=G2_ROOM_FAMILIES,
+        source_digests=_digests(SOURCE_BINDING_IDS, 0),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, 10),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, 20),
+        study_profile=RAPID_G2_ROOM_2025H1_PROFILE,
+        room_bindings=G2_ROOM_BINDINGS,
+    )
+    room_schedule = build_long_horizon_stream_schedule(
+        room_plan, worker_bindings=G2_ROOM_WORKERS
+    )
+
+    assert room_schedule["stream_job_count"] == 12
+    assert room_schedule["result_coordinate_count"] == 144
+    assert all(job["coordinate_count"] == 12 for job in room_schedule["jobs"])
+    first = room_schedule["jobs"][0]
+    assert first["source_stream_instance_count"] == 1
+    assert {row["stage"] for row in first["coordinates"]} == {"ROOM_TRAIN_MAIN"}
+    by_room: dict[str, list[dict]] = {}
+    for coordinate in first["coordinates"]:
+        by_room.setdefault(coordinate["fold_label"], []).append(coordinate)
+    assert sorted(by_room) == [row["room_id"] for row in G2_ROOM_BINDINGS]
+    family_order = list(G2_ROOM_FAMILIES)
+    worker_order = [row["family_id"] for row in G2_ROOM_WORKERS]
+    for binding in G2_ROOM_BINDINGS:
+        rows = by_room[binding["room_id"]]
+        assert {row["cost_scenario"] for row in rows} == {"BASE", "STRESS"}
+        expected_family_mask = "".join(
+            "1" if family == binding["family_id"] else "0"
+            for family in family_order
+        )
+        expected_worker_mask = "".join(
+            "1" if family == binding["family_id"] else "0"
+            for family in worker_order
+        )
+        assert {row["active_family_mask"] for row in rows} == {
+            expected_family_mask
+        }
+        assert {row["active_worker_mask"] for row in rows} == {
+            expected_worker_mask
+        }
+        # The immutable stream identity is stored once on the parent job; all
+        # room coordinates inherit that one stream and may not reopen it.
+        assert all("price_stream_id" not in row for row in rows)
+    assert first["source_stream_instance_count"] == 1
+    assert first["fanout_before_any_coordinate_decision"] is True
+    assert first["coordinate_may_reopen_or_resort_source"] is False
+    assert validate_long_horizon_stream_schedule(
+        room_schedule, plan=room_plan
+    ) == room_schedule
 
 
 def test_each_job_requires_one_stream_fanned_out_before_decisions(

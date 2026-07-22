@@ -12,6 +12,7 @@ from quant_rabbit.dojo_long_horizon_plan import (
     M1_FULL28_BINDING_ID,
     M5_BINDING_ID,
     M5_MONTHS,
+    RAPID_G2_ROOM_2025H1_PROFILE,
     RAPID_2025H1_PROFILE,
     SOURCE_BINDING_IDS,
     DojoLongHorizonPlanError,
@@ -23,6 +24,15 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 
 FAMILIES = ("breakout", "range_fade", "spike_fade")
+G2_ROOM_BINDINGS = (
+    {"room_id": "room-g2-01", "family_id": "spike_fade"},
+    {"room_id": "room-g2-02", "family_id": "burst"},
+    {"room_id": "room-g2-03", "family_id": "pullback_limit"},
+    {"room_id": "room-g2-04", "family_id": "prev_day_extreme_fade"},
+    {"room_id": "room-g2-05", "family_id": "round_number_fade"},
+    {"room_id": "room-g2-06", "family_id": "mean_revert_24h"},
+)
+G2_ROOM_FAMILIES = tuple(sorted(row["family_id"] for row in G2_ROOM_BINDINGS))
 
 
 def _digests(keys: tuple[str, ...], *, offset: int) -> dict[str, str]:
@@ -107,6 +117,97 @@ def test_reviewed_rapid_profile_is_exactly_2025h1_and_still_worn_train() -> None
     )
     assert plan["authority"]["forward_proof_eligible"] is False
     assert validate_long_horizon_train_plan(plan) == plan
+
+
+def test_g2_room_profile_is_m5_only_and_fixes_six_isolated_denominators() -> None:
+    plan = build_long_horizon_train_plan(
+        portfolio_families=G2_ROOM_FAMILIES,
+        source_digests=_digests(SOURCE_BINDING_IDS, offset=0),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, offset=10),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, offset=20),
+        study_profile=RAPID_G2_ROOM_2025H1_PROFILE,
+        room_bindings=G2_ROOM_BINDINGS,
+    )
+
+    denominator = plan["exact_denominator"]
+    assert denominator["month_count"] == 6
+    assert denominator["m1_precision_result_cell_count"] == 0
+    assert denominator["portfolio_result_cell_count"] == 144
+    assert denominator["total_required_result_cell_count"] == 144
+    assert denominator["portfolio_stages"] == [
+        {
+            "stage": "ROOM_TRAIN_MAIN",
+            "labels": [row["room_id"] for row in G2_ROOM_BINDINGS],
+            "room_family_bindings": [dict(row) for row in G2_ROOM_BINDINGS],
+            "label_count": 6,
+            "result_cell_count": 144,
+        }
+    ]
+    assert plan["portfolio"]["room_account_state_shared"] is False
+    assert plan["portfolio"]["room_results_may_be_summed_as_portfolio_result"] is False
+    assert plan["portfolio"]["common_sparring_requires_fresh_denominator"] is True
+    assert plan["monthly_3x_diagnostic_gates"]["profile_can_reach_three_x_gate"] is False
+    assert validate_long_horizon_train_plan(plan) == plan
+
+
+def test_room_profile_seals_configured_room_count_and_contiguous_train_window() -> None:
+    bindings = (
+        {"room_id": "room-alpha-01", "family_id": "breakout"},
+        {"room_id": "room-alpha-02", "family_id": "range_fade"},
+    )
+    months = ("2024-07", "2024-08", "2024-09")
+    plan = build_long_horizon_train_plan(
+        portfolio_families=("breakout", "range_fade"),
+        source_digests=_digests(SOURCE_BINDING_IDS, offset=0),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, offset=10),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, offset=20),
+        study_profile=RAPID_G2_ROOM_2025H1_PROFILE,
+        room_bindings=bindings,
+        room_train_months=months,
+    )
+
+    assert plan["period"]["calendar_months"] == list(months)
+    assert plan["exact_denominator"]["month_count"] == 3
+    assert plan["exact_denominator"]["portfolio_result_cell_count"] == 24
+    assert plan["exact_denominator"]["portfolio_stages"][0]["label_count"] == 2
+    assert validate_long_horizon_train_plan(plan) == plan
+
+    with pytest.raises(DojoLongHorizonPlanError, match="contiguous"):
+        build_long_horizon_train_plan(
+            portfolio_families=("breakout", "range_fade"),
+            source_digests=_digests(SOURCE_BINDING_IDS, offset=0),
+            corpus_digests=_digests(SOURCE_BINDING_IDS, offset=10),
+            implementation_digests=_digests(
+                IMPLEMENTATION_DIGEST_KEYS, offset=20
+            ),
+            study_profile=RAPID_G2_ROOM_2025H1_PROFILE,
+            room_bindings=bindings,
+            room_train_months=("2024-07", "2024-09"),
+        )
+
+
+def test_room_profile_rejects_missing_duplicate_or_cross_family_bindings() -> None:
+    common = {
+        "portfolio_families": G2_ROOM_FAMILIES,
+        "source_digests": _digests(SOURCE_BINDING_IDS, offset=0),
+        "corpus_digests": _digests(SOURCE_BINDING_IDS, offset=10),
+        "implementation_digests": _digests(IMPLEMENTATION_DIGEST_KEYS, offset=20),
+        "study_profile": RAPID_G2_ROOM_2025H1_PROFILE,
+    }
+    with pytest.raises(DojoLongHorizonPlanError, match="requires an exact"):
+        build_long_horizon_train_plan(**common)
+    duplicate = [dict(row) for row in G2_ROOM_BINDINGS]
+    duplicate[-1]["family_id"] = duplicate[0]["family_id"]
+    with pytest.raises(DojoLongHorizonPlanError, match="bijectively"):
+        build_long_horizon_train_plan(**common, room_bindings=duplicate)
+    with pytest.raises(DojoLongHorizonPlanError, match="only valid"):
+        build_long_horizon_train_plan(
+            portfolio_families=FAMILIES,
+            source_digests=_digests(SOURCE_BINDING_IDS, offset=0),
+            corpus_digests=_digests(SOURCE_BINDING_IDS, offset=10),
+            implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, offset=20),
+            room_bindings=G2_ROOM_BINDINGS[:3],
+        )
 
 
 def test_lopo_stages_have_exact_pair_family_and_currency_denominators() -> None:

@@ -81,6 +81,7 @@ LOPO_PROFIT_DROP_FRACTION_MAX: Final = 0.50
 _SHA256_RE: Final = re.compile(r"[0-9a-f]{64}\Z")
 _ZERO_SHA256: Final = "0" * 64
 _FAMILY_ID_RE: Final = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+_ROOM_ID_RE: Final = re.compile(r"room-[a-z0-9][a-z0-9-]{0,95}\Z")
 
 
 class DojoLongHorizonPlanError(ValueError):
@@ -104,6 +105,7 @@ M1_FULL28_MONTHS: Final = _month_range((2025, 1), (2026, 6))
 
 LONG_HORIZON_PROFILE: Final = "LONG_HORIZON_2020_2026H1"
 RAPID_2025H1_PROFILE: Final = "RAPID_SIX_MONTH_2025H1"
+RAPID_G2_ROOM_2025H1_PROFILE: Final = "RAPID_G2_ROOM_SIX_MONTH_2025H1"
 _PROFILE_MONTHS: Final = {
     LONG_HORIZON_PROFILE: (M5_MONTHS, M1_CORE5_MONTHS, M1_FULL28_MONTHS),
     RAPID_2025H1_PROFILE: (
@@ -111,15 +113,27 @@ _PROFILE_MONTHS: Final = {
         _month_range((2025, 1), (2025, 6)),
         _month_range((2025, 1), (2025, 6)),
     ),
+    # The first room screen is deliberately M5-only.  Precision M1 is a
+    # survivor-validation expense, not a discovery expense, and duplicating it
+    # across every room would consume storage before causal room selection.
+    RAPID_G2_ROOM_2025H1_PROFILE: (
+        _month_range((2025, 1), (2025, 6)),
+        (),
+        (),
+    ),
 }
 _PROFILE_EVALUATION_MODES: Final = {
     LONG_HORIZON_PROFILE: EVALUATION_MODES,
     RAPID_2025H1_PROFILE: ("INDEPENDENT_MONTH",),
+    RAPID_G2_ROOM_2025H1_PROFILE: ("INDEPENDENT_MONTH",),
 }
 _PROFILE_LOPO_STAGES: Final = {
     LONG_HORIZON_PROFILE: LOPO_STAGES,
     RAPID_2025H1_PROFILE: (),
+    RAPID_G2_ROOM_2025H1_PROFILE: (),
 }
+
+_ROOM_BINDING_KEYS: Final = frozenset({"room_id", "family_id"})
 
 
 def _period_bounds(months: Sequence[str]) -> tuple[str, str]:
@@ -224,6 +238,86 @@ def _families(value: Sequence[str]) -> tuple[str, ...]:
     return rows
 
 
+def _room_bindings(
+    value: Sequence[Mapping[str, str]] | None,
+    *,
+    families: Sequence[str],
+    required: bool,
+) -> tuple[dict[str, str], ...]:
+    if not required:
+        if value is not None:
+            raise DojoLongHorizonPlanError(
+                "room bindings are only valid for a reviewed room profile"
+            )
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise DojoLongHorizonPlanError(
+            "the room profile requires an exact room binding sequence"
+        )
+    rows: list[dict[str, str]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping) or set(raw) != _ROOM_BINDING_KEYS:
+            raise DojoLongHorizonPlanError(
+                f"room_bindings[{index}] schema is not exact"
+            )
+        room_id = raw["room_id"]
+        family_id = raw["family_id"]
+        if (
+            not isinstance(room_id, str)
+            or _ROOM_ID_RE.fullmatch(room_id) is None
+            or family_id not in families
+        ):
+            raise DojoLongHorizonPlanError(
+                f"room_bindings[{index}] identity is invalid"
+            )
+        rows.append({"room_id": room_id, "family_id": family_id})
+    if rows != sorted(rows, key=lambda row: row["room_id"]):
+        raise DojoLongHorizonPlanError("room bindings must be sorted by room_id")
+    if len(rows) != len(families):
+        raise DojoLongHorizonPlanError(
+            "the room profile requires exactly one room per portfolio family"
+        )
+    room_ids = [row["room_id"] for row in rows]
+    family_ids = [row["family_id"] for row in rows]
+    if len(room_ids) != len(set(room_ids)) or sorted(family_ids) != list(families):
+        raise DojoLongHorizonPlanError(
+            "room bindings must bijectively cover the sealed family set"
+        )
+    return tuple(rows)
+
+
+def _room_train_months(
+    value: Sequence[str] | None, *, required: bool
+) -> tuple[str, ...] | None:
+    if not required:
+        if value is not None:
+            raise DojoLongHorizonPlanError(
+                "room_train_months are only valid for a reviewed room profile"
+            )
+        return None
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise DojoLongHorizonPlanError("room_train_months must be a sequence")
+    rows = tuple(value)
+    if not rows or rows != tuple(sorted(set(rows))):
+        raise DojoLongHorizonPlanError(
+            "room_train_months must be nonempty, sorted, and unique"
+        )
+    available = {month: index for index, month in enumerate(M5_MONTHS)}
+    try:
+        ordinals = [available[month] for month in rows]
+    except (KeyError, TypeError) as exc:
+        raise DojoLongHorizonPlanError(
+            "room_train_months exceed the sealed source coverage"
+        ) from exc
+    if ordinals != list(range(ordinals[0], ordinals[0] + len(ordinals))):
+        raise DojoLongHorizonPlanError(
+            "room_train_months must form one contiguous preregistered window"
+        )
+    return rows
+
+
 def _authority() -> dict[str, Any]:
     return {
         "automatic_deployment_allowed": False,
@@ -306,6 +400,7 @@ def _denominator(
     m1_full_months: Sequence[str],
     evaluation_modes: Sequence[str],
     lopo_stages: Sequence[str],
+    room_bindings: Sequence[Mapping[str, str]],
 ) -> dict[str, Any]:
     month_count = len(m5_months)
     mode_count = len(evaluation_modes)
@@ -327,13 +422,25 @@ def _denominator(
         m1_pair_month_cells * mode_count * path_count * scenario_count
     )
 
-    stages = [
-        {
-            "stage": "PORTFOLIO_MAIN",
-            "label_count": 1,
-            "result_cell_count": base_strata,
-        }
-    ]
+    stages = (
+        [
+            {
+                "stage": "ROOM_TRAIN_MAIN",
+                "labels": [row["room_id"] for row in room_bindings],
+                "room_family_bindings": [dict(row) for row in room_bindings],
+                "label_count": len(room_bindings),
+                "result_cell_count": base_strata * len(room_bindings),
+            }
+        ]
+        if room_bindings
+        else [
+            {
+                "stage": "PORTFOLIO_MAIN",
+                "label_count": 1,
+                "result_cell_count": base_strata,
+            }
+        ]
+    )
     if "PAIR_LOPO" in lopo_stages:
         stages.append({
             "stage": "PAIR_LOPO",
@@ -433,6 +540,8 @@ def build_long_horizon_train_plan(
     corpus_digests: Mapping[str, str],
     implementation_digests: Mapping[str, str],
     study_profile: str = LONG_HORIZON_PROFILE,
+    room_bindings: Sequence[Mapping[str, str]] | None = None,
+    room_train_months: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical fixed-denominator worn-TRAIN plan.
 
@@ -441,7 +550,18 @@ def build_long_horizon_train_plan(
     Unknown keys are rejected rather than silently omitted from the seal.
     """
 
+    if study_profile not in _PROFILE_MONTHS:
+        raise DojoLongHorizonPlanError("study_profile is not reviewed")
     families = _families(portfolio_families)
+    rooms = _room_bindings(
+        room_bindings,
+        families=families,
+        required=study_profile == RAPID_G2_ROOM_2025H1_PROFILE,
+    )
+    reviewed_room_months = _room_train_months(
+        room_train_months,
+        required=study_profile == RAPID_G2_ROOM_2025H1_PROFILE,
+    )
     sources = _exact_digest_map(
         source_digests,
         keys=SOURCE_BINDING_IDS,
@@ -457,9 +577,9 @@ def build_long_horizon_train_plan(
         keys=IMPLEMENTATION_DIGEST_KEYS,
         field="implementation_digests",
     )
-    if study_profile not in _PROFILE_MONTHS:
-        raise DojoLongHorizonPlanError("study_profile is not reviewed")
     m5_months, m1_core_months, m1_full_months = _PROFILE_MONTHS[study_profile]
+    if reviewed_room_months is not None:
+        m5_months = reviewed_room_months
     evaluation_modes = _PROFILE_EVALUATION_MODES[study_profile]
     lopo_stages = _PROFILE_LOPO_STAGES[study_profile]
     period_from, period_to = _period_bounds(m5_months)
@@ -488,12 +608,26 @@ def build_long_horizon_train_plan(
         "source_binding_sha256": canonical_sha256(source_body),
     }
 
-    family_body = {
+    family_body: dict[str, Any] = {
         "families": list(families),
         "family_count": len(families),
-        "portfolio_policy": "ALL_FAMILIES_SIMULTANEOUS_SHARED_CAPITAL",
+        "portfolio_policy": (
+            "ONE_FAMILY_PER_ROOM_SHARED_SYNCHRONIZED_MARKET_TAPE"
+            if rooms
+            else "ALL_FAMILIES_SIMULTANEOUS_SHARED_CAPITAL"
+        ),
         "selection_after_outcome_allowed": False,
     }
+    if rooms:
+        family_body.update(
+            {
+                "room_count": len(rooms),
+                "room_bindings": [dict(row) for row in rooms],
+                "room_account_state_shared": False,
+                "room_results_may_be_summed_as_portfolio_result": False,
+                "common_sparring_requires_fresh_denominator": True,
+            }
+        )
     portfolio = {
         **family_body,
         "family_set_sha256": canonical_sha256(family_body),
@@ -552,6 +686,7 @@ def build_long_horizon_train_plan(
             m1_full_months=m1_full_months,
             evaluation_modes=evaluation_modes,
             lopo_stages=lopo_stages,
+            room_bindings=rooms,
         ),
         "monthly_3x_diagnostic_gates": _diagnostic_gates(
             m5_months=m5_months,
@@ -572,7 +707,17 @@ def build_long_horizon_train_plan(
             "FORWARD_PAPER_AND_SEPARATE_PROMOTION_CONTRACT_REQUIRED",
             *(
                 ["RAPID_PROFILE_REQUIRES_FULL_LONG_PROFILE_FOR_3X_GATE"]
-                if study_profile == RAPID_2025H1_PROFILE
+                if study_profile
+                in {RAPID_2025H1_PROFILE, RAPID_G2_ROOM_2025H1_PROFILE}
+                else []
+            ),
+            *(
+                [
+                    "ROOM_TRAIN_RESULTS_ARE_ISOLATED_SELECTION_EVIDENCE_ONLY",
+                    "COMMON_SPARRING_REQUIRES_FRESH_SHARED_CAPITAL_REPLAY",
+                    "M1_PRECISION_DEFERRED_TO_ROOM_SURVIVORS",
+                ]
+                if study_profile == RAPID_G2_ROOM_2025H1_PROFILE
                 else []
             ),
         ],
@@ -624,6 +769,11 @@ def validate_long_horizon_train_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         family_ids = portfolio["families"]
         implementation_digests = implementation["digests"]
         study_profile = plan["study_profile"]
+        room_bindings = (
+            portfolio.get("room_bindings")
+            if study_profile == RAPID_G2_ROOM_2025H1_PROFILE
+            else None
+        )
     except (KeyError, IndexError, TypeError) as exc:
         raise DojoLongHorizonPlanError(
             "plan is missing a sealed source, family, or implementation binding"
@@ -635,6 +785,12 @@ def validate_long_horizon_train_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         corpus_digests=corpora,
         implementation_digests=implementation_digests,
         study_profile=study_profile,
+        room_bindings=room_bindings,
+        room_train_months=(
+            source_bindings["m5"]["months"]
+            if study_profile == RAPID_G2_ROOM_2025H1_PROFILE
+            else None
+        ),
     )
     if dict(plan) != expected:
         raise DojoLongHorizonPlanError(
@@ -657,6 +813,7 @@ __all__ = [
     "M5_MONTHS",
     "LONG_HORIZON_PROFILE",
     "RAPID_2025H1_PROFILE",
+    "RAPID_G2_ROOM_2025H1_PROFILE",
     "SOURCE_BINDING_IDS",
     "build_long_horizon_train_plan",
     "canonical_sha256",

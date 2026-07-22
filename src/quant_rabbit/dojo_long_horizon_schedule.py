@@ -386,27 +386,56 @@ def _m5_coordinates(
                 "cost_scenario": scenario,
                 "feed_pairs": feed_pairs,
             }
-            result.append(
-                _coordinate(
-                    **common,
-                    stage="PORTFOLIO_MAIN",
-                    fold_label=None,
-                    precision_pair=None,
-                    trade_pairs=feed_pairs,
-                    active_families=families,
-                    all_families=families,
-                    active_worker_rows=worker_rows,
-                    all_worker_rows=worker_rows,
-                    plan_sha256=plan_sha256,
-                    worker_set_sha256=worker_set_sha256,
-                    month_ordinal=month_ordinal,
-                    month_count=month_count,
-                    replica_group_id=None,
-                    replica_expected_count=1,
-                    aggregation_weight=1.0,
-                    replica_paired_consistency_required=False,
+            if "PORTFOLIO_MAIN" in stages:
+                result.append(
+                    _coordinate(
+                        **common,
+                        stage="PORTFOLIO_MAIN",
+                        fold_label=None,
+                        precision_pair=None,
+                        trade_pairs=feed_pairs,
+                        active_families=families,
+                        all_families=families,
+                        active_worker_rows=worker_rows,
+                        all_worker_rows=worker_rows,
+                        plan_sha256=plan_sha256,
+                        worker_set_sha256=worker_set_sha256,
+                        month_ordinal=month_ordinal,
+                        month_count=month_count,
+                        replica_group_id=None,
+                        replica_expected_count=1,
+                        aggregation_weight=1.0,
+                        replica_paired_consistency_required=False,
+                    )
                 )
-            )
+            for room in stages.get("ROOM_TRAIN_MAIN", {}).get(
+                "room_family_bindings", []
+            ):
+                room_family = room["family_id"]
+                active_rows = [
+                    row for row in worker_rows if row["family_id"] == room_family
+                ]
+                result.append(
+                    _coordinate(
+                        **common,
+                        stage="ROOM_TRAIN_MAIN",
+                        fold_label=room["room_id"],
+                        precision_pair=None,
+                        trade_pairs=feed_pairs,
+                        active_families=[room_family],
+                        all_families=families,
+                        active_worker_rows=active_rows,
+                        all_worker_rows=worker_rows,
+                        plan_sha256=plan_sha256,
+                        worker_set_sha256=worker_set_sha256,
+                        month_ordinal=month_ordinal,
+                        month_count=month_count,
+                        replica_group_id=None,
+                        replica_expected_count=1,
+                        aggregation_weight=1.0,
+                        replica_paired_consistency_required=False,
+                    )
+                )
             for held_out_pair in (
                 feed_pairs if "PAIR_LOPO" in stages else ()
             ):

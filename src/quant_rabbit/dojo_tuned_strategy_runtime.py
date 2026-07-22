@@ -36,12 +36,18 @@ from quant_rabbit.dojo_strategy_catalog_revision_v2 import (
     strategy_config_sha256 as revision_v2_config_sha256,
     validate_asia_sweep_reclaim_be_config,
 )
+from quant_rabbit.dojo_strategy_catalog_revision_v3 import (
+    PROPOSAL_CONTRACT as REVISION_V3_PROPOSAL_CONTRACT,
+    seal_candidate_proposal as seal_revision_v3_candidate_proposal,
+    strategy_config_sha256 as revision_v3_config_sha256,
+    validate_session_open_range_break_config,
+)
 
 
 RUNTIME_SEAL_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_SEAL_V2"
 RUNTIME_STATE_CONTRACT: Final = "QR_DOJO_TUNED_STRATEGY_RUNTIME_STATE_V2"
 SCHEMA_VERSION: Final = 2
-ALGORITHM_REVISION: Final = "DECLARATIVE_LAB_FAMILY_POST_EXIT_ADAPTER_V3"
+ALGORITHM_REVISION: Final = "DECLARATIVE_LAB_FAMILY_POST_EXIT_ADAPTER_V4"
 GENESIS_SNAPSHOT_SHA256: Final = "0" * 64
 MAX_WORKERS: Final = 32
 MAX_DEPENDENCY_BYTES: Final = 8 * 1024 * 1024
@@ -91,6 +97,7 @@ _DEPENDENCY_PATHS: Final = (
     "src/quant_rabbit/dojo_lab_provenance.py",
     "src/quant_rabbit/dojo_shared_worker_protocol.py",
     "src/quant_rabbit/dojo_strategy_catalog_revision_v2.py",
+    "src/quant_rabbit/dojo_strategy_catalog_revision_v3.py",
     "src/quant_rabbit/dojo_tuned_strategy_runtime.py",
 )
 
@@ -242,12 +249,16 @@ def _timeframe_profiles() -> list[dict[str, Any]]:
 def _seal_runtime_candidate_proposal(
     raw: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
-    """Seal one legacy or explicit revision-V2 proposal without cross-admission."""
+    """Seal one legacy or explicit revision proposal without cross-admission."""
 
     if raw.get("contract") == REVISION_V2_PROPOSAL_CONTRACT:
         proposal = seal_revision_v2_candidate_proposal(raw)
         config = validate_asia_sweep_reclaim_be_config(proposal["config"])
         return proposal, config, revision_v2_config_sha256(config)
+    if raw.get("contract") == REVISION_V3_PROPOSAL_CONTRACT:
+        proposal = seal_revision_v3_candidate_proposal(raw)
+        config = validate_session_open_range_break_config(proposal["config"])
+        return proposal, config, revision_v3_config_sha256(config)
     proposal = seal_candidate_proposal(raw)
     config = validate_bot_config(proposal["config"])
     return proposal, config, bot_config_sha256(config)
@@ -281,6 +292,7 @@ def _proposal_rows(
             ) from exc
         worker_id = proposal["candidate_id"]
         family = proposal["family"]
+        bounded_session = proposal["contract"] == REVISION_V3_PROPOSAL_CONTRACT
         if _WORKER_ID_RE.fullmatch(worker_id) is None:
             raise DojoTunedStrategyRuntimeError(
                 "candidate id is not a schedule-safe worker id"
@@ -290,6 +302,8 @@ def _proposal_rows(
             raise DojoTunedStrategyRuntimeError(
                 f"family has no tuned runtime implementation: {family}"
             )
+        if bounded_session:
+            capability = "LONDON_00_08_RANGE_BREAK_BOUNDED_STOP_MARKET_V2"
         capability_body = {
             "algorithm_revision": ALGORITHM_REVISION,
             "family_id": family,
@@ -299,6 +313,8 @@ def _proposal_rows(
             not in {"session_open_range_break", "weekend_gap_recovery"},
             "supports_dynamic_tp_sl": family
             in {"session_open_range_break", "weekend_gap_recovery"},
+            "bounded_dynamic_initial_stop": bounded_session,
+            "atomic_rounded_stop_cap_enforced": bounded_session,
             "supports_breakeven_overlay": True,
             "supports_atr_trailing_overlay": family != ASIA_SWEEP_RECLAIM_BE_FAMILY,
             "m5_close_only": family == ASIA_SWEEP_RECLAIM_BE_FAMILY,
@@ -314,7 +330,11 @@ def _proposal_rows(
                     namespace=(
                         "dojo-long-tuned-v2"
                         if family == ASIA_SWEEP_RECLAIM_BE_FAMILY
-                        else "dojo-long-tuned-v1"
+                        else (
+                            "dojo-long-tuned-v3"
+                            if bounded_session
+                            else "dojo-long-tuned-v1"
+                        )
                     ),
                 ),
                 "family_id": family,
@@ -373,7 +393,11 @@ def build_tuned_strategy_runtime_seal(
         row
         for row in dependencies
         if row["relative_path"]
-        in {"bots/lab_bot.py", "src/quant_rabbit/dojo_tuned_strategy_runtime.py"}
+        in {
+            "bots/lab_bot.py",
+            "src/quant_rabbit/dojo_strategy_catalog_revision_v3.py",
+            "src/quant_rabbit/dojo_tuned_strategy_runtime.py",
+        }
     ]
     algorithm_sha = _sha256(
         {
@@ -1354,6 +1378,41 @@ def _new_risk_intent(
     }
 
 
+def _atomic_initial_stop_within_configured_bound(
+    *,
+    config: Mapping[str, Any],
+    pair: str,
+    side: str,
+    entry_price: float,
+    sl_distance: float,
+) -> bool:
+    """Check the actual rounded intent geometry, not only the raw range width."""
+
+    raw_bound = config.get("max_initial_stop_pips")
+    if raw_bound is None:
+        # Legacy catalog V1 session candidates intentionally preserve their
+        # historical behavior.  Only revision V3 configs carry the opt-in cap.
+        return True
+    if (
+        isinstance(raw_bound, bool)
+        or not isinstance(raw_bound, (int, float))
+        or not math.isfinite(float(raw_bound))
+        or float(raw_bound) <= 0
+    ):
+        return False
+    rounded_entry = _round_price(pair, entry_price)
+    raw_stop = (
+        rounded_entry - sl_distance if side == "LONG" else rounded_entry + sl_distance
+    )
+    rounded_stop = _round_price(pair, raw_stop)
+    price_scale = 1_000 if pair.endswith("JPY") else 100_000
+    entry_ticks = int(round(rounded_entry * price_scale))
+    stop_ticks = int(round(rounded_stop * price_scale))
+    # Both supported quote precisions have ten atomic ticks per pip.
+    actual_stop_pips = abs(entry_ticks - stop_ticks) / 10.0
+    return math.isfinite(actual_stop_pips) and actual_stop_pips <= float(raw_bound)
+
+
 def _reduction_intent(
     *,
     binding: Mapping[str, str],
@@ -1812,6 +1871,13 @@ def _family_intent(
             target_distance <= 0
             or sl_distance <= 0
             or spread > target_distance * _SPREAD_TO_TARGET_CAP
+            or not _atomic_initial_stop_within_configured_bound(
+                config=config,
+                pair=pair,
+                side=side,
+                entry_price=float(quote["ask"] if side == "LONG" else quote["bid"]),
+                sl_distance=sl_distance,
+            )
         ):
             return None
         action = "MARKET"
