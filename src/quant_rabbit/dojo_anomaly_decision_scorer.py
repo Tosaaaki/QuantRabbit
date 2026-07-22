@@ -40,6 +40,7 @@ from quant_rabbit.dojo_economic_transcript import (
 from quant_rabbit.dojo_portfolio_replay_reducer import canonical_portfolio_sha256
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
+    SPARSE_POST_EXIT_SNAPSHOT_CONTRACT,
     readonly_post_exit_snapshot,
     seal_worker_proposal,
     seal_worker_proposal_batch,
@@ -596,7 +597,22 @@ def _recomputed_batch(
     trade_pairs: Sequence[str],
 ) -> dict[str, Any]:
     readonly = readonly_post_exit_snapshot(snapshot)
-    raw = runtime.propose(readonly)
+    available_pairs = {row["pair"] for row in snapshot["quotes"]}
+    if (
+        snapshot["contract"] == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+        and available_pairs != set(snapshot["expected_quote_pairs"])
+    ):
+        raw = [
+            {
+                **binding,
+                "snapshot_sha256": snapshot["snapshot_sha256"],
+                "risk_reducing_intents": [],
+                "new_risk_intents": [],
+            }
+            for binding in snapshot["active_worker_bindings"]
+        ]
+    else:
+        raw = runtime.propose(readonly)
     if isinstance(raw, (str, bytes, bytearray)) or not isinstance(raw, Sequence):
         raise DojoAnomalyDecisionScorerError(
             "runtime proposal output is not an array"
@@ -1016,7 +1032,10 @@ def _fixed_request_transcript_paths(
             raise DojoAnomalyDecisionScorerError(
                 "fixed request transcript paths must be relative filenames"
             )
-        candidate = (root / raw_path).resolve(strict=True)
+        # Denominator completeness is validated before any transcript is
+        # opened.  Keep path normalization non-opening here so an omitted map
+        # cannot be masked by a missing transcript diagnostic.
+        candidate = (root / raw_path).resolve(strict=False)
         try:
             candidate.relative_to(root)
         except ValueError as exc:

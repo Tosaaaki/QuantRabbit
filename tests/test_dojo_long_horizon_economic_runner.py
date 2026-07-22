@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -38,11 +38,16 @@ from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
     ECONOMIC_TRANSCRIPT_V1_JSONL,
     ECONOMIC_TRANSCRIPT_V2_COMPACT,
+    SPARSE_MONTH_SOURCE_SLICE_CONTRACT,
+    build_sparse_month_source_slice_receipt,
     build_month_source_slice_receipt,
     builtin_no_intent_runtime_factory,
     run_long_horizon_economic_job,
+    validate_sparse_month_source_slice_receipt,
     validate_month_source_slice_receipt,
 )
+from quant_rabbit.dojo_shared_worker_protocol import SPARSE_QUOTE_POLICY
+from quant_rabbit.dojo_sparse_source_slice_v2 import SPARSE_SOURCE_SLICE_CONTRACT
 from quant_rabbit.dojo_long_horizon_execution import (
     CELL_CONTRACT,
     LongHorizonExecutionSession,
@@ -244,6 +249,9 @@ def _write_source(
                 "relative_path": raw_path.name,
                 "file_size_bytes": len(raw_bytes),
                 "file_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                "acquisition_receipt_sha256": canonical_sha256(
+                    {"pair": pair, "source": "test-authenticated-raw"}
+                ),
                 "pair": pair,
                 "granularity": job["granularity"],
             }
@@ -328,6 +336,191 @@ def _write_source(
         source_manifest=manifest,
     )
     return receipt, manifest
+
+
+def _write_sparse_source_from_v1(
+    root: Path,
+    job: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    rows = [
+        _source_row(1_577_836_800, 0.0),
+        _source_row(1_577_836_860, 0.0001),
+    ]
+    synchronized_receipt, manifest = _write_source(root, job, rows=rows)
+    feed = list(job["feed_pairs"])
+    missing_pair = feed[-1]
+    sparse_rows: list[dict[str, Any]] = []
+    for ordinal, source in enumerate(rows):
+        observed = feed if ordinal == 0 else feed[:-1]
+        unavailable = [] if ordinal == 0 else [missing_pair]
+        ages = {
+            pair: 0 if pair in observed else 60
+            for pair in feed
+        }
+        quote_map = {quote["pair"]: quote for quote in source["quotes"]}
+        sparse_quotes = [
+            {
+                **quote_map[pair],
+                "parent_quote_sha256": canonical_sha256(
+                    {
+                        "pair": pair,
+                        "epoch": source["epoch"],
+                        "granularity": job["granularity"],
+                        "bid": quote_map[pair]["bid"],
+                        "ask": quote_map[pair]["ask"],
+                    }
+                ),
+            }
+            for pair in observed
+        ]
+        row_body = {
+            "ordinal": ordinal,
+            "epoch": source["epoch"],
+            "granularity": job["granularity"],
+            "complete": True,
+            "observed_pairs": observed,
+            "fresh_executable_pairs": observed,
+            "unavailable_pairs": unavailable,
+            "pair_local_quote_age_seconds": ages,
+            "availability_cell_sha256": canonical_sha256(
+                {"epoch": source["epoch"], "batch_pairs": observed}
+            ),
+            "pair_local_quote_age_cell_sha256": canonical_sha256(
+                {
+                    "epoch": source["epoch"],
+                    "pair_local_quote_age_seconds": ages,
+                }
+            ),
+            "quotes": sparse_quotes,
+            "synthetic_quote_count": 0,
+            "carry_forward_quote_count": 0,
+        }
+        sparse_rows.append(
+            {**row_body, "source_row_sha256": canonical_sha256(row_body)}
+        )
+    sparse_path = root / "sparse.jsonl"
+    sparse_bytes = b"".join(
+        json.dumps(row, sort_keys=True, separators=(",", ":")).encode()
+        + b"\n"
+        for row in sparse_rows
+    )
+    sparse_path.write_bytes(sparse_bytes)
+    sparse_receipt_body = {
+        "contract": SPARSE_SOURCE_SLICE_CONTRACT,
+        "schema_version": 2,
+        "stream_id": "test-sparse-stream",
+        "slice_id": "test-sparse-slice",
+        "sequence": 0,
+        "prior_receipt_sha256": "0" * 64,
+        "granularity": job["granularity"],
+        "from_epoch": int(
+            datetime.fromisoformat(job["from_utc"].replace("Z", "+00:00")).timestamp()
+        ),
+        "to_epoch": int(
+            datetime.fromisoformat(job["to_utc"].replace("Z", "+00:00")).timestamp()
+        ),
+        "feed_pairs": feed,
+        "quote_policy": SPARSE_QUOTE_POLICY,
+        "schedule_coverage_receipt": {
+            "quote_policy": SPARSE_QUOTE_POLICY,
+            "synthetic_quote_count": 0,
+            "carry_forward_quote_count": 0,
+        },
+        "schedule_coverage_sha256": canonical_sha256(
+            {
+                "quote_policy": SPARSE_QUOTE_POLICY,
+                "synthetic_quote_count": 0,
+                "carry_forward_quote_count": 0,
+            }
+        ),
+        "availability_mask_sha256": canonical_sha256(
+            [row["availability_cell_sha256"] for row in sparse_rows]
+        ),
+        "pair_local_quote_age_mask_sha256": canonical_sha256(
+            [row["pair_local_quote_age_cell_sha256"] for row in sparse_rows]
+        ),
+        "calendar_coverage_validated": True,
+        "parent_quote_maps": [],
+        "parent_quote_maps_sha256": canonical_sha256([]),
+        "source_row_count": len(sparse_rows),
+        "observed_quote_count": sum(len(row["quotes"]) for row in sparse_rows),
+        "source_rows_sha256": canonical_sha256(sparse_rows),
+        "first_epoch": sparse_rows[0]["epoch"],
+        "last_epoch": sparse_rows[-1]["epoch"],
+        "synthetic_quote_count": 0,
+        "carry_forward_quote_count": 0,
+        "complete": True,
+        "lineage": {
+            "append_only_sequence_intent": True,
+            "prior_receipt_bound": True,
+            "caller_supplied_chain_fork_check_required": True,
+            "external_monotonic_anchor_configured": False,
+            "global_fork_absence_proven": False,
+        },
+        "authority": {
+            "research_source_only": True,
+            "historical_train_is_forward_proof": False,
+            "promotion_eligible": False,
+            "live_permission": False,
+            "order_authority": "NONE",
+            "broker_mutation_allowed": False,
+        },
+    }
+    sparse_receipt = {
+        **sparse_receipt_body,
+        "receipt_sha256": canonical_sha256(sparse_receipt_body),
+    }
+    parent_keys = (
+        "source_manifest_sha256",
+        "parent_binding_physical_shard_ids_sha256",
+        "parent_month_coverage_cells",
+        "parent_month_coverage_cells_sha256",
+    )
+    outer_body = {
+        "contract": SPARSE_MONTH_SOURCE_SLICE_CONTRACT,
+        "schema_version": 2,
+        **{
+            key: job[key]
+            for key in (
+                "job_sha256",
+                "price_stream_id",
+                "source_binding_id",
+                "source_digest_sha256",
+                "corpus_digest_sha256",
+                "month",
+                "granularity",
+                "from_utc",
+                "to_utc",
+            )
+        },
+        "feed_pairs": feed,
+        **{key: synchronized_receipt[key] for key in parent_keys},
+        "parent_quote_coverage_complete": True,
+        "sparse_calendar_coverage_proved": True,
+        "relative_path": sparse_path.name,
+        "file_size_bytes": len(sparse_bytes),
+        "file_sha256": hashlib.sha256(sparse_bytes).hexdigest(),
+        "row_count": len(sparse_rows),
+        "observed_quote_count": sparse_receipt["observed_quote_count"],
+        "first_epoch": sparse_rows[0]["epoch"],
+        "last_epoch": sparse_rows[-1]["epoch"],
+        "complete_rows_only": True,
+        "synthetic_quote_count": 0,
+        "carry_forward_quote_count": 0,
+        "source_open_count_per_economic_run": 1,
+        "normalized_price_derivation_verified": True,
+        "normalized_price_derivation_sha256": canonical_sha256(sparse_rows),
+        "sparse_source_receipt": sparse_receipt,
+        "sparse_source_receipt_sha256": sparse_receipt["receipt_sha256"],
+        "authority": economic_runner_module._authority(),
+    }
+    return (
+        {
+            **outer_body,
+            "source_slice_receipt_sha256": canonical_sha256(outer_body),
+        },
+        manifest,
+    )
 
 
 def _policy(
@@ -548,6 +741,41 @@ def test_single_source_stream_fans_out_before_incremental_economics(
         "VERIFIED_COMPLETE"
     )
     assert len(result["economic_transcript_artifacts"]) == 20
+
+
+def test_sparse_observed_union_reexecutes_without_synthetic_or_carry_fills(
+    tmp_path: Path, sealed_handoff: dict[str, Any]
+) -> None:
+    receipt, source_manifest = _write_sparse_source_from_v1(
+        tmp_path, sealed_handoff["job"]
+    )
+    evidence_root = _economic_evidence_root(tmp_path)
+    result = run_long_horizon_economic_job(
+        runner_handoff=sealed_handoff,
+        plan=PLANS_BY_JOB[sealed_handoff["job"]["job_sha256"]],
+        source_root=tmp_path,
+        source_manifest=source_manifest,
+        source_slice_receipt=receipt,
+        economic_evidence_root=evidence_root,
+        worker_catalog=CATALOG,
+        coordinate_runtimes=_runtime_rows(sealed_handoff),
+        worker_runtime_factory=builtin_no_intent_runtime_factory,
+        worker_runtime_binding_sha256=RUNTIME_SHA,
+    )
+
+    assert result["job_status"] == "COMPLETE"
+    assert result["sparse_observed_epoch_union_used"] is True
+    assert result["synthetic_executable_quote_count"] == 0
+    assert result["carry_forward_executable_quote_count"] == 0
+    assert result["source_quote_coverage_proved"] is True
+    assert result["independent_economic_reexecution_passed"] is True
+    assert result["complete_coordinate_count"] == len(
+        sealed_handoff["runnable_coordinate_ids"]
+    )
+    assert all(
+        row["processed_coordinate_count"] == 8
+        for row in result["portfolio_results_by_coordinate"].values()
+    )
     assert all(
         (evidence_root / row["transcript_filename"]).is_file()
         for row in result["economic_transcript_artifacts"]
@@ -587,6 +815,39 @@ def test_single_source_stream_fans_out_before_incremental_economics(
             worker_runtime_factory=builtin_no_intent_runtime_factory,
             worker_runtime_binding_sha256=RUNTIME_SHA,
         )
+
+
+def test_sparse_month_builder_authenticates_parent_maps_and_materializes_union(
+    tmp_path: Path, sealed_handoff: dict[str, Any]
+) -> None:
+    short_job = copy.deepcopy(sealed_handoff["job"])
+    start = datetime.fromtimestamp(1_577_836_800, timezone.utc)
+    short_job["from_utc"] = start.isoformat().replace("+00:00", "Z")
+    short_job["to_utc"] = (
+        start.replace(second=0) + timedelta(seconds=120)
+    ).isoformat().replace("+00:00", "Z")
+    short_job["job_sha256"] = canonical_sha256(
+        {key: value for key, value in short_job.items() if key != "job_sha256"}
+    )
+    _unused_v1, source_manifest = _write_source(tmp_path, short_job)
+    receipt = build_sparse_month_source_slice_receipt(
+        source_root=tmp_path,
+        relative_path="prepared-sparse.jsonl",
+        job=short_job,
+        source_manifest=source_manifest,
+    )
+    verified = validate_sparse_month_source_slice_receipt(
+        receipt,
+        job=short_job,
+        source_manifest=source_manifest,
+    )
+
+    assert verified["contract"] == SPARSE_MONTH_SOURCE_SLICE_CONTRACT
+    assert verified["row_count"] == 2
+    assert verified["observed_quote_count"] == 10
+    assert verified["synthetic_quote_count"] == 0
+    assert verified["carry_forward_quote_count"] == 0
+    assert (tmp_path / verified["relative_path"]).is_file()
 
 
 def test_compact_v2_differential_economics_and_measured_disk_growth(

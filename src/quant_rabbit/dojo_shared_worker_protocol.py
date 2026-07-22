@@ -18,6 +18,10 @@ from typing import Any, Final, Mapping, Sequence
 
 
 POST_EXIT_SNAPSHOT_CONTRACT: Final = "QR_DOJO_SHARED_POST_EXIT_SNAPSHOT_V1"
+SPARSE_POST_EXIT_SNAPSHOT_CONTRACT: Final = (
+    "QR_DOJO_SHARED_SPARSE_POST_EXIT_SNAPSHOT_V2"
+)
+SPARSE_QUOTE_POLICY: Final = "OBSERVED_ONLY_NO_SYNTHETIC_OR_CARRY_FORWARD_QUOTES"
 WORKER_PROPOSAL_CONTRACT: Final = "QR_DOJO_SHARED_WORKER_PROPOSAL_V1"
 WORKER_PROPOSAL_BATCH_CONTRACT: Final = "QR_DOJO_SHARED_WORKER_PROPOSAL_BATCH_V1"
 SCHEMA_VERSION: Final = 1
@@ -57,6 +61,15 @@ _RAW_SNAPSHOT_KEYS: Final = frozenset(
         "pending_orders",
     }
 )
+_SPARSE_AVAILABILITY_KEYS: Final = frozenset(
+    {
+        "fresh_quote_pairs",
+        "unavailable_quote_pairs",
+        "pair_local_quote_age_seconds",
+        "quote_policy",
+    }
+)
+_RAW_SPARSE_SNAPSHOT_KEYS: Final = _RAW_SNAPSHOT_KEYS | _SPARSE_AVAILABILITY_KEYS
 _SEALED_SNAPSHOT_KEYS: Final = _RAW_SNAPSHOT_KEYS | frozenset(
     {
         "contract",
@@ -71,6 +84,24 @@ _SEALED_SNAPSHOT_KEYS: Final = _RAW_SNAPSHOT_KEYS | frozenset(
         "broker_mutation_allowed",
         "snapshot_sha256",
     }
+)
+_SEALED_SPARSE_SNAPSHOT_KEYS: Final = (
+    _RAW_SPARSE_SNAPSHOT_KEYS
+    | frozenset(
+        {
+            "contract",
+            "schema_version",
+            "snapshot_state",
+            "read_only",
+            "proposal_only",
+            "allocation_allowed",
+            "execution_allowed",
+            "order_authority",
+            "live_permission",
+            "broker_mutation_allowed",
+            "snapshot_sha256",
+        }
+    )
 )
 _ACCOUNT_KEYS: Final = frozenset(
     {"balance_jpy", "equity_jpy", "margin_used_jpy", "accrued_financing_jpy"}
@@ -380,6 +411,19 @@ def _normalize_expected_quote_pairs(value: Any) -> list[str]:
     return sorted(normalized)
 
 
+def _normalize_quote_pair_subset(value: Any, *, path: str) -> list[str]:
+    rows = _require_sequence(value, path, MAX_SNAPSHOT_ROWS)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(rows):
+        pair = _require_identifier(raw, f"{path}[{index}]")
+        if _PAIR_RE.fullmatch(pair) is None or pair in seen:
+            raise ProtocolViolation(f"{path} contains an invalid or duplicate pair")
+        seen.add(pair)
+        normalized.append(pair)
+    return sorted(normalized)
+
+
 def _normalize_worker_bindings(value: Any) -> list[dict[str, str]]:
     rows = _require_sequence(
         value, "snapshot.active_worker_bindings", MAX_PROPOSALS_PER_BATCH
@@ -557,25 +601,81 @@ def seal_post_exit_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and seal a reducer-produced, post-exit account snapshot."""
 
     raw = _require_mapping(snapshot, "snapshot")
-    _require_exact_keys(raw, _RAW_SNAPSHOT_KEYS, "snapshot")
+    sparse = set(raw) == set(_RAW_SPARSE_SNAPSHOT_KEYS)
+    if not sparse:
+        _require_exact_keys(raw, _RAW_SNAPSHOT_KEYS, "snapshot")
     epoch = _require_int(raw["epoch"], "snapshot.epoch")
     phase = _require_enum(raw["phase"], _PHASES, "snapshot.phase")
     expected_quote_pairs = _normalize_expected_quote_pairs(raw["expected_quote_pairs"])
     quotes = _normalize_quotes(raw["quotes"], epoch=epoch, phase=phase)
     quote_pairs = {quote["pair"] for quote in quotes}
-    if quote_pairs != set(expected_quote_pairs):
+    availability: dict[str, Any] = {}
+    if sparse:
+        fresh = _normalize_quote_pair_subset(
+            raw["fresh_quote_pairs"], path="snapshot.fresh_quote_pairs"
+        )
+        unavailable = _normalize_quote_pair_subset(
+            raw["unavailable_quote_pairs"],
+            path="snapshot.unavailable_quote_pairs",
+        )
+        if (
+            quote_pairs != set(fresh)
+            or set(fresh).intersection(unavailable)
+            or set(fresh).union(unavailable) != set(expected_quote_pairs)
+            or raw["quote_policy"] != SPARSE_QUOTE_POLICY
+        ):
+            raise ProtocolViolation(
+                "sparse snapshot availability does not partition expected quotes"
+            )
+        raw_ages = _require_mapping(
+            raw["pair_local_quote_age_seconds"],
+            "snapshot.pair_local_quote_age_seconds",
+        )
+        if set(raw_ages) != set(expected_quote_pairs):
+            raise ProtocolViolation(
+                "sparse snapshot quote-age keys differ from expected pairs"
+            )
+        ages: dict[str, int | None] = {}
+        for pair in expected_quote_pairs:
+            value = raw_ages[pair]
+            if pair in fresh:
+                if value != 0:
+                    raise ProtocolViolation(
+                        "fresh sparse quote must have zero pair-local age"
+                    )
+                ages[pair] = 0
+            elif value is None:
+                ages[pair] = None
+            else:
+                ages[pair] = _require_int(
+                    value,
+                    f"snapshot.pair_local_quote_age_seconds.{pair}",
+                    minimum=1,
+                )
+        availability = {
+            "fresh_quote_pairs": fresh,
+            "unavailable_quote_pairs": unavailable,
+            "pair_local_quote_age_seconds": ages,
+            "quote_policy": SPARSE_QUOTE_POLICY,
+        }
+    elif quote_pairs != set(expected_quote_pairs):
         missing = sorted(set(expected_quote_pairs) - quote_pairs)
         extra = sorted(quote_pairs - set(expected_quote_pairs))
         raise ProtocolViolation(
             f"snapshot quote set is incomplete or unexpected: missing={missing}, extra={extra}"
         )
     active_worker_bindings = _normalize_worker_bindings(raw["active_worker_bindings"])
-    positions = _normalize_positions(raw["positions"], quote_pairs)
-    pending_orders = _normalize_pending_orders(raw["pending_orders"], quote_pairs)
+    state_pairs = set(expected_quote_pairs) if sparse else quote_pairs
+    positions = _normalize_positions(raw["positions"], state_pairs)
+    pending_orders = _normalize_pending_orders(raw["pending_orders"], state_pairs)
     _require_bound_state_owners(positions, pending_orders, active_worker_bindings)
     body: dict[str, Any] = {
-        "contract": POST_EXIT_SNAPSHOT_CONTRACT,
-        "schema_version": SCHEMA_VERSION,
+        "contract": (
+            SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+            if sparse
+            else POST_EXIT_SNAPSHOT_CONTRACT
+        ),
+        "schema_version": 2 if sparse else SCHEMA_VERSION,
         "coordinate_id": _require_identifier(
             raw["coordinate_id"], "snapshot.coordinate_id"
         ),
@@ -604,6 +704,7 @@ def seal_post_exit_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         "order_authority": "NONE",
         "live_permission": False,
         "broker_mutation_allowed": False,
+        **availability,
     }
     body["snapshot_sha256"] = _sha256(body)
     return _copy_json(body)
@@ -613,8 +714,14 @@ def verify_post_exit_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Verify a sealed snapshot and return a detached canonical copy."""
 
     sealed = _require_mapping(snapshot, "sealed_snapshot")
-    _require_exact_keys(sealed, _SEALED_SNAPSHOT_KEYS, "sealed_snapshot")
-    raw = {key: sealed[key] for key in _RAW_SNAPSHOT_KEYS}
+    sparse = sealed.get("contract") == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+    _require_exact_keys(
+        sealed,
+        _SEALED_SPARSE_SNAPSHOT_KEYS if sparse else _SEALED_SNAPSHOT_KEYS,
+        "sealed_snapshot",
+    )
+    raw_keys = _RAW_SPARSE_SNAPSHOT_KEYS if sparse else _RAW_SNAPSHOT_KEYS
+    raw = {key: sealed[key] for key in raw_keys}
     rebuilt = seal_post_exit_snapshot(raw)
     if _copy_json(sealed) != rebuilt:
         raise ProtocolViolation("sealed_snapshot content or snapshot_sha256 is invalid")
@@ -1084,6 +1191,8 @@ def verify_worker_proposal_batch(
 
 __all__ = [
     "POST_EXIT_SNAPSHOT_CONTRACT",
+    "SPARSE_POST_EXIT_SNAPSHOT_CONTRACT",
+    "SPARSE_QUOTE_POLICY",
     "WORKER_PROPOSAL_BATCH_CONTRACT",
     "WORKER_PROPOSAL_CONTRACT",
     "ProtocolViolation",

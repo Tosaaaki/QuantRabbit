@@ -19,6 +19,8 @@ from quant_rabbit.dojo_portfolio_replay_reducer import (
 )
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
+    SPARSE_POST_EXIT_SNAPSHOT_CONTRACT,
+    SPARSE_QUOTE_POLICY,
     seal_post_exit_snapshot,
     seal_worker_proposal,
     seal_worker_proposal_batch,
@@ -236,6 +238,90 @@ def project_pending(carry: dict) -> list[dict]:
         "valid_until_epoch",
     )
     return [{key: row[key] for key in keys} for row in carry["pending_orders"]]
+
+
+def test_sparse_session_never_executes_an_unobserved_pair_quote() -> None:
+    policy = make_policy(pairs=("USD_JPY", "EUR_JPY"))
+    session = PortfolioReplaySession(policy=policy, initial_balance_jpy=200_000)
+    first = 1_704_067_200
+    watermark = 0
+
+    def step(
+        epoch: int,
+        phase: str,
+        prices: dict[str, tuple[float, float]],
+        ages: dict[str, int | None],
+        *,
+        intent: dict | None = None,
+    ) -> dict:
+        nonlocal watermark
+        watermark += 1
+        quotes = make_quotes(epoch, phase, prices)
+        snapshot = session.prepare_coordinate(
+            coordinate_id="sparse-account",
+            epoch=epoch,
+            phase=phase,
+            intrabar="OHLC",
+            quote_watermark=watermark,
+            quotes=quotes,
+            quote_batch_sha256_value=quote_batch_sha256(
+                epoch=epoch,
+                phase=phase,
+                intrabar="OHLC",
+                quote_watermark=watermark,
+                quotes=quotes,
+            ),
+            fresh_quote_pairs=sorted(prices),
+            unavailable_quote_pairs=sorted(set(policy["expected_quote_pairs"]) - set(prices)),
+            pair_local_quote_age_seconds=ages,
+            quote_policy=SPARSE_QUOTE_POLICY,
+        )
+        assert snapshot["contract"] == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+        assert {row["pair"] for row in snapshot["quotes"]} == set(prices)
+        session.consume_proposal_batch(
+            make_batch(
+                snapshot,
+                new_by_worker={"worker-a": [intent]} if intent is not None else None,
+            )
+        )
+        return snapshot
+
+    full = {"USD_JPY": (145.0, 145.02), "EUR_JPY": (158.0, 158.02)}
+    entry = make_intent(
+        intent_id="sparse-entry",
+        pair="USD_JPY",
+        entry_price=145.02,
+        sl_price=144.0,
+        tp_price=145.5,
+        valid_until_epoch=first + 3_600,
+    )
+    step(first, "O", full, {"USD_JPY": 0, "EUR_JPY": 0}, intent=entry)
+    for phase in ("H", "L", "C"):
+        step(first, phase, full, {"USD_JPY": 0, "EUR_JPY": 0})
+    assert len(
+        session.export_checkpoint()["exact_carry_state"]["positions"]
+    ) == 1
+
+    missing_usd = {"EUR_JPY": (158.1, 158.12)}
+    for phase in ("O", "H", "L", "C"):
+        snapshot = step(
+            first + 60,
+            phase,
+            missing_usd,
+            {"USD_JPY": 60, "EUR_JPY": 0},
+        )
+        assert snapshot["unavailable_quote_pairs"] == ["USD_JPY"]
+        assert len(snapshot["positions"]) == 1
+
+    # The next genuinely observed USD/JPY bid crosses TP. The close happens
+    # here, never at the prior EUR-only coordinate using USD/JPY's stale mark.
+    step(
+        first + 120,
+        "O",
+        {"USD_JPY": (145.6, 145.62)},
+        {"USD_JPY": 0, "EUR_JPY": 60},
+    )
+    assert session.export_checkpoint()["exact_carry_state"]["positions"] == []
 
 
 def test_admission_is_input_order_independent_and_ignores_claimed_edge() -> None:

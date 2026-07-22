@@ -75,13 +75,26 @@ from quant_rabbit.dojo_portfolio_replay_reducer import (
     verify_portfolio_policy,
 )
 from quant_rabbit.dojo_shared_worker_protocol import (
+    SPARSE_POST_EXIT_SNAPSHOT_CONTRACT,
+    SPARSE_QUOTE_POLICY,
     readonly_post_exit_snapshot,
     seal_worker_proposal,
     seal_worker_proposal_batch,
 )
+from quant_rabbit.dojo_sparse_replay import build_sparse_replay_schedule_from_rows
+from quant_rabbit.dojo_sparse_source_slice_v2 import (
+    GENESIS_SHA256 as SPARSE_SOURCE_GENESIS_SHA256,
+    SPARSE_SOURCE_SLICE_CONTRACT,
+    build_parent_quote_map_binding,
+    build_sparse_source_slice_v2,
+    verify_sparse_source_receipt_chain_v2,
+)
 
 
 SOURCE_SLICE_CONTRACT: Final = "QR_DOJO_SYNCHRONIZED_SOURCE_SLICE_V1"
+SPARSE_MONTH_SOURCE_SLICE_CONTRACT: Final = (
+    "QR_DOJO_SPARSE_MONTH_SOURCE_SLICE_V2"
+)
 ECONOMIC_CARRY_CONTRACT: Final = "QR_DOJO_LONG_HORIZON_ECONOMIC_CARRY_V1"
 ECONOMIC_JOB_RESULT_CONTRACT: Final = "QR_DOJO_LONG_HORIZON_ECONOMIC_JOB_RESULT_V1"
 SCHEMA_VERSION: Final = 1
@@ -112,6 +125,27 @@ _GRANULARITY_SECONDS = {"M1": 60, "M5": 300}
 _PHASES = {"OHLC": ("O", "H", "L", "C"), "OLHC": ("O", "L", "H", "C")}
 _SOURCE_ROW_KEYS = frozenset({"complete", "epoch", "granularity", "quotes"})
 _SOURCE_QUOTE_KEYS = frozenset({"ask", "bid", "pair"})
+_SPARSE_SOURCE_ROW_KEYS = frozenset(
+    {
+        "ordinal",
+        "epoch",
+        "granularity",
+        "complete",
+        "observed_pairs",
+        "fresh_executable_pairs",
+        "unavailable_pairs",
+        "pair_local_quote_age_seconds",
+        "availability_cell_sha256",
+        "pair_local_quote_age_cell_sha256",
+        "quotes",
+        "synthetic_quote_count",
+        "carry_forward_quote_count",
+        "source_row_sha256",
+    }
+)
+_SPARSE_SOURCE_QUOTE_KEYS = frozenset(
+    {"ask", "bid", "pair", "parent_quote_sha256"}
+)
 _RUNTIME_KEYS = frozenset(
     {
         "coordinate_id",
@@ -696,6 +730,110 @@ def _validate_source_row(
     }
 
 
+def _validate_sparse_source_row(
+    value: Any,
+    *,
+    job: Mapping[str, Any],
+    previous_epoch: int | None,
+    expected_ordinal: int,
+) -> dict[str, Any]:
+    row = _exact(value, _SPARSE_SOURCE_ROW_KEYS, field="sparse source row")
+    body = {key: item for key, item in row.items() if key != "source_row_sha256"}
+    if (
+        row["source_row_sha256"] != canonical_sha256(body)
+        or row["ordinal"] != expected_ordinal
+        or row["complete"] is not True
+        or row["granularity"] != job["granularity"]
+        or row["synthetic_quote_count"] != 0
+        or row["carry_forward_quote_count"] != 0
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source row seal or no-imputation contract is invalid"
+        )
+    observed = _sequence(row["observed_pairs"], field="observed pairs")
+    fresh = _sequence(
+        row["fresh_executable_pairs"], field="fresh executable pairs"
+    )
+    unavailable = _sequence(row["unavailable_pairs"], field="unavailable pairs")
+    feed = list(job["feed_pairs"])
+    if (
+        not observed
+        or fresh != observed
+        or len(observed) != len(set(observed))
+        or len(unavailable) != len(set(unavailable))
+        or [pair for pair in feed if pair in set(observed)] != observed
+        or [pair for pair in feed if pair not in set(observed)] != unavailable
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source availability does not partition the sealed feed"
+        )
+    ages = _mapping(
+        row["pair_local_quote_age_seconds"], field="pair-local quote ages"
+    )
+    if set(ages) != set(feed):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse quote-age keys differ from the sealed feed"
+        )
+    for pair in feed:
+        age = ages[pair]
+        if pair in observed:
+            if age != 0:
+                raise DojoLongHorizonEconomicRunnerError(
+                    "fresh sparse pair has non-zero quote age"
+                )
+        elif age is not None:
+            _integer(age, field=f"pair-local quote age {pair}", minimum=1)
+    epoch = _integer(row["epoch"], field="sparse source row.epoch")
+    if (
+        row["availability_cell_sha256"]
+        != canonical_sha256({"epoch": epoch, "batch_pairs": observed})
+        or row["pair_local_quote_age_cell_sha256"]
+        != canonical_sha256(
+            {"epoch": epoch, "pair_local_quote_age_seconds": ages}
+        )
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse availability or quote-age cell digest is invalid"
+        )
+    quote_rows = _sequence(row["quotes"], field="sparse quotes")
+    normalized_quotes: list[dict[str, Any]] = []
+    for index, value_quote in enumerate(quote_rows):
+        quote = _exact(
+            value_quote,
+            _SPARSE_SOURCE_QUOTE_KEYS,
+            field=f"sparse quote[{index}]",
+        )
+        _sha(
+            quote["parent_quote_sha256"],
+            field=f"sparse quote[{index}].parent_quote_sha256",
+        )
+        normalized_quotes.append(
+            {key: quote[key] for key in ("pair", "bid", "ask")}
+        )
+    normalized = _validate_source_row(
+        {
+            "complete": True,
+            "epoch": epoch,
+            "granularity": job["granularity"],
+            "quotes": normalized_quotes,
+        },
+        job={**job, "feed_pairs": observed},
+        previous_epoch=previous_epoch,
+    )
+    if [quote["pair"] for quote in normalized["quotes"]] != observed:
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse quote rows differ from observed pair order"
+        )
+    return {
+        **normalized,
+        "ordinal": expected_ordinal,
+        "fresh_quote_pairs": observed,
+        "unavailable_quote_pairs": unavailable,
+        "pair_local_quote_age_seconds": dict(ages),
+        "quote_policy": SPARSE_QUOTE_POLICY,
+    }
+
+
 def _safe_source_path(source_root: Path, relative_path: Any) -> Path:
     root = source_root.resolve(strict=True)
     relative = Path(_identifier(relative_path, field="source relative_path"))
@@ -753,10 +891,52 @@ _SOURCE_RECEIPT_KEYS = frozenset(
         "source_slice_receipt_sha256",
     }
 )
+_SPARSE_MONTH_SOURCE_RECEIPT_KEYS = frozenset(
+    {
+        "contract",
+        "schema_version",
+        "job_sha256",
+        "price_stream_id",
+        "source_binding_id",
+        "source_digest_sha256",
+        "corpus_digest_sha256",
+        "month",
+        "granularity",
+        "from_utc",
+        "to_utc",
+        "feed_pairs",
+        "source_manifest_sha256",
+        "parent_binding_physical_shard_ids_sha256",
+        "parent_month_coverage_cells",
+        "parent_month_coverage_cells_sha256",
+        "parent_quote_coverage_complete",
+        "sparse_calendar_coverage_proved",
+        "relative_path",
+        "file_size_bytes",
+        "file_sha256",
+        "row_count",
+        "observed_quote_count",
+        "first_epoch",
+        "last_epoch",
+        "complete_rows_only",
+        "synthetic_quote_count",
+        "carry_forward_quote_count",
+        "source_open_count_per_economic_run",
+        "normalized_price_derivation_verified",
+        "normalized_price_derivation_sha256",
+        "sparse_source_receipt",
+        "sparse_source_receipt_sha256",
+        "authority",
+        "source_slice_receipt_sha256",
+    }
+)
 
 
 def _source_parent_binding(
-    source_manifest: Mapping[str, Any], *, job: Mapping[str, Any]
+    source_manifest: Mapping[str, Any],
+    *,
+    job: Mapping[str, Any],
+    sparse_observed_union: bool = False,
 ) -> dict[str, Any]:
     manifest = verify_long_horizon_source_manifest_seal(source_manifest)
     manifest_sha = _sha(
@@ -854,7 +1034,7 @@ def _source_parent_binding(
         if row["missing_slot_legitimacy_proved"] is not True
         or row["calendar_open_quote_coverage_proved"] is not True
     ]
-    if unproved_pairs:
+    if unproved_pairs and not sparse_observed_union:
         raise DojoLongHorizonEconomicRunnerError(
             "source quote coverage/calendar-gap legitimacy is unproved for the "
             "sealed pair-month denominator"
@@ -873,13 +1053,14 @@ def _source_parent_binding(
         )
         for row in parent_rows
     }
-    if len(row_counts) != 1 or len(observed_bounds) != 1:
+    if not sparse_observed_union and (
+        len(row_counts) != 1 or len(observed_bounds) != 1
+    ):
         raise DojoLongHorizonEconomicRunnerError(
             "pair epoch contract is inconsistent across the sealed pair-month "
             "denominator; synchronized economic replay is forbidden"
         )
-    first_epoch, last_epoch = next(iter(observed_bounds))
-    if first_epoch > last_epoch:
+    if any(first_epoch > last_epoch for first_epoch, last_epoch in observed_bounds):
         raise DojoLongHorizonEconomicRunnerError(
             "pair epoch contract has inverted observed bounds"
         )
@@ -888,7 +1069,7 @@ def _source_parent_binding(
         "parent_binding_physical_shard_ids_sha256": physical_ids_sha,
         "parent_month_coverage_cells": parent_rows,
         "parent_month_coverage_cells_sha256": canonical_sha256(parent_rows),
-        "parent_quote_coverage_complete": True,
+        "parent_quote_coverage_complete": not sparse_observed_union,
     }
 
 
@@ -905,6 +1086,7 @@ def _parent_price_rows(
     *,
     job: Mapping[str, Any],
     parent: Mapping[str, Any],
+    require_synchronized_epochs: bool = True,
 ) -> dict[str, dict[int, dict[str, Any]]]:
     manifest = _mapping(source_manifest, field="source manifest")
     roots = _mapping(manifest.get("source_roots"), field="source manifest.source_roots")
@@ -1008,7 +1190,7 @@ def _parent_price_rows(
             )
         result[pair] = rows
     epoch_sets = {tuple(sorted(rows)) for rows in result.values()}
-    if len(epoch_sets) != 1:
+    if require_synchronized_epochs and len(epoch_sets) != 1:
         raise DojoLongHorizonEconomicRunnerError(
             "pair source timestamps are not exactly synchronized; imputation is forbidden"
         )
@@ -1155,6 +1337,233 @@ def build_month_source_slice_receipt(
     return {**body, "source_slice_receipt_sha256": canonical_sha256(body)}
 
 
+def _sparse_parent_bindings(
+    source_manifest: Mapping[str, Any],
+    *,
+    job: Mapping[str, Any],
+    parent: Mapping[str, Any],
+    schedule: Any,
+    parent_rows: Mapping[str, Mapping[int, Mapping[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    physical = {
+        row.get("physical_shard_id"): row
+        for row in _sequence(
+            source_manifest.get("physical_shards"),
+            field="source manifest.physical_shards",
+        )
+    }
+    bindings: dict[str, dict[str, Any]] = {}
+    for coverage in parent["parent_month_coverage_cells"]:
+        pair = coverage["pair"]
+        shard = _mapping(
+            physical.get(coverage["physical_shard_id"]),
+            field=f"physical shard for {pair}",
+        )
+        bindings[pair] = build_parent_quote_map_binding(
+            schedule=schedule,
+            pair=pair,
+            quote_map=parent_rows[pair],
+            authentication={
+                "raw_source_id": coverage["physical_shard_id"],
+                "raw_artifact_sha256": _sha(
+                    shard.get("file_sha256"),
+                    field=f"physical shard {pair}.file_sha256",
+                ),
+                "upstream_authentication_receipt_sha256": _sha(
+                    shard.get("acquisition_receipt_sha256"),
+                    field=f"physical shard {pair}.acquisition_receipt_sha256",
+                ),
+            },
+        )
+    if set(bindings) != set(job["feed_pairs"]):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse parent bindings do not equal the sealed feed"
+        )
+    return bindings
+
+
+def _write_exclusive_source_rows(
+    *, source_root: Path, relative_path: str, rows: Sequence[Mapping[str, Any]]
+) -> tuple[Path, str, int]:
+    root = source_root.resolve(strict=True)
+    relative = Path(_identifier(relative_path, field="source relative_path"))
+    if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".jsonl":
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source output must be a safe relative .jsonl path"
+        )
+    parent = (root / relative.parent).resolve(strict=True)
+    try:
+        parent.relative_to(root)
+    except ValueError as exc:
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source output parent escapes source root"
+        ) from exc
+    path = parent / relative.name
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    digest = hashlib.sha256()
+    size = 0
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = -1
+            for row in rows:
+                payload = _canonical_bytes(row) + b"\n"
+                if handle.write(payload) != len(payload):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "sparse source output write was incomplete"
+                    )
+                digest.update(payload)
+                size += len(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        directory_fd = os.open(
+            parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    if size <= 0:
+        raise DojoLongHorizonEconomicRunnerError("sparse source output is empty")
+    return path, digest.hexdigest(), size
+
+
+def build_sparse_month_source_slice_receipt(
+    *,
+    source_root: Path,
+    relative_path: str,
+    job: Mapping[str, Any],
+    source_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Materialize one authenticated observed-epoch union without imputation."""
+
+    parent = _source_parent_binding(
+        source_manifest,
+        job=job,
+        sparse_observed_union=True,
+    )
+    parent_rows = _parent_price_rows(
+        source_manifest,
+        job=job,
+        parent=parent,
+        require_synchronized_epochs=False,
+    )
+    lower = datetime.fromtimestamp(
+        _epoch_from_utc(job["from_utc"], field="job.from_utc"), timezone.utc
+    )
+    upper = datetime.fromtimestamp(
+        _epoch_from_utc(job["to_utc"], field="job.to_utc"), timezone.utc
+    )
+    schedule = build_sparse_replay_schedule_from_rows(
+        parent_rows,
+        feed_pairs=job["feed_pairs"],
+        start=lower,
+        end=upper,
+        granularity=job["granularity"],
+    )
+    parent_bindings = _sparse_parent_bindings(
+        source_manifest,
+        job=job,
+        parent=parent,
+        schedule=schedule,
+        parent_rows=parent_rows,
+    )
+    source_slice = build_sparse_source_slice_v2(
+        stream_id=f"sparse-{job['job_sha256'][:32]}",
+        slice_id=f"month-{job['month']}",
+        sequence=0,
+        prior_receipt_sha256=SPARSE_SOURCE_GENESIS_SHA256,
+        schedule=schedule,
+        pair_quote_maps=parent_rows,
+        parent_bindings=parent_bindings,
+    )
+    path, file_sha, file_size = _write_exclusive_source_rows(
+        source_root=source_root,
+        relative_path=relative_path,
+        rows=source_slice.rows,
+    )
+    sparse_receipt = dict(source_slice.receipt)
+    coverage = sparse_receipt["schedule_coverage_receipt"]
+    derivation_sha = canonical_sha256(
+        {
+            "contract": "QR_DOJO_SPARSE_NORMALIZED_PRICE_DERIVATION_V2",
+            "job_sha256": job["job_sha256"],
+            "parent_quote_maps_sha256": sparse_receipt[
+                "parent_quote_maps_sha256"
+            ],
+            "availability_mask_sha256": sparse_receipt[
+                "availability_mask_sha256"
+            ],
+            "pair_local_quote_age_mask_sha256": sparse_receipt[
+                "pair_local_quote_age_mask_sha256"
+            ],
+            "source_rows_sha256": sparse_receipt["source_rows_sha256"],
+        }
+    )
+    body = {
+        "contract": SPARSE_MONTH_SOURCE_SLICE_CONTRACT,
+        "schema_version": 2,
+        "job_sha256": job["job_sha256"],
+        "price_stream_id": job["price_stream_id"],
+        "source_binding_id": job["source_binding_id"],
+        "source_digest_sha256": job["source_digest_sha256"],
+        "corpus_digest_sha256": job["corpus_digest_sha256"],
+        "month": job["month"],
+        "granularity": job["granularity"],
+        "from_utc": job["from_utc"],
+        "to_utc": job["to_utc"],
+        "feed_pairs": list(job["feed_pairs"]),
+        **{
+            key: value
+            for key, value in parent.items()
+            if key != "parent_quote_coverage_complete"
+        },
+        "parent_quote_coverage_complete": True,
+        "sparse_calendar_coverage_proved": True,
+        "relative_path": relative_path,
+        "file_size_bytes": file_size,
+        "file_sha256": file_sha,
+        "row_count": sparse_receipt["source_row_count"],
+        "observed_quote_count": sparse_receipt["observed_quote_count"],
+        "first_epoch": sparse_receipt["first_epoch"],
+        "last_epoch": sparse_receipt["last_epoch"],
+        "complete_rows_only": True,
+        "synthetic_quote_count": 0,
+        "carry_forward_quote_count": 0,
+        "source_open_count_per_economic_run": 1,
+        "normalized_price_derivation_verified": True,
+        "normalized_price_derivation_sha256": derivation_sha,
+        "sparse_source_receipt": sparse_receipt,
+        "sparse_source_receipt_sha256": sparse_receipt["receipt_sha256"],
+        "authority": _authority(),
+    }
+    if path.stat(follow_symlinks=False).st_size != file_size or (
+        coverage["synthetic_quote_count"] != 0
+        or coverage["carry_forward_quote_count"] != 0
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source materialization integrity drifted"
+        )
+    return {**body, "source_slice_receipt_sha256": canonical_sha256(body)}
+
+
 def validate_month_source_slice_receipt(
     value: Mapping[str, Any],
     *,
@@ -1210,6 +1619,122 @@ def validate_month_source_slice_receipt(
     _integer(row["row_count"], field="source receipt.row_count", minimum=1)
     _integer(row["first_epoch"], field="source receipt.first_epoch")
     _integer(row["last_epoch"], field="source receipt.last_epoch")
+    return dict(row)
+
+
+def validate_sparse_month_source_slice_receipt(
+    value: Mapping[str, Any],
+    *,
+    job: Mapping[str, Any],
+    source_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    row = _exact(
+        value,
+        _SPARSE_MONTH_SOURCE_RECEIPT_KEYS,
+        field="sparse source receipt",
+    )
+    body = {key: row[key] for key in row if key != "source_slice_receipt_sha256"}
+    if (
+        row["contract"] != SPARSE_MONTH_SOURCE_SLICE_CONTRACT
+        or row["schema_version"] != 2
+        or row["source_slice_receipt_sha256"] != canonical_sha256(body)
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source receipt seal is invalid"
+        )
+    for key in (
+        "job_sha256",
+        "price_stream_id",
+        "source_binding_id",
+        "source_digest_sha256",
+        "corpus_digest_sha256",
+        "month",
+        "granularity",
+        "from_utc",
+        "to_utc",
+    ):
+        if row[key] != job[key]:
+            raise DojoLongHorizonEconomicRunnerError(
+                f"sparse source receipt {key} differs from the sealed job"
+            )
+    parent = _source_parent_binding(
+        source_manifest,
+        job=job,
+        sparse_observed_union=True,
+    )
+    for key, item in parent.items():
+        if key == "parent_quote_coverage_complete":
+            continue
+        if row[key] != item:
+            raise DojoLongHorizonEconomicRunnerError(
+                "sparse source receipt parent-manifest binding drifted"
+            )
+    sparse_receipt = _mapping(
+        row["sparse_source_receipt"], field="sparse source V2 receipt"
+    )
+    try:
+        verify_sparse_source_receipt_chain_v2(
+            [sparse_receipt],
+            expected_stream_id=sparse_receipt.get("stream_id"),
+            expected_start_sequence=0,
+            expected_prior_receipt_sha256=SPARSE_SOURCE_GENESIS_SHA256,
+        )
+    except (TypeError, ValueError) as exc:
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source V2 receipt chain is invalid"
+        ) from exc
+    sparse_body = {
+        key: item for key, item in sparse_receipt.items() if key != "receipt_sha256"
+    }
+    coverage = _mapping(
+        sparse_receipt.get("schedule_coverage_receipt"),
+        field="sparse schedule coverage receipt",
+    )
+    if (
+        sparse_receipt.get("contract") != SPARSE_SOURCE_SLICE_CONTRACT
+        or sparse_receipt.get("schema_version") != 2
+        or sparse_receipt.get("receipt_sha256") != canonical_sha256(sparse_body)
+        or row["sparse_source_receipt_sha256"]
+        != sparse_receipt.get("receipt_sha256")
+        or sparse_receipt.get("feed_pairs") != job["feed_pairs"]
+        or sparse_receipt.get("granularity") != job["granularity"]
+        or sparse_receipt.get("from_epoch")
+        != _epoch_from_utc(job["from_utc"], field="job.from_utc")
+        or sparse_receipt.get("to_epoch")
+        != _epoch_from_utc(job["to_utc"], field="job.to_utc")
+        or sparse_receipt.get("source_row_count") != row["row_count"]
+        or sparse_receipt.get("observed_quote_count")
+        != row["observed_quote_count"]
+        or sparse_receipt.get("first_epoch") != row["first_epoch"]
+        or sparse_receipt.get("last_epoch") != row["last_epoch"]
+        or sparse_receipt.get("synthetic_quote_count") != 0
+        or sparse_receipt.get("carry_forward_quote_count") != 0
+        or coverage.get("quote_policy") != SPARSE_QUOTE_POLICY
+        or coverage.get("synthetic_quote_count") != 0
+        or coverage.get("carry_forward_quote_count") != 0
+        or row["feed_pairs"] != job["feed_pairs"]
+        or row["parent_quote_coverage_complete"] is not True
+        or row["sparse_calendar_coverage_proved"] is not True
+        or row["complete_rows_only"] is not True
+        or row["synthetic_quote_count"] != 0
+        or row["carry_forward_quote_count"] != 0
+        or row["source_open_count_per_economic_run"] != 1
+        or row["normalized_price_derivation_verified"] is not True
+        or row["authority"] != _authority()
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source receipt coverage or authority is invalid"
+        )
+    _integer(row["file_size_bytes"], field="sparse file size", minimum=1)
+    _sha(row["file_sha256"], field="sparse file sha256")
+    _sha(
+        row["normalized_price_derivation_sha256"],
+        field="sparse normalized price derivation",
+    )
+    _integer(row["row_count"], field="sparse row count", minimum=1)
+    _integer(row["observed_quote_count"], field="observed quote count", minimum=1)
+    _integer(row["first_epoch"], field="sparse first epoch")
+    _integer(row["last_epoch"], field="sparse last epoch")
     return dict(row)
 
 
@@ -1572,9 +2097,30 @@ def _raw_proposals_for_snapshot(
     *,
     snapshot: Mapping[str, Any],
     trade_pairs: Sequence[str],
+    require_full_quote_feed: bool = False,
 ) -> dict[str, Any]:
     readonly = readonly_post_exit_snapshot(snapshot)
-    proposals = _sequence(runtime.propose(readonly), field="worker proposals")
+    available_pairs = {row["pair"] for row in snapshot["quotes"]}
+    required_pairs = (
+        set(snapshot["expected_quote_pairs"])
+        if require_full_quote_feed
+        else set(trade_pairs)
+    )
+    if (
+        snapshot["contract"] == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+        and not required_pairs.issubset(available_pairs)
+    ):
+        proposals = [
+            {
+                **binding,
+                "snapshot_sha256": snapshot["snapshot_sha256"],
+                "risk_reducing_intents": [],
+                "new_risk_intents": [],
+            }
+            for binding in snapshot["active_worker_bindings"]
+        ]
+    else:
+        proposals = _sequence(runtime.propose(readonly), field="worker proposals")
     sealed = []
     allowed = set(trade_pairs)
     for raw in proposals:
@@ -1667,9 +2213,27 @@ def run_long_horizon_economic_job(
             "economic runner plan differs from the sealed job"
         )
     implementation_digests = verified_plan["implementation_binding"]["digests"]
-    receipt = validate_month_source_slice_receipt(
-        source_slice_receipt, job=job, source_manifest=source_manifest
+    sparse_source = (
+        source_slice_receipt.get("contract")
+        == SPARSE_MONTH_SOURCE_SLICE_CONTRACT
     )
+    receipt = (
+        validate_sparse_month_source_slice_receipt(
+            source_slice_receipt,
+            job=job,
+            source_manifest=source_manifest,
+        )
+        if sparse_source
+        else validate_month_source_slice_receipt(
+            source_slice_receipt,
+            job=job,
+            source_manifest=source_manifest,
+        )
+    )
+    if sparse_source and economic_transcript_format != ECONOMIC_TRANSCRIPT_V1_JSONL:
+        raise DojoLongHorizonEconomicRunnerError(
+            "sparse source currently requires the availability-preserving V1 transcript"
+        )
     evidence_root = _economic_evidence_directory(economic_evidence_root)
     path = _safe_source_path(source_root, receipt["relative_path"])
     before = path.stat(follow_symlinks=False)
@@ -2048,8 +2612,17 @@ def run_long_horizon_economic_job(
             while raw := handle.readline(MAX_SOURCE_LINE_BYTES + 1):
                 digest.update(raw)
                 parsed = _strict_json_line(raw, field=f"source row {row_count + 1}")
-                candle = _validate_source_row(
-                    parsed, job=job, previous_epoch=previous_epoch
+                candle = (
+                    _validate_sparse_source_row(
+                        parsed,
+                        job=job,
+                        previous_epoch=previous_epoch,
+                        expected_ordinal=row_count,
+                    )
+                    if sparse_source
+                    else _validate_source_row(
+                        parsed, job=job, previous_epoch=previous_epoch
+                    )
                 )
                 previous_epoch = candle["epoch"]
                 first_epoch = candle["epoch"] if first_epoch is None else first_epoch
@@ -2091,6 +2664,17 @@ def run_long_horizon_economic_job(
                             source_batch_chain_sha256=batch_chain,
                         )
                         try:
+                            sparse_prepare: dict[str, Any] = {}
+                            if sparse_source:
+                                sparse_prepare = {
+                                    key: candle[key]
+                                    for key in (
+                                        "fresh_quote_pairs",
+                                        "unavailable_quote_pairs",
+                                        "pair_local_quote_age_seconds",
+                                        "quote_policy",
+                                    )
+                                }
                             snapshots[coordinate_id] = sessions[
                                 coordinate_id
                             ].prepare_coordinate(
@@ -2101,6 +2685,7 @@ def run_long_horizon_economic_job(
                                 quote_watermark=watermark,
                                 quotes=quotes,
                                 quote_batch_sha256_value=quote_digest,
+                                **sparse_prepare,
                             )
                             _transcript_call(
                                 transcript_recorders[
@@ -2141,6 +2726,10 @@ def run_long_horizon_economic_job(
                                     worker_instances[coordinate_id],
                                     snapshot=snapshot,
                                     trade_pairs=runtimes[coordinate_id]["trade_pairs"],
+                                    require_full_quote_feed=(
+                                        worker_runtime_mode
+                                        == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+                                    ),
                                 )
                             )
                             _transcript_call(
@@ -2775,6 +3364,9 @@ def run_long_horizon_economic_job(
         ],
         "independent_economic_reexecution_passed": (independent_reexecution_passed),
         "source_quote_coverage_proved": source_quote_coverage_proved,
+        "sparse_observed_epoch_union_used": sparse_source,
+        "synthetic_executable_quote_count": 0,
+        "carry_forward_executable_quote_count": 0,
         "official_evidence_eligible": official_evidence_eligible,
         "proof_classification": (
             "INDEPENDENTLY_REEXECUTED_WORN_TRAIN"
@@ -2804,6 +3396,7 @@ __all__ = [
     "ECONOMIC_TRANSCRIPT_V1_JSONL",
     "ECONOMIC_TRANSCRIPT_V2_COMPACT",
     "ECONOMIC_TRANSCRIPT_V3_COMPACT",
+    "SPARSE_MONTH_SOURCE_SLICE_CONTRACT",
     "SOURCE_SLICE_CONTRACT",
     "DojoLongHorizonEconomicRunnerError",
     "EconomicWorkerRuntime",
@@ -2811,6 +3404,8 @@ __all__ = [
     "builtin_no_intent_runtime_factory",
     "builtin_strategy_runtime_factory",
     "build_month_source_slice_receipt",
+    "build_sparse_month_source_slice_receipt",
     "run_long_horizon_economic_job",
     "validate_month_source_slice_receipt",
+    "validate_sparse_month_source_slice_receipt",
 ]

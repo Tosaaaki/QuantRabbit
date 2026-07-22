@@ -24,6 +24,7 @@ from typing import Any, Final, Mapping, Sequence
 
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
+    SPARSE_POST_EXIT_SNAPSHOT_CONTRACT,
     seal_post_exit_snapshot,
     verify_post_exit_snapshot,
     verify_worker_proposal_batch,
@@ -909,6 +910,10 @@ def admit_worker_proposals(
         raise DojoPortfolioReplayError(
             "snapshot quote coverage does not match sealed policy"
         )
+    if verified_snapshot["contract"] == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT:
+        raise DojoPortfolioReplayError(
+            "standalone admission cannot reconstruct sparse non-executable MTM marks"
+        )
     if (
         verified_snapshot["active_worker_bindings"]
         != verified_policy["active_worker_bindings"]
@@ -1432,6 +1437,8 @@ def _triggered_pending_candidates(
         order = state["pending_orders"][order_id]
         if coordinate_seq <= int(order["created_coordinate_seq"]):
             continue
+        if order["pair"] not in quotes:
+            continue
         fill = _pending_fill(order, quotes[order["pair"]], indexes)
         if fill is None:
             continue
@@ -1485,6 +1492,8 @@ def _process_system_exits(
         position = state["positions"].get(position_id)
         if position is None:
             continue
+        if position["pair"] not in quotes:
+            continue
         quote = quotes[position["pair"]]
         if position["side"] == "LONG":
             stop_hit = quote["bid"] <= position["sl_price"]
@@ -1519,6 +1528,7 @@ def _process_margin_closeout(
     quotes: Mapping[str, Mapping[str, Any]],
     indexes: Mapping[str, Any],
     policy: Mapping[str, Any],
+    executable_pairs: set[str] | None = None,
 ) -> None:
     while state["positions"]:
         equity = _account_equity(state, quotes, indexes)
@@ -1526,6 +1536,13 @@ def _process_margin_closeout(
             _margin(row, quotes, indexes, policy) for row in state["positions"].values()
         )
         if equity <= 0 or margin / equity >= policy["margin_closeout_fraction"]:
+            if executable_pairs is not None and any(
+                row["pair"] not in executable_pairs
+                for row in state["positions"].values()
+            ):
+                raise DojoPortfolioReplayError(
+                    "margin closeout requires fresh quotes for every open position"
+                )
             victim = min(
                 state["positions"].values(),
                 key=lambda row: (
@@ -2034,6 +2051,10 @@ class PortfolioReplaySession:
         quote_watermark: int,
         quotes: Sequence[Mapping[str, Any]],
         quote_batch_sha256_value: str | None = None,
+        fresh_quote_pairs: Sequence[str] | None = None,
+        unavailable_quote_pairs: Sequence[str] | None = None,
+        pair_local_quote_age_seconds: Mapping[str, int | None] | None = None,
+        quote_policy: str | None = None,
     ) -> dict[str, Any]:
         """Advance through exits and return the reducer-owned worker snapshot."""
 
@@ -2062,34 +2083,72 @@ class PortfolioReplaySession:
         ) != computed_digest:
             raise DojoPortfolioReplayError("quote batch digest mismatch")
 
-        # Validate the complete mark set and timestamp coordinate before state
-        # mutation.  The placeholder account/state are intentionally empty;
-        # reducer-owned economic state is sealed only after exits below.
-        try:
-            market_guard = seal_post_exit_snapshot(
+        sparse_arguments = (
+            fresh_quote_pairs,
+            unavailable_quote_pairs,
+            pair_local_quote_age_seconds,
+            quote_policy,
+        )
+        sparse = any(value is not None for value in sparse_arguments)
+        if sparse and any(value is None for value in sparse_arguments):
+            raise DojoPortfolioReplayError(
+                "sparse quote availability arguments must be supplied together"
+            )
+        # Validate the fresh executable mark set and timestamp coordinate before
+        # state mutation. Sparse valuation may later combine these fresh marks
+        # with prior non-executable MTM marks, but those prior marks are never
+        # exposed to a worker or used for a fill.
+        market_payload: dict[str, Any] = {
+            "coordinate_id": coordinate_name,
+            "epoch": epoch_value,
+            "phase": phase,
+            "intrabar": intrabar,
+            "quote_batch_sha256": computed_digest,
+            "quote_watermark": watermark,
+            "expected_quote_pairs": self.policy["expected_quote_pairs"],
+            "active_worker_bindings": self.policy["active_worker_bindings"],
+            "account": {
+                "balance_jpy": 0.0,
+                "equity_jpy": 0.0,
+                "margin_used_jpy": 0.0,
+                "accrued_financing_jpy": 0.0,
+            },
+            "quotes": list(quotes),
+            "positions": [],
+            "pending_orders": [],
+        }
+        if sparse:
+            market_payload.update(
                 {
-                    "coordinate_id": coordinate_name,
-                    "epoch": epoch_value,
-                    "phase": phase,
-                    "intrabar": intrabar,
-                    "quote_batch_sha256": computed_digest,
-                    "quote_watermark": watermark,
-                    "expected_quote_pairs": self.policy["expected_quote_pairs"],
-                    "active_worker_bindings": self.policy["active_worker_bindings"],
-                    "account": {
-                        "balance_jpy": 0.0,
-                        "equity_jpy": 0.0,
-                        "margin_used_jpy": 0.0,
-                        "accrued_financing_jpy": 0.0,
-                    },
-                    "quotes": list(quotes),
-                    "positions": [],
-                    "pending_orders": [],
+                    "fresh_quote_pairs": list(fresh_quote_pairs or []),
+                    "unavailable_quote_pairs": list(
+                        unavailable_quote_pairs or []
+                    ),
+                    "pair_local_quote_age_seconds": dict(
+                        pair_local_quote_age_seconds or {}
+                    ),
+                    "quote_policy": quote_policy,
                 }
             )
+        try:
+            market_guard = seal_post_exit_snapshot(market_payload)
         except ProtocolViolation as exc:
             raise DojoPortfolioReplayError(f"invalid quote coordinate: {exc}") from exc
-        normalized_quotes = _quote_map(market_guard)
+        fresh_quotes = _quote_map(market_guard)
+        valuation_quotes = (
+            {**self.state["last_quotes"], **fresh_quotes}
+            if sparse
+            else fresh_quotes
+        )
+        required_state_pairs = {
+            row["pair"]
+            for row in list(self.state["positions"].values())
+            + list(self.state["pending_orders"].values())
+        }
+        if not required_state_pairs.issubset(valuation_quotes):
+            raise DojoPortfolioReplayError(
+                "sparse MTM lacks a prior or fresh quote for active state"
+            )
 
         phase_rank = _INTRABAR_PHASE_ORDER[intrabar][phase]
         last_coordinate = self.state["last_coordinate"]
@@ -2131,7 +2190,7 @@ class PortfolioReplaySession:
             locked = _exposure(
                 list(self.state["positions"].values()),
                 list(self.state["pending_orders"].values()),
-                self.state["last_quotes"],
+                valuation_quotes,
                 self.indexes,
                 self.policy,
             )["margin"]
@@ -2141,13 +2200,13 @@ class PortfolioReplaySession:
         carry_charges = _financing_charges(self.state, epoch_value, self.indexes)
         _expire_old_pending(self.state, epoch_value)
         _process_system_exits(
-            self.state, epoch_value, normalized_quotes, self.indexes
+            self.state, epoch_value, fresh_quotes, self.indexes
         )
         frozen_trigger_candidates = _triggered_pending_candidates(
             self.state,
             epoch=epoch_value,
             coordinate_seq=self.state["coordinate_seq"],
-            quotes=normalized_quotes,
+            quotes=fresh_quotes,
             indexes=self.indexes,
             policy=self.policy,
         )
@@ -2156,59 +2215,75 @@ class PortfolioReplaySession:
         # Recording only after closeout would erase the low equity/free margin
         # and peak usage observed at the executable current quote.
         _record_account_state(
-            self.state, normalized_quotes, self.indexes, self.policy
+            self.state, valuation_quotes, self.indexes, self.policy
         )
         _process_margin_closeout(
-            self.state, normalized_quotes, self.indexes, self.policy
+            self.state,
+            valuation_quotes,
+            self.indexes,
+            self.policy,
+            executable_pairs=set(fresh_quotes) if sparse else None,
         )
         _record_account_state(
-            self.state, normalized_quotes, self.indexes, self.policy
+            self.state, valuation_quotes, self.indexes, self.policy
         )
 
         computed_equity = _account_equity(
-            self.state, normalized_quotes, self.indexes
+            self.state, valuation_quotes, self.indexes
         )
         open_margin = sum(
-            _margin(row, normalized_quotes, self.indexes, self.policy)
+            _margin(row, valuation_quotes, self.indexes, self.policy)
             for row in self.state["positions"].values()
         )
-        try:
-            snapshot = seal_post_exit_snapshot(
+        snapshot_payload: dict[str, Any] = {
+            "coordinate_id": coordinate_name,
+            "epoch": epoch_value,
+            "phase": phase,
+            "intrabar": intrabar,
+            "quote_batch_sha256": computed_digest,
+            "quote_watermark": watermark,
+            "expected_quote_pairs": self.policy["expected_quote_pairs"],
+            "active_worker_bindings": self.policy["active_worker_bindings"],
+            "account": {
+                "balance_jpy": self.state["balance_jpy"],
+                "equity_jpy": computed_equity,
+                "margin_used_jpy": open_margin,
+                "accrued_financing_jpy": self.state[
+                    "accrued_financing_jpy"
+                ],
+            },
+            "quotes": list(market_guard["quotes"]),
+            "positions": [
+                _project_position(row)
+                for row in self.state["positions"].values()
+            ],
+            "pending_orders": [
+                _project_order(row)
+                for row in self.state["pending_orders"].values()
+            ],
+        }
+        if sparse:
+            snapshot_payload.update(
                 {
-                    "coordinate_id": coordinate_name,
-                    "epoch": epoch_value,
-                    "phase": phase,
-                    "intrabar": intrabar,
-                    "quote_batch_sha256": computed_digest,
-                    "quote_watermark": watermark,
-                    "expected_quote_pairs": self.policy["expected_quote_pairs"],
-                    "active_worker_bindings": self.policy["active_worker_bindings"],
-                    "account": {
-                        "balance_jpy": self.state["balance_jpy"],
-                        "equity_jpy": computed_equity,
-                        "margin_used_jpy": open_margin,
-                        "accrued_financing_jpy": self.state[
-                            "accrued_financing_jpy"
-                        ],
-                    },
-                    "quotes": list(market_guard["quotes"]),
-                    "positions": [
-                        _project_position(row)
-                        for row in self.state["positions"].values()
-                    ],
-                    "pending_orders": [
-                        _project_order(row)
-                        for row in self.state["pending_orders"].values()
-                    ],
+                    key: market_guard[key]
+                    for key in (
+                        "fresh_quote_pairs",
+                        "unavailable_quote_pairs",
+                        "pair_local_quote_age_seconds",
+                        "quote_policy",
+                    )
                 }
             )
+        try:
+            snapshot = seal_post_exit_snapshot(snapshot_payload)
         except ProtocolViolation as exc:  # pragma: no cover - internal invariant
             raise DojoPortfolioReplayError(
                 f"reducer produced an invalid post-exit snapshot: {exc}"
             ) from exc
         self._prepared = {
             "snapshot": snapshot,
-            "quotes": normalized_quotes,
+            "quotes": valuation_quotes,
+            "fresh_quote_pairs": set(fresh_quotes),
             "epoch": epoch_value,
             "phase_rank": phase_rank,
             "intrabar": intrabar,
@@ -2251,6 +2326,18 @@ class PortfolioReplaySession:
                 "batch_sha256": batch["batch_sha256"],
             },
         )
+        fresh_pairs = prepared["fresh_quote_pairs"]
+        for proposal in batch["proposals"]:
+            for intent in proposal["risk_reducing_intents"]:
+                if intent["action"] != "CLOSE_POSITION":
+                    continue
+                position = self.state["positions"].get(
+                    intent["parameters"]["position_id"]
+                )
+                if position is None or position["pair"] not in fresh_pairs:
+                    raise DojoPortfolioReplayError(
+                        "worker close requires a fresh executable pair quote"
+                    )
         _apply_actual_risk_reductions(self.state, batch, quotes, self.indexes)
         candidates = list(prepared["frozen_trigger_candidates"])
         candidates.extend(

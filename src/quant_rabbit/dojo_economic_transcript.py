@@ -42,6 +42,7 @@ from quant_rabbit.dojo_portfolio_replay_reducer import (
 )
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
+    SPARSE_POST_EXIT_SNAPSHOT_CONTRACT,
     verify_post_exit_snapshot,
     verify_worker_proposal_batch,
 )
@@ -1038,6 +1039,7 @@ def reexecute_economic_transcript(path: Path) -> dict[str, Any]:
     header: dict[str, Any] | None = None
     session: PortfolioReplaySession | None = None
     prepared_snapshot: dict[str, Any] | None = None
+    pending_quote: dict[str, Any] | None = None
     recorded_snapshot: dict[str, Any] | None = None
     proposal_batch: dict[str, Any] | None = None
     terminal_record: dict[str, Any] | None = None
@@ -1117,19 +1119,15 @@ def reexecute_economic_transcript(path: Path) -> dict[str, Any]:
                         header=header,
                         previous_source_chain=source_chain,
                     )
-                    prepared_snapshot = session.prepare_coordinate(
-                        coordinate_id=quote["coordinate_id"],
-                        epoch=quote["epoch"],
-                        phase=quote["phase"],
-                        intrabar=quote["intrabar"],
-                        quote_watermark=quote["quote_watermark"],
-                        quotes=quote["quotes"],
-                        quote_batch_sha256_value=quote["quote_batch_sha256"],
-                    )
+                    pending_quote = quote
                     source_chain = quote["source_batch_chain_sha256"]
                     stage = "EXPECT_SNAPSHOT"
                 elif event_type == "POST_EXIT_SNAPSHOT":
-                    if stage != "EXPECT_SNAPSHOT" or prepared_snapshot is None:
+                    if (
+                        stage != "EXPECT_SNAPSHOT"
+                        or pending_quote is None
+                        or session is None
+                    ):
                         raise DojoEconomicTranscriptError(
                             "snapshot event is out of order"
                         )
@@ -1142,6 +1140,32 @@ def reexecute_economic_transcript(path: Path) -> dict[str, Any]:
                         raise DojoEconomicTranscriptError(
                             "recorded post-exit snapshot is invalid"
                         ) from exc
+                    sparse_arguments: dict[str, Any] = {}
+                    if (
+                        recorded_snapshot["contract"]
+                        == SPARSE_POST_EXIT_SNAPSHOT_CONTRACT
+                    ):
+                        sparse_arguments = {
+                            key: recorded_snapshot[key]
+                            for key in (
+                                "fresh_quote_pairs",
+                                "unavailable_quote_pairs",
+                                "pair_local_quote_age_seconds",
+                                "quote_policy",
+                            )
+                        }
+                    prepared_snapshot = session.prepare_coordinate(
+                        coordinate_id=pending_quote["coordinate_id"],
+                        epoch=pending_quote["epoch"],
+                        phase=pending_quote["phase"],
+                        intrabar=pending_quote["intrabar"],
+                        quote_watermark=pending_quote["quote_watermark"],
+                        quotes=pending_quote["quotes"],
+                        quote_batch_sha256_value=pending_quote[
+                            "quote_batch_sha256"
+                        ],
+                        **sparse_arguments,
+                    )
                     if recorded_snapshot != prepared_snapshot:
                         raise DojoEconomicTranscriptError(
                             "independent post-exit snapshot mismatch"
