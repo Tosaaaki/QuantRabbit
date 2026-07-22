@@ -12,6 +12,7 @@ from quant_rabbit.dojo_long_horizon_plan import (
     M1_FULL28_BINDING_ID,
     M5_BINDING_ID,
     M5_MONTHS,
+    RAPID_2025H1_PROFILE,
     SOURCE_BINDING_IDS,
     DojoLongHorizonPlanError,
     build_long_horizon_train_plan,
@@ -76,6 +77,35 @@ def test_builds_exact_m5_and_m1_denominators_with_no_authority() -> None:
         "promotion_eligible": False,
         "trainer_may_change_live_configuration": False,
     }
+    assert validate_long_horizon_train_plan(plan) == plan
+
+
+def test_reviewed_rapid_profile_is_exactly_2025h1_and_still_worn_train() -> None:
+    plan = build_long_horizon_train_plan(
+        portfolio_families=FAMILIES,
+        source_digests=_digests(SOURCE_BINDING_IDS, offset=0),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, offset=10),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, offset=20),
+        study_profile=RAPID_2025H1_PROFILE,
+    )
+
+    months = [f"2025-{month:02d}" for month in range(1, 7)]
+    assert plan["period"]["calendar_months"] == months
+    assert plan["period"]["from_utc"] == "2025-01-01T00:00:00Z"
+    assert plan["period"]["to_utc"] == "2025-07-01T00:00:00Z"
+    assert plan["exact_denominator"]["month_count"] == 6
+    assert plan["exact_denominator"]["evaluation_modes"] == [
+        "INDEPENDENT_MONTH"
+    ]
+    assert [
+        row["stage"] for row in plan["exact_denominator"]["portfolio_stages"]
+    ] == ["PORTFOLIO_MAIN", "FAMILY_LOPO"]
+    assert plan["monthly_3x_diagnostic_gates"]["required_month_count"] == 6
+    assert (
+        plan["monthly_3x_diagnostic_gates"]["profile_can_reach_three_x_gate"]
+        is False
+    )
+    assert plan["authority"]["forward_proof_eligible"] is False
     assert validate_long_horizon_train_plan(plan) == plan
 
 

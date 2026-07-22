@@ -18,6 +18,7 @@ from quant_rabbit.dojo_builtin_strategy_runtime import (
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
     DojoLongHorizonEconomicRunnerError,
+    build_sparse_month_source_slice_receipt,
     build_month_source_slice_receipt,
     builtin_no_intent_runtime_factory,
     run_long_horizon_economic_job,
@@ -109,6 +110,16 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--relative-path", required=True)
     source.add_argument("--output", type=Path, required=True)
 
+    sparse_source = sub.add_parser(
+        "seal-sparse-source-slice",
+        help="materialize and seal an observed-epoch-union month without imputation",
+    )
+    sparse_source.add_argument("--runner-handoff", type=Path, required=True)
+    sparse_source.add_argument("--source-root", type=Path, required=True)
+    sparse_source.add_argument("--source-manifest", type=Path, required=True)
+    sparse_source.add_argument("--relative-path", required=True)
+    sparse_source.add_argument("--output", type=Path, required=True)
+
     builtins = sub.add_parser("seal-builtin-strategies")
     builtins.add_argument("--output", type=Path, required=True)
 
@@ -175,13 +186,18 @@ def main() -> int:
             )
         else:
             handoff = _read_json(args.runner_handoff)
-        if args.command == "seal-source-slice":
+        if args.command in {"seal-source-slice", "seal-sparse-source-slice"}:
             job = handoff.get("job")
             if not isinstance(job, dict):
                 raise DojoLongHorizonEconomicRunnerError(
                     "runner handoff has no job object"
                 )
-            result = build_month_source_slice_receipt(
+            builder = (
+                build_sparse_month_source_slice_receipt
+                if args.command == "seal-sparse-source-slice"
+                else build_month_source_slice_receipt
+            )
+            result = builder(
                 source_root=args.source_root,
                 relative_path=args.relative_path,
                 job=job,

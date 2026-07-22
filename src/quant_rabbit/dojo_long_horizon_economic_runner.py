@@ -81,7 +81,10 @@ from quant_rabbit.dojo_shared_worker_protocol import (
     seal_worker_proposal,
     seal_worker_proposal_batch,
 )
-from quant_rabbit.dojo_sparse_replay import build_sparse_replay_schedule_from_rows
+from quant_rabbit.dojo_sparse_replay import (
+    AUTHENTICATED_OBSERVED_SOURCE_POLICY,
+    build_sparse_replay_schedule_from_rows,
+)
 from quant_rabbit.dojo_sparse_source_slice_v2 import (
     GENESIS_SHA256 as SPARSE_SOURCE_GENESIS_SHA256,
     SPARSE_SOURCE_SLICE_CONTRACT,
@@ -1477,6 +1480,7 @@ def build_sparse_month_source_slice_receipt(
         start=lower,
         end=upper,
         granularity=job["granularity"],
+        policy=AUTHENTICATED_OBSERVED_SOURCE_POLICY,
     )
     parent_bindings = _sparse_parent_bindings(
         source_manifest,
@@ -1535,8 +1539,12 @@ def build_sparse_month_source_slice_receipt(
             for key, value in parent.items()
             if key != "parent_quote_coverage_complete"
         },
+        # Every delivered observation is authenticated and included, which is
+        # sufficient for causal observed-only execution.  This does not prove
+        # that every calendar-open slot emitted a quote; that separate flag
+        # remains false and prevents promotion/official-evidence labeling.
         "parent_quote_coverage_complete": True,
-        "sparse_calendar_coverage_proved": True,
+        "sparse_calendar_coverage_proved": False,
         "relative_path": relative_path,
         "file_size_bytes": file_size,
         "file_sha256": file_sha,
@@ -1713,8 +1721,12 @@ def validate_sparse_month_source_slice_receipt(
         or coverage.get("synthetic_quote_count") != 0
         or coverage.get("carry_forward_quote_count") != 0
         or row["feed_pairs"] != job["feed_pairs"]
+        or coverage.get("coverage_policy_id")
+        != AUTHENTICATED_OBSERVED_SOURCE_POLICY.policy_id
+        or coverage.get("expected_calendar_coverage_enforced") is not False
+        or coverage.get("expected_open_slot_gap_enforced") is not False
         or row["parent_quote_coverage_complete"] is not True
-        or row["sparse_calendar_coverage_proved"] is not True
+        or row["sparse_calendar_coverage_proved"] is not False
         or row["complete_rows_only"] is not True
         or row["synthetic_quote_count"] != 0
         or row["carry_forward_quote_count"] != 0
@@ -3234,7 +3246,13 @@ def run_long_horizon_economic_job(
         _write_exclusive_json(
             fixed_decision_attestation_path, fixed_decision_attestation
         )
-    source_quote_coverage_proved = receipt["parent_quote_coverage_complete"] is True
+    source_quote_coverage_proved = (
+        receipt["parent_quote_coverage_complete"] is True
+        and (
+            not sparse_source
+            or receipt.get("sparse_calendar_coverage_proved") is True
+        )
+    )
     independent_reexecution_passed = (
         fixed_attestation["status"] == "VERIFIED_COMPLETE"
         and fixed_attestation["downstream_terminal_reduction_allowed"] is True

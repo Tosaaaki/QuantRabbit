@@ -1,0 +1,55 @@
+{
+  "authority": {
+    "automatic_deployment_allowed": false,
+    "broker_mutation_allowed": false,
+    "historical_replay_process_start_allowed": true,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false,
+    "research_filesystem_write_allowed": true
+  },
+  "contract": "QR_DOJO_G2_HISTORICAL_RUN_CONTROL_V1",
+  "execution": {
+    "allowed_command": "scripts/run-dojo-historical-train-control.py run-next",
+    "evidence_tier": "WORN_HISTORICAL_TRAIN_ONLY",
+    "max_jobs_per_invocation": 1,
+    "max_parallel_jobs": 1,
+    "minimum_free_disk_bytes": 26843545600,
+    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-fixed-six-family-20260722-r4",
+    "source_slice_policy": "AUTHENTICATED_OBSERVED_EPOCH_UNION_NO_IMPUTATION",
+    "training_root_may_be_deleted": false
+  },
+  "fixed_inputs": {
+    "generation": "G2",
+    "study_profile": "RAPID_SIX_MONTH_2025H1",
+    "registry_artifact_sha256": "7a12ece80923d3cc2eb173fc166117b9e8d2100ba5e59100af60b1c9c5bbdfbb",
+    "registry_path": "research/registries/dojo_g2_baseline_revision_v1.json",
+    "source_manifest_path": "research/data/dojo_long_horizon_source_manifest_2020_2026.json",
+    "source_manifest_sha256": "f8f68681d1a23ef5ed1e2fdbd0e34be7cc57298dec9f69e4167b7fc8c359ae64"
+  },
+  "resource_policy": {
+    "archive_completed_job_before_source_eviction": true,
+    "large_legacy_archive_remote_verification_blocks_source_deletion": true,
+    "large_legacy_archive_remote_verification_blocks_this_compact_train": false,
+    "stop_before_disk_floor": true
+  },
+  "schema_version": 1,
+  "trainer_milestones": {
+    "continuous_account_role": "SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE",
+    "economics_hidden_while_job_running": true,
+    "m5_completed_months_per_review": 6,
+    "minimum_completed_intrabar_paths_per_month": 2,
+    "non_overlapping_six_month_blocks_required": true,
+    "parameter_change_applies_only_to_new_generation": true,
+    "partial_month_tuning_allowed": false,
+    "rapid_train_evaluation_mode": "INDEPENDENT_MONTH",
+    "review_inputs": [
+      "COST_AFTER_EQUITY",
+      "INDEPENDENT_MONTH_DRAWDOWN",
+      "MARGIN_USAGE_AND_REJECTS",
+      "FAMILY_LOPO_AND_MAIN_PAIR_CURRENCY_ATTRIBUTION",
+      "TRADE_AND_ZERO_TRADE_COUNTS"
+    ],
+    "target_multiple_may_backsolve_sizing": false
+  }
+}

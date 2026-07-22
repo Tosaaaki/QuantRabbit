@@ -72,8 +72,11 @@
   - the external AI trainer may reserve or complete exactly one queue candidate only through
     that control plane after a changed terminal/material cost+MTM+margin+LOPO TRAIN result;
     unchanged results remain a recorded semantic no-op and a stale/forked parent is rejected
-  - reservation remains planning custody, not replay permission: the separate historical
-    run-control contract is still absent and the heartbeat must not start a replay process
+  - reservation remains planning custody, not replay permission. The separately reviewed
+    `config/dojo_g2_historical_run_control_v1.json` authorizes only the fixed
+    `RAPID_SIX_MONTH_2025H1` G2 baseline replay, one job per invocation, with broker/live/order
+    authority false/false/NONE; it grants no queue candidate permission. The heartbeat stops
+    this run at the six-completed-M5-month trainer boundary
   - holdout/prospective opening, monthly-target backsolving, proof, promotion, live permission,
     broker mutation, and QuantRabbit model API calls remain forbidden
 

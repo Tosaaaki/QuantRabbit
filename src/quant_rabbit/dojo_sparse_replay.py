@@ -55,8 +55,22 @@ class SparseCoveragePolicy:
     full_day_reference_m1_slots: int = 1_000
     max_open_slot_gap_seconds: int = 900
     minimum_rows_per_pair: int = 2
+    policy_id: str = "EXPECTED_OANDA_CALENDAR_COVERAGE_V1"
+    enforce_expected_calendar_coverage: bool = True
+    enforce_expected_open_slot_gap: bool = True
 
     def validate(self) -> None:
+        if not self.policy_id or not isinstance(self.policy_id, str):
+            raise SparseReplayError("policy_id must be a non-empty string")
+        for name, value in (
+            (
+                "enforce_expected_calendar_coverage",
+                self.enforce_expected_calendar_coverage,
+            ),
+            ("enforce_expected_open_slot_gap", self.enforce_expected_open_slot_gap),
+        ):
+            if value.__class__ is not bool:
+                raise SparseReplayError(f"{name} must be a boolean")
         for name, value in (
             ("full_day_coverage_floor", self.full_day_coverage_floor),
             ("partial_day_coverage_floor", self.partial_day_coverage_floor),
@@ -83,6 +97,20 @@ class SparseCoveragePolicy:
 
 DEFAULT_SPARSE_COVERAGE_POLICY: Final = SparseCoveragePolicy()
 
+# OANDA's authenticated candle response is observationally sparse: a pair can
+# have no candle while other pairs trade, and the market can have calendar-open
+# slots with no delivered observations during holidays.  Long-horizon replay
+# may use this policy only after its caller has verified the immutable raw-file
+# hash and the acquisition request-completion receipt.  Calendar alignment,
+# duplicate rejection, pair membership, and observed-only/no-imputation remain
+# enforced; only the invalid assumption that every open slot must emit a candle
+# is disabled.
+AUTHENTICATED_OBSERVED_SOURCE_POLICY: Final = SparseCoveragePolicy(
+    policy_id="AUTHENTICATED_OANDA_OBSERVED_ONLY_NO_IMPUTATION_V1",
+    enforce_expected_calendar_coverage=False,
+    enforce_expected_open_slot_gap=False,
+)
+
 
 @dataclass(frozen=True)
 class SparseDailyCoverage:
@@ -91,6 +119,7 @@ class SparseDailyCoverage:
     partial_window_day: bool
     expected_slot_count: int
     coverage_floor: float
+    coverage_enforced: bool
     pair_row_counts: tuple[tuple[str, int], ...]
     pair_coverage_ratios: tuple[tuple[str, float], ...]
 
@@ -101,6 +130,7 @@ class SparseDailyCoverage:
             "partial_window_day": self.partial_window_day,
             "expected_slot_count": self.expected_slot_count,
             "coverage_floor": self.coverage_floor,
+            "coverage_enforced": self.coverage_enforced,
             "pair_row_counts": dict(self.pair_row_counts),
             "pair_coverage_ratios": dict(self.pair_coverage_ratios),
         }
@@ -172,6 +202,13 @@ class SparseReplaySchedule:
             "cadence_seconds": self.cadence_seconds,
             "coordinate_schedule": COORDINATE_SCHEDULE,
             "quote_policy": QUOTE_POLICY,
+            "coverage_policy_id": self.policy.policy_id,
+            "expected_calendar_coverage_enforced": (
+                self.policy.enforce_expected_calendar_coverage
+            ),
+            "expected_open_slot_gap_enforced": (
+                self.policy.enforce_expected_open_slot_gap
+            ),
             "feed_pairs": list(self.feed_pairs),
             "from_epoch": self.start_epoch,
             "to_epoch": self.end_epoch,
@@ -468,7 +505,7 @@ def _daily_coverage(
             ratio = count / len(day_epochs)
             counts.append((pair, count))
             ratios.append((pair, ratio))
-            if ratio < floor:
+            if policy.enforce_expected_calendar_coverage and ratio < floor:
                 raise SparseReplayError(
                     f"OANDA sparse coverage below {floor:.0%} for {pair} "
                     f"on {day}: {count}/{len(day_epochs)}"
@@ -480,6 +517,7 @@ def _daily_coverage(
                 partial_window_day=partial_window_day,
                 expected_slot_count=len(day_epochs),
                 coverage_floor=floor,
+                coverage_enforced=policy.enforce_expected_calendar_coverage,
                 pair_row_counts=tuple(counts),
                 pair_coverage_ratios=tuple(ratios),
             )
@@ -495,6 +533,8 @@ def _validate_open_slot_gaps(
     cadence_seconds: int,
     policy: SparseCoveragePolicy,
 ) -> None:
+    if not policy.enforce_expected_open_slot_gap:
+        return
     expected_index = {epoch: index for index, epoch in enumerate(expected_epochs)}
     for pair in pairs:
         epochs = observed[pair]
@@ -554,6 +594,7 @@ def _aligned_utc(value: datetime, cadence_seconds: int, *, field: str) -> dateti
 
 
 __all__ = [
+    "AUTHENTICATED_OBSERVED_SOURCE_POLICY",
     "COORDINATE_SCHEDULE",
     "DEFAULT_SPARSE_COVERAGE_POLICY",
     "INTRABAR_PHASE_COUNT",

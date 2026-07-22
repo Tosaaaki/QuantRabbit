@@ -7,6 +7,7 @@ import pytest
 
 from quant_rabbit.dojo_market_calendar import expected_oanda_fx_slots
 from quant_rabbit.dojo_sparse_replay import (
+    AUTHENTICATED_OBSERVED_SOURCE_POLICY,
     QUOTE_POLICY,
     SparseReplayError,
     build_sparse_replay_schedule,
@@ -229,6 +230,33 @@ def test_m5_rejects_open_slot_gap_larger_than_fixed_bound(
             end=fixture.end,
             granularity="M5",
         )
+
+
+def test_authenticated_observed_source_accepts_real_pair_sparse_gap(
+    sparse_m5_rows: SparseRowsFixture,
+) -> None:
+    fixture = sparse_m5_rows
+    for index in (4, 5, 6):
+        del fixture.pair_rows["USD_JPY"][fixture.epochs[index]]
+
+    schedule = build_sparse_replay_schedule_from_rows(
+        fixture.pair_rows,
+        feed_pairs=PAIRS,
+        start=fixture.start,
+        end=fixture.end,
+        granularity="M5",
+        policy=AUTHENTICATED_OBSERVED_SOURCE_POLICY,
+    )
+    receipt = schedule.coverage_receipt()
+
+    assert receipt["coverage_policy_id"] == (
+        "AUTHENTICATED_OANDA_OBSERVED_ONLY_NO_IMPUTATION_V1"
+    )
+    assert receipt["expected_calendar_coverage_enforced"] is False
+    assert receipt["expected_open_slot_gap_enforced"] is False
+    assert receipt["synthetic_quote_count"] == 0
+    assert receipt["carry_forward_quote_count"] == 0
+    assert receipt["maximum_pair_local_quote_age_seconds"] == 900
 
 
 def test_full_m1_day_keeps_ninety_eight_percent_floor() -> None:

@@ -102,6 +102,37 @@ M5_MONTHS: Final = _month_range((2020, 1), (2026, 6))
 M1_CORE5_MONTHS: Final = M5_MONTHS
 M1_FULL28_MONTHS: Final = _month_range((2025, 1), (2026, 6))
 
+LONG_HORIZON_PROFILE: Final = "LONG_HORIZON_2020_2026H1"
+RAPID_2025H1_PROFILE: Final = "RAPID_SIX_MONTH_2025H1"
+_PROFILE_MONTHS: Final = {
+    LONG_HORIZON_PROFILE: (M5_MONTHS, M1_CORE5_MONTHS, M1_FULL28_MONTHS),
+    RAPID_2025H1_PROFILE: (
+        _month_range((2025, 1), (2025, 6)),
+        _month_range((2025, 1), (2025, 6)),
+        _month_range((2025, 1), (2025, 6)),
+    ),
+}
+_PROFILE_EVALUATION_MODES: Final = {
+    LONG_HORIZON_PROFILE: EVALUATION_MODES,
+    RAPID_2025H1_PROFILE: ("INDEPENDENT_MONTH",),
+}
+_PROFILE_LOPO_STAGES: Final = {
+    LONG_HORIZON_PROFILE: LOPO_STAGES,
+    RAPID_2025H1_PROFILE: ("FAMILY_LOPO",),
+}
+
+
+def _period_bounds(months: Sequence[str]) -> tuple[str, str]:
+    first_year, first_month = map(int, months[0].split("-"))
+    last_year, last_month = map(int, months[-1].split("-"))
+    next_year, next_month = last_year, last_month + 1
+    if next_month == 13:
+        next_year, next_month = next_year + 1, 1
+    return (
+        f"{first_year:04d}-{first_month:02d}-01T00:00:00Z",
+        f"{next_year:04d}-{next_month:02d}-01T00:00:00Z",
+    )
+
 
 def _check_canonical_json(value: Any, *, path: str = "$", depth: int = 0) -> None:
     if depth > 32:
@@ -208,8 +239,8 @@ def _authority() -> dict[str, Any]:
     }
 
 
-def _month_mode_contracts() -> list[dict[str, Any]]:
-    return [
+def _month_mode_contracts(modes: Sequence[str]) -> list[dict[str, Any]]:
+    contracts = [
         {
             "mode": "INDEPENDENT_MONTH",
             "account_reset_at_each_month_start": True,
@@ -230,21 +261,25 @@ def _month_mode_contracts() -> list[dict[str, Any]]:
             "target_denominator": "MONTH_OPEN_MTM_EQUITY",
         },
     ]
+    return [row for row in contracts if row["mode"] in modes]
 
 
 def _m1_rectangles(
     source_digests: Mapping[str, str],
     corpus_digests: Mapping[str, str],
+    *,
+    core_months: Sequence[str],
+    full_months: Sequence[str],
 ) -> list[dict[str, Any]]:
     rectangles = [
         {
             "rectangle_id": M1_CORE5_BINDING_ID,
             "granularity": M1_GRANULARITY,
             "pairs": list(CORE5_PAIRS),
-            "months": list(M1_CORE5_MONTHS),
+            "months": list(core_months),
             "pair_count": len(CORE5_PAIRS),
-            "month_count": len(M1_CORE5_MONTHS),
-            "pair_month_cell_count": len(CORE5_PAIRS) * len(M1_CORE5_MONTHS),
+            "month_count": len(core_months),
+            "pair_month_cell_count": len(CORE5_PAIRS) * len(core_months),
             "source_digest_sha256": source_digests[M1_CORE5_BINDING_ID],
             "corpus_digest_sha256": corpus_digests[M1_CORE5_BINDING_ID],
         },
@@ -252,10 +287,10 @@ def _m1_rectangles(
             "rectangle_id": M1_FULL28_BINDING_ID,
             "granularity": M1_GRANULARITY,
             "pairs": list(DEFAULT_TRADER_PAIRS),
-            "months": list(M1_FULL28_MONTHS),
+            "months": list(full_months),
             "pair_count": len(DEFAULT_TRADER_PAIRS),
-            "month_count": len(M1_FULL28_MONTHS),
-            "pair_month_cell_count": len(DEFAULT_TRADER_PAIRS) * len(M1_FULL28_MONTHS),
+            "month_count": len(full_months),
+            "pair_month_cell_count": len(DEFAULT_TRADER_PAIRS) * len(full_months),
             "source_digest_sha256": source_digests[M1_FULL28_BINDING_ID],
             "corpus_digest_sha256": corpus_digests[M1_FULL28_BINDING_ID],
         },
@@ -263,9 +298,17 @@ def _m1_rectangles(
     return [{**row, "rectangle_sha256": canonical_sha256(row)} for row in rectangles]
 
 
-def _denominator(families: Sequence[str]) -> dict[str, Any]:
-    month_count = len(M5_MONTHS)
-    mode_count = len(EVALUATION_MODES)
+def _denominator(
+    families: Sequence[str],
+    *,
+    m5_months: Sequence[str],
+    m1_core_months: Sequence[str],
+    m1_full_months: Sequence[str],
+    evaluation_modes: Sequence[str],
+    lopo_stages: Sequence[str],
+) -> dict[str, Any]:
+    month_count = len(m5_months)
+    mode_count = len(evaluation_modes)
     path_count = len(INTRABAR_PATHS)
     scenario_count = len(COST_SCENARIOS)
     base_strata = month_count * mode_count * path_count * scenario_count
@@ -273,10 +316,12 @@ def _denominator(families: Sequence[str]) -> dict[str, Any]:
     family_lopo = base_strata * len(families)
     currency_lopo = base_strata * len(G8_CURRENCIES)
 
-    m1_pair_month_cells = len(CORE5_PAIRS) * len(M1_CORE5_MONTHS) + len(
+    m1_pair_month_cells = len(CORE5_PAIRS) * len(m1_core_months) + len(
         DEFAULT_TRADER_PAIRS
-    ) * len(M1_FULL28_MONTHS)
-    m1_overlap_cells = len(CORE5_PAIRS) * len(M1_FULL28_MONTHS)
+    ) * len(m1_full_months)
+    m1_overlap_cells = len(CORE5_PAIRS) * len(
+        set(m1_core_months).intersection(m1_full_months)
+    )
     m1_unique_pair_month_cells = m1_pair_month_cells - m1_overlap_cells
     m1_precision_result_cells = (
         m1_pair_month_cells * mode_count * path_count * scenario_count
@@ -287,51 +332,50 @@ def _denominator(families: Sequence[str]) -> dict[str, Any]:
             "stage": "PORTFOLIO_MAIN",
             "label_count": 1,
             "result_cell_count": base_strata,
-        },
-        {
+        }
+    ]
+    if "PAIR_LOPO" in lopo_stages:
+        stages.append({
             "stage": "PAIR_LOPO",
             "labels": list(DEFAULT_TRADER_PAIRS),
             "label_count": len(DEFAULT_TRADER_PAIRS),
             "result_cell_count": pair_lopo,
-        },
-        {
+        })
+    if "FAMILY_LOPO" in lopo_stages:
+        stages.append({
             "stage": "FAMILY_LOPO",
             "labels": list(families),
             "label_count": len(families),
             "result_cell_count": family_lopo,
-        },
-        {
+        })
+    if "CURRENCY_LOPO" in lopo_stages:
+        stages.append({
             "stage": "CURRENCY_LOPO",
             "labels": list(G8_CURRENCIES),
             "label_count": len(G8_CURRENCIES),
             "removed_pair_count_per_label": 7,
             "result_cell_count": currency_lopo,
-        },
-    ]
+        })
+    portfolio_result_cell_count = sum(row["result_cell_count"] for row in stages)
     body = {
-        "months": list(M5_MONTHS),
+        "months": list(m5_months),
         "month_count": month_count,
         "m5_pairs": list(DEFAULT_TRADER_PAIRS),
         "m5_pair_count": len(DEFAULT_TRADER_PAIRS),
         "m5_pair_month_source_cell_count": len(DEFAULT_TRADER_PAIRS) * month_count,
-        "evaluation_modes": list(EVALUATION_MODES),
+        "evaluation_modes": list(evaluation_modes),
         "intrabar_paths": list(INTRABAR_PATHS),
         "cost_scenarios": list(COST_SCENARIOS),
         "base_month_mode_path_scenario_cell_count": base_strata,
         "portfolio_stages": stages,
-        "portfolio_result_cell_count": base_strata
-        + pair_lopo
-        + family_lopo
-        + currency_lopo,
+        "portfolio_result_cell_count": portfolio_result_cell_count,
         "m1_precision_rectangle_pair_month_cell_count": m1_pair_month_cells,
         "m1_precision_overlap_pair_month_cell_count": m1_overlap_cells,
         "m1_precision_unique_pair_month_cell_count": m1_unique_pair_month_cells,
         "m1_precision_result_cell_count": m1_precision_result_cells,
-        "total_required_result_cell_count": base_strata
-        + pair_lopo
-        + family_lopo
-        + currency_lopo
-        + m1_precision_result_cells,
+        "total_required_result_cell_count": (
+            portfolio_result_cell_count + m1_precision_result_cells
+        ),
         "missing_or_failed_cell_policy": "COUNT_IN_DENOMINATOR_AND_FAIL_CLOSED",
         "early_stopping_allowed": False,
         "additive_substitute_for_lopo_allowed": False,
@@ -339,19 +383,28 @@ def _denominator(families: Sequence[str]) -> dict[str, Any]:
     return {**body, "denominator_sha256": canonical_sha256(body)}
 
 
-def _diagnostic_gates() -> dict[str, Any]:
+def _diagnostic_gates(
+    *,
+    m5_months: Sequence[str],
+    evaluation_modes: Sequence[str],
+    lopo_stages: Sequence[str],
+) -> dict[str, Any]:
+    full_profile = (
+        tuple(evaluation_modes) == EVALUATION_MODES
+        and tuple(lopo_stages) == LOPO_STAGES
+    )
     body = {
         "objective": "MONTHLY_3X_WORN_TRAIN_DIAGNOSTIC",
         "target_multiple": TARGET_MULTIPLE,
         "target_is_sizing_input": False,
         "target_may_backsolve_risk_or_leverage": False,
         "pessimistic_month_multiple_policy": "MIN_OHLC_OLHC_STRESS",
-        "required_month_count": len(M5_MONTHS),
-        "required_three_x_month_count": len(M5_MONTHS),
+        "required_month_count": len(m5_months),
+        "required_three_x_month_count": len(m5_months),
         "required_three_x_hit_rate": 1.0,
         "maximum_losing_month_count": 0,
         "independent_month_target_required": True,
-        "continuous_month_target_required": True,
+        "continuous_month_target_required": "CONTINUOUS_ACCOUNT" in evaluation_modes,
         "continuous_mode_cannot_substitute_for_failed_independent_months": True,
         "base_max_drawdown_fraction_max": BASE_MAX_DRAWDOWN_FRACTION,
         "stress_max_drawdown_fraction_max": STRESS_MAX_DRAWDOWN_FRACTION,
@@ -360,7 +413,11 @@ def _diagnostic_gates() -> dict[str, Any]:
         "pair_lopo_profit_drop_fraction_max": LOPO_PROFIT_DROP_FRACTION_MAX,
         "family_lopo_profit_drop_fraction_max": LOPO_PROFIT_DROP_FRACTION_MAX,
         "currency_lopo_profit_drop_fraction_max": LOPO_PROFIT_DROP_FRACTION_MAX,
-        "all_paths_scenarios_modes_and_lopo_required": True,
+        "pair_lopo_required": "PAIR_LOPO" in lopo_stages,
+        "family_lopo_required": "FAMILY_LOPO" in lopo_stages,
+        "currency_lopo_required": "CURRENCY_LOPO" in lopo_stages,
+        "all_paths_scenarios_modes_and_lopo_required": full_profile,
+        "profile_can_reach_three_x_gate": full_profile,
         "missing_cells_pass": False,
         "diagnostic_pass_grants_proof": False,
         "diagnostic_pass_grants_live_permission": False,
@@ -375,6 +432,7 @@ def build_long_horizon_train_plan(
     source_digests: Mapping[str, str],
     corpus_digests: Mapping[str, str],
     implementation_digests: Mapping[str, str],
+    study_profile: str = LONG_HORIZON_PROFILE,
 ) -> dict[str, Any]:
     """Build the canonical fixed-denominator worn-TRAIN plan.
 
@@ -399,20 +457,31 @@ def build_long_horizon_train_plan(
         keys=IMPLEMENTATION_DIGEST_KEYS,
         field="implementation_digests",
     )
+    if study_profile not in _PROFILE_MONTHS:
+        raise DojoLongHorizonPlanError("study_profile is not reviewed")
+    m5_months, m1_core_months, m1_full_months = _PROFILE_MONTHS[study_profile]
+    evaluation_modes = _PROFILE_EVALUATION_MODES[study_profile]
+    lopo_stages = _PROFILE_LOPO_STAGES[study_profile]
+    period_from, period_to = _period_bounds(m5_months)
 
     source_body = {
         "price_component": PRICE_COMPONENT,
         "m5": {
             "binding_id": M5_BINDING_ID,
             "granularity": M5_GRANULARITY,
-            "from_utc": PERIOD_FROM_UTC,
-            "to_utc": PERIOD_TO_UTC,
+            "from_utc": period_from,
+            "to_utc": period_to,
             "pairs": list(DEFAULT_TRADER_PAIRS),
-            "months": list(M5_MONTHS),
+            "months": list(m5_months),
             "source_digest_sha256": sources[M5_BINDING_ID],
             "corpus_digest_sha256": corpora[M5_BINDING_ID],
         },
-        "m1_precision_rectangles": _m1_rectangles(sources, corpora),
+        "m1_precision_rectangles": _m1_rectangles(
+            sources,
+            corpora,
+            core_months=m1_core_months,
+            full_months=m1_full_months,
+        ),
     }
     source_bindings = {
         **source_body,
@@ -440,18 +509,19 @@ def build_long_horizon_train_plan(
         "contract": CONTRACT,
         "schema_version": SCHEMA_VERSION,
         "classification": EVIDENCE_TIER,
+        "study_profile": study_profile,
         "period": {
-            "from_utc": PERIOD_FROM_UTC,
-            "to_utc": PERIOD_TO_UTC,
+            "from_utc": period_from,
+            "to_utc": period_to,
             "half_open": True,
-            "calendar_months": list(M5_MONTHS),
-            "month_count": len(M5_MONTHS),
+            "calendar_months": list(m5_months),
+            "month_count": len(m5_months),
         },
         "source_bindings": source_bindings,
         "implementation_binding": implementation,
         "portfolio": portfolio,
         "evaluation": {
-            "modes": _month_mode_contracts(),
+            "modes": _month_mode_contracts(evaluation_modes),
             "intrabar_paths": list(INTRABAR_PATHS),
             "cost_scenarios": list(COST_SCENARIOS),
             "one_decision_context_per_timestamp": True,
@@ -467,20 +537,44 @@ def build_long_horizon_train_plan(
             "known_gap_disclosure": {
                 "pair": "NZD_CHF",
                 "granularity": M1_GRANULARITY,
-                "months": list(_month_range((2024, 1), (2024, 12))),
+                "months": [
+                    month
+                    for month in _month_range((2024, 1), (2024, 12))
+                    if month in set(m1_core_months).union(m1_full_months)
+                ],
                 "handling": "NOT_IN_EITHER_M1_PRECISION_RECTANGLE_AND_NEVER_IMPUTED",
             },
         },
-        "exact_denominator": _denominator(families),
-        "monthly_3x_diagnostic_gates": _diagnostic_gates(),
+        "exact_denominator": _denominator(
+            families,
+            m5_months=m5_months,
+            m1_core_months=m1_core_months,
+            m1_full_months=m1_full_months,
+            evaluation_modes=evaluation_modes,
+            lopo_stages=lopo_stages,
+        ),
+        "monthly_3x_diagnostic_gates": _diagnostic_gates(
+            m5_months=m5_months,
+            evaluation_modes=evaluation_modes,
+            lopo_stages=lopo_stages,
+        ),
         "authority": _authority(),
         "limitations": [
-            "ALL_2020_2026H1_HISTORY_IS_WORN_TRAIN",
+            (
+                "ALL_2020_2026H1_HISTORY_IS_WORN_TRAIN"
+                if study_profile == LONG_HORIZON_PROFILE
+                else "2025H1_IS_WORN_RAPID_TRAIN"
+            ),
             "NO_UNTOUCHED_HISTORICAL_HOLDOUT",
             "M1_IS_LIMITED_TO_TWO_PREDECLARED_PRECISION_RECTANGLES",
             "NZD_CHF_2024_M1_MISSING_AND_NOT_IMPUTED",
             "HISTORICAL_DIAGNOSTIC_CANNOT_GUARANTEE_MONTHLY_3X",
             "FORWARD_PAPER_AND_SEPARATE_PROMOTION_CONTRACT_REQUIRED",
+            *(
+                ["RAPID_PROFILE_REQUIRES_FULL_LONG_PROFILE_FOR_3X_GATE"]
+                if study_profile == RAPID_2025H1_PROFILE
+                else []
+            ),
         ],
     }
     return {**body, "plan_sha256": canonical_sha256(body)}
@@ -496,6 +590,7 @@ def validate_long_horizon_train_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         "contract",
         "schema_version",
         "classification",
+        "study_profile",
         "period",
         "source_bindings",
         "implementation_binding",
@@ -528,6 +623,7 @@ def validate_long_horizon_train_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         }
         family_ids = portfolio["families"]
         implementation_digests = implementation["digests"]
+        study_profile = plan["study_profile"]
     except (KeyError, IndexError, TypeError) as exc:
         raise DojoLongHorizonPlanError(
             "plan is missing a sealed source, family, or implementation binding"
@@ -538,6 +634,7 @@ def validate_long_horizon_train_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         source_digests=sources,
         corpus_digests=corpora,
         implementation_digests=implementation_digests,
+        study_profile=study_profile,
     )
     if dict(plan) != expected:
         raise DojoLongHorizonPlanError(
@@ -558,6 +655,8 @@ __all__ = [
     "M1_FULL28_BINDING_ID",
     "M5_BINDING_ID",
     "M5_MONTHS",
+    "LONG_HORIZON_PROFILE",
+    "RAPID_2025H1_PROFILE",
     "SOURCE_BINDING_IDS",
     "build_long_horizon_train_plan",
     "canonical_sha256",

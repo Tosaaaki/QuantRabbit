@@ -423,12 +423,22 @@ def _write_sparse_source_from_v1(
         "quote_policy": SPARSE_QUOTE_POLICY,
         "schedule_coverage_receipt": {
             "quote_policy": SPARSE_QUOTE_POLICY,
+            "coverage_policy_id": (
+                "AUTHENTICATED_OANDA_OBSERVED_ONLY_NO_IMPUTATION_V1"
+            ),
+            "expected_calendar_coverage_enforced": False,
+            "expected_open_slot_gap_enforced": False,
             "synthetic_quote_count": 0,
             "carry_forward_quote_count": 0,
         },
         "schedule_coverage_sha256": canonical_sha256(
             {
                 "quote_policy": SPARSE_QUOTE_POLICY,
+                "coverage_policy_id": (
+                    "AUTHENTICATED_OANDA_OBSERVED_ONLY_NO_IMPUTATION_V1"
+                ),
+                "expected_calendar_coverage_enforced": False,
+                "expected_open_slot_gap_enforced": False,
                 "synthetic_quote_count": 0,
                 "carry_forward_quote_count": 0,
             }
@@ -496,7 +506,7 @@ def _write_sparse_source_from_v1(
         "feed_pairs": feed,
         **{key: synchronized_receipt[key] for key in parent_keys},
         "parent_quote_coverage_complete": True,
-        "sparse_calendar_coverage_proved": True,
+        "sparse_calendar_coverage_proved": False,
         "relative_path": sparse_path.name,
         "file_size_bytes": len(sparse_bytes),
         "file_sha256": hashlib.sha256(sparse_bytes).hexdigest(),
@@ -767,8 +777,9 @@ def test_sparse_observed_union_reexecutes_without_synthetic_or_carry_fills(
     assert result["sparse_observed_epoch_union_used"] is True
     assert result["synthetic_executable_quote_count"] == 0
     assert result["carry_forward_executable_quote_count"] == 0
-    assert result["source_quote_coverage_proved"] is True
+    assert result["source_quote_coverage_proved"] is False
     assert result["independent_economic_reexecution_passed"] is True
+    assert result["official_evidence_eligible"] is False
     assert result["complete_coordinate_count"] == len(
         sealed_handoff["runnable_coordinate_ids"]
     )

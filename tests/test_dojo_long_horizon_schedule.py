@@ -7,6 +7,7 @@ from quant_rabbit.dojo_long_horizon_plan import (
     M1_CORE5_BINDING_ID,
     M1_FULL28_BINDING_ID,
     M5_BINDING_ID,
+    RAPID_2025H1_PROFILE,
     SOURCE_BINDING_IDS,
     build_long_horizon_train_plan,
     canonical_sha256,
@@ -65,6 +66,35 @@ def test_expands_exact_fixed_denominator_into_bounded_stream_jobs(
     assert len(ids) == len(set(ids)) == 32_112
     assert schedule["all_coordinate_ids_sha256"] == canonical_sha256(ids)
     assert validate_long_horizon_stream_schedule(schedule, plan=plan) == schedule
+
+
+def test_rapid_profile_is_independent_month_family_screen_at_2025_start() -> None:
+    rapid_plan = build_long_horizon_train_plan(
+        portfolio_families=FAMILIES,
+        source_digests=_digests(SOURCE_BINDING_IDS, 0),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, 10),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, 20),
+        study_profile=RAPID_2025H1_PROFILE,
+    )
+    rapid = build_long_horizon_stream_schedule(
+        rapid_plan, worker_bindings=WORKERS
+    )
+
+    assert rapid["stream_job_count"] == 36
+    assert rapid["result_coordinate_count"] == 888
+    assert rapid["jobs"][0]["month"] == "2025-01"
+    assert rapid["jobs"][0]["source_binding_id"] == M5_BINDING_ID
+    assert rapid["jobs"][0]["coordinate_count"] == 8
+    continuous = [
+        row
+        for row in rapid["jobs"][0]["coordinates"]
+        if row["evaluation_mode"] == "CONTINUOUS_ACCOUNT"
+    ]
+    assert continuous == []
+    assert {
+        row["stage"] for row in rapid["jobs"][0]["coordinates"]
+    } == {"PORTFOLIO_MAIN", "FAMILY_LOPO"}
+    assert validate_long_horizon_stream_schedule(rapid, plan=rapid_plan) == rapid
 
 
 def test_each_job_requires_one_stream_fanned_out_before_decisions(

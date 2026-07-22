@@ -368,7 +368,11 @@ def _m5_coordinates(
     families = list(plan["portfolio"]["families"])
     modes = [row["mode"] for row in plan["evaluation"]["modes"]]
     scenarios = list(plan["evaluation"]["cost_scenarios"])
-    currencies = list(plan["exact_denominator"]["portfolio_stages"][3]["labels"])
+    stages = {
+        row["stage"]: row
+        for row in plan["exact_denominator"]["portfolio_stages"]
+    }
+    currencies = list(stages.get("CURRENCY_LOPO", {}).get("labels", []))
     result: list[dict[str, Any]] = []
     for mode in modes:
         for scenario in scenarios:
@@ -403,7 +407,9 @@ def _m5_coordinates(
                     replica_paired_consistency_required=False,
                 )
             )
-            for held_out_pair in feed_pairs:
+            for held_out_pair in (
+                feed_pairs if "PAIR_LOPO" in stages else ()
+            ):
                 result.append(
                     _coordinate(
                         **common,
@@ -427,7 +433,9 @@ def _m5_coordinates(
                         replica_paired_consistency_required=False,
                     )
                 )
-            for held_out_family in families:
+            for held_out_family in (
+                families if "FAMILY_LOPO" in stages else ()
+            ):
                 active_rows = [
                     row for row in worker_rows if row["family_id"] != held_out_family
                 ]

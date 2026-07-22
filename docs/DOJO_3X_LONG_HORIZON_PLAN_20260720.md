@@ -24,6 +24,23 @@ and as a continuous walk-forward account.  OHLC and OLHC paths, BASE and
 STRESS costs, missing months, aborted runs and rejected trades remain in the
 fixed denominator.
 
+### Rapid six-month trainer block
+
+The first trainer iteration uses the separately sealed
+`RAPID_SIX_MONTH_2025H1` profile: M5 and both M1 rectangles cover exactly
+2025-01 through 2025-06.  Its fast M5 screen keeps all 28 pairs and all six
+families, but evaluates independent monthly accounts with BASE/STRESS and
+main-plus-family-LOPO coordinates only.  Pair/currency LOPO, continuous
+accounts and M1 precision are deferred to the full profile for survivors.
+This is recent-regime, worn historical TRAIN, not a holdout, and the rapid
+profile cannot satisfy the 3x gate by itself.  Both M5 intrabar paths must
+finish for all six months before the AI trainer may inspect economics.
+Parameter changes create a new immutable generation; partial months cannot
+tune.  The following non-overlapping six months are the initial survival
+check, while the 2020-2026H1 profile remains the background regime-robustness
+denominator.  Six months is therefore an iteration boundary, not sufficient
+evidence for a recurring monthly 3x claim.
+
 ## Portfolio hypothesis
 
 The portfolio must earn from genuinely different causal sleeves rather than
