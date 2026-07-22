@@ -386,6 +386,9 @@ profit factor約1.091で、約0.40 pipの追加コストが期待値を消す。
 
 1. 全quote batchの期待座標commitment、bot action後の連続 `ACCOUNT_MARK`、corpus bytesからの独立再構築は実装済み。ユーザー指定の戦略多様化を受け、追加のentry-family基準線として5通貨×4戦略を全て`FIXED`で先に封印した。これはexit overlay比較ではなく、結果開封前に固定した96 replayの追加TRAINである。
 2. first waveの結果を次候補へ使う前に、累積candidate数、過去evaluation SHA、重複configを外部append-only lineageへ束縛する。generic trainerのstudy単位budgetだけでは複数studyを跨ぐp-hackingを防げないため、registry完成前はattempt 2/3を証拠として受理しない。
+   新戦略queue V1にはOS lock、append-only event SHA chain、parent/tip CAS、result artifact bytes束縛を持つ
+   `dojo_strategy_queue_control.py`を接続済み。これでAIトレーナーの予約・完了は一意に記録できるが、
+   replay processの起動権限は別契約のまま未実装である。
 3. lineage custody完成後、通過した同一entry signal列へ `FIXED / BREAKEVEN / ATR_TRAILING` を別グリッドで固定する。正式開始前に全candidate、窓、コスト、source、prompt/model/input/raw response、探索分母を封印する。
 4. round-number TP 2→3 ATRの別TRAIN追試は両経路で負となったため凍結し、同familyの後追いparameter探索を止める。
 5. `room-meta-01`の実装済み純粋controllerを長期economic runnerへ接続する。base、momentum veto、reversal veto、volatility/correlation sizing、combined admissionを同じupstream signal列・固定policy・固定分母で走らせ、HOLDした候補のcounterfactualと次順位採用を独立scorerで再構築する。接続までは利益候補としてrankしない。

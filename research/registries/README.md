@@ -65,11 +65,15 @@
     room; a four-capital-slot common TRAIN sparring arena is separate from unopened holdout
     examination and prospective-forward arenas
   - exact G2 baseline binding rejects the existing six families and any resealed duplicate
-  - the queue is currently a planning catalog, not an operational reservation authority:
-    its V1 transition state has no authenticated receipt chain or lock-backed compare-and-swap
-  - the external AI trainer must not reserve or complete a design until that control plane exists;
-    it may prepare an unreserved proposal only after a changed terminal/material
-    cost+MTM+margin+LOPO TRAIN result, while unchanged results remain a semantic no-op
+  - `quant_rabbit.dojo_strategy_queue_control` supplies the reviewed local custody boundary:
+    an OS-locked append-only event chain, exact parent/tip compare-and-swap, canonical
+    reservation recomputation, idempotent retry, and a no-follow byte binding to the
+    terminal/material TRAIN result artifact
+  - the external AI trainer may reserve or complete exactly one queue candidate only through
+    that control plane after a changed terminal/material cost+MTM+margin+LOPO TRAIN result;
+    unchanged results remain a recorded semantic no-op and a stale/forked parent is rejected
+  - reservation remains planning custody, not replay permission: the separate historical
+    run-control contract is still absent and the heartbeat must not start a replay process
   - holdout/prospective opening, monthly-target backsolving, proof, promotion, live permission,
     broker mutation, and QuantRabbit model API calls remain forbidden
 
