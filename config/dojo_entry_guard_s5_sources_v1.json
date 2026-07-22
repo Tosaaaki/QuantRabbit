@@ -1,0 +1,14 @@
+{
+  "contract": "QR_VIRTUAL_REPLAY_SOURCE_MANIFEST_V1",
+  "granularity": "S5",
+  "pairs": [
+    "USD_JPY"
+  ],
+  "files": [
+    {
+      "pair": "USD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260717T061122Z/USD_JPY/USD_JPY_S5_BA_20260508T061122Z_20260717T061122Z.jsonl.gz",
+      "sha256": "ec980059ccde5968c42acc9ffe341c3a09b98bb9a8bd2a2349d3efe9a5146358"
+    }
+  ]
+}

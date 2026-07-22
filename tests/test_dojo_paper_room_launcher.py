@@ -92,6 +92,24 @@ def test_registry_refuses_duplicate_room_ids(tmp_path):
         launcher.load_room(path, source["rooms"][0]["room_id"])
 
 
+def test_smoke_registry_can_be_explicitly_diagnostic(tmp_path):
+    launcher = _load_launcher()
+    source = json.loads(
+        (ROOT / "config/dojo_paper_rooms_v1.json").read_text(encoding="utf-8")
+    )
+    source["proof_mode"] = "diagnostic"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+
+    command, _, _ = launcher.build_launch(
+        registry_path=path,
+        room_id=source["rooms"][0]["room_id"],
+        python_executable="/fixed/python3",
+    )
+
+    assert command[command.index("--paper-proof-mode") + 1] == "diagnostic"
+
+
 def test_wave_uses_one_detached_owner_name_and_session_per_room():
     wave = _load_wave()
     registry_path = ROOT / "config/dojo_paper_rooms_v1.json"

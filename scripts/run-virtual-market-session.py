@@ -423,7 +423,8 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
 
 def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
                         time_to: str, intrabar: str = "OHLC",
-                        granularity: str = "M1"):
+                        granularity: str = "M1",
+                        source_files: list[Path] | None = None):
     """Merge pairs' M1 bars in time order; yield (epoch, pair, bid, ask, phase).
 
     Streams year by year so full-history sessions stay in bounded memory.
@@ -437,7 +438,21 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
     for year in range(int(time_from[:4]), int(time_to[:4]) + 1):
         rows = []
         for pair in pairs:
-            for shard in sorted(root.glob(f"*/{pair}/{pair}_{granularity}_BA_{year}*.jsonl.gz")):
+            shards = (
+                [
+                    path
+                    for path in source_files
+                    if path.parent.name == pair
+                    and f"{pair}_{granularity}_BA_{year}" in path.name
+                ]
+                if source_files is not None
+                else list(
+                    root.glob(
+                        f"*/{pair}/{pair}_{granularity}_BA_{year}*.jsonl.gz"
+                    )
+                )
+            )
+            for shard in sorted(shards):
                 with gzip.open(shard, "rt", encoding="utf-8") as handle:
                     for line in handle:
                         row = json.loads(line)
@@ -457,6 +472,33 @@ def _iter_replay_quotes(root: Path, pairs: list[str], time_from: str,
                 yield epoch, pair, float(b[key]), float(a[key]), phase
 
 
+def _load_replay_source_manifest(
+    path: Path, *, pairs: list[str], granularity: str
+) -> list[Path]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest.get("contract") != "QR_VIRTUAL_REPLAY_SOURCE_MANIFEST_V1":
+            raise ValueError("unsupported source manifest contract")
+        if manifest.get("granularity") != granularity:
+            raise ValueError("source manifest granularity mismatch")
+        manifest_pairs = manifest.get("pairs")
+        if sorted(manifest_pairs or []) != sorted(pairs):
+            raise ValueError("source manifest pair coverage mismatch")
+        files = []
+        for row in manifest.get("files") or []:
+            source = Path(str(row.get("path"))).resolve()
+            if row.get("pair") not in manifest_pairs or not source.is_file():
+                raise ValueError(f"invalid source manifest file: {source}")
+            if file_sha256(source) != row.get("sha256"):
+                raise ValueError(f"source manifest hash mismatch: {source}")
+            files.append(source)
+        if not files:
+            raise ValueError("source manifest has no files")
+        return files
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise DojoPaperContractError(f"invalid replay source manifest: {exc}") from exc
+
+
 def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     pairs = args.pairs.split(",")
     root = Path(args.corpus_root)
@@ -470,7 +512,7 @@ def run_replay(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None
     aggregate_bot_bars = bot is not None and args.bot_bar == "M1" and args.granularity != "M1"
     for epoch, pair, bid, ask, phase in _iter_replay_quotes(
             root, pairs, args.time_from, args.time_to, args.intrabar,
-            args.granularity):
+            args.granularity, args.replay_source_files):
         if aggregate_bot_bars:
             minute = epoch // 60 * 60
             mb = bot_minute.get(pair)
@@ -627,6 +669,16 @@ def main() -> int:
         parser.error("--source-manifest is replay-only")
     if args.source_manifest is not None and not args.source_manifest.is_file():
         parser.error(f"source manifest is missing: {args.source_manifest}")
+    args.replay_source_files = None
+    if args.source_manifest is not None:
+        try:
+            args.replay_source_files = _load_replay_source_manifest(
+                args.source_manifest,
+                pairs=[pair for pair in args.pairs.split(",") if pair],
+                granularity=args.granularity,
+            )
+        except DojoPaperContractError as exc:
+            parser.error(f"invalid replay source manifest: {exc}")
 
     ledger_path = session_dir / "ledger.jsonl"
     ledger_had_records = ledger_path.is_file() and ledger_path.stat().st_size > 0

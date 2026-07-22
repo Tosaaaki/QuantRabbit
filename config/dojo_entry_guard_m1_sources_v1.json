@@ -1,0 +1,24 @@
+{
+  "contract": "QR_VIRTUAL_REPLAY_SOURCE_MANIFEST_V1",
+  "granularity": "M1",
+  "pairs": [
+    "USD_JPY"
+  ],
+  "files": [
+    {
+      "pair": "USD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084445Z/USD_JPY/USD_JPY_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "sha256": "41c69c09faf547e4cc0cf2a8e4ef0a27b0769d6489db7308d11a48efaf93c33d"
+    },
+    {
+      "pair": "USD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084558Z/USD_JPY/USD_JPY_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "sha256": "629adb8fbbb8742758852991acc7f6e3768b9901672167a8ae3d068c5187d301"
+    },
+    {
+      "pair": "USD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084710Z/USD_JPY/USD_JPY_M1_BA_20260101T000000Z_20260710T000000Z.jsonl.gz",
+      "sha256": "7f18912cb886189af7c116787db33ae3a74ef88d07f42ce22237f17e5b005e71"
+    }
+  ]
+}

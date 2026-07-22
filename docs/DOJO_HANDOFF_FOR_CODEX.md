@@ -24,6 +24,8 @@
 | `scripts/run-pair-adaptation-lab.py` | ペア別幾何適応（screen→専用服→VAL/S5処刑）。換算フィード同席は`feed_pairs()`が担保 |
 | `scripts/run-live-shadow-environment.py` | 受動シャドー環境（黄金日MomentumBurst観測用・二重出口簿記） |
 | `scripts/run-dojo-forward-cycle.sh` | W_FADE + W_SPIKE_FADE の恒久ライブペーパー起動契約（12時間、`ORDER AUTHORITY: NONE`） |
+| `scripts/run-dojo-entry-guard-replay.py` | 固定M1/S5 shardだけを読む、逆行SHORT制限と日次DD停止の独立比較。終端未決済を利益に含めない |
+| `config/dojo_entry_guard_*_sources_v1.json` | リプレイに許可するUSD_JPY bid/ask shardの絶対path・SHA-256。root探索や重複shard選択は禁止 |
 | `scripts/oanda_history_fetch_m1.py` | M1取得（凍結fetcherの削除ガード準拠派生。原本 `oanda_history_fetch.py` は編集禁止） |
 | `docs/virtual_market_environment.md` | エージェント操作書（inbox JSONプロトコル） |
 | `docs/design_weakness_ledger_20260718.md` | **W1〜W55 全審判記録（正本）。必読** |
@@ -61,6 +63,14 @@ QR_OANDA_ENV_FILE=/Users/tossaki/App/QuantRabbit-live/.env.local ... --feed live
 - Codex monitor: `qr-dojo-episode-s5-forward-monitor`（30分ごと。正常な`SESSION_STOP`とledger/snapshot SHA一致時だけ次周回を起動）
 - snapshotはstate更新ごとに原子的保存し、`ledger_sha`がterminal SHAと違えば再開をfail-closedする。起動時にledger全hash-chainを再検証する。
 - 2026-07-22の旧cycle 4は、再起動時に8h天井をリセットしていたため前向き証拠として無効。`T000184` / `T000207` / `T000229` の後続決済もcarry-repairとして分離する。クリーンなpost-fix成績は `trade_id > T000229` の新規約定から数える。
+
+### Entry observability / guard replay correction（2026-07-22）
+
+- `strategy_tag`に加え、全DOJO entryへ`QR_DOJO_ENTRY_CONTEXT_V1`を保存する。内容は判断時の24h trend/変化、6h変化/efficiency、ATR、strategy/signal/sideと、brokerが約定時に原子的に付ける在庫before/after。注文・約定・position snapshotはcontent hashを保持し、restore時の改変はfail-closedする。
+- 旧replay runnerは`--source-manifest`をsession contractへhash保存するだけで、実際のreaderはroot配下をglobしていた。重複shardやroot階層の違いで結果が変わる測定欠陥だった。修正後はmanifest記載ファイル以外を読めず、各実ファイルSHAも実行前に再検証する。
+- 固定比較`episode-s5-entry-guards-replay-20260722-v1`の結果: 2% JST日次equity DD停止はVAL/S5の複数経路でnet/PF/DDを悪化させたため`REJECT`。長期LONG中のSHORT禁止はS5 net/PFを改善したが、TRAINが基準`+155,609.72円`から`-120,731.70円`へ反転し、VAL_OLHCのDD/最悪日も悪化したため`TEST`止まり。どちらも正式waveへ入れない。
+- manifest固定後の現行W_FADE基準はTRAIN `+155,609.72円`、VAL OHLC `-88,169.30円` / OLHC `-59,591.34円`、S5 stress OHLC `+13,512.57円` / OLHC `+17,507.15円`。旧scoreboardのVALプラス値を同一証拠として引用しない。
+- 4室context smokeは別ID`episode-s5-entry-context-smoke-20260722-v1`、diagnostic only。正式5日waveのregistry/windowは変更しない。
 
 ## 5. 確定済みの結論（W37〜W55、詳細は台帳）
 

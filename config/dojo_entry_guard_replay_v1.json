@@ -1,0 +1,122 @@
+{
+  "contract": "QR_DOJO_ENTRY_GUARD_REPLAY_V1",
+  "experiment_id": "episode-s5-entry-guards-replay-20260722-v1",
+  "order_authority": "NONE",
+  "live_permission": false,
+  "baseline": {
+    "strategy_tag": "W_FADE",
+    "signal": "range_fade_limit",
+    "pairs": [
+      "USD_JPY"
+    ],
+    "tp_pips": 6.0,
+    "sl_pips": null,
+    "ceiling_min": 480,
+    "max_concurrent": 3,
+    "per_pos_lev": 4.3,
+    "atr_floor_pips": 1.0,
+    "fade_atr": 1.2,
+    "eff_max": 0.2
+  },
+  "candidates": [
+    {
+      "candidate_id": "baseline",
+      "overrides": {}
+    },
+    {
+      "candidate_id": "block-long-trend-short",
+      "overrides": {
+        "block_long_trend_short": true
+      }
+    },
+    {
+      "candidate_id": "daily-equity-dd-stop-2pct",
+      "overrides": {
+        "daily_equity_drawdown_stop_pct": 0.02
+      }
+    }
+  ],
+  "windows": [
+    {
+      "window_id": "TRAIN",
+      "from_utc": "2024-01-02T00:00:00",
+      "to_utc": "2025-07-01T00:00:00",
+      "granularity": "M1",
+      "intrabar_paths": [
+        "OHLC"
+      ],
+      "slippage_pips_per_fill": 0.0,
+      "financing_pips_per_day": 0.0
+    },
+    {
+      "window_id": "VAL",
+      "from_utc": "2025-07-01T00:00:00",
+      "to_utc": "2026-07-01T00:00:00",
+      "granularity": "M1",
+      "intrabar_paths": [
+        "OHLC",
+        "OLHC"
+      ],
+      "slippage_pips_per_fill": 0.0,
+      "financing_pips_per_day": 0.0
+    },
+    {
+      "window_id": "S5_STRESS",
+      "from_utc": "2026-05-10T00:00:00",
+      "to_utc": "2026-07-04T00:00:00",
+      "granularity": "S5",
+      "intrabar_paths": [
+        "OHLC",
+        "OLHC"
+      ],
+      "slippage_pips_per_fill": 0.3,
+      "financing_pips_per_day": 0.8
+    }
+  ],
+  "sources": {
+    "M1": {
+      "root": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026",
+      "manifest": "config/dojo_entry_guard_m1_sources_v1.json",
+      "files": [
+        {
+          "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084445Z/USD_JPY/USD_JPY_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+          "sha256": "41c69c09faf547e4cc0cf2a8e4ef0a27b0769d6489db7308d11a48efaf93c33d"
+        },
+        {
+          "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084558Z/USD_JPY/USD_JPY_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+          "sha256": "629adb8fbbb8742758852991acc7f6e3768b9901672167a8ae3d068c5187d301"
+        },
+        {
+          "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084710Z/USD_JPY/USD_JPY_M1_BA_20260101T000000Z_20260710T000000Z.jsonl.gz",
+          "sha256": "7f18912cb886189af7c116787db33ae3a74ef88d07f42ce22237f17e5b005e71"
+        }
+      ]
+    },
+    "S5": {
+      "root": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history",
+      "manifest": "config/dojo_entry_guard_s5_sources_v1.json",
+      "files": [
+        {
+          "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history/20260717T061122Z/USD_JPY/USD_JPY_S5_BA_20260508T061122Z_20260717T061122Z.jsonl.gz",
+          "sha256": "ec980059ccde5968c42acc9ffe341c3a09b98bb9a8bd2a2349d3efe9a5146358"
+        }
+      ]
+    }
+  },
+  "evaluation": {
+    "selection_window": "TRAIN",
+    "proof_windows": [
+      "VAL",
+      "S5_STRESS"
+    ],
+    "end_of_replay_forced_close_allowed": false,
+    "candidate_isolation_required": true,
+    "acceptance": {
+      "all_proof_paths_net_gt_baseline": true,
+      "all_proof_paths_pf_gte_baseline": true,
+      "all_proof_paths_max_drawdown_lte_baseline": true,
+      "all_proof_paths_worst_day_gte_baseline": true,
+      "minimum_trade_retention": 0.5
+    }
+  }
+}

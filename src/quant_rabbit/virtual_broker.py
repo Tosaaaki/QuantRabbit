@@ -35,6 +35,7 @@ UTC = timezone.utc
 
 LEVERAGE_DEFAULT = 25.0
 CLOSEOUT_USAGE = 1.0
+ENTRY_CONTEXT_MAX_BYTES = 16 * 1024
 
 
 class VirtualBrokerError(ValueError):
@@ -69,6 +70,8 @@ class VBPosition:
     tp_price: Optional[float] = None
     sl_price: Optional[float] = None
     strategy_tag: Optional[str] = None
+    entry_context: Optional[dict[str, Any]] = None
+    entry_context_sha256: Optional[str] = None
 
 
 @dataclass
@@ -82,6 +85,8 @@ class VBOrder:
     sl_pips: Optional[float] = None
     kind: str = "LIMIT"  # LIMIT (at level or better) / STOP (breakout trigger)
     strategy_tag: Optional[str] = None
+    entry_context: Optional[dict[str, Any]] = None
+    entry_context_sha256: Optional[str] = None
 
 
 @dataclass
@@ -143,6 +148,92 @@ class VirtualBroker:
     def _next_id(self, prefix: str) -> str:
         self._seq += 1
         return f"{prefix}{self._seq:06d}"
+
+    @staticmethod
+    def _copy_entry_context(
+        entry_context: Optional[dict[str, Any]], strategy_tag: Optional[str]
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        if entry_context is None:
+            return None, None
+        if not isinstance(entry_context, dict):
+            raise VirtualBrokerError("entry_context must be an object")
+        try:
+            raw = json.dumps(
+                entry_context,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise VirtualBrokerError("entry_context is not canonical JSON") from exc
+        if len(raw) > ENTRY_CONTEXT_MAX_BYTES:
+            raise VirtualBrokerError("entry_context exceeds the byte limit")
+        copied = json.loads(raw)
+        context_tag = copied.get("strategy_tag")
+        if strategy_tag and context_tag != strategy_tag:
+            raise VirtualBrokerError("entry_context strategy_tag mismatch")
+        return copied, hashlib.sha256(raw).hexdigest()
+
+    def _inventory_state(
+        self, *, pair: str, strategy_tag: Optional[str]
+    ) -> dict[str, Any]:
+        pair_positions = [p for p in self.positions.values() if p.pair == pair]
+        strategy_positions = [
+            p
+            for p in pair_positions
+            if strategy_tag is not None and p.strategy_tag == strategy_tag
+        ]
+        pair_orders = [o for o in self.orders.values() if o.pair == pair]
+        strategy_orders = [
+            o
+            for o in pair_orders
+            if strategy_tag is not None and o.strategy_tag == strategy_tag
+        ]
+
+        def units(rows: list[VBPosition], side: str) -> float:
+            return sum(float(row.units) for row in rows if row.side == side)
+
+        pair_long = units(pair_positions, "LONG")
+        pair_short = units(pair_positions, "SHORT")
+        strategy_long = units(strategy_positions, "LONG")
+        strategy_short = units(strategy_positions, "SHORT")
+        return {
+            "all_open_positions": len(self.positions),
+            "all_resting_orders": len(self.orders),
+            "pair_open_positions": len(pair_positions),
+            "pair_resting_orders": len(pair_orders),
+            "pair_long_units": pair_long,
+            "pair_short_units": pair_short,
+            "pair_gross_units": pair_long + pair_short,
+            "pair_net_units": pair_long - pair_short,
+            "strategy_open_positions": len(strategy_positions),
+            "strategy_resting_orders": len(strategy_orders),
+            "strategy_pair_long_units": strategy_long,
+            "strategy_pair_short_units": strategy_short,
+            "strategy_pair_gross_units": strategy_long + strategy_short,
+            "strategy_pair_net_units": strategy_long - strategy_short,
+        }
+
+    def _finalize_entry_context(
+        self,
+        base_context: Optional[dict[str, Any]],
+        *,
+        strategy_tag: Optional[str],
+        pair: str,
+        inventory_before: dict[str, Any],
+        inventory_after: dict[str, Any],
+        quote: dict[str, Any],
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        if base_context is None:
+            return None, None
+        context = dict(base_context)
+        context["inventory_before"] = inventory_before
+        context["inventory_after"] = inventory_after
+        context["fill_quote"] = quote
+        context["pair"] = pair
+        context["strategy_tag"] = strategy_tag
+        return self._copy_entry_context(context, strategy_tag)
 
     # ---- conversion / accounting ----------------------------------------
     def _jpy_per_quote_unit(self, pair: str) -> float:
@@ -252,7 +343,8 @@ class VirtualBroker:
     def market_order(self, pair: str, side: str, units: float,
                      tp_pips: Optional[float] = None,
                      sl_pips: Optional[float] = None,
-                     strategy_tag: Optional[str] = None) -> str:
+                     strategy_tag: Optional[str] = None,
+                     entry_context: Optional[dict[str, Any]] = None) -> str:
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
         if units <= 0:
@@ -265,6 +357,10 @@ class VirtualBroker:
                       {"pair": pair, "side": side, "units": units})
             raise VirtualBrokerError("insufficient margin for market order")
         bid, ask, ts = q
+        base_context, _ = self._copy_entry_context(entry_context, strategy_tag)
+        inventory_before = self._inventory_state(
+            pair=pair, strategy_tag=strategy_tag
+        )
         pip = _pip(pair)
         slip = self.slippage_pips * pip
         entry = (ask + slip) if side == "LONG" else (bid - slip)
@@ -277,10 +373,23 @@ class VirtualBroker:
             entry_price=entry, opened_ts=ts, tp_price=tp, sl_price=sl,
             strategy_tag=strategy_tag,
         )
+        inventory_after = self._inventory_state(pair=pair, strategy_tag=strategy_tag)
+        final_context, context_sha = self._finalize_entry_context(
+            base_context,
+            strategy_tag=strategy_tag,
+            pair=pair,
+            inventory_before=inventory_before,
+            inventory_after=inventory_after,
+            quote={"bid": bid, "ask": ask, "ts": ts},
+        )
+        self.positions[trade_id].entry_context = final_context
+        self.positions[trade_id].entry_context_sha256 = context_sha
         self._log("FILL_MARKET", {
             "trade_id": trade_id, "pair": pair, "side": side, "units": units,
             "entry": entry, "tp": tp, "sl": sl,
             "strategy_tag": strategy_tag,
+            "entry_context": final_context,
+            "entry_context_sha256": context_sha,
             "quote": {"bid": bid, "ask": ask, "ts": ts},
         })
         self._enforce_margin_after_action()
@@ -289,28 +398,37 @@ class VirtualBroker:
     def limit_order(self, pair: str, side: str, units: float, price: float,
                     tp_pips: Optional[float] = None,
                     sl_pips: Optional[float] = None,
-                    strategy_tag: Optional[str] = None) -> str:
+                    strategy_tag: Optional[str] = None,
+                    entry_context: Optional[dict[str, Any]] = None) -> str:
         if side not in {"LONG", "SHORT"}:
             raise VirtualBrokerError(f"invalid side: {side}")
         if units <= 0 or price <= 0:
             raise VirtualBrokerError("units and price must be positive")
         order_id = self._next_id("O")
+        copied_context, context_sha = self._copy_entry_context(
+            entry_context, strategy_tag
+        )
         self.orders[order_id] = VBOrder(
             order_id=order_id, pair=pair, side=side, units=units,
             limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips,
             strategy_tag=strategy_tag,
+            entry_context=copied_context,
+            entry_context_sha256=context_sha,
         )
         self._log("ORDER_LIMIT", {
             "order_id": order_id, "pair": pair, "side": side,
             "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
             "strategy_tag": strategy_tag,
+            "entry_context": copied_context,
+            "entry_context_sha256": context_sha,
         })
         return order_id
 
     def stop_order(self, pair: str, side: str, units: float, price: float,
                    tp_pips: Optional[float] = None,
                    sl_pips: Optional[float] = None,
-                   strategy_tag: Optional[str] = None) -> str:
+                   strategy_tag: Optional[str] = None,
+                   entry_context: Optional[dict[str, Any]] = None) -> str:
         """Breakout entry: LONG fills once the real ask reaches price (at
         the level or WORSE when gapped); SHORT once the real bid does."""
 
@@ -319,15 +437,22 @@ class VirtualBroker:
         if units <= 0 or price <= 0:
             raise VirtualBrokerError("units and price must be positive")
         order_id = self._next_id("O")
+        copied_context, context_sha = self._copy_entry_context(
+            entry_context, strategy_tag
+        )
         self.orders[order_id] = VBOrder(
             order_id=order_id, pair=pair, side=side, units=units,
             limit_price=price, tp_pips=tp_pips, sl_pips=sl_pips, kind="STOP",
             strategy_tag=strategy_tag,
+            entry_context=copied_context,
+            entry_context_sha256=context_sha,
         )
         self._log("ORDER_STOP", {
             "order_id": order_id, "pair": pair, "side": side,
             "units": units, "price": price, "tp_pips": tp_pips, "sl_pips": sl_pips,
             "strategy_tag": strategy_tag,
+            "entry_context": copied_context,
+            "entry_context_sha256": context_sha,
         })
         return order_id
 
@@ -363,6 +488,7 @@ class VirtualBroker:
         self._log("CLOSE", {
             "trade_id": trade_id, "units": close_units, "price": price,
             "pl_jpy": round(pl, 2), "strategy_tag": pos.strategy_tag,
+            "entry_context_sha256": pos.entry_context_sha256,
             "quote": {"bid": bid, "ask": ask, "ts": ts},
         })
         return pl
@@ -417,6 +543,9 @@ class VirtualBroker:
                           {"order_id": order_id, "pair": pair})
                 continue
             pip = _pip(pair)
+            inventory_before = self._inventory_state(
+                pair=pair, strategy_tag=order.strategy_tag
+            )
             tp = _round_price(pair, filled_price + order.tp_pips * pip if order.side == "LONG"
                               else filled_price - order.tp_pips * pip) if order.tp_pips else None
             sl = _round_price(pair, filled_price - order.sl_pips * pip if order.side == "LONG"
@@ -428,10 +557,25 @@ class VirtualBroker:
                 strategy_tag=order.strategy_tag,
             )
             del self.orders[order_id]
+            inventory_after = self._inventory_state(
+                pair=pair, strategy_tag=order.strategy_tag
+            )
+            final_context, context_sha = self._finalize_entry_context(
+                order.entry_context,
+                strategy_tag=order.strategy_tag,
+                pair=pair,
+                inventory_before=inventory_before,
+                inventory_after=inventory_after,
+                quote={"bid": bid, "ask": ask, "ts": ts},
+            )
+            self.positions[trade_id].entry_context = final_context
+            self.positions[trade_id].entry_context_sha256 = context_sha
             event = {
                 "event": "FILL_LIMIT", "order_id": order_id, "trade_id": trade_id,
                 "pair": pair, "side": order.side, "units": order.units,
                 "price": filled_price, "strategy_tag": order.strategy_tag,
+                "entry_context": final_context,
+                "entry_context_sha256": context_sha,
                 "quote": {"bid": bid, "ask": ask, "ts": ts},
             }
             self._log("FILL_LIMIT", event)
@@ -465,6 +609,7 @@ class VirtualBroker:
             event = {
                 "event": f"EXIT_{reason}", "trade_id": trade_id, "price": exit_price,
                 "pl_jpy": round(pl, 2), "strategy_tag": pos.strategy_tag,
+                "entry_context_sha256": pos.entry_context_sha256,
                 "quote": {"bid": bid, "ask": ask, "ts": ts},
             }
             self._log(f"EXIT_{reason}", event)
@@ -492,7 +637,8 @@ class VirtualBroker:
             del self.positions[trade_id]
             event = {"event": "MARGIN_CLOSEOUT", "trade_id": trade_id,
                      "price": price, "pl_jpy": round(pl, 2),
-                     "strategy_tag": pos.strategy_tag}
+                     "strategy_tag": pos.strategy_tag,
+                     "entry_context_sha256": pos.entry_context_sha256}
             self._log("MARGIN_CLOSEOUT", event)
             events.append(event)
         return events
@@ -517,6 +663,14 @@ class VirtualBroker:
             )
         self.balance_jpy = float(snap["balance_jpy"])
         self._seq = int(snap["seq"])
+        for row in [*(snap.get("positions") or []), *(snap.get("orders") or [])]:
+            context = row.get("entry_context")
+            digest = row.get("entry_context_sha256")
+            copied, expected = self._copy_entry_context(
+                context, row.get("strategy_tag")
+            )
+            if copied != context or digest != expected:
+                raise VirtualBrokerError("snapshot entry_context hash mismatch")
         self.positions = {
             p["trade_id"]: VBPosition(**p) for p in snap["positions"]
         }

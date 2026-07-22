@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
+from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
@@ -68,22 +69,103 @@ class Bot:
         self.pull_atr = float(cfg.get("pull_atr", 0.6))
         self.fade_atr = float(cfg.get("fade_atr", 1.2))
         self.eff_max = float(cfg.get("eff_max", 0.2))
+        self.block_long_trend_short = bool(
+            cfg.get("block_long_trend_short", False)
+        )
+        raw_dd_stop = cfg.get("daily_equity_drawdown_stop_pct")
+        self.daily_equity_drawdown_stop_pct = (
+            float(raw_dd_stop) if raw_dd_stop is not None else None
+        )
+        if (
+            self.daily_equity_drawdown_stop_pct is not None
+            and not 0 < self.daily_equity_drawdown_stop_pct < 1
+        ):
+            raise ValueError("daily_equity_drawdown_stop_pct must be in (0, 1)")
         self.global_max = int(cfg.get("global_max_concurrent",
                                       self.max_concurrent * len(self.pairs)))
         self.state: dict[str, _PairState] = {p: _PairState() for p in self.pairs}
         self._owner: dict[str, str] = {}  # trade_id -> pair
+        self._entry_context: dict[str, dict] = {}
+        self._dd_day_jst: str | None = None
+        self._dd_high_water_equity: float | None = None
+        self._dd_tripped = False
+
+    def _context_for_order(self, pair: str, side: str) -> dict:
+        context = self._entry_context.get(pair)
+        if context is None:
+            raise VirtualBrokerError("complete entry context is required")
+        if (
+            self.block_long_trend_short
+            and side == "SHORT"
+            and context["trend_24h"] == "LONG"
+        ):
+            raise VirtualBrokerError("long-trend countertrend SHORT is blocked")
+        return {**context, "side": side}
 
     def _market_order(self, *args, **kwargs) -> str:
+        pair, side = str(args[0]), str(args[1])
         kwargs["strategy_tag"] = self.strategy_tag
+        kwargs["entry_context"] = self._context_for_order(pair, side)
         return self.broker.market_order(*args, **kwargs)
 
     def _limit_order(self, *args, **kwargs) -> str:
+        pair, side = str(args[0]), str(args[1])
         kwargs["strategy_tag"] = self.strategy_tag
+        kwargs["entry_context"] = self._context_for_order(pair, side)
         return self.broker.limit_order(*args, **kwargs)
 
     def _stop_order(self, *args, **kwargs) -> str:
+        pair, side = str(args[0]), str(args[1])
         kwargs["strategy_tag"] = self.strategy_tag
+        kwargs["entry_context"] = self._context_for_order(pair, side)
         return self.broker.stop_order(*args, **kwargs)
+
+    def _daily_dd_blocks_entries(self, epoch: int) -> bool:
+        threshold = self.daily_equity_drawdown_stop_pct
+        if threshold is None:
+            return False
+        try:
+            equity = float(self.broker.account()["equity_jpy"])
+        except VirtualBrokerError:
+            return True
+        day_jst = (
+            datetime.fromtimestamp(epoch, timezone.utc) + timedelta(hours=9)
+        ).date().isoformat()
+        if day_jst != self._dd_day_jst:
+            self._dd_day_jst = day_jst
+            self._dd_high_water_equity = equity
+            self._dd_tripped = False
+        else:
+            self._dd_high_water_equity = max(
+                float(self._dd_high_water_equity or equity), equity
+            )
+        high_water = float(self._dd_high_water_equity or equity)
+        drawdown = 1.0 - equity / high_water if high_water > 0 else 1.0
+        if drawdown + 1e-12 < threshold:
+            return False
+        if not self._dd_tripped:
+            self.broker._log(
+                "ENTRY_CIRCUIT_BREAKER",
+                {
+                    "strategy_tag": self.strategy_tag,
+                    "day_jst": day_jst,
+                    "reason": "DAILY_EQUITY_DRAWDOWN",
+                    "threshold": threshold,
+                    "drawdown": drawdown,
+                    "high_water_equity_jpy": high_water,
+                    "equity_jpy": equity,
+                    "new_entries_allowed": False,
+                },
+            )
+            self._dd_tripped = True
+        for pair_state in self.state.values():
+            for order_id in list(pair_state.my_orders):
+                try:
+                    self.broker.cancel_order(order_id)
+                except VirtualBrokerError:
+                    pass
+            pair_state.my_orders = []
+        return True
 
     # ---- incremental indicators -----------------------------------------
     def _update(self, st: "_PairState", bar: dict) -> None:
@@ -177,6 +259,26 @@ class Bot:
             return
         atr_pips = st.atr / pip
         if atr_pips < self.atr_floor:
+            return
+        efficiency_6h = self._efficiency_6h(st)
+        if efficiency_6h is None:
+            return
+        self._entry_context[pair] = {
+            "contract": "QR_DOJO_ENTRY_CONTEXT_V1",
+            "strategy_tag": self.strategy_tag,
+            "signal": self.signal,
+            "pair": pair,
+            "decision_bar_epoch": int(epoch),
+            "decision_bar_ts_utc": datetime.fromtimestamp(
+                epoch, timezone.utc
+            ).isoformat(),
+            "trend_24h": trend,
+            "trend_24h_change_pips": (st.closes[-1] - st.closes[0]) / pip,
+            "change_6h_pips": (st.closes[-1] - st.closes[-361]) / pip,
+            "efficiency_6h": efficiency_6h,
+            "atr_pips": atr_pips,
+        }
+        if self._daily_dd_blocks_entries(epoch):
             return
         total_open = sum(len(s.my_trades) for s in self.state.values())
         if total_open >= self.global_max:
@@ -438,7 +540,7 @@ class Bot:
                 except VirtualBrokerError:
                     pass
             st.my_orders = []
-            eff = self._efficiency_6h(st)
+            eff = efficiency_6h
             if eff is None or eff > self.eff_max or open_n >= self.max_concurrent:
                 return
             dist = self.fade_atr * st.atr

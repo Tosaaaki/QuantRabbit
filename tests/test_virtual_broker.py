@@ -161,6 +161,74 @@ def test_strategy_tag_survives_order_fill_exit_ledger_and_snapshot(broker):
     assert {record["payload"]["strategy_tag"] for record in tagged} == {"W_FADE"}
 
 
+def test_entry_context_adds_atomic_inventory_before_after_and_survives_restore(
+    broker, tmp_path
+):
+    decision = {
+        "contract": "QR_DOJO_ENTRY_CONTEXT_V1",
+        "strategy_tag": "W_FADE",
+        "signal": "range_fade_limit",
+        "pair": "USD_JPY",
+        "side": "LONG",
+        "decision_bar_epoch": 1,
+        "decision_bar_ts_utc": "2026-07-22T00:00:00+00:00",
+        "trend_24h": "LONG",
+        "trend_24h_change_pips": 25.0,
+        "change_6h_pips": -3.0,
+        "efficiency_6h": 0.07,
+        "atr_pips": 1.4,
+    }
+    order_id = broker.limit_order(
+        "USD_JPY",
+        "LONG",
+        1_000,
+        price=149.95,
+        tp_pips=5,
+        strategy_tag="W_FADE",
+        entry_context=decision,
+    )
+    assert broker.orders[order_id].entry_context == decision
+
+    fill = broker.on_quote("USD_JPY", 149.92, 149.94, "t1")[0]
+    position = broker.positions[fill["trade_id"]]
+    context = position.entry_context
+    assert context is not None
+    assert context["trend_24h"] == "LONG"
+    assert context["efficiency_6h"] == pytest.approx(0.07)
+    assert context["atr_pips"] == pytest.approx(1.4)
+    assert context["inventory_before"]["pair_long_units"] == 0
+    assert context["inventory_before"]["pair_resting_orders"] == 1
+    assert context["inventory_after"]["pair_long_units"] == 1_000
+    assert context["inventory_after"]["pair_resting_orders"] == 0
+    assert fill["entry_context_sha256"] == position.entry_context_sha256
+
+    snapshot = broker.snapshot()
+    restored = VirtualBroker(tmp_path / "restored.jsonl")
+    restored.restore(snapshot)
+    restored_position = restored.positions[fill["trade_id"]]
+    assert restored_position.entry_context == context
+    assert restored_position.entry_context_sha256 == position.entry_context_sha256
+
+
+def test_restore_rejects_tampered_entry_context_hash(broker, tmp_path):
+    trade_id = broker.market_order(
+        "USD_JPY",
+        "LONG",
+        1_000,
+        strategy_tag="W_FADE",
+        entry_context={
+            "contract": "QR_DOJO_ENTRY_CONTEXT_V1",
+            "strategy_tag": "W_FADE",
+        },
+    )
+    snapshot = broker.snapshot()
+    snapshot["positions"][0]["entry_context"]["tampered"] = True
+    restored = VirtualBroker(tmp_path / "tampered.jsonl")
+    with pytest.raises(VirtualBrokerError, match="entry_context hash mismatch"):
+        restored.restore(snapshot)
+    assert trade_id in broker.positions
+
+
 def test_snapshot_ledger_checkpoint_mismatch_fails_closed(broker, tmp_path):
     broker.market_order("USD_JPY", "LONG", 1_000)
     snap = broker.snapshot()

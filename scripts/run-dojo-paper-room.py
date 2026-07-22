@@ -58,6 +58,9 @@ def build_launch(
         raise RoomRegistryError("single-strategy room requires a strategy_tag")
     if room.get("arm") not in {"BASE", "STRESS"}:
         raise RoomRegistryError("room arm must be BASE or STRESS")
+    proof_mode = str(registry.get("proof_mode") or "formal")
+    if proof_mode not in {"diagnostic", "formal"}:
+        raise RoomRegistryError("room registry proof_mode must be diagnostic or formal")
     required = {
         "experiment_id": registry.get("experiment_id"),
         "candidate_id": room.get("candidate_id"),
@@ -118,7 +121,7 @@ def build_launch(
         "--leverage",
         str(float(defaults["leverage"])),
         "--paper-proof-mode",
-        "formal",
+        proof_mode,
         "--room-kind",
         "single_strategy",
         "--experiment-id",
