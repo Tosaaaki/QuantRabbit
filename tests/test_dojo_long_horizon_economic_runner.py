@@ -4,6 +4,9 @@ import copy
 import gzip
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -23,6 +26,11 @@ from quant_rabbit.dojo_anomaly_admission_controller import (
 from quant_rabbit.dojo_anomaly_admission_runtime import (
     build_anomaly_admission_runtime_factory,
     build_anomaly_admission_runtime_seal,
+)
+from quant_rabbit.dojo_anomaly_decision_scorer import (
+    DojoAnomalyDecisionScorerError,
+    REQUEST_CONTRACT,
+    score_anomaly_decision_transcript,
 )
 from quant_rabbit.dojo_bot_catalog import AUTHORITY_INVARIANTS, validate_bot_config
 from quant_rabbit.dojo_bot_trainer import PROPOSAL_CONTRACT, seal_candidate_proposal
@@ -1039,6 +1047,105 @@ def test_anomaly_admission_wraps_actual_exact28_job_order_diagnostically(
         for evidence in result["worker_runtime_evidence_by_coordinate"].values()
     )
     assert result["authority"]["order_authority"] == "NONE"
+
+    artifact = result["economic_transcript_artifacts"][0]
+    coordinate_id = artifact["coordinate_id"]
+    evidence_root = tmp_path / "economic-evidence"
+    economic_attestation = json.loads(
+        (
+            evidence_root / artifact["reexecution_attestation_filename"]
+        ).read_text()
+    )
+    decision_attestation = score_anomaly_decision_transcript(
+        evidence_root / artifact["transcript_filename"],
+        economic_attestation=economic_attestation,
+        runtime_seal=anomaly_seal,
+        job=handoff["job"],
+        predecessor_economic_carry=None,
+        expected_runtime_evidence_summary=result[
+            "worker_runtime_evidence_by_coordinate"
+        ][coordinate_id],
+        repo_root=Path(__file__).resolve().parents[1],
+    )
+    assert decision_attestation["strategy_decision_reexecution_passed"] is True
+    assert (
+        decision_attestation["hidden_upstream_candidate_reconstruction_passed"]
+        is True
+    )
+    assert (
+        decision_attestation["hold_resize_next_rank_reconstruction_passed"] is True
+    )
+    assert (
+        decision_attestation["held_economic_counterfactual_reexecution_passed"]
+        is False
+    )
+    assert decision_attestation["official_evidence_eligible"] is False
+
+    request_body = {
+        "contract": REQUEST_CONTRACT,
+        "schema_version": 1,
+        "transcript_path": str(evidence_root / artifact["transcript_filename"]),
+        "economic_attestation": economic_attestation,
+        "runtime_seal": anomaly_seal,
+        "job": handoff["job"],
+        "predecessor_economic_carry": None,
+        "expected_runtime_evidence_summary": result[
+            "worker_runtime_evidence_by_coordinate"
+        ][coordinate_id],
+    }
+    request = {
+        **request_body,
+        "request_sha256": canonical_sha256(request_body),
+    }
+    request_path = tmp_path / "anomaly-decision-request.json"
+    request_path.write_text(
+        json.dumps(request, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    repository_root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.dojo_anomaly_decision_scorer",
+            "--request",
+            str(request_path),
+            "--repo-root",
+            str(repository_root),
+        ],
+        cwd=repository_root,
+        env={**os.environ, "PYTHONPATH": str(repository_root / "src")},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+    assert json.loads(completed.stdout) == decision_attestation
+
+    tampered_summary = copy.deepcopy(
+        result["worker_runtime_evidence_by_coordinate"][coordinate_id]
+    )
+    tampered_summary["counts"]["decisions"] += 1
+    tampered_body = {
+        key: value
+        for key, value in tampered_summary.items()
+        if key != "evidence_summary_sha256"
+    }
+    tampered_summary["evidence_summary_sha256"] = canonical_sha256(tampered_body)
+    with pytest.raises(
+        DojoAnomalyDecisionScorerError,
+        match="hidden candidate/HOLD evidence summary differs",
+    ):
+        score_anomaly_decision_transcript(
+            evidence_root / artifact["transcript_filename"],
+            economic_attestation=economic_attestation,
+            runtime_seal=anomaly_seal,
+            job=handoff["job"],
+            predecessor_economic_carry=None,
+            expected_runtime_evidence_summary=tampered_summary,
+            repo_root=Path(__file__).resolve().parents[1],
+        )
 
 
 def test_source_byte_drift_invalidates_every_coordinate(
