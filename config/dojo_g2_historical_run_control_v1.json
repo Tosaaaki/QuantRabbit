@@ -15,7 +15,7 @@
     "max_jobs_per_invocation": 1,
     "max_parallel_jobs": 1,
     "minimum_free_disk_bytes": 26843545600,
-    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-fixed-six-family-20260722-r4",
+    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-fixed-six-family-20260722-r5",
     "source_slice_policy": "AUTHENTICATED_OBSERVED_EPOCH_UNION_NO_IMPUTATION",
     "training_root_may_be_deleted": false
   },
@@ -47,7 +47,7 @@
       "COST_AFTER_EQUITY",
       "INDEPENDENT_MONTH_DRAWDOWN",
       "MARGIN_USAGE_AND_REJECTS",
-      "FAMILY_LOPO_AND_MAIN_PAIR_CURRENCY_ATTRIBUTION",
+      "MAIN_FAMILY_PAIR_CURRENCY_ATTRIBUTION",
       "TRADE_AND_ZERO_TRADE_COUNTS"
     ],
     "target_multiple_may_backsolve_sizing": false

@@ -81,10 +81,10 @@ def test_rapid_profile_is_independent_month_family_screen_at_2025_start() -> Non
     )
 
     assert rapid["stream_job_count"] == 36
-    assert rapid["result_coordinate_count"] == 888
+    assert rapid["result_coordinate_count"] == 816
     assert rapid["jobs"][0]["month"] == "2025-01"
     assert rapid["jobs"][0]["source_binding_id"] == M5_BINDING_ID
-    assert rapid["jobs"][0]["coordinate_count"] == 8
+    assert rapid["jobs"][0]["coordinate_count"] == 2
     continuous = [
         row
         for row in rapid["jobs"][0]["coordinates"]
@@ -93,7 +93,7 @@ def test_rapid_profile_is_independent_month_family_screen_at_2025_start() -> Non
     assert continuous == []
     assert {
         row["stage"] for row in rapid["jobs"][0]["coordinates"]
-    } == {"PORTFOLIO_MAIN", "FAMILY_LOPO"}
+    } == {"PORTFOLIO_MAIN"}
     assert validate_long_horizon_stream_schedule(rapid, plan=rapid_plan) == rapid
 
 

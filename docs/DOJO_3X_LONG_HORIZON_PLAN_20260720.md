@@ -30,7 +30,8 @@ The first trainer iteration uses the separately sealed
 `RAPID_SIX_MONTH_2025H1` profile: M5 and both M1 rectangles cover exactly
 2025-01 through 2025-06.  Its fast M5 screen keeps all 28 pairs and all six
 families, but evaluates independent monthly accounts with BASE/STRESS and
-main-plus-family-LOPO coordinates only.  Pair/currency LOPO, continuous
+main-account coordinates only.  Its terminal result retains per-family,
+pair and currency attribution.  All family/pair/currency LOPO, continuous
 accounts and M1 precision are deferred to the full profile for survivors.
 This is recent-regime, worn historical TRAIN, not a holdout, and the rapid
 profile cannot satisfy the 3x gate by itself.  Both M5 intrabar paths must

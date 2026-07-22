@@ -99,7 +99,7 @@ def test_reviewed_rapid_profile_is_exactly_2025h1_and_still_worn_train() -> None
     ]
     assert [
         row["stage"] for row in plan["exact_denominator"]["portfolio_stages"]
-    ] == ["PORTFOLIO_MAIN", "FAMILY_LOPO"]
+    ] == ["PORTFOLIO_MAIN"]
     assert plan["monthly_3x_diagnostic_gates"]["required_month_count"] == 6
     assert (
         plan["monthly_3x_diagnostic_gates"]["profile_can_reach_three_x_gate"]
