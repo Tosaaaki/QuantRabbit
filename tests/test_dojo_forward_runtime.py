@@ -6,6 +6,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
+from quant_rabbit.dojo_paper_contract import DojoPaperContractError
 from quant_rabbit.virtual_broker import VirtualBroker
 
 
@@ -109,6 +112,52 @@ def test_restarted_combo_hand_does_not_adopt_another_strategy(tmp_path):
     assert foreign_trade in broker.positions
     assert unknown_trade in broker.positions
     assert bot.state["USD_JPY"].my_trades == {}
+
+
+def test_drain_controller_only_resolves_existing_position_at_original_ceiling(
+    tmp_path,
+):
+    runner = _load_module(
+        "dojo_virtual_market_drain_test",
+        ROOT / "scripts" / "run-virtual-market-session.py",
+    )
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)
+    opened = datetime(2026, 7, 21, 9, 0, tzinfo=timezone.utc)
+    broker.on_quote("USD_JPY", 162.00, 162.01, opened.isoformat())
+    trade_id = broker.market_order(
+        "USD_JPY", "LONG", 1_000, tp_pips=200, strategy_tag="W_FADE"
+    )
+    controller = runner.DrainOnlyController(broker, ceiling_minutes=480)
+
+    before = opened + timedelta(minutes=479)
+    broker.on_quote("USD_JPY", 162.02, 162.03, before.isoformat())
+    controller.on_quote("USD_JPY", before.isoformat())
+    assert trade_id in broker.positions
+
+    due = opened + timedelta(minutes=480)
+    broker.on_quote("USD_JPY", 162.02, 162.03, due.isoformat())
+    controller.on_quote("USD_JPY", due.isoformat())
+
+    assert trade_id not in broker.positions
+    events = [
+        json.loads(line)["event"]
+        for line in broker.ledger_path.read_text().splitlines()
+    ]
+    assert events[-2:] == ["DRAIN_CEILING_DUE", "CLOSE"]
+
+
+def test_virtual_market_session_refuses_a_second_process_owner(tmp_path):
+    runner = _load_module(
+        "dojo_virtual_market_lock_test",
+        ROOT / "scripts" / "run-virtual-market-session.py",
+    )
+    runner._acquire_runtime_lock(tmp_path)
+    try:
+        with pytest.raises(DojoPaperContractError, match="another virtual-market"):
+            runner._acquire_runtime_lock(tmp_path)
+    finally:
+        runner._RUNTIME_LOCK_HANDLE.close()
+        runner._RUNTIME_LOCK_HANDLE = None
 
 
 def test_profitability_knowledge_separates_clean_and_carry_cohorts(tmp_path):

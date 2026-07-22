@@ -38,6 +38,7 @@ account only; this process cannot reach the real broker's order API).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import json
 import os
@@ -50,6 +51,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from quant_rabbit.analysis.market_status import compute_market_status
+from quant_rabbit.dojo_paper_contract import (
+    DojoPaperContractError,
+    bot_contract,
+    build_session_contract,
+    file_sha256,
+    prepare_drain_contract,
+    publish_immutable_json,
+    runtime_manifest,
+)
 from quant_rabbit.virtual_broker import VirtualBroker, VirtualBrokerError
 
 
@@ -153,6 +163,69 @@ class GoldenBurstBot:
 UTC = timezone.utc
 POLL_SECONDS = 5.0
 STALE_QUOTE_MAX_S = 90.0
+_RUNTIME_LOCK_HANDLE = None
+
+
+def _acquire_runtime_lock(session_dir: Path) -> None:
+    """Hold one non-blocking process lock for the whole session lifetime."""
+
+    global _RUNTIME_LOCK_HANDLE
+    handle = (session_dir / ".virtual-market-runtime.lock").open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise DojoPaperContractError(
+            f"another virtual-market process owns {session_dir}"
+        ) from exc
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"pid={os.getpid()}\n")
+    handle.flush()
+    _RUNTIME_LOCK_HANDLE = handle
+
+
+class DrainOnlyController:
+    """Resolve existing paper exposure without admitting another entry.
+
+    TP/SL and margin events remain owned by ``VirtualBroker.on_quote``.  The
+    controller adds only the original time ceiling, measured from the
+    persisted ``opened_ts``.  It has no entry/order method by construction.
+    """
+
+    def __init__(self, broker: VirtualBroker, ceiling_minutes: int):
+        self.broker = broker
+        self.ceiling_seconds = ceiling_minutes * 60
+
+    def on_quote(self, pair: str, quote_ts: str) -> None:
+        quote_epoch = self.broker._ts_epoch(quote_ts)
+        if quote_epoch is None:
+            return
+        for trade_id, pos in list(self.broker.positions.items()):
+            if pos.pair != pair:
+                continue
+            opened_epoch = self.broker._ts_epoch(pos.opened_ts)
+            if opened_epoch is None:
+                raise VirtualBrokerError(
+                    f"drain cannot parse opened_ts for {trade_id}"
+                )
+            if quote_epoch - opened_epoch < self.ceiling_seconds:
+                continue
+            self.broker._log(
+                "DRAIN_CEILING_DUE",
+                {
+                    "trade_id": trade_id,
+                    "pair": pair,
+                    "strategy_tag": pos.strategy_tag,
+                    "opened_ts": pos.opened_ts,
+                    "ceiling_seconds": self.ceiling_seconds,
+                    "quote_ts": quote_ts,
+                },
+            )
+            self.broker.close_trade(trade_id)
+
+    def on_bar_closed(self, pair: str, bar: dict, epoch: int) -> None:
+        del pair, bar, epoch
 
 
 def _write_broker_snapshot(session_dir: Path, broker: VirtualBroker) -> None:
@@ -278,9 +351,29 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
         n = _seed_bot_from_history(args, bot, pairs)
         broker._log("BOT_SEEDED", {"bars": n, "hours": args.seed_hours,
                                    "root": str(args.seed_m1_root)})
-    deadline = time_mod.time() + args.minutes * 60.0
+    window_start = (
+        datetime.fromisoformat(args.window_start_utc).timestamp()
+        if args.window_start_utc
+        else None
+    )
+    deadline = (
+        datetime.fromisoformat(args.window_end_utc).timestamp()
+        if args.window_end_utc
+        else time_mod.time() + args.minutes * 60.0
+    )
     live_bars: dict[str, dict] = {}
     while time_mod.time() < deadline:
+        if window_start is not None and time_mod.time() < window_start:
+            now = datetime.now(UTC)
+            _write_state(
+                session_dir,
+                broker,
+                now.isoformat(),
+                "live",
+                "WAITING_FOR_PRECOMMITTED_WINDOW: no quote consumed",
+            )
+            time_mod.sleep(min(POLL_SECONDS, max(window_start - time_mod.time(), 0.1)))
+            continue
         now = datetime.now(UTC)
         if not compute_market_status(now).is_fx_open:
             _write_state(session_dir, broker, now.isoformat(), "live",
@@ -304,6 +397,8 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
             continue
         for pair, q in quotes.items():
             broker.on_quote(pair, q.bid, q.ask, q.timestamp_utc.isoformat())
+            if args.drain_only:
+                bot.on_quote(pair, q.timestamp_utc.isoformat())
             minute = int(now.timestamp() // 60) * 60
             bar = live_bars.get(pair)
             if bar is not None and bar["epoch"] != minute:
@@ -318,8 +413,11 @@ def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
                 bar["bid_h"] = max(bar["bid_h"], q.bid); bar["bid_l"] = min(bar["bid_l"], q.bid)
                 bar["ask_h"] = max(bar["ask_h"], q.ask); bar["ask_l"] = min(bar["ask_l"], q.ask)
                 bar["bid_c"] = q.bid; bar["ask_c"] = q.ask
-        _process_inbox(session_dir, broker)
+        if not args.drain_only:
+            _process_inbox(session_dir, broker)
         _write_state(session_dir, broker, now.isoformat(), "live")
+        if args.drain_only and not broker.positions and not broker.orders:
+            return
         time_mod.sleep(POLL_SECONDS)
 
 
@@ -436,10 +534,26 @@ def main() -> int:
     parser.add_argument("--pairs", default="USD_JPY,EUR_USD")
     parser.add_argument("--balance", type=float, default=200_000.0)
     parser.add_argument("--minutes", type=float, default=480.0, help="live mode duration")
+    parser.add_argument(
+        "--window-start-utc",
+        default=None,
+        help="formal live: precommitted timezone-aware ISO window start",
+    )
+    parser.add_argument(
+        "--window-end-utc",
+        default=None,
+        help="formal live: precommitted timezone-aware ISO window end",
+    )
     parser.add_argument("--corpus-root", default=(
         "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"))
     parser.add_argument("--from", dest="time_from", default="2026-01-05T00:00:00")
     parser.add_argument("--to", dest="time_to", default="2026-01-10T00:00:00")
+    parser.add_argument(
+        "--source-manifest",
+        type=Path,
+        default=None,
+        help="replay: sealed corpus manifest bound by SHA-256",
+    )
     parser.add_argument("--bars-per-second", type=float, default=20.0)
     parser.add_argument("--step", action="store_true",
                         help="replay: advance one bar per inbox/STEP file")
@@ -452,6 +566,15 @@ def main() -> int:
     parser.add_argument("--bot-module", default=None,
                         help="path to ANY bot file: <file.py>[:ClassName]; the class "
                              "takes (broker) and implements on_bar_closed(pair, bar, epoch)")
+    parser.add_argument("--bot-config-env", default=None,
+                        help="JSON environment variable bound into the room contract")
+    parser.add_argument(
+        "--runtime-dependency",
+        type=Path,
+        action="append",
+        default=[],
+        help="additional launcher/registry file bound into the runtime manifest",
+    )
     parser.add_argument("--granularity", choices=["M1", "S5"], default="M1",
                         help="replay feed granularity (S5 = 12x finer fill realism)")
     parser.add_argument("--bot-bar", choices=["feed", "M1"], default="feed",
@@ -460,10 +583,26 @@ def main() -> int:
                         help="replay: write state/process inbox every N bars (lab speed)")
     parser.add_argument("--fast-ledger", action="store_true",
                         help="ledger flush without fsync (lab runs)")
-    parser.add_argument("--slippage-pips", type=float, default=0.0,
+    parser.add_argument("--slippage-pips", type=float, default=None,
                         help="stress: extra pips against the trader on every fill")
-    parser.add_argument("--financing-pips-day", type=float, default=0.0,
+    parser.add_argument("--financing-pips-day", type=float, default=None,
                         help="holding cost in pips per 24h held (pro-rata)")
+    parser.add_argument("--leverage", type=float, default=None,
+                        help="virtual account leverage; formal paper must set it explicitly")
+    parser.add_argument("--paper-proof-mode", choices=["diagnostic", "formal"],
+                        default="diagnostic")
+    parser.add_argument("--room-kind",
+                        choices=["diagnostic", "single_strategy", "integrated", "ai"],
+                        default="diagnostic")
+    parser.add_argument("--experiment-id", default="diagnostic-unregistered")
+    parser.add_argument("--room-id", default="diagnostic-unregistered")
+    parser.add_argument("--candidate-id", default="diagnostic-unregistered")
+    parser.add_argument("--drain-only", action="store_true",
+                        help="resume terminal paper exposure with new entries disabled")
+    parser.add_argument("--drain-ceiling-min", type=int, default=None,
+                        help="original per-position ceiling for drain-only mode")
+    parser.add_argument("--allow-legacy-untagged", action="store_true",
+                        help="diagnostic drain only; never proof-eligible")
     parser.add_argument("--intrabar", choices=["OHLC", "OLHC"], default="OHLC",
                         help="declared synthetic intrabar path; run both to bracket "
                              "both-touch ambiguity")
@@ -471,21 +610,224 @@ def main() -> int:
 
     session_dir = args.session_dir
     (session_dir / "inbox" / "processed").mkdir(parents=True, exist_ok=True)
+    _acquire_runtime_lock(session_dir)
+    if args.drain_only and args.feed != "live":
+        parser.error("--drain-only requires --feed live")
+    if args.drain_only and (args.bot or args.bot_module):
+        parser.error("--drain-only forbids every bot")
+    if args.drain_only and args.drain_ceiling_min is None:
+        parser.error("--drain-only requires --drain-ceiling-min")
+    if args.paper_proof_mode == "formal" and args.drain_only:
+        parser.error("drain inherits proof status; do not set formal mode")
+    if bool(args.window_start_utc) != bool(args.window_end_utc):
+        parser.error("live paper window requires both --window-start-utc and --window-end-utc")
+    if args.feed == "replay" and (args.window_start_utc or args.window_end_utc):
+        parser.error("fixed live window arguments cannot be used with replay")
+    if args.feed == "live" and args.source_manifest is not None:
+        parser.error("--source-manifest is replay-only")
+    if args.source_manifest is not None and not args.source_manifest.is_file():
+        parser.error(f"source manifest is missing: {args.source_manifest}")
+
+    ledger_path = session_dir / "ledger.jsonl"
+    ledger_had_records = ledger_path.is_file() and ledger_path.stat().st_size > 0
+    if args.window_start_utc:
+        try:
+            window_start = datetime.fromisoformat(args.window_start_utc)
+            window_end = datetime.fromisoformat(args.window_end_utc)
+        except ValueError as exc:
+            parser.error(f"invalid live paper ISO window: {exc}")
+        if window_start.tzinfo is None or window_end.tzinfo is None:
+            parser.error("live paper window must be timezone-aware")
+        if window_end <= window_start:
+            parser.error("live paper window end must follow its start")
+        now = datetime.now(UTC)
+        if now >= window_end:
+            parser.error("live paper window has already ended")
+        if (
+            args.paper_proof_mode == "formal"
+            and not ledger_had_records
+            and now.timestamp() > window_start.timestamp() + 60.0
+        ):
+            parser.error("fresh formal live paper started over 60s late")
+
+    costs_explicit = (
+        args.slippage_pips is not None
+        and args.financing_pips_day is not None
+        and args.leverage is not None
+    )
+    slippage_pips = float(args.slippage_pips or 0.0)
+    financing_pips_day = float(args.financing_pips_day or 0.0)
+    leverage = float(args.leverage or 25.0)
+    pairs = [pair for pair in args.pairs.split(",") if pair]
+    if not pairs or len(pairs) != len(set(pairs)):
+        parser.error("--pairs must be a non-empty unique comma-separated list")
+
+    raw_module_path = None
+    if args.bot_module:
+        raw_module_path = Path(args.bot_module.partition(":")[0])
+        if not raw_module_path.is_absolute():
+            raw_module_path = REPO_ROOT / raw_module_path
+    runtime = runtime_manifest(
+        repo_root=REPO_ROOT,
+        runner_path=Path(__file__),
+        bot_module_path=raw_module_path,
+        extra_paths=[
+            path if path.is_absolute() else REPO_ROOT / path
+            for path in args.runtime_dependency
+        ],
+    )
+    bot_spec = bot_contract(
+        repo_root=REPO_ROOT,
+        built_in_bot=args.bot,
+        bot_module=args.bot_module,
+        bot_config_env=args.bot_config_env,
+    )
+
     broker = VirtualBroker(
-        ledger_path=session_dir / "ledger.jsonl", balance_jpy=args.balance,
-        fast_ledger=args.fast_ledger, slippage_pips=args.slippage_pips,
-        financing_pips_per_day=args.financing_pips_day)
+        ledger_path=ledger_path,
+        balance_jpy=args.balance,
+        fast_ledger=args.fast_ledger,
+        slippage_pips=slippage_pips,
+        financing_pips_per_day=financing_pips_day,
+        leverage=leverage,
+    )
     snap_path = session_dir / "broker_snapshot.json"
+    snapshot_recovery = None
     if snap_path.exists():
         snap = json.loads(snap_path.read_text())
         broker.restore(snap, require_ledger_match="ledger_sha" in snap)
         if snap.get("recovery"):
-            broker._log("SESSION_RECOVERY", snap["recovery"])
-    broker._log("SESSION_START", {
-        "contract": "QR_VIRTUAL_MARKET_SESSION_V1",
-        "feed": args.feed, "pairs": args.pairs, "balance": broker.balance_jpy,
-        "order_authority": "NONE",
-    })
+            snapshot_recovery = snap["recovery"]
+
+    if args.drain_only:
+        drain = prepare_drain_contract(
+            session_dir=session_dir,
+            pairs=pairs,
+            ceiling_minutes=args.drain_ceiling_min,
+            allow_legacy_untagged=args.allow_legacy_untagged,
+            slippage_pips=slippage_pips,
+            financing_pips_per_day=financing_pips_day,
+            leverage=leverage,
+            runtime=runtime,
+        )
+        if snapshot_recovery:
+            broker._log("DRAIN_RECOVERY", snapshot_recovery)
+        for order_id, order in list(broker.orders.items()):
+            broker._log(
+                "DRAIN_PENDING_ORDER_CANCEL",
+                {
+                    "order_id": order_id,
+                    "pair": order.pair,
+                    "strategy_tag": order.strategy_tag,
+                    "drain_contract_sha256": drain["drain_contract_sha256"],
+                },
+            )
+            broker.cancel_order(order_id)
+        broker._log(
+            "DRAIN_START",
+            {
+                "contract": drain["contract"],
+                "drain_contract_sha256": drain["drain_contract_sha256"],
+                "source_terminal_sha256": drain["source_terminal_sha256"],
+                "proof_eligible": drain["proof_eligible"],
+                "positions": len(broker.positions),
+                "orders": len(broker.orders),
+                "order_authority": "NONE",
+            },
+        )
+        controller = DrainOnlyController(broker, args.drain_ceiling_min)
+        try:
+            if broker.positions:
+                run_live(args, broker, session_dir, bot=controller)
+        finally:
+            sealed = not broker.positions and not broker.orders
+            broker._log(
+                "DRAIN_STOP",
+                {
+                    "drain_contract_sha256": drain["drain_contract_sha256"],
+                    "status": "SEALED" if sealed else "DRAIN_INCOMPLETE",
+                    "positions": len(broker.positions),
+                    "orders": len(broker.orders),
+                    "account": broker.account() if broker.last_quotes else None,
+                },
+            )
+            _write_broker_snapshot(session_dir, broker)
+        print(
+            json.dumps(
+                {
+                    "status": "DRAIN_SEALED" if sealed else "DRAIN_INCOMPLETE",
+                    "positions": len(broker.positions),
+                    "orders": len(broker.orders),
+                    "drain_contract_sha256": drain["drain_contract_sha256"],
+                },
+                sort_keys=True,
+            )
+        )
+        return 0 if sealed else 75
+
+    session_contract_path = session_dir / "session_contract.json"
+    if ledger_had_records and not session_contract_path.exists():
+        raise DojoPaperContractError(
+            "normal session cannot bootstrap a contract over a legacy ledger; "
+            "use the drain-only boundary"
+        )
+    source = {
+        "kind": "live_read_only_pricing" if args.feed == "live" else "sealed_replay",
+        "poll_seconds": POLL_SECONDS if args.feed == "live" else None,
+        "stale_quote_max_seconds": STALE_QUOTE_MAX_S if args.feed == "live" else None,
+        "window_start_utc": args.window_start_utc if args.feed == "live" else None,
+        "window_end_utc": args.window_end_utc if args.feed == "live" else None,
+        "corpus_root": str(Path(args.corpus_root).resolve()) if args.feed == "replay" else None,
+        "source_manifest_path": (
+            str(args.source_manifest.resolve()) if args.source_manifest else None
+        ),
+        "source_manifest_sha256": (
+            file_sha256(args.source_manifest) if args.source_manifest else None
+        ),
+        "time_from": args.time_from if args.feed == "replay" else None,
+        "time_to": args.time_to if args.feed == "replay" else None,
+        "granularity": args.granularity if args.feed == "replay" else "live_poll",
+        "intrabar": args.intrabar if args.feed == "replay" else None,
+    }
+    session_contract = build_session_contract(
+        experiment_id=args.experiment_id,
+        room_id=args.room_id,
+        candidate_id=args.candidate_id,
+        room_kind=args.room_kind,
+        proof_mode=args.paper_proof_mode,
+        feed=args.feed,
+        pairs=pairs,
+        initial_balance_jpy=args.balance,
+        slippage_pips=slippage_pips,
+        financing_pips_per_day=financing_pips_day,
+        leverage=leverage,
+        costs_explicit=costs_explicit,
+        runtime=runtime,
+        bot=bot_spec,
+        source=source,
+    )
+    publish_immutable_json(session_contract_path, session_contract)
+    if snapshot_recovery:
+        broker._log("SESSION_RECOVERY", snapshot_recovery)
+    broker._log(
+        "SESSION_START",
+        {
+            "contract": session_contract["contract"],
+            "session_contract_sha256": session_contract["session_contract_sha256"],
+            "runtime_manifest_sha256": runtime["manifest_sha256"],
+            "bot_contract_sha256": bot_spec["bot_contract_sha256"],
+            "experiment_id": args.experiment_id,
+            "room_id": args.room_id,
+            "candidate_id": args.candidate_id,
+            "proof_mode": args.paper_proof_mode,
+            "proof_eligible": session_contract["proof_eligible"],
+            "feed": args.feed,
+            "pairs": pairs,
+            "balance": broker.balance_jpy,
+            "costs": session_contract["costs"],
+            "order_authority": "NONE",
+        },
+    )
     bot = None
     if args.bot == "golden_burst":
         bot = GoldenBurstBot(broker)
@@ -503,14 +845,33 @@ def main() -> int:
         _spec.loader.exec_module(_mod)
         bot_cls = getattr(_mod, class_name or "Bot")
         bot = bot_cls(broker)
-        broker._log("BOT_LOADED", {"module": module_path, "class": class_name or "Bot"})
+        broker._log(
+            "BOT_LOADED",
+            {
+                "module": module_path,
+                "class": class_name or "Bot",
+                "bot_contract_sha256": bot_spec["bot_contract_sha256"],
+                "module_sha256": bot_spec["module_sha256"],
+                "config_sha256": bot_spec["config_sha256"],
+                "strategy_tags": bot_spec["strategy_tags"],
+            },
+        )
     try:
         if args.feed == "live":
             run_live(args, broker, session_dir, bot=bot)
         else:
             run_replay(args, broker, session_dir, bot=bot)
     finally:
-        broker._log("SESSION_STOP", {"account": broker.account() if broker.last_quotes else None})
+        broker._log(
+            "SESSION_STOP",
+            {
+                "account": broker.account() if broker.last_quotes else None,
+                "session_contract_sha256": session_contract[
+                    "session_contract_sha256"
+                ],
+                "proof_eligible": session_contract["proof_eligible"],
+            },
+        )
         _write_broker_snapshot(session_dir, broker)
     print(json.dumps({"status": "SESSION_DONE",
                       "account": broker.account() if broker.last_quotes else None},

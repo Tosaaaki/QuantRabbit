@@ -1,0 +1,117 @@
+{
+  "contract": "QR_DOJO_PAPER_ROOM_REGISTRY_V1",
+  "experiment_id": "episode-s5-forward-wave-20260726-v1",
+  "window": {
+    "start_utc": "2026-07-26T21:00:00+00:00",
+    "end_utc": "2026-07-31T21:00:00+00:00"
+  },
+  "defaults": {
+    "balance_jpy": 200000.0,
+    "leverage": 25.0,
+    "pairs": [
+      "USD_JPY"
+    ],
+    "seed_m1_root": "research/data/m1_seed",
+    "seed_hours": 200.0,
+    "bot_module": "bots/lab_bot.py:Bot",
+    "bot_config_env": "DOJO_BOT_CONFIG"
+  },
+  "rooms": [
+    {
+      "room_id": "room-01-w-fade-base",
+      "candidate_id": "W_FADE@paper-v1",
+      "arm": "BASE",
+      "costs": {
+        "slippage_pips_per_fill": 0.0,
+        "financing_pips_per_day": 0.0
+      },
+      "bot_config": {
+        "strategy_tag": "W_FADE",
+        "signal": "range_fade_limit",
+        "pairs": [
+          "USD_JPY"
+        ],
+        "tp_pips": 6.0,
+        "sl_pips": null,
+        "ceiling_min": 480,
+        "max_concurrent": 3,
+        "per_pos_lev": 4.3,
+        "atr_floor_pips": 1.0,
+        "fade_atr": 1.2,
+        "eff_max": 0.2
+      }
+    },
+    {
+      "room_id": "room-02-w-fade-stress",
+      "candidate_id": "W_FADE@paper-v1",
+      "arm": "STRESS",
+      "costs": {
+        "slippage_pips_per_fill": 0.3,
+        "financing_pips_per_day": 0.8
+      },
+      "bot_config": {
+        "strategy_tag": "W_FADE",
+        "signal": "range_fade_limit",
+        "pairs": [
+          "USD_JPY"
+        ],
+        "tp_pips": 6.0,
+        "sl_pips": null,
+        "ceiling_min": 480,
+        "max_concurrent": 3,
+        "per_pos_lev": 4.3,
+        "atr_floor_pips": 1.0,
+        "fade_atr": 1.2,
+        "eff_max": 0.2
+      }
+    },
+    {
+      "room_id": "room-03-w-spike-base",
+      "candidate_id": "W_SPIKE@paper-v1",
+      "arm": "BASE",
+      "costs": {
+        "slippage_pips_per_fill": 0.0,
+        "financing_pips_per_day": 0.0
+      },
+      "bot_config": {
+        "strategy_tag": "W_SPIKE",
+        "signal": "spike_fade",
+        "pairs": [
+          "USD_JPY"
+        ],
+        "tp_atr": 3.0,
+        "sl_pips": null,
+        "ceiling_min": 480,
+        "max_concurrent": 2,
+        "per_pos_lev": 4.3,
+        "atr_floor_pips": 1.0,
+        "fade_atr": 1.2,
+        "eff_max": 0.2
+      }
+    },
+    {
+      "room_id": "room-04-w-spike-stress",
+      "candidate_id": "W_SPIKE@paper-v1",
+      "arm": "STRESS",
+      "costs": {
+        "slippage_pips_per_fill": 0.3,
+        "financing_pips_per_day": 0.8
+      },
+      "bot_config": {
+        "strategy_tag": "W_SPIKE",
+        "signal": "spike_fade",
+        "pairs": [
+          "USD_JPY"
+        ],
+        "tp_atr": 3.0,
+        "sl_pips": null,
+        "ceiling_min": 480,
+        "max_concurrent": 2,
+        "per_pos_lev": 4.3,
+        "atr_floor_pips": 1.0,
+        "fade_atr": 1.2,
+        "eff_max": 0.2
+      }
+    }
+  ]
+}
