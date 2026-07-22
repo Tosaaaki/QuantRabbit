@@ -31,6 +31,16 @@ def _load_wave():
     return module
 
 
+def _load_drain_launcher():
+    path = ROOT / "scripts/run-dojo-paper-room-drain.py"
+    spec = importlib.util.spec_from_file_location("dojo_paper_room_drain_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_registry_builds_four_isolated_formal_rooms_with_explicit_cost_arms():
     launcher = _load_launcher()
     registry_path = ROOT / "config/dojo_paper_rooms_v1.json"
@@ -94,3 +104,31 @@ def test_wave_uses_one_detached_owner_name_and_session_per_room():
         assert row["screen_name"] == f"qr-dojo-{row['room_id']}"
         assert row["command"][0] == "/fixed/python3"
         assert row["command"][-2:] == ["--room-id", row["room_id"]]
+
+
+@pytest.mark.parametrize(
+    ("room_id", "slippage", "financing"),
+    [
+        ("room-01-w-fade-base", "0.0", "0.0"),
+        ("room-02-w-fade-stress", "0.3", "0.8"),
+        ("room-03-w-spike-base", "0.0", "0.0"),
+        ("room-04-w-spike-stress", "0.3", "0.8"),
+    ],
+)
+def test_room_drain_inherits_costs_and_has_no_entry_worker(
+    room_id, slippage, financing
+):
+    drain = _load_drain_launcher()
+    command, _, _ = drain.build_drain_launch(
+        registry_path=ROOT / "config/dojo_paper_rooms_v1.json",
+        room_id=room_id,
+        python_executable="/fixed/python3",
+    )
+
+    assert "--drain-only" in command
+    assert "--bot" not in command
+    assert "--bot-module" not in command
+    assert "--allow-legacy-untagged" not in command
+    assert command[command.index("--slippage-pips") + 1] == slippage
+    assert command[command.index("--financing-pips-day") + 1] == financing
+    assert command[command.index("--drain-ceiling-min") + 1] == "480"
