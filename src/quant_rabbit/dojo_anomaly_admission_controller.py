@@ -26,6 +26,7 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, G8_CURRENCIES
 
 
 CONTRACT: Final = "QR_DOJO_ANOMALY_ADMISSION_ALLOCATION_V1"
+ECONOMIC_ALLOCATION_CONTRACT: Final = "QR_DOJO_ANOMALY_ADMISSION_ALLOCATION_V2"
 POLICY_CONTRACT: Final = "QR_DOJO_ANOMALY_ADMISSION_POLICY_V1"
 TRAIN_PLAN_CONTRACT: Final = "QR_DOJO_ANOMALY_ADMISSION_TRAIN_PLAN_V1"
 SCHEMA_VERSION: Final = 1
@@ -713,16 +714,20 @@ def allocate_candidates(
             if severity is not None:
                 reasons.append(f"{feature_name.upper()}_{severity}")
 
+        correlation_gate_enabled = arm in {
+            "VOLATILITY_CORRELATION_SIZING",
+            "COMBINED_ANOMALY_ADMISSION",
+        }
         selected_correlation = (
             max(
                 _pair_correlation(correlations, pair, selected)
                 for selected in selected_pairs
             )
-            if selected_pairs
+            if correlation_gate_enabled and selected_pairs
             else 0.0
         )
         if (
-            arm in {"VOLATILITY_CORRELATION_SIZING", "COMBINED_ANOMALY_ADMISSION"}
+            correlation_gate_enabled
             and selected_correlation
             >= normalized_policy["selected_pair_abs_correlation_hold_at"]
         ):
@@ -853,6 +858,289 @@ def validate_allocation(
     if row != expected:
         raise DojoAnomalyAdmissionError(
             "allocation differs from canonical recomputation"
+        )
+    return dict(row)
+
+
+def _normalize_economic_candidates(
+    value: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize runner-native candidates without rounding fractional units.
+
+    V1 intentionally used integer units for its pure planning surface.  The
+    economic runner sizes non-JPY pairs with fractional units, so coercing or
+    flooring them would change the upstream strategy.  V2 preserves the exact
+    finite value and remains a separate content-addressed contract.
+    """
+
+    candidates: list[dict[str, Any]] = []
+    identities: set[str] = set()
+    ranks: set[int] = set()
+    for index, raw in enumerate(_sequence(value, field="candidates")):
+        field = f"candidates[{index}]"
+        row = _exact_mapping(
+            raw,
+            {
+                "candidate_id",
+                "priority_rank",
+                "strategy_family",
+                "pair",
+                "side",
+                "full_size_units",
+                "currency_exposure_increment_at_full_size",
+            },
+            field=field,
+        )
+        candidate_id = _identifier(row["candidate_id"], field=f"{field}.candidate_id")
+        rank = _integer(row["priority_rank"], field=f"{field}.priority_rank", minimum=1)
+        pair = _identifier(row["pair"], field=f"{field}.pair")
+        if pair not in FORMAL_G8_PAIRS:
+            raise DojoAnomalyAdmissionError(f"{field}.pair is outside formal G8")
+        units = _finite(
+            row["full_size_units"], field=f"{field}.full_size_units", positive=True
+        )
+        if units < 4:
+            raise DojoAnomalyAdmissionError(
+                f"{field}.full_size_units must be at least 4"
+            )
+        if candidate_id in identities or rank in ranks:
+            raise DojoAnomalyAdmissionError(
+                "candidate ids and priority ranks must be unique"
+            )
+        identities.add(candidate_id)
+        ranks.add(rank)
+        candidates.append(
+            {
+                "candidate_id": candidate_id,
+                "priority_rank": rank,
+                "strategy_family": _identifier(
+                    row["strategy_family"], field=f"{field}.strategy_family"
+                ),
+                "pair": pair,
+                "side": _side(row["side"], field=f"{field}.side"),
+                "full_size_units": units,
+                "currency_exposure_increment_at_full_size": _finite(
+                    row["currency_exposure_increment_at_full_size"],
+                    field=f"{field}.currency_exposure_increment_at_full_size",
+                    positive=True,
+                ),
+            }
+        )
+    return sorted(candidates, key=lambda row: row["priority_rank"])
+
+
+def allocate_economic_candidates(
+    *,
+    completed_h1_panel: Mapping[str, Any],
+    decision_epoch: int,
+    latest_completed_h1_close_epoch: int,
+    policy: Mapping[str, Any],
+    arm: str,
+    candidates: Sequence[Mapping[str, Any]],
+    currency_gross_exposure_fractions: Mapping[str, Any],
+    capacity_slots: int,
+) -> dict[str, Any]:
+    """Allocate runner-native units using only the latest causal H1 panel."""
+
+    epoch = _integer(decision_epoch, field="decision_epoch", minimum=1)
+    panel_epoch = _integer(
+        latest_completed_h1_close_epoch,
+        field="latest_completed_h1_close_epoch",
+        minimum=1,
+    )
+    if panel_epoch > epoch or epoch - panel_epoch >= H1_SECONDS:
+        raise DojoAnomalyAdmissionError(
+            "latest completed H1 panel must be causal and less than one hour old"
+        )
+    normalized_policy = validate_policy(policy)
+    if arm not in EXPERIMENT_ARMS or arm == "AI_EXIT_CAPITAL_RELEASE":
+        _arm_feature_names(arm)
+    active_features = _arm_feature_names(arm)
+    slots = _integer(capacity_slots, field="capacity_slots", minimum=1)
+    normalized_candidates = _normalize_economic_candidates(candidates)
+    exposure = _normalize_exposure(currency_gross_exposure_fractions)
+    required_bars = max(normalized_policy["lookbacks"].values()) + 1
+    panel_body, panel, common_epochs = _normalize_panel(
+        completed_h1_panel,
+        decision_epoch=panel_epoch,
+        required_bars=required_bars,
+    )
+    features, correlations = _feature_rows(panel, normalized_policy, active_features)
+
+    selected_pairs: list[str] = []
+    rows: list[dict[str, Any]] = []
+    for candidate in normalized_candidates:
+        pair = candidate["pair"]
+        reasons: list[str] = []
+        cap = 1.0
+        pair_features = dict(features[pair])
+        for feature_name in active_features:
+            if feature_name == "currency_gross_exposure_fraction":
+                continue
+            band = normalized_policy["bands"][feature_name]
+            if arm in {"EXTREME_MOMENTUM_VETO", "REVERSAL_SHOCK_VETO"}:
+                feature_cap, severity = (
+                    (0.0, "HOLD")
+                    if pair_features[feature_name] >= band["hold_at"]
+                    else (1.0, None)
+                )
+            else:
+                feature_cap, severity = _band_cap(pair_features[feature_name], band)
+            cap = min(cap, feature_cap)
+            if severity is not None:
+                reasons.append(f"{feature_name.upper()}_{severity}")
+
+        correlation_gate_enabled = arm in {
+            "VOLATILITY_CORRELATION_SIZING",
+            "COMBINED_ANOMALY_ADMISSION",
+        }
+        selected_correlation = (
+            max(
+                _pair_correlation(correlations, pair, selected)
+                for selected in selected_pairs
+            )
+            if correlation_gate_enabled and selected_pairs
+            else 0.0
+        )
+        if (
+            correlation_gate_enabled
+            and selected_correlation
+            >= normalized_policy["selected_pair_abs_correlation_hold_at"]
+        ):
+            cap = 0.0
+            reasons.append("SELECTED_PAIR_CORRELATION_HOLD")
+
+        base_currency, quote_currency = pair.split("_")
+        chosen_multiplier = 0.0
+        if len(selected_pairs) >= slots:
+            reasons.append("CAPACITY_FULL_HOLD")
+        elif cap > 0:
+            for multiplier in _POSITIVE_MULTIPLIERS_DESC:
+                if multiplier > cap:
+                    continue
+                if "currency_gross_exposure_fraction" in active_features:
+                    projected_peak = max(
+                        exposure[base_currency]
+                        + candidate["currency_exposure_increment_at_full_size"]
+                        * multiplier,
+                        exposure[quote_currency]
+                        + candidate["currency_exposure_increment_at_full_size"]
+                        * multiplier,
+                    )
+                    exposure_cap, severity = _band_cap(
+                        projected_peak,
+                        normalized_policy["bands"][
+                            "currency_gross_exposure_fraction"
+                        ],
+                    )
+                    if severity is not None:
+                        reasons.append(
+                            f"CURRENCY_GROSS_EXPOSURE_FRACTION_{severity}"
+                        )
+                    if multiplier > exposure_cap:
+                        continue
+                chosen_multiplier = multiplier
+                break
+
+        if chosen_multiplier == 0.0:
+            decision = "HOLD"
+            status = "NOT_SELECTED"
+            selected_slot = None
+            allocated_units = 0.0
+            if not reasons:
+                reasons.append("ANOMALY_POLICY_HOLD")
+        else:
+            decision = "ENTER_OK" if chosen_multiplier == 1.0 else "REDUCE_SIZE"
+            status = "SELECTED"
+            selected_pairs.append(pair)
+            selected_slot = len(selected_pairs)
+            allocated_units = candidate["full_size_units"] * chosen_multiplier
+            increment = (
+                candidate["currency_exposure_increment_at_full_size"]
+                * chosen_multiplier
+            )
+            exposure[base_currency] += increment
+            exposure[quote_currency] += increment
+
+        rows.append(
+            {
+                **candidate,
+                "upstream_side_preserved": candidate["side"],
+                "upstream_priority_rank_preserved": candidate["priority_rank"],
+                "status": status,
+                "admission_decision": decision,
+                "size_multiplier": chosen_multiplier,
+                "allocated_units": allocated_units,
+                "selected_slot": selected_slot,
+                "anomaly_features": pair_features,
+                "max_abs_correlation_to_selected_before_decision": selected_correlation,
+                "reason_codes": sorted(set(reasons)),
+            }
+        )
+
+    body = {
+        "contract": ECONOMIC_ALLOCATION_CONTRACT,
+        "schema_version": 2,
+        "room_id": ROOM_ID,
+        "arm": arm,
+        "decision_epoch": epoch,
+        "latest_completed_h1_close_epoch": common_epochs[-1],
+        "h1_information_lag_seconds": epoch - common_epochs[-1],
+        "formal_pair_count": len(FORMAL_G8_PAIRS),
+        "completed_h1_panel_sha256": canonical_sha256(panel_body),
+        "policy_sha256": normalized_policy["policy_sha256"],
+        "candidate_set_sha256": canonical_sha256(normalized_candidates),
+        "capacity_slots": slots,
+        "selected_count": len(selected_pairs),
+        "selected_candidate_ids": [
+            row["candidate_id"] for row in rows if row["status"] == "SELECTED"
+        ],
+        "candidate_decisions": rows,
+        "ending_currency_gross_exposure_fractions": exposure,
+        "capital_recycle_policy": {
+            "hold_consumes_capacity_slot": False,
+            "next_upstream_rank_considered_after_hold": True,
+            "selected_pair_correlation_gate_enabled": arm
+            in {"VOLATILITY_CORRELATION_SIZING", "COMBINED_ANOMALY_ADMISSION"},
+        },
+        "upstream_fractional_units_preserved": True,
+        "direction_predictions_emitted": False,
+        "evidence_class": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC",
+        "runner_integration_complete": False,
+        "source_binding_verified": False,
+        "authority": _strict_clone(_AUTHORITY, field="authority"),
+    }
+    return {**body, "allocation_sha256": canonical_sha256(body)}
+
+
+def validate_economic_allocation(
+    value: Mapping[str, Any],
+    *,
+    completed_h1_panel: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+    currency_gross_exposure_fractions: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Recompute one V2 runner allocation and reject output tampering."""
+
+    row = _strict_clone(value, field="economic_allocation")
+    if not isinstance(row, Mapping):
+        raise DojoAnomalyAdmissionError("economic_allocation must be an object")
+    expected = allocate_economic_candidates(
+        completed_h1_panel=completed_h1_panel,
+        decision_epoch=row.get("decision_epoch"),
+        latest_completed_h1_close_epoch=row.get(
+            "latest_completed_h1_close_epoch"
+        ),
+        policy=policy,
+        arm=row.get("arm"),
+        candidates=candidates,
+        currency_gross_exposure_fractions=currency_gross_exposure_fractions,
+        capacity_slots=row.get("capacity_slots"),
+    )
+    if row != expected:
+        raise DojoAnomalyAdmissionError(
+            "economic allocation differs from canonical recomputation"
         )
     return dict(row)
 

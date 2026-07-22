@@ -16,6 +16,14 @@ from quant_rabbit.dojo_builtin_strategy_runtime import (
     build_builtin_strategy_runtime_seal,
     builtin_strategy_runtime_factory,
 )
+from quant_rabbit.dojo_anomaly_admission_controller import (
+    FORMAL_G8_PAIRS,
+    build_policy as build_anomaly_policy,
+)
+from quant_rabbit.dojo_anomaly_admission_runtime import (
+    build_anomaly_admission_runtime_factory,
+    build_anomaly_admission_runtime_seal,
+)
 from quant_rabbit.dojo_bot_catalog import AUTHORITY_INVARIANTS, validate_bot_config
 from quant_rabbit.dojo_bot_trainer import PROPOSAL_CONTRACT, seal_candidate_proposal
 from quant_rabbit.dojo_long_horizon_economic_runner import (
@@ -35,6 +43,7 @@ from quant_rabbit.dojo_long_horizon_execution import (
 from quant_rabbit.dojo_long_horizon_plan import (
     IMPLEMENTATION_DIGEST_KEYS,
     M1_CORE5_BINDING_ID,
+    M5_BINDING_ID,
     SOURCE_BINDING_IDS,
     build_long_horizon_train_plan,
     canonical_sha256,
@@ -147,11 +156,33 @@ def _source_row(epoch: int, bump: float) -> dict[str, Any]:
     return {"complete": True, "epoch": epoch, "granularity": "M1", "quotes": quotes}
 
 
+def _exact28_source_row(epoch: int, bump: float) -> dict[str, Any]:
+    quotes = []
+    for index, pair in enumerate(FORMAL_G8_PAIRS):
+        bid_open = (
+            100.0 + index
+            if pair.endswith("_JPY")
+            else 0.65 + index * 0.025
+        ) + bump
+        spread = 0.02 if pair.endswith("_JPY") else 0.0002
+        span = 0.10 if pair.endswith("_JPY") else 0.0010
+        bid = [bid_open, bid_open + span, bid_open - span, bid_open + span / 4]
+        ask = [value + spread for value in bid]
+        quotes.append({"pair": pair, "bid": bid, "ask": ask})
+    return {"complete": True, "epoch": epoch, "granularity": "M5", "quotes": quotes}
+
+
 def _write_source(
-    root: Path, job: Mapping[str, Any]
+    root: Path,
+    job: Mapping[str, Any],
+    *,
+    rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    path = root / "2020-01.jsonl"
-    rows = [_source_row(1_577_836_800, 0.0), _source_row(1_577_836_860, 0.0001)]
+    path = root / f"{job['month']}.jsonl"
+    source_rows = list(rows) if rows is not None else [
+        _source_row(1_577_836_800, 0.0),
+        _source_row(1_577_836_860, 0.0001),
+    ]
     path.write_bytes(
         b"".join(
             json.dumps(
@@ -162,7 +193,7 @@ def _write_source(
                 separators=(",", ":"),
             ).encode("utf-8")
             + b"\n"
-            for row in rows
+            for row in source_rows
         )
     )
     raw_root = root / "raw"
@@ -172,7 +203,7 @@ def _write_source(
     for pair in job["feed_pairs"]:
         raw_path = raw_root / f"{pair}.jsonl.gz"
         with gzip.open(raw_path, "wt", encoding="utf-8", newline="\n") as handle:
-            for row in rows:
+            for row in source_rows:
                 quote = next(item for item in row["quotes"] if item["pair"] == pair)
                 handle.write(
                     json.dumps(
@@ -184,7 +215,7 @@ def _write_source(
                                 zip(("o", "h", "l", "c"), quote["bid"], strict=True)
                             ),
                             "complete": True,
-                            "granularity": "M1",
+                            "granularity": job["granularity"],
                             "pair": pair,
                             "price": "BA",
                             "time": datetime.fromtimestamp(
@@ -206,16 +237,20 @@ def _write_source(
                 "file_size_bytes": len(raw_bytes),
                 "file_sha256": hashlib.sha256(raw_bytes).hexdigest(),
                 "pair": pair,
-                "granularity": "M1",
+                "granularity": job["granularity"],
             }
         )
         coverage_body = {
             "pair": pair,
-            "month": "2020-01",
+            "month": job["month"],
             "physical_shard_id": physical_id,
-            "row_count": len(rows),
-            "first_observed_utc": "2020-01-01T00:00:00+00:00",
-            "last_observed_utc": "2020-01-01T00:01:00+00:00",
+            "row_count": len(source_rows),
+            "first_observed_utc": datetime.fromtimestamp(
+                source_rows[0]["epoch"], timezone.utc
+            ).isoformat(),
+            "last_observed_utc": datetime.fromtimestamp(
+                source_rows[-1]["epoch"], timezone.utc
+            ).isoformat(),
             "request_window_completion_report_proved": True,
             "missing_slot_legitimacy_proved": True,
             "calendar_open_quote_coverage_proved": True,
@@ -327,10 +362,25 @@ def _policy(
             ],
             "conversion_routes": [
                 {
-                    "currency": "USD",
-                    "pair": "USD_JPY",
-                    "orientation": "JPY_PER_CURRENCY",
+                    "currency": currency,
+                    "pair": (
+                        f"{currency}_JPY"
+                        if f"{currency}_JPY" in pairs
+                        else f"JPY_{currency}"
+                    ),
+                    "orientation": (
+                        "JPY_PER_CURRENCY"
+                        if f"{currency}_JPY" in pairs
+                        else "CURRENCY_PER_JPY"
+                    ),
                 }
+                for currency in sorted(
+                    {
+                        pair.split("_")[1]
+                        for pair in pairs
+                        if pair.split("_")[1] != "JPY"
+                    }
+                )
             ],
             "correlation_bindings": [],
         }
@@ -346,6 +396,13 @@ def _runtime_rows(
     digests = PLANS_BY_JOB[job["job_sha256"]]["implementation_binding"]["digests"]
     result = {}
     for coordinate in job["coordinates"]:
+        active_catalog = [
+            row
+            for row, bit in zip(
+                catalog, coordinate["active_worker_mask"], strict=True
+            )
+            if bit == "1"
+        ]
         trade_pairs = [
             pair
             for pair, bit in zip(
@@ -354,7 +411,7 @@ def _runtime_rows(
             if bit == "1"
         ]
         policy = _policy(
-            catalog,
+            active_catalog,
             job["feed_pairs"],
             trade_pairs,
             f"{coordinate['cost_scenario'].lower()}-{coordinate['coordinate_id'][:8]}",
@@ -803,6 +860,185 @@ def test_sealed_tuned_generation_runs_without_plugin_or_mutable_seal(
     )
     assert result["external_worker_code_loaded"] is False
     assert result["authority"]["live_permission"] is False
+
+
+def test_anomaly_admission_wraps_actual_exact28_job_order_diagnostically(
+    tmp_path: Path,
+) -> None:
+    proposals = []
+    for family in ("burst", "range_fade_limit"):
+        config: dict[str, Any] = {
+            "signal": family,
+            "pairs": list(FORMAL_G8_PAIRS),
+            "tp_atr": 3.0,
+            "sl_pips": 25.0,
+            "ceiling_min": 60,
+            "max_concurrent_per_pair": 1,
+            "global_max_concurrent": 4,
+            "per_pos_lev": 5.0,
+            "atr_floor_pips": 0.5,
+            "exit_policy": "FIXED",
+            **dict(AUTHORITY_INVARIANTS),
+        }
+        if family == "range_fade_limit":
+            config.update({"fade_atr": 1.2, "eff_max": 0.2})
+        proposals.append(
+            seal_candidate_proposal(
+                {
+                    "contract": PROPOSAL_CONTRACT,
+                    "schema_version": 1,
+                    "candidate_id": f"meta-runtime-exact28-{family}",
+                    "family": family,
+                    "hypothesis": "Exercise admission over the exact scheduled G8 feed.",
+                    "config": validate_bot_config(config),
+                    "risk_increase": False,
+                }
+            )
+        )
+    tuned_seal = build_tuned_strategy_runtime_seal(
+        Path(__file__).resolve().parents[1],
+        candidate_proposals=proposals,
+        generation_ordinal=1,
+        generation_binding_sha256="e" * 64,
+    )
+    anomaly_policy = build_anomaly_policy(
+        policy_id="exact28-runner-integration-v1",
+        lookbacks={
+            "momentum_bars": 2,
+            "reversal_prior_bars": 2,
+            "volatility_short_bars": 2,
+            "volatility_long_bars": 3,
+            "atr_bars": 3,
+            "correlation_bars": 3,
+        },
+        bands={
+            name: {
+                "reduce_to_half_at": 10.0,
+                "reduce_to_quarter_at": 20.0,
+                "hold_at": 30.0,
+            }
+            for name in (
+                "momentum_z",
+                "reversal_shock_z",
+                "volatility_ratio",
+                "spread_atr_ratio",
+                "currency_gross_exposure_fraction",
+            )
+        }
+        | {
+            "correlation_concentration": {
+                "reduce_to_half_at": 2.0,
+                "reduce_to_quarter_at": 3.0,
+                "hold_at": 4.0,
+            }
+        },
+        selected_pair_abs_correlation_hold_at=1.0,
+    )
+    anomaly_seal = build_anomaly_admission_runtime_seal(
+        Path(__file__).resolve().parents[1],
+        upstream_runtime_seal=tuned_seal,
+        policy=anomaly_policy,
+        arm="BASE_BOT",
+        capacity_slots=4,
+    )
+    anomaly_factory = build_anomaly_admission_runtime_factory(
+        anomaly_seal, repo_root=Path(__file__).resolve().parents[1]
+    )
+    plan = build_long_horizon_train_plan(
+        portfolio_families=("burst", "range_fade_limit"),
+        source_digests=_digests(SOURCE_BINDING_IDS, 160),
+        corpus_digests=_digests(SOURCE_BINDING_IDS, 170),
+        implementation_digests=_digests(IMPLEMENTATION_DIGEST_KEYS, 180),
+    )
+    schedule = build_long_horizon_stream_schedule(
+        plan,
+        worker_bindings=[
+            {
+                key: row[key]
+                for key in ("worker_id", "family_id", "config_sha256")
+            }
+            for row in tuned_seal["worker_catalog"]
+        ],
+    )
+    job = next(
+        row
+        for row in schedule["jobs"]
+        if row["source_binding_id"] == M5_BINDING_ID
+        and row["month"] == "2020-01"
+        and row["intrabar_path"] == "OHLC"
+    )
+    # The plan has its own stable feed ordering while room-meta seals a sorted
+    # universe.  Equality is semantic set equality, not incidental list order.
+    assert job["feed_pairs"] != list(FORMAL_G8_PAIRS)
+    assert set(job["feed_pairs"]) == set(FORMAL_G8_PAIRS)
+    state = tmp_path / "anomaly-exact28-state"
+    initialize_long_horizon_execution_state(
+        state,
+        schedule=schedule,
+        plan=plan,
+        runner_binding={
+            "runner_contract": "QR_TEST_ANOMALY_EXACT28_RUNNER_V1",
+            "runner_code_sha256": "d" * 64,
+            "result_contract": CELL_CONTRACT,
+        },
+        resource_policy={
+            "max_resident_coordinates": 160,
+            "max_rss_bytes": 2_147_483_648,
+            "max_open_files": 256,
+            "min_free_disk_bytes": 1,
+            "max_checkpoint_bytes": 8_388_608,
+            "max_terminal_bytes": 2_097_152,
+            "max_parallel_jobs": 1,
+        },
+    )
+    handoff = LongHorizonExecutionSession(
+        state, schedule=schedule, plan=plan
+    ).claim_job(job_sha256=job["job_sha256"], runner_id="anomaly-exact28-test")
+    PLANS_BY_JOB[job["job_sha256"]] = plan
+    rows = [
+        _exact28_source_row(1_577_836_800, 0.0),
+        _exact28_source_row(1_577_837_100, 0.0001),
+    ]
+    receipt, source_manifest = _write_source(
+        tmp_path, handoff["job"], rows=rows
+    )
+    result = run_long_horizon_economic_job(
+        runner_handoff=handoff,
+        plan=plan,
+        source_root=tmp_path,
+        source_manifest=source_manifest,
+        source_slice_receipt=receipt,
+        worker_catalog=tuned_seal["worker_catalog"],
+        coordinate_runtimes=_runtime_rows(
+            handoff, catalog=tuned_seal["worker_catalog"]
+        ),
+        worker_runtime_factory=anomaly_factory,
+        worker_runtime_binding_sha256=anomaly_seal["runtime_binding_sha256"],
+        worker_runtime_seal=anomaly_seal,
+        worker_runtime_repo_root=Path(__file__).resolve().parents[1],
+        economic_evidence_root=_economic_evidence_root(tmp_path),
+    )
+
+    assert result["job_status"] == "COMPLETE"
+    assert result["worker_runtime_mode"] == (
+        "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+    )
+    assert result["worker_runtime_seal_sha256"] == anomaly_seal[
+        "runtime_binding_sha256"
+    ]
+    assert result["strategy_decision_reexecution_passed"] is False
+    assert result["official_evidence_eligible"] is False
+    assert result["independent_economic_reexecution_passed"] is True
+    assert len(result["worker_runtime_evidence_by_coordinate"]) == len(
+        handoff["runnable_coordinate_ids"]
+    )
+    assert all(
+        evidence["runner_integration_complete"] is True
+        and evidence["independent_counterfactual_reexecution_complete"] is False
+        and evidence["official_evidence_eligible"] is False
+        for evidence in result["worker_runtime_evidence_by_coordinate"].values()
+    )
+    assert result["authority"]["order_authority"] == "NONE"
 
 
 def test_source_byte_drift_invalidates_every_coordinate(

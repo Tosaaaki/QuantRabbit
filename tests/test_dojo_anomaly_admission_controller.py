@@ -10,10 +10,12 @@ from quant_rabbit.dojo_anomaly_admission_controller import (
     FORMAL_G8_PAIRS,
     DojoAnomalyAdmissionError,
     allocate_candidates,
+    allocate_economic_candidates,
     build_policy,
     build_train_plan,
     canonical_sha256,
     validate_allocation,
+    validate_economic_allocation,
     validate_policy,
     validate_train_plan,
 )
@@ -231,6 +233,25 @@ def test_base_arm_does_not_depend_on_unused_anomaly_feature_variation() -> None:
     assert row["anomaly_features"] == {}
 
 
+def test_base_arm_can_fill_multiple_slots_without_an_unbuilt_correlation_table() -> None:
+    first_pair, second_pair = FORMAL_G8_PAIRS[:2]
+    result = _allocate(
+        panel=_panel(),
+        arm="BASE_BOT",
+        candidates=[
+            _candidate("first-base", 1, first_pair),
+            _candidate("second-base", 2, second_pair),
+        ],
+        slots=2,
+    )
+
+    assert result["selected_candidate_ids"] == ["first-base", "second-base"]
+    assert [
+        row["max_abs_correlation_to_selected_before_decision"]
+        for row in result["candidate_decisions"]
+    ] == [0.0, 0.0]
+
+
 def test_reversal_shock_is_an_independent_veto_arm() -> None:
     pair = FORMAL_G8_PAIRS[2]
     result = _allocate(
@@ -373,6 +394,52 @@ def test_ai_exit_arm_remains_outside_direction_neutral_controller() -> None:
             panel=_panel(),
             arm="AI_EXIT_CAPITAL_RELEASE",
             candidates=[_candidate("candidate", 1, FORMAL_G8_PAIRS[0])],
+        )
+
+
+def test_economic_v2_preserves_fractional_units_and_uses_latest_causal_h1() -> None:
+    pair = FORMAL_G8_PAIRS[0]
+    candidate = _candidate("fractional", 1, pair)
+    candidate["full_size_units"] = 4_000.75
+    decision_epoch = DECISION_EPOCH + 1_800
+    result = allocate_economic_candidates(
+        completed_h1_panel=_panel(),
+        decision_epoch=decision_epoch,
+        latest_completed_h1_close_epoch=DECISION_EPOCH,
+        policy=_policy(),
+        arm="BASE_BOT",
+        candidates=[candidate],
+        currency_gross_exposure_fractions=_exposure(),
+        capacity_slots=1,
+    )
+
+    row = result["candidate_decisions"][0]
+    assert result["schema_version"] == 2
+    assert result["h1_information_lag_seconds"] == 1_800
+    assert result["upstream_fractional_units_preserved"] is True
+    assert row["full_size_units"] == 4_000.75
+    assert row["allocated_units"] == 4_000.75
+    assert (
+        validate_economic_allocation(
+            result,
+            completed_h1_panel=_panel(),
+            policy=_policy(),
+            candidates=[candidate],
+            currency_gross_exposure_fractions=_exposure(),
+        )
+        == result
+    )
+
+    with pytest.raises(DojoAnomalyAdmissionError, match="less than one hour old"):
+        allocate_economic_candidates(
+            completed_h1_panel=_panel(),
+            decision_epoch=DECISION_EPOCH + 3_600,
+            latest_completed_h1_close_epoch=DECISION_EPOCH,
+            policy=_policy(),
+            arm="BASE_BOT",
+            candidates=[candidate],
+            currency_gross_exposure_fractions=_exposure(),
+            capacity_slots=1,
         )
 
 

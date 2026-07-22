@@ -53,6 +53,10 @@ from quant_rabbit.dojo_tuned_strategy_runtime import (
     SealedTunedStrategyRuntimeFactory,
     verify_tuned_strategy_runtime_seal,
 )
+from quant_rabbit.dojo_anomaly_admission_runtime import (
+    SealedAnomalyAdmissionRuntimeFactory,
+    verify_anomaly_admission_runtime_seal,
+)
 from quant_rabbit.dojo_long_horizon_plan import (
     STARTING_EQUITY_JPY,
     canonical_sha256,
@@ -602,11 +606,18 @@ def _validate_source_row(
                 "source executable spread is crossed or zero"
             )
         quotes.append({"pair": pair, "bid": sides["bid"], "ask": sides["ask"]})
-    quotes.sort(key=lambda item: item["pair"])
-    if [item["pair"] for item in quotes] != list(job["feed_pairs"]):
+    expected_pairs = list(job["feed_pairs"])
+    observed_pairs = [item["pair"] for item in quotes]
+    if (
+        len(observed_pairs) != len(expected_pairs)
+        or len(set(observed_pairs)) != len(observed_pairs)
+        or set(observed_pairs) != set(expected_pairs)
+    ):
         raise DojoLongHorizonEconomicRunnerError(
-            "source row does not contain the exact ordered feed-pair denominator"
+            "source row does not contain the exact feed-pair denominator"
         )
+    quotes_by_pair = {item["pair"]: item for item in quotes}
+    quotes = [quotes_by_pair[pair] for pair in expected_pairs]
     return {
         "complete": True,
         "epoch": epoch,
@@ -1307,7 +1318,7 @@ def _coordinate_runtime_rows(
                 raise DojoLongHorizonEconomicRunnerError(
                     f"coordinate runtime {field} differs from the sealed plan"
                 )
-        if policy["expected_quote_pairs"] != list(job["feed_pairs"]):
+        if policy["expected_quote_pairs"] != sorted(job["feed_pairs"]):
             raise DojoLongHorizonEconomicRunnerError(
                 "portfolio policy does not cover the exact feed pairs"
             )
@@ -1460,7 +1471,7 @@ def _economic_carry(
 def _phase_quotes(row: Mapping[str, Any], phase: str) -> list[dict[str, Any]]:
     offset = {"O": 0, "H": 1, "L": 2, "C": 3}[phase]
     timestamp = datetime.fromtimestamp(row["epoch"], timezone.utc).isoformat()
-    return [
+    quotes = [
         {
             "pair": quote["pair"],
             "bid": quote["bid"][offset],
@@ -1469,6 +1480,7 @@ def _phase_quotes(row: Mapping[str, Any], phase: str) -> list[dict[str, Any]]:
         }
         for quote in row["quotes"]
     ]
+    return sorted(quotes, key=lambda quote: quote["pair"])
 
 
 def _batch_chain(
@@ -1671,6 +1683,42 @@ def run_long_horizon_economic_job(
                 "worker catalog differs from the tuned generation seal"
             )
         worker_runtime_mode = "SEALED_TUNED_DECLARATIVE_MULTI_STRATEGY"
+    elif type(worker_runtime_factory) is SealedAnomalyAdmissionRuntimeFactory:
+        if worker_runtime_seal is None or worker_runtime_repo_root is None:
+            raise DojoLongHorizonEconomicRunnerError(
+                "anomaly admission runtime requires its dependency seal"
+            )
+        try:
+            verified_runtime_seal = verify_anomaly_admission_runtime_seal(
+                worker_runtime_seal, repo_root=worker_runtime_repo_root
+            )
+        except ValueError as exc:
+            raise DojoLongHorizonEconomicRunnerError(
+                f"anomaly admission runtime seal is invalid: {exc}"
+            ) from exc
+        if (
+            runtime_sha != verified_runtime_seal["runtime_binding_sha256"]
+            or worker_runtime_factory.runtime_binding_sha256 != runtime_sha
+            or not worker_runtime_factory.matches_verified_seal(
+                verified_runtime_seal
+            )
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                "anomaly admission runtime differs from its immutable seal"
+            )
+        if catalog != verified_runtime_seal["worker_catalog"]:
+            raise DojoLongHorizonEconomicRunnerError(
+                "worker catalog differs from the anomaly upstream generation"
+            )
+        formal_pair_universe = list(verified_runtime_seal["formal_pair_universe"])
+        if (
+            len(job["feed_pairs"]) != len(formal_pair_universe)
+            or set(job["feed_pairs"]) != set(formal_pair_universe)
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                "anomaly admission runner requires the exact sealed G8 feed universe"
+            )
+        worker_runtime_mode = "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
     else:
         raise DojoLongHorizonEconomicRunnerError(
             "external in-process worker code is forbidden in the economic evidence "
@@ -1713,6 +1761,7 @@ def run_long_horizon_economic_job(
     failures: dict[str, tuple[str, str]] = {}
     portfolio_results: dict[str, dict[str, Any]] = {}
     economic_carries: dict[str, dict[str, Any]] = {}
+    worker_runtime_evidence: dict[str, dict[str, Any]] = {}
     initial = _positive(initial_balance_jpy, field="initial_balance_jpy")
     if initial != float(STARTING_EQUITY_JPY):
         raise DojoLongHorizonEconomicRunnerError(
@@ -2179,6 +2228,44 @@ def run_long_horizon_economic_job(
                 raise DojoLongHorizonEconomicRunnerError(
                     "worker state exceeds the sealed runner bound"
                 )
+            admission_evidence: dict[str, Any] | None = None
+            if worker_runtime_mode == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY":
+                exporter = getattr(
+                    worker_instances[coordinate_id],
+                    "export_admission_evidence",
+                    None,
+                )
+                if not callable(exporter):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "anomaly runtime did not expose its decision evidence"
+                    )
+                candidate_evidence = exporter()
+                if (
+                    not isinstance(candidate_evidence, Mapping)
+                    or candidate_evidence.get("runtime_binding_sha256") != runtime_sha
+                    or candidate_evidence.get("runner_integration_complete") is not True
+                    or candidate_evidence.get(
+                        "independent_counterfactual_reexecution_complete"
+                    )
+                    is not False
+                    or candidate_evidence.get("official_evidence_eligible") is not False
+                ):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "anomaly runtime evidence summary is invalid"
+                    )
+                evidence_body = {
+                    key: value
+                    for key, value in candidate_evidence.items()
+                    if key != "evidence_summary_sha256"
+                }
+                if candidate_evidence.get(
+                    "evidence_summary_sha256"
+                ) != canonical_sha256(evidence_body):
+                    raise DojoLongHorizonEconomicRunnerError(
+                        "anomaly runtime evidence summary SHA-256 is invalid"
+                    )
+                admission_evidence = dict(candidate_evidence)
+                worker_runtime_evidence[coordinate_id] = admission_evidence
             carry_out_sha: str | None = None
             carry_slot = coordinate["carry_out_state_slot_id"]
             if carry_slot is not None:
@@ -2211,6 +2298,11 @@ def run_long_horizon_economic_job(
                     "batch_chain_sha256": batch_chain,
                     "worker_runtime_binding_sha256": runtime_sha,
                     "worker_state_sha256": canonical_sha256(worker_state),
+                    "worker_runtime_evidence_sha256": (
+                        None
+                        if admission_evidence is None
+                        else admission_evidence["evidence_summary_sha256"]
+                    ),
                     "predecessor_state_sha256": predecessor_sha[coordinate_id],
                     "carry_out_state_sha256": carry_out_sha,
                 }
@@ -2430,6 +2522,8 @@ def run_long_horizon_economic_job(
         independent_reexecution_passed
         and source_quote_coverage_proved
         and economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL
+        and worker_runtime_mode
+        != "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
     )
     body = {
         "contract": ECONOMIC_JOB_RESULT_CONTRACT,
@@ -2477,6 +2571,15 @@ def run_long_horizon_economic_job(
         "worker_capability_isolation_enforced": True,
         "external_worker_code_loaded": False,
         "worker_runtime_mode": worker_runtime_mode,
+        "worker_runtime_evidence_by_coordinate": (
+            worker_runtime_evidence if failed_count == 0 else {}
+        ),
+        "strategy_decision_reexecution_passed": (
+            False
+            if worker_runtime_mode
+            == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
         "worker_runtime_seal_sha256": (
             verified_runtime_seal["runtime_binding_sha256"]
             if verified_runtime_seal is not None
