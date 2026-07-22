@@ -217,6 +217,9 @@ _ROOM_STUDY_PROFILE_POLICY_KEYS: Final = {
 }
 _ROOM_REVIEW_BLOCK_KEYS: Final = {"review_block_id", "train_months"}
 _MONTH_RE: Final = re.compile(r"[0-9]{4}-(?:0[1-9]|1[0-2])\Z")
+_SUPERSEDE_PENDING_ANCHOR_RE: Final = re.compile(
+    r"\.supersede-[0-9a-f]{64}-[0-9a-f]{64}\.json" r"\.pending(?:-[0-9]{4})?\Z"
+)
 _LOCK_BINDINGS: dict[int, tuple[int, Path, str, tuple[int, int], tuple[int, int]]] = {}
 
 _ARTIFACT_NAMES: Final = {
@@ -3712,6 +3715,15 @@ def _find_supersede_receipt_for_root(
         )
     matches = []
     for path in sorted(store.iterdir()):
+        if _SUPERSEDE_PENDING_ANCHOR_RE.fullmatch(path.name) is not None:
+            if path.is_symlink() or not path.is_file():
+                raise DojoHistoricalTrainControlError(
+                    "generation transition receipt store contains an unknown entry"
+                )
+            # The V2 publisher deliberately retains one or more hidden hard-link
+            # anchors.  The subsequent receipt verifier checks their bytes,
+            # inode linkage, naming, and uniqueness against the final JSON.
+            continue
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
             raise DojoHistoricalTrainControlError(
                 "generation transition receipt store contains an unknown entry"

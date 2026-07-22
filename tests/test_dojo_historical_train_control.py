@@ -30,6 +30,7 @@ from quant_rabbit.dojo_historical_train_control import (
     _disk_capacity_snapshot,
     _effective_archive_staging_fraction,
     _filesystem_capacity_reservations,
+    _find_supersede_receipt_for_root,
     _g2_room_bindings,
     _milestone_status,
     _load_generation,
@@ -1745,6 +1746,32 @@ def test_verified_supersede_excludes_orphan_from_active_conflicts(
     )
 
     _assert_dynamic_machine_capacity(control)
+
+
+def test_supersede_receipt_lookup_accepts_v2_durable_pending_anchor(
+    tmp_path: Path,
+) -> None:
+    current_root = tmp_path / "current"
+    conflicting_root = tmp_path / "old"
+    store = current_root / "transition-receipts"
+    store.mkdir(parents=True)
+    identity = "a" * 64
+    digest = "b" * 64
+    final = store / f"supersede-{identity}-{digest}.json"
+    payload = {
+        "contract": "QR_DOJO_HISTORICAL_GENERATION_SUPERSEDE_RECEIPT_V2",
+        "old_generation": {"root": str(conflicting_root)},
+    }
+    final.write_text(json.dumps(payload), encoding="utf-8")
+    os.link(final, store / f".{final.name}.pending")
+
+    assert (
+        _find_supersede_receipt_for_root(
+            current_root=current_root,
+            conflicting_root=conflicting_root,
+        )
+        == final
+    )
 
 
 def test_conflicting_generation_status_reports_absent_root() -> None:
