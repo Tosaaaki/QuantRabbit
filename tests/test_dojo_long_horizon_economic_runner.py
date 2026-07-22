@@ -1295,6 +1295,12 @@ def test_anomaly_admission_wraps_actual_exact28_job_order_diagnostically(
     assert result["worker_runtime_seal_sha256"] == anomaly_seal[
         "runtime_binding_sha256"
     ]
+    assert result["worker_runtime_arm"] == "BASE_BOT"
+    assert result["worker_runtime_capacity_slots"] == 4
+    assert result["worker_runtime_policy_sha256"] == anomaly_seal["policy_sha256"]
+    assert result["worker_upstream_runtime_binding_sha256"] == tuned_seal[
+        "runtime_binding_sha256"
+    ]
     assert result["strategy_decision_reexecution_passed"] is True
     fixed_decisions = result[
         "fixed_denominator_decision_reexecution_attestation"

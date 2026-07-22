@@ -3293,6 +3293,30 @@ def run_long_horizon_economic_job(
         "worker_capability_isolation_enforced": True,
         "external_worker_code_loaded": False,
         "worker_runtime_mode": worker_runtime_mode,
+        "worker_runtime_arm": (
+            verified_runtime_seal["arm"]
+            if worker_runtime_mode
+            == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
+        "worker_runtime_capacity_slots": (
+            verified_runtime_seal["capacity_slots"]
+            if worker_runtime_mode
+            == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
+        "worker_runtime_policy_sha256": (
+            verified_runtime_seal["policy_sha256"]
+            if worker_runtime_mode
+            == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
+        "worker_upstream_runtime_binding_sha256": (
+            verified_runtime_seal["upstream_runtime_binding_sha256"]
+            if worker_runtime_mode
+            == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
         "worker_runtime_evidence_by_coordinate": (
             worker_runtime_evidence if failed_count == 0 else {}
         ),
