@@ -42,6 +42,7 @@ from quant_rabbit.dojo_historical_train_control import (
     _risk_envelope,
     _seal_source_failure,
     _verified_control,
+    _verify_supersede_receipt_chain,
     advance_one_historical_transition,
     archive_next_completed_job,
     evaluate_historical_lifecycle,
@@ -1772,6 +1773,49 @@ def test_supersede_receipt_lookup_accepts_v2_durable_pending_anchor(
         )
         == final
     )
+
+
+def test_supersede_receipt_chain_reaches_current_through_unique_successors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = tmp_path / "old"
+    middle = tmp_path / "middle"
+    current = tmp_path / "current"
+    for root in (old, middle, current):
+        root.mkdir()
+    control = _load(ROOM_CONTROL_PATH)
+    configured_roots = sorted((old, middle))
+    control["execution"]["conflicting_execution_roots"] = [
+        str(root) for root in configured_roots
+    ]
+    control["execution"]["conflicting_run_lock_paths"] = [
+        str(root / ".historical-train.lock") for root in configured_roots
+    ]
+    first = middle / "first.json"
+    second = current / "second.json"
+    paths = {(middle, old): first, (current, middle): second}
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control."
+        "_find_supersede_receipt_for_root",
+        lambda *, current_root, conflicting_root: paths.get(
+            (current_root, conflicting_root)
+        ),
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control."
+        "verify_historical_supersede_receipt_file",
+        lambda path, **kwargs: {
+            "receipt_sha256": "a" * 64 if path == first else "b" * 64
+        },
+    )
+
+    chain = _verify_supersede_receipt_chain(
+        control,
+        current_root=current,
+        conflicting_root=old,
+    )
+
+    assert [row["receipt_sha256"] for row in chain] == ["a" * 64, "b" * 64]
 
 
 def test_conflicting_generation_status_reports_absent_root() -> None:

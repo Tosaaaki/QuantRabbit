@@ -3743,6 +3743,75 @@ def _find_supersede_receipt_for_root(
     return matches[0] if matches else None
 
 
+def _verify_supersede_receipt_chain(
+    control: Mapping[str, Any],
+    *,
+    current_root: Path,
+    conflicting_root: Path,
+    locked_descriptors: Mapping[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Verify the unique append-only successor path into the current generation."""
+
+    candidate_successors = [
+        root for root, _ in _configured_conflicting_pairs(control)
+    ] + [current_root]
+    if len(candidate_successors) != len(set(candidate_successors)):
+        raise DojoHistoricalTrainControlError(
+            "generation supersede lineage contains duplicate roots"
+        )
+    cursor = conflicting_root
+    seen = {cursor}
+    receipts: list[dict[str, Any]] = []
+    for _ in range(len(candidate_successors)):
+        matches: list[tuple[Path, Path]] = []
+        for successor in candidate_successors:
+            if successor in seen or not successor.exists():
+                continue
+            receipt_path = _find_supersede_receipt_for_root(
+                current_root=successor,
+                conflicting_root=cursor,
+            )
+            if receipt_path is not None:
+                matches.append((successor, receipt_path))
+        if not matches:
+            return []
+        if len(matches) != 1:
+            raise DojoHistoricalTrainControlError(
+                "generation supersede lineage has multiple successor paths"
+            )
+        successor, receipt_path = matches[0]
+        try:
+            descriptor = (
+                locked_descriptors.get(os.fspath(cursor))
+                if locked_descriptors is not None
+                else None
+            )
+            if descriptor is None:
+                receipt = verify_historical_supersede_receipt_file(
+                    receipt_path,
+                    old_root=cursor,
+                    new_root=successor,
+                )
+            else:
+                receipt = verify_historical_supersede_receipt_store_locked(
+                    old_root=cursor,
+                    new_root=successor,
+                    old_lock_descriptor=descriptor,
+                )
+        except DojoHistoricalSupersedeReceiptError as exc:
+            raise DojoHistoricalTrainControlError(
+                "generation supersede receipt chain failed verification: " f"{exc}"
+            ) from exc
+        receipts.append(receipt)
+        cursor = successor
+        if cursor == current_root:
+            return receipts
+        seen.add(cursor)
+    raise DojoHistoricalTrainControlError(
+        "generation supersede lineage exceeded its configured root bound"
+    )
+
+
 def _conflicting_generation_statuses(
     control: Mapping[str, Any],
     *,
@@ -3777,35 +3846,17 @@ def _conflicting_generation_statuses(
         superseded = False
         supersede_receipt_sha256 = None
         if status["active_job_count"] > 0 and current_root is not None:
-            receipt_path = _find_supersede_receipt_for_root(
+            receipt_chain = _verify_supersede_receipt_chain(
+                control,
                 current_root=current_root,
                 conflicting_root=root,
+                locked_descriptors=locked_descriptors,
             )
-            if receipt_path is not None:
-                try:
-                    descriptor = (
-                        locked_descriptors.get(os.fspath(root))
-                        if locked_descriptors is not None
-                        else None
-                    )
-                    if descriptor is None:
-                        receipt = verify_historical_supersede_receipt_file(
-                            receipt_path,
-                            old_root=root,
-                            new_root=current_root,
-                        )
-                    else:
-                        receipt = verify_historical_supersede_receipt_store_locked(
-                            old_root=root,
-                            new_root=current_root,
-                            old_lock_descriptor=descriptor,
-                        )
-                except DojoHistoricalSupersedeReceiptError as exc:
-                    raise DojoHistoricalTrainControlError(
-                        "generation supersede receipt failed verification: " f"{exc}"
-                    ) from exc
+            if receipt_chain:
                 superseded = True
-                supersede_receipt_sha256 = receipt["receipt_sha256"]
+                supersede_receipt_sha256 = canonical_sha256(
+                    [receipt["receipt_sha256"] for receipt in receipt_chain]
+                )
         rows.append(
             {
                 "output_root": str(root),

@@ -1,0 +1,176 @@
+{
+  "authority": {
+    "automatic_deployment_allowed": false,
+    "broker_mutation_allowed": false,
+    "historical_replay_process_start_allowed": true,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "promotion_eligible": false,
+    "research_filesystem_write_allowed": true
+  },
+  "contract": "QR_DOJO_G2_HISTORICAL_RUN_CONTROL_V1",
+  "execution": {
+    "allowed_command": "scripts/run-dojo-historical-train-control.py step",
+    "archive_root": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260723-r10",
+    "archive_drive_root_id": "1bkh3RY7I3DtGjUifV8PRez2L7kETahst",
+    "archive_drive_readback_parent_id": "1DXT5O2F_F5wl-3Nrpj1USonoFZU25sl9",
+    "archive_drive_remote_receipts_parent_id": "1iOi8ljgUuOxeVkpNOM4YWOoMnDqC3FXF",
+    "archive_local_staging_root": "/Users/tossaki/App/QuantRabbit-live/staging/dojo-historical-archives-r10",
+    "archive_zstd_executable": "/opt/homebrew/Cellar/zstd/1.5.7_1/bin/zstd",
+    "archive_zstd_sha256": "aff8169fb421bb925fb16c44a7e0143fa2c7a941dc45cce76b15062a2ce54917",
+    "archive_zstd_size_bytes": 205776,
+    "archive_zstd_version": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+    "archive_staging_fraction": 1,
+    "capacity_baseline": {
+      "baseline_artifact_path": "research/baselines/dojo_r7_capacity_baseline_v1.json",
+      "baseline_artifact_sha256": "a01bf5625eb3a8ff7cd30a275af076d2fc3ec310725f637757c25f40c95af469",
+      "baseline_id": "G2_R7_VERIFIED_2025_01_COMPLETE_PATH",
+      "coordinate_count": 12,
+      "raw_bytes_per_job": 3605674230,
+      "source_bytes_per_job": 42067733
+    },
+    "bootstrap_job_working_set_bytes": 1073741824,
+    "conflicting_execution_roots": [
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-fixed-six-family-20260722-r5",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r8",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r9"
+    ],
+    "conflicting_run_lock_paths": [
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-fixed-six-family-20260722-r5/.historical-train.lock",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7/.historical-train.lock",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r8/.historical-train.lock",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r9/.historical-train.lock"
+    ],
+    "evidence_tier": "WORN_HISTORICAL_TRAIN_ONLY",
+    "global_heavy_lock_path": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/.dojo-heavy-operation.lock",
+    "job_space_headroom_fraction": 0.15,
+    "lifecycle_barrier_policy": {
+      "archive_before_next_claim": true,
+      "capacity_model": "ONE_WORKING_SET_PLUS_PER_FILESYSTEM_FLOOR",
+      "exact_v2_raw_reclaim_before_next_claim": true,
+      "external_attestor_unavailable_action": "WAIT_WITHOUT_CLAIM",
+      "max_unreclaimed_terminal_jobs": 1,
+      "signed_remote_attestation_before_next_claim": true
+    },
+    "max_checkpoint_bytes": 16777216,
+    "max_jobs_per_invocation": 1,
+    "max_open_files": 1024,
+    "max_parallel_jobs": 1,
+    "max_one_minute_load_per_cpu": 1.2,
+    "max_rss_bytes": 8589934592,
+    "max_terminal_bytes": 16777216,
+    "minimum_free_disk_bytes": 26843545600,
+    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r10",
+    "source_slice_policy": "AUTHENTICATED_OBSERVED_EPOCH_UNION_NO_IMPUTATION",
+    "training_root_may_be_deleted": false
+  },
+  "fixed_inputs": {
+    "cost_profiles": {
+      "BASE": {
+        "financing_policy": "ZERO_BASE_DIAGNOSTIC",
+        "jpy_quote_financing_jpy_per_unit_day": 0,
+        "non_jpy_quote_financing_jpy_per_unit_day": 0,
+        "slippage_pips_per_adverse_fill": 0
+      },
+      "STRESS": {
+        "financing_policy": "DECLARED_FIXED_JPY_CONSERVATIVE_PROXY",
+        "jpy_quote_financing_jpy_per_unit_day": 0.008,
+        "non_jpy_quote_financing_jpy_per_unit_day": 0.02,
+        "slippage_pips_per_adverse_fill": 0.3
+      }
+    },
+    "generation": "G2_ROOM_V2",
+    "study_profile": "RAPID_G2_ROOM_SIX_MONTH_2025H1",
+    "strategy_generation_ordinal": 3,
+    "train_months": [
+      "2025-01",
+      "2025-02",
+      "2025-03",
+      "2025-04",
+      "2025-05",
+      "2025-06"
+    ],
+    "study_profile_policy": {
+      "contract": "QR_DOJO_HISTORICAL_ROOM_STUDY_PROFILE_POLICY_V1",
+      "schema_version": 1,
+      "profile_type": "EXPLICIT_CONTIGUOUS_M5_ISOLATED_ROOM_TRAIN",
+      "train_month_count": 6,
+      "train_months_contiguous": true,
+      "review_cadence_months": 6,
+      "review_blocks": [
+        {
+          "review_block_id": "review-block-0001",
+          "train_months": [
+            "2025-01",
+            "2025-02",
+            "2025-03",
+            "2025-04",
+            "2025-05",
+            "2025-06"
+          ]
+        }
+      ],
+      "complete_review_blocks_required": true,
+      "non_overlapping_review_blocks_required": true,
+      "partial_review_block_allowed": false
+    },
+    "room_taxonomy_revision": "DOJO_ONE_THESIS_PER_ROOM_TAXONOMY_V2",
+    "room_family_bindings_sha256": "672e88a6117d84f248328388836158e3c1bfb9d7e922aa0a9e90968c30b1522b",
+    "room_bindings": [
+      {
+        "family_id": "spike_fade",
+        "room_id": "room-g2-01"
+      },
+      {
+        "family_id": "burst",
+        "room_id": "room-g2-02"
+      },
+      {
+        "family_id": "pullback_limit",
+        "room_id": "room-g2-03"
+      },
+      {
+        "family_id": "prev_day_extreme_fade",
+        "room_id": "room-g2-04"
+      },
+      {
+        "family_id": "round_number_fade",
+        "room_id": "room-g2-05"
+      },
+      {
+        "family_id": "mean_revert_24h",
+        "room_id": "room-g2-06"
+      }
+    ],
+    "registry_artifact_sha256": "7a12ece80923d3cc2eb173fc166117b9e8d2100ba5e59100af60b1c9c5bbdfbb",
+    "registry_path": "research/registries/dojo_g2_baseline_revision_v1.json",
+    "source_manifest_path": "research/data/dojo_long_horizon_source_manifest_2020_2026.json",
+    "source_manifest_sha256": "f8f68681d1a23ef5ed1e2fdbd0e34be7cc57298dec9f69e4167b7fc8c359ae64"
+  },
+  "resource_policy": {
+    "archive_completed_job_before_source_eviction": true,
+    "large_legacy_archive_remote_verification_blocks_source_deletion": true,
+    "large_legacy_archive_remote_verification_blocks_this_compact_train": false,
+    "stop_before_disk_floor": true
+  },
+  "schema_version": 1,
+  "trainer_milestones": {
+    "continuous_account_role": "SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE",
+    "economics_hidden_while_job_running": true,
+    "m5_completed_months_per_review": 6,
+    "minimum_completed_intrabar_paths_per_month": 2,
+    "non_overlapping_review_blocks_required": true,
+    "parameter_change_applies_only_to_new_generation": true,
+    "partial_month_tuning_allowed": false,
+    "rapid_train_evaluation_mode": "INDEPENDENT_MONTH",
+    "review_inputs": [
+      "ROOM_LOCAL_COST_AFTER_EQUITY",
+      "ROOM_LOCAL_INDEPENDENT_MONTH_DRAWDOWN",
+      "ROOM_LOCAL_MARGIN_USAGE_AND_REJECTS",
+      "ROOM_LOCAL_FAMILY_PAIR_CURRENCY_ATTRIBUTION",
+      "ROOM_LOCAL_TRADE_AND_ZERO_TRADE_COUNTS"
+    ],
+    "target_multiple_may_backsolve_sizing": false
+  }
+}
