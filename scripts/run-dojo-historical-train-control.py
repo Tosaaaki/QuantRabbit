@@ -15,6 +15,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from quant_rabbit.dojo_historical_train_control import (  # noqa: E402
     DojoHistoricalTrainControlError,
+    advance_one_historical_transition,
+    archive_next_completed_job,
     generation_status,
     prepare_generation,
     run_next_job,
@@ -27,11 +29,16 @@ DEFAULT_RUN_CONTROL = REPO_ROOT / "config" / "dojo_g2_historical_run_control_v1.
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "run-next", "status"):
+    for name in (
+        "prepare",
+        "step",
+        "advance-one",
+        "archive-next",
+        "run-next",
+        "status",
+    ):
         command = commands.add_parser(name)
-        command.add_argument(
-            "--run-control", type=Path, default=DEFAULT_RUN_CONTROL
-        )
+        command.add_argument("--run-control", type=Path, default=DEFAULT_RUN_CONTROL)
     return parser
 
 
@@ -40,6 +47,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "prepare":
             result = prepare_generation(
+                repo_root=REPO_ROOT, run_control_path=args.run_control
+            )
+        elif args.command in {"step", "advance-one"}:
+            result = advance_one_historical_transition(
+                repo_root=REPO_ROOT, run_control_path=args.run_control
+            )
+        elif args.command == "archive-next":
+            result = archive_next_completed_job(
                 repo_root=REPO_ROOT, run_control_path=args.run_control
             )
         elif args.command == "run-next":
@@ -61,6 +76,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "live_permission": False,
                     "order_authority": "NONE",
                     "promotion_eligible": False,
+                    **(
+                        {"next_job_started": False}
+                        if args.command == "archive-next"
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
                 sort_keys=True,

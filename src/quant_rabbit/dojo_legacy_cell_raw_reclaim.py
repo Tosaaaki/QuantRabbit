@@ -17,7 +17,6 @@ target set.  The old archive receipts remain immutable and continue to state
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -25,10 +24,9 @@ import re
 import stat
 import tempfile
 from collections.abc import Mapping
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Final, Iterator
+from typing import Any, Final
 
 import quant_rabbit.dojo_drive_archive as drive_archive
 
@@ -1280,61 +1278,6 @@ def _write_once(path: Path, value: Mapping[str, Any], *, field: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-@contextmanager
-def _exclusive_lock(path: Path) -> Iterator[None]:
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    try:
-        descriptor = os.open(path, flags, 0o600)
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise DojoLegacyCellRawReclaimError("run lock is not regular")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as exc:
-        raise DojoLegacyCellRawReclaimError("legacy reclaim run lock is held") from exc
-    except OSError as exc:
-        raise DojoLegacyCellRawReclaimError(
-            "legacy reclaim run lock is unavailable"
-        ) from exc
-    try:
-        yield
-    finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-
-
-def _unlink_target(root: Path, row: Mapping[str, Any]) -> int:
-    path = _safe_path(root, str(row.get("path", "")), must_exist=False)
-    descriptor = os.open(
-        path.parent,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-    )
-    try:
-        try:
-            before = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
-        except FileNotFoundError:
-            return 0
-        if not stat.S_ISREG(before.st_mode):
-            raise DojoLegacyCellRawReclaimError("raw target is not regular")
-        sha256, _, size, allocated = _hash_file(path)
-        after = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
-        if (
-            (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            or sha256 != row.get("sha256")
-            or size != row.get("size_bytes")
-        ):
-            raise DojoLegacyCellRawReclaimError("raw target changed before unlink")
-        os.unlink(path.name, dir_fd=descriptor)
-        os.fsync(descriptor)
-        return allocated
-    finally:
-        os.close(descriptor)
-
-
 def reclaim_legacy_cell_raw(
     *,
     source_run: Path,
@@ -1343,163 +1286,21 @@ def reclaim_legacy_cell_raw(
     expected_drive_parent_id: str,
     zstd_bin: str = "zstd",
 ) -> dict[str, Any]:
-    """Unlink only remotely verified cell raw under an append-only run plan."""
+    """Reject V1 reclaim because its remote receipts are self-attested JSON.
 
-    root = Path(source_run).resolve(strict=True)
-    with _exclusive_lock(root / ".dojo-legacy-cell-reclaim.lock"):
-        receipts = root / "legacy-cell-reclaim-receipts"
-        preflight_body: dict[str, Any] | None = None
-        if receipts.is_symlink():
-            raise DojoLegacyCellRawReclaimError("reclaim receipt directory is unsafe")
-        if not receipts.exists():
-            preflight_body = _fresh_plan_body(
-                source_run=root,
-                archive_root=Path(archive_root),
-                remote_receipts_dir=Path(remote_receipts_dir),
-                expected_drive_parent_id=expected_drive_parent_id,
-                zstd_bin=zstd_bin,
-            )
-            receipts.mkdir(mode=0o700)
-            drive_archive._fsync_directory(root)
-        elif not receipts.is_dir():
-            raise DojoLegacyCellRawReclaimError("reclaim receipt directory is unsafe")
-        existing_plans = sorted(receipts.glob("plan-*.json"))
-        existing_receipts = sorted(receipts.glob("reclaim-*.json"))
-        if (
-            sorted(receipts.iterdir(), key=lambda path: path.name)
-            != sorted(existing_plans + existing_receipts, key=lambda path: path.name)
-            or any(
-                path.is_symlink() or not path.is_file() for path in receipts.iterdir()
-            )
-            or len(existing_plans) > 1
-            or len(existing_receipts) > 1
-        ):
-            raise DojoLegacyCellRawReclaimError("multiple reclaim lineages exist")
-        if existing_plans:
-            plan = _load_json(existing_plans[0], field="legacy reclaim plan")
-            root, plan = _validate_plan_resume(
-                plan=plan,
-                source_run=root,
-                archive_root=Path(archive_root),
-                remote_receipts_dir=Path(remote_receipts_dir),
-                expected_drive_parent_id=expected_drive_parent_id,
-                zstd_bin=zstd_bin,
-            )
-            expected_plan_name = (
-                f"plan-{plan['source_run_sha256']}-"
-                f"{plan['remote_receipt_set_sha256']}.json"
-            )
-            if existing_plans[0].name != expected_plan_name:
-                raise DojoLegacyCellRawReclaimError(
-                    "legacy reclaim plan filename is invalid"
-                )
-        else:
-            if existing_receipts:
-                raise DojoLegacyCellRawReclaimError(
-                    "reclaim receipt exists without its append-only plan"
-                )
-            body = preflight_body or _fresh_plan_body(
-                source_run=root,
-                archive_root=Path(archive_root),
-                remote_receipts_dir=Path(remote_receipts_dir),
-                expected_drive_parent_id=expected_drive_parent_id,
-                zstd_bin=zstd_bin,
-            )
-            plan = {**body, "reclaim_plan_sha256": _sha256(body)}
-            plan_path = receipts / (
-                f"plan-{plan['source_run_sha256']}-{plan['remote_receipt_set_sha256']}.json"
-            )
-            _write_once(plan_path, plan, field="legacy reclaim plan")
-            existing_plans = [plan_path]
-        if existing_receipts:
-            receipt = _load_json(existing_receipts[0], field="legacy reclaim receipt")
-            _exact(receipt, _RECLAIM_RECEIPT_KEYS, "legacy reclaim receipt")
-            receipt_body = {
-                key: value
-                for key, value in receipt.items()
-                if key != "reclaim_receipt_sha256"
-            }
-            if (
-                receipt.get("contract") != RECLAIM_RECEIPT_CONTRACT
-                or receipt.get("schema_version") != SCHEMA_VERSION
-                or receipt.get("status") != "LEGACY_CELL_RAW_RECLAIMED"
-                or existing_receipts[0].name
-                != f"reclaim-{receipt.get('reclaim_receipt_sha256')}.json"
-                or receipt.get("reclaim_plan_sha256") != plan["reclaim_plan_sha256"]
-                or receipt.get("source_run_sha256") != plan["source_run_sha256"]
-                or receipt.get("remote_receipt_set_sha256")
-                != plan["remote_receipt_set_sha256"]
-                or receipt.get("verified_cell_count") != plan["verified_cell_count"]
-                or receipt.get("unverified_cell_count") != plan["unverified_cell_count"]
-                or receipt.get("deleted_file_count") != plan["target_count"]
-                or receipt.get("deleted_files") != plan["targets"]
-                or receipt.get("reclaimed_logical_bytes") != plan["target_bytes"]
-                or receipt.get("remote_unverified_cells_excluded") is not True
-                or receipt.get("restore_requires_verified_cell_archives") is not True
-                or _sha(
-                    receipt.get("reclaim_receipt_sha256"),
-                    "legacy reclaim receipt SHA-256",
-                )
-                != _sha256(receipt_body)
-                or any(receipt.get(key) != value for key, value in _AUTHORITY.items())
-            ):
-                raise DojoLegacyCellRawReclaimError("legacy reclaim receipt is invalid")
-            _utc(receipt.get("completed_at_utc"), "reclaim completed_at_utc")
-            for field in (
-                "reclaimed_allocated_bytes_observed",
-                "free_disk_bytes_before",
-                "free_disk_bytes_after",
-            ):
-                _nonnegative_int(receipt.get(field), field)
-            if any(
-                _verify_row(root, row, missing_allowed=True) for row in plan["targets"]
-            ):
-                raise DojoLegacyCellRawReclaimError(
-                    "reclaim receipt exists while a target remains"
-                )
-            return receipt
-        free_before = os.statvfs(root).f_bavail * os.statvfs(root).f_frsize
-        allocated = 0
-        for row in plan["targets"]:
-            allocated += _unlink_target(root, row)
-        if any(_verify_row(root, row, missing_allowed=True) for row in plan["targets"]):
-            raise DojoLegacyCellRawReclaimError("not every planned target was removed")
-        for row in plan["shared_terminal_files"]:
-            _verify_row(root, row, missing_allowed=False)
-        for row in plan["unverified_raw_files"]:
-            path = _safe_path(root, row["path"])
-            if path.stat(follow_symlinks=False).st_size != row["size_bytes"]:
-                raise DojoLegacyCellRawReclaimError(
-                    "unverified raw changed during reclaim"
-                )
-        free_after = os.statvfs(root).f_bavail * os.statvfs(root).f_frsize
-        receipt_body = {
-            "contract": RECLAIM_RECEIPT_CONTRACT,
-            "schema_version": SCHEMA_VERSION,
-            "status": "LEGACY_CELL_RAW_RECLAIMED",
-            "source_run_sha256": plan["source_run_sha256"],
-            "remote_receipt_set_sha256": plan["remote_receipt_set_sha256"],
-            "reclaim_plan_sha256": plan["reclaim_plan_sha256"],
-            "completed_at_utc": datetime.now(timezone.utc).isoformat(),
-            "verified_cell_count": plan["verified_cell_count"],
-            "unverified_cell_count": plan["unverified_cell_count"],
-            "deleted_file_count": plan["target_count"],
-            "deleted_files": plan["targets"],
-            "reclaimed_logical_bytes": plan["target_bytes"],
-            "reclaimed_allocated_bytes_observed": allocated,
-            "free_disk_bytes_before": free_before,
-            "free_disk_bytes_after": free_after,
-            "remote_unverified_cells_excluded": True,
-            "restore_requires_verified_cell_archives": True,
-            **_AUTHORITY,
-        }
-        receipt = {
-            **receipt_body,
-            "reclaim_receipt_sha256": _sha256(receipt_body),
-        }
-        receipt_path = receipts / f"reclaim-{receipt['reclaim_receipt_sha256']}.json"
-        _write_once(receipt_path, receipt, field="legacy reclaim receipt")
-        return receipt
+    V1 verification remains available as diagnostic migration input.  It can
+    never authorize another unlink: the receipt contract has no authenticated
+    issuer and cannot prove that its Drive metadata came from Google Drive.
+    """
+
+    del (
+        source_run,
+        archive_root,
+        remote_receipts_dir,
+        expected_drive_parent_id,
+        zstd_bin,
+    )
+    raise DojoLegacyCellRawReclaimError("V1_REMOTE_RECEIPTS_UNSIGNED_RECLAIM_DISABLED")
 
 
 __all__ = [

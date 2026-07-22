@@ -1,0 +1,19 @@
+{
+  "archive_receipt_file_sha256": "53a9cba8d7ab21bdbf8dcaa87838fed09b3ad1c767a8107d2596dad310a7d863",
+  "archive_receipt_path": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260722-r7/receipts/job-fba1fddfb96d280412455a3a6754332c9355cfbc61626fdf15e37523c05018e6-0adaf71b5f19f94ed85522996deb7ce9a73499650c388f064af83c2ff8e619d0.json",
+  "archive_receipt_sha256": "47e58b1841831ce879698fe17b4e4112728124985e34253e96fa63c79e46b3b2",
+  "artifact_sha256": "ef1e56f2975e2b0cb13caea660c60fceebb5d99389e15d81a75d7d193cfa9065",
+  "baseline_id": "G2_R7_VERIFIED_2025_01_COMPLETE_PATH",
+  "completion_file_sha256": "9df270a6985cef56228ddd5b919c3cba933146cac70035a49598b59b549c5399",
+  "completion_path": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7/jobs/fba1fddfb96d280412455a3a6754332c9355cfbc61626fdf15e37523c05018e6/completion.json",
+  "completion_sha256": "7f6ed95c8f9d59fb42ca8c9f9d96e4bf296837cdf3e718a6a15fedd6d5778519",
+  "contract": "QR_DOJO_HISTORICAL_CAPACITY_BASELINE_V1",
+  "coordinate_count": 12,
+  "job_sha256": "fba1fddfb96d280412455a3a6754332c9355cfbc61626fdf15e37523c05018e6",
+  "measured_raw_bytes": 3605674230,
+  "measured_source_bytes": 42067733,
+  "schema_version": 1,
+  "source_slice_receipt_file_sha256": "e64ae2e5afcfbf903beeef94f74a052f4942d714b67a2d1345474e6c9318ef41",
+  "source_slice_receipt_path": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7/jobs/fba1fddfb96d280412455a3a6754332c9355cfbc61626fdf15e37523c05018e6/source-slice-receipt.json",
+  "source_slice_receipt_sha256": "43b5dfd158b0545a1eaf52ef39776599f8bdd21d3181b6557721081e46f35cb5"
+}

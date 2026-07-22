@@ -9,19 +9,23 @@ required before any later reclamation policy may do that.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 from contextlib import contextmanager
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Final, Iterator
+from typing import Any, BinaryIO, Callable, Final, Iterator
 
 import fcntl
 
@@ -31,6 +35,9 @@ ARCHIVE_MANIFEST_CONTRACT: Final = "QR_DOJO_HISTORICAL_JOB_ARCHIVE_MANIFEST_V1"
 ARCHIVE_READBACK_CONTRACT: Final = "QR_DOJO_ARCHIVE_READBACK_OBJECT_SET_V1"
 ARCHIVE_SOURCE_INSPECTION_CONTRACT: Final = (
     "QR_DOJO_HISTORICAL_JOB_ARCHIVE_SOURCE_INSPECTION_V1"
+)
+ARCHIVE_RECOVERY_CAPACITY_CONTRACT: Final = (
+    "QR_DOJO_HISTORICAL_JOB_ARCHIVE_RECOVERY_CAPACITY_V1"
 )
 JOB_COMPLETION_CONTRACT: Final = "QR_DOJO_HISTORICAL_TRAIN_JOB_COMPLETION_V1"
 SOURCE_FAILURE_CONTRACT: Final = "QR_DOJO_HISTORICAL_SOURCE_FAILURE_V1"
@@ -168,7 +175,7 @@ def _read_json(path: Path, *, field: str) -> dict[str, Any]:
     )
 
 
-def _hash_file(path: Path) -> tuple[str, int]:
+def _hash_file_with_identity(path: Path) -> tuple[str, int, int, int]:
     try:
         before = path.stat(follow_symlinks=False)
         if not stat.S_ISREG(before.st_mode):
@@ -199,7 +206,12 @@ def _hash_file(path: Path) -> tuple[str, int]:
         raise DojoHistoricalJobArchiveError(
             f"archive source changed while hashing: {path}"
         )
-    return digest.hexdigest(), size
+    return digest.hexdigest(), size, after.st_dev, after.st_ino
+
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    sha256, size, _, _ = _hash_file_with_identity(path)
+    return sha256, size
 
 
 def _safe_relative(value: str) -> str:
@@ -1092,13 +1104,14 @@ def _verify_archive(
         os.close(archive_descriptor)
         raise DojoHistoricalJobArchiveError("archive changed while opened")
     verified: dict[str, Any] | None = None
+    tar_error: Exception | None = None
     with tempfile.TemporaryFile() as process_error:
         try:
             process = subprocess.Popen(
-                [resolved, "-q", "-d", "-c", f"/dev/fd/{archive_descriptor}"],
+                [resolved, "-q", "-d", "-c"],
+                stdin=archive_descriptor,
                 stdout=subprocess.PIPE,
                 stderr=process_error,
-                pass_fds=(archive_descriptor,),
             )
         except OSError as exc:
             os.close(archive_descriptor)
@@ -1178,16 +1191,7 @@ def _verify_archive(
                         "archive contains an unmanifested member"
                     )
         except Exception as exc:
-            process.stdout.close()
-            if process.poll() is None:
-                process.kill()
-            process.wait()
-            os.close(archive_descriptor)
-            if isinstance(exc, DojoHistoricalJobArchiveError):
-                raise
-            raise DojoHistoricalJobArchiveError(
-                "archive tar stream is invalid"
-            ) from exc
+            tar_error = exc
         finally:
             if not process.stdout.closed:
                 process.stdout.close()
@@ -1207,9 +1211,20 @@ def _verify_archive(
             raise DojoHistoricalJobArchiveError("archive changed while verified")
         process_error.seek(0)
         error = process_error.read(4096)
+        diagnostic = error.decode("utf-8", "replace")[:1000].strip()
+        if tar_error is not None:
+            if isinstance(tar_error, DojoHistoricalJobArchiveError):
+                message = str(tar_error)
+            else:
+                message = f"archive tar stream is invalid: {tar_error}"
+            raise DojoHistoricalJobArchiveError(
+                f"{message}; zstd return code {return_code}; "
+                f"zstd stderr: {diagnostic or '<empty>'}"
+            ) from tar_error
         if return_code != 0:
             raise DojoHistoricalJobArchiveError(
-                f"zstd verification failed: {error.decode('utf-8', 'replace')[:1000]}"
+                f"zstd verification failed with return code {return_code}: "
+                f"{diagnostic or '<empty>'}"
             )
     if verified is None:
         raise DojoHistoricalJobArchiveError("archive manifest was not verified")
@@ -1241,6 +1256,535 @@ def _ensure_directory(path: Path) -> None:
         )
 
 
+def _copy_regular_file_to_output(
+    *,
+    source_path: Path,
+    output: BinaryIO,
+    expected_sha256: str,
+    expected_size_bytes: int,
+    field: str,
+) -> None:
+    """Copy one stable regular file and fsync the receiving file descriptor."""
+
+    try:
+        before = source_path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode):
+            raise DojoHistoricalJobArchiveError(f"{field} source is not regular")
+        descriptor = os.open(
+            source_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+    except DojoHistoricalJobArchiveError:
+        raise
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(f"{field} source is unavailable") from exc
+    if _identity(before) != _identity(opened):
+        os.close(descriptor)
+        raise DojoHistoricalJobArchiveError(f"{field} source changed while opened")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(descriptor, "rb", closefd=True) as source:
+            while chunk := source.read(HASH_CHUNK_BYTES):
+                output.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            opened_after = os.fstat(source.fileno())
+        after = source_path.stat(follow_symlinks=False)
+        output.flush()
+        os.fsync(output.fileno())
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(f"{field} copy failed") from exc
+    if (
+        _identity(before) != _identity(opened_after)
+        or _identity(opened_after) != _identity(after)
+        or size != expected_size_bytes
+        or digest.hexdigest() != expected_sha256
+    ):
+        raise DojoHistoricalJobArchiveError(f"{field} source drifted while copied")
+
+
+def _retirement_anchor_name(path: Path, *, device: int, inode: int) -> str:
+    leaf_digest = hashlib.sha256(os.fsencode(path.name)).hexdigest()[:16]
+    return (
+        f".retired-{leaf_digest}-{device:x}-{inode:x}-" f"{secrets.token_hex(8)}.anchor"
+    )
+
+
+def _quarantine_pending_without_release(path: Path, *, field: str) -> None:
+    """Remove a name from active use without deleting or truncating its inode."""
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        directory_fd = os.open(path.parent, directory_flags)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            f"{field} pending parent is unavailable"
+        ) from exc
+    try:
+        try:
+            current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise DojoHistoricalJobArchiveError(
+                f"{field} pending is unavailable"
+            ) from exc
+        anchor_name = _retirement_anchor_name(
+            path,
+            device=current.st_dev,
+            inode=current.st_ino,
+        )
+        try:
+            published = _atomic_rename_at_no_replace(
+                directory_fd,
+                path.name,
+                anchor_name,
+            )
+        except FileNotFoundError:
+            return
+        if not published:
+            raise DojoHistoricalJobArchiveError(f"{field} retirement anchor collided")
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _unlink_if_same_inode(path: Path, *, device: int, inode: int) -> None:
+    """Retire and release only the caller-bound inode, never a replacement."""
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        directory_fd = os.open(path.parent, directory_flags)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            f"incomplete archive output parent is unavailable: {path.parent}"
+        ) from exc
+    descriptor: int | None = None
+    try:
+        try:
+            descriptor = os.open(
+                path.name,
+                os.O_RDWR
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=directory_fd,
+            )
+            opened = os.fstat(descriptor)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise DojoHistoricalJobArchiveError(
+                f"incomplete archive output could not be opened: {path}"
+            ) from exc
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != device
+            or opened.st_ino != inode
+        ):
+            raise DojoHistoricalJobArchiveError(
+                f"incomplete archive output was replaced concurrently: {path}"
+            )
+        anchor_name = _retirement_anchor_name(path, device=device, inode=inode)
+        try:
+            published = _atomic_rename_at_no_replace(
+                directory_fd,
+                path.name,
+                anchor_name,
+            )
+        except FileNotFoundError:
+            return
+        if not published:
+            raise DojoHistoricalJobArchiveError(
+                "incomplete archive retirement anchor collided"
+            )
+        os.fsync(directory_fd)
+        anchored = os.stat(
+            anchor_name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISREG(anchored.st_mode)
+            or anchored.st_dev != device
+            or anchored.st_ino != inode
+        ):
+            # The atomic rename captured a last-moment replacement.  Keep all
+            # of its bytes under the durable anchor and never unlink/truncate it.
+            os.fsync(directory_fd)
+            raise DojoHistoricalJobArchiveError(
+                f"incomplete archive output was replaced concurrently: {path}"
+            )
+        before_release = os.fstat(descriptor)
+        if before_release.st_nlink != 1:
+            raise DojoHistoricalJobArchiveError(
+                f"incomplete archive output has an unexpected hard link: {path}"
+            )
+        # Truncation is descriptor-bound: even if the anchor is replaced now,
+        # no same-name replacement can be deleted or modified.  The zero-byte
+        # anchor is retained as durable audit evidence and consumes no payload
+        # blocks.
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+        os.fsync(directory_fd)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(directory_fd)
+
+
+def _remove_exact_pending(
+    path: Path,
+    *,
+    field: str,
+    expected_sha256: str | None = None,
+    expected_size_bytes: int | None = None,
+) -> None:
+    if (expected_sha256 is None) != (expected_size_bytes is None):
+        raise DojoHistoricalJobArchiveError(
+            f"{field} pending cleanup expectation is incomplete"
+        )
+    if expected_sha256 is None:
+        _quarantine_pending_without_release(path, field=field)
+        return
+    try:
+        path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(f"{field} pending is unavailable") from exc
+    try:
+        observed_sha256, observed_size, device, inode = _hash_file_with_identity(path)
+    except DojoHistoricalJobArchiveError:
+        try:
+            path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise
+    if observed_sha256 != expected_sha256 or observed_size != expected_size_bytes:
+        _quarantine_pending_without_release(path, field=field)
+        return
+    _unlink_if_same_inode(path, device=device, inode=inode)
+
+
+def _pending_hash_if_exists(
+    path: Path,
+    *,
+    field: str,
+) -> tuple[str, int] | None:
+    try:
+        state = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(f"{field} pending is unavailable") from exc
+    if not stat.S_ISREG(state.st_mode):
+        raise DojoHistoricalJobArchiveError(f"{field} pending is not regular")
+    return _hash_file(path)
+
+
+def _atomic_rename_at_no_replace(
+    directory_fd: int,
+    source_name: str,
+    destination_name: str,
+) -> bool:
+    """Atomically rename two leaves bound to one already-open directory."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    destination = os.fsencode(destination_name)
+    ctypes.set_errno(0)
+    if sys.platform == "darwin":
+        try:
+            rename = libc.renameatx_np
+        except AttributeError as exc:
+            raise DojoHistoricalJobArchiveError(
+                "atomic no-replace rename is unsupported"
+            ) from exc
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        result = rename(directory_fd, source, directory_fd, destination, 0x00000004)
+    elif sys.platform.startswith("linux"):
+        try:
+            rename = libc.renameat2
+        except AttributeError as exc:
+            raise DojoHistoricalJobArchiveError(
+                "atomic no-replace rename is unsupported"
+            ) from exc
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        result = rename(directory_fd, source, directory_fd, destination, 0x00000001)
+    else:
+        raise DojoHistoricalJobArchiveError("atomic no-replace rename is unsupported")
+    if result == 0:
+        return True
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        return False
+    if error_number == errno.ENOENT:
+        raise FileNotFoundError(error_number, os.strerror(error_number), source_name)
+    if error_number in {
+        errno.EINVAL,
+        errno.ENOSYS,
+        errno.ENOTSUP,
+        getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+        errno.EXDEV,
+    }:
+        raise DojoHistoricalJobArchiveError(
+            "atomic no-replace rename is unsupported by the archive filesystem"
+        )
+    raise DojoHistoricalJobArchiveError(
+        f"atomic no-replace rename failed: {os.strerror(error_number)}"
+    )
+
+
+def _atomic_rename_no_replace(source_path: Path, destination_path: Path) -> bool:
+    """Atomically publish within one directory, or fail closed if unsupported."""
+
+    if source_path.parent != destination_path.parent:
+        raise DojoHistoricalJobArchiveError(
+            "atomic archive publication requires one directory"
+        )
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        directory_fd = os.open(source_path.parent, directory_flags)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "atomic archive publication directory is unavailable"
+        ) from exc
+    try:
+        return _atomic_rename_at_no_replace(
+            directory_fd,
+            source_path.name,
+            destination_path.name,
+        )
+    finally:
+        os.close(directory_fd)
+
+
+def _prepare_checked_copy_pending(
+    *,
+    source_path: Path,
+    pending_path: Path,
+    expected_sha256: str,
+    expected_size_bytes: int,
+    field: str,
+    mutation_guard: Callable[[], None] | None = None,
+) -> Path:
+    observed = _pending_hash_if_exists(pending_path, field=field)
+    if observed is not None:
+        pending_sha256, pending_size = observed
+        if pending_sha256 == expected_sha256 and pending_size == expected_size_bytes:
+            return pending_path
+        if mutation_guard is not None:
+            mutation_guard()
+        _remove_exact_pending(pending_path, field=field)
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if mutation_guard is not None:
+        mutation_guard()
+    try:
+        descriptor = os.open(pending_path, flags, 0o600)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            f"{field} pending cannot be created"
+        ) from exc
+    created = os.fstat(descriptor)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as output:
+            _copy_regular_file_to_output(
+                source_path=source_path,
+                output=output,
+                expected_sha256=expected_sha256,
+                expected_size_bytes=expected_size_bytes,
+                field=field,
+            )
+        pending_sha256, pending_size = _hash_file(pending_path)
+        if pending_sha256 != expected_sha256 or pending_size != expected_size_bytes:
+            raise DojoHistoricalJobArchiveError(f"{field} pending bytes drifted")
+        _fsync_directory(pending_path.parent)
+    except Exception:
+        _unlink_if_same_inode(
+            pending_path,
+            device=created.st_dev,
+            inode=created.st_ino,
+        )
+        raise
+    return pending_path
+
+
+def _publish_prepared_pending(
+    *,
+    pending_path: Path,
+    destination_path: Path,
+    expected_sha256: str,
+    expected_size_bytes: int,
+    field: str,
+    mutation_guard: Callable[[], None] | None = None,
+) -> bool:
+    try:
+        pending_state = pending_path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(f"{field} pending is unavailable") from exc
+    if (
+        not stat.S_ISREG(pending_state.st_mode)
+        or pending_state.st_size != expected_size_bytes
+    ):
+        raise DojoHistoricalJobArchiveError(f"{field} pending is not verified")
+    if mutation_guard is not None:
+        mutation_guard()
+    published = _atomic_rename_no_replace(pending_path, destination_path)
+    if not published:
+        observed_sha256, observed_size = _hash_file(destination_path)
+        if observed_sha256 != expected_sha256 or observed_size != expected_size_bytes:
+            raise DojoHistoricalJobArchiveError(f"existing {field} drifted")
+        if mutation_guard is not None:
+            mutation_guard()
+        _remove_exact_pending(
+            pending_path,
+            field=field,
+            expected_sha256=expected_sha256,
+            expected_size_bytes=expected_size_bytes,
+        )
+        return False
+    _fsync_directory(destination_path.parent)
+    try:
+        published_state = destination_path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            f"published {field} is unavailable"
+        ) from exc
+    if (
+        not stat.S_ISREG(published_state.st_mode)
+        or published_state.st_dev != pending_state.st_dev
+        or published_state.st_ino != pending_state.st_ino
+        or published_state.st_size != expected_size_bytes
+    ):
+        raise DojoHistoricalJobArchiveError(f"published {field} bytes drifted")
+    return True
+
+
+def _prepare_slice_pending(
+    *,
+    source_path: Path,
+    offset_bytes: int,
+    pending_path: Path,
+    expected_sha256: str,
+    expected_size_bytes: int,
+) -> Path:
+    observed = _pending_hash_if_exists(
+        pending_path,
+        field="remote readback part",
+    )
+    if observed is not None:
+        pending_sha256, pending_size = observed
+        if pending_sha256 == expected_sha256 and pending_size == expected_size_bytes:
+            return pending_path
+        _remove_exact_pending(pending_path, field="remote readback part")
+    try:
+        before = source_path.stat(follow_symlinks=False)
+        source_descriptor = os.open(
+            source_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(source_descriptor)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive source is unavailable while preparing readback part"
+        ) from exc
+    if not stat.S_ISREG(before.st_mode) or _identity(before) != _identity(opened):
+        os.close(source_descriptor)
+        raise DojoHistoricalJobArchiveError(
+            "archive source drifted before preparing readback part"
+        )
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        pending_descriptor = os.open(pending_path, flags, 0o600)
+    except OSError as exc:
+        os.close(source_descriptor)
+        raise DojoHistoricalJobArchiveError(
+            "remote readback part pending cannot be created"
+        ) from exc
+    digest = hashlib.sha256()
+    copied = 0
+    try:
+        with os.fdopen(source_descriptor, "rb", closefd=True) as source, os.fdopen(
+            pending_descriptor, "wb", closefd=True
+        ) as output:
+            source.seek(offset_bytes)
+            while copied < expected_size_bytes:
+                chunk = source.read(min(HASH_CHUNK_BYTES, expected_size_bytes - copied))
+                if not chunk:
+                    break
+                output.write(chunk)
+                digest.update(chunk)
+                copied += len(chunk)
+            opened_after = os.fstat(source.fileno())
+            output.flush()
+            os.fsync(output.fileno())
+        after = source_path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "remote readback part pending copy failed"
+        ) from exc
+    if (
+        _identity(before) != _identity(opened_after)
+        or _identity(opened_after) != _identity(after)
+        or copied != expected_size_bytes
+        or digest.hexdigest() != expected_sha256
+    ):
+        raise DojoHistoricalJobArchiveError(
+            "remote readback part pending source drifted"
+        )
+    pending_sha256, pending_size = _hash_file(pending_path)
+    if pending_sha256 != expected_sha256 or pending_size != expected_size_bytes:
+        raise DojoHistoricalJobArchiveError(
+            "remote readback part pending bytes drifted"
+        )
+    _fsync_directory(pending_path.parent)
+    return pending_path
+
+
 def _build_remote_readback_objects(
     *,
     destination: Path,
@@ -1248,140 +1792,138 @@ def _build_remote_readback_objects(
     archive_sha256: str,
     archive_size_bytes: int,
     stem: str,
+    source_archive_path: Path | None = None,
+    mutation_guard: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    if archive_size_bytes <= ARCHIVE_PART_BYTES:
-        objects = [
-            {
-                "index": 0,
-                "offset_bytes": 0,
-                "relative_path": archive_path.relative_to(destination).as_posix(),
-                "size_bytes": archive_size_bytes,
-                "sha256": archive_sha256,
-            }
-        ]
-    else:
-        parts_root = destination / "parts"
-        _ensure_directory(parts_root)
-        part_set_root = parts_root / stem
-        _ensure_directory(part_set_root)
-        try:
-            before = archive_path.stat(follow_symlinks=False)
-            descriptor = os.open(
-                archive_path,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-            )
-            opened = os.fstat(descriptor)
-        except OSError as exc:
-            raise DojoHistoricalJobArchiveError(
-                "archive is unavailable while split for remote readback"
-            ) from exc
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or _identity(before) != _identity(opened)
-            or before.st_size != archive_size_bytes
-        ):
-            os.close(descriptor)
-            raise DojoHistoricalJobArchiveError(
-                "archive drifted before remote readback split"
-            )
-        objects = []
-        combined = hashlib.sha256()
-        combined_size = 0
-        try:
-            with os.fdopen(descriptor, "rb", closefd=True) as source:
-                while combined_size < archive_size_bytes:
-                    if len(objects) >= MAX_ARCHIVE_PARTS:
-                        raise DojoHistoricalJobArchiveError(
-                            "archive remote readback part count exceeds its bound"
-                        )
-                    part_descriptor, part_name = tempfile.mkstemp(
-                        prefix=f".part-{len(objects):05d}.",
-                        suffix=".tmp",
-                        dir=part_set_root,
+    readback_root = destination / "readback-objects"
+    if mutation_guard is not None:
+        mutation_guard()
+    _ensure_directory(readback_root)
+    source_path = source_archive_path or archive_path
+    try:
+        before = source_path.stat(follow_symlinks=False)
+        descriptor = os.open(
+            source_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive is unavailable while split for remote readback"
+        ) from exc
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or _identity(before) != _identity(opened)
+        or before.st_size != archive_size_bytes
+    ):
+        os.close(descriptor)
+        raise DojoHistoricalJobArchiveError(
+            "archive drifted before remote readback split"
+        )
+    objects: list[dict[str, Any]] = []
+    combined = hashlib.sha256()
+    combined_size = 0
+    try:
+        with os.fdopen(descriptor, "rb", closefd=True) as source:
+            while combined_size < archive_size_bytes:
+                if len(objects) >= MAX_ARCHIVE_PARTS:
+                    raise DojoHistoricalJobArchiveError(
+                        "archive remote readback part count exceeds its bound"
                     )
-                    temporary = Path(part_name)
-                    part_digest = hashlib.sha256()
-                    part_size = 0
+                index = len(objects)
+                offset = combined_size
+                part_digest = hashlib.sha256()
+                part_size = 0
+                while part_size < ARCHIVE_PART_BYTES:
+                    chunk = source.read(
+                        min(HASH_CHUNK_BYTES, ARCHIVE_PART_BYTES - part_size)
+                    )
+                    if not chunk:
+                        break
+                    part_digest.update(chunk)
+                    combined.update(chunk)
+                    part_size += len(chunk)
+                    combined_size += len(chunk)
+                if part_size <= 0:
+                    raise DojoHistoricalJobArchiveError(
+                        "archive ended before its declared size"
+                    )
+                digest = part_digest.hexdigest()
+                final = readback_root / (f"{stem}-part-{index:05d}-{digest}.bin")
+                pending = readback_root / f".{stem}-part-{index:05d}.pending"
+                try:
+                    final_sha256, final_size = _hash_file(final)
+                except DojoHistoricalJobArchiveError:
                     try:
-                        with os.fdopen(part_descriptor, "wb", closefd=True) as part:
-                            while part_size < ARCHIVE_PART_BYTES:
-                                chunk = source.read(
-                                    min(
-                                        HASH_CHUNK_BYTES,
-                                        ARCHIVE_PART_BYTES - part_size,
-                                    )
-                                )
-                                if not chunk:
-                                    break
-                                part.write(chunk)
-                                part_digest.update(chunk)
-                                combined.update(chunk)
-                                part_size += len(chunk)
-                                combined_size += len(chunk)
-                            part.flush()
-                            os.fsync(part.fileno())
-                        if part_size <= 0:
-                            raise DojoHistoricalJobArchiveError(
-                                "archive ended before its declared size"
-                            )
-                        digest = part_digest.hexdigest()
-                        final = part_set_root / (
-                            f"part-{len(objects):05d}-{digest}.bin"
+                        final.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        final_exists = False
+                    else:
+                        raise
+                else:
+                    final_exists = True
+                    if final_sha256 != digest or final_size != part_size:
+                        raise DojoHistoricalJobArchiveError(
+                            "existing remote readback part drifted"
                         )
-                        try:
-                            os.link(temporary, final)
-                        except FileExistsError:
-                            existing_sha, existing_size = _hash_file(final)
-                            if existing_sha != digest or existing_size != part_size:
-                                raise DojoHistoricalJobArchiveError(
-                                    "existing remote readback part drifted"
-                                )
-                        objects.append(
-                            {
-                                "index": len(objects),
-                                "offset_bytes": combined_size - part_size,
-                                "relative_path": final.relative_to(
-                                    destination
-                                ).as_posix(),
-                                "size_bytes": part_size,
-                                "sha256": digest,
-                            }
-                        )
-                    finally:
-                        try:
-                            temporary.unlink()
-                        except FileNotFoundError:
-                            pass
-                opened_after = os.fstat(source.fileno())
-            after = archive_path.stat(follow_symlinks=False)
-        except DojoHistoricalJobArchiveError:
-            raise
-        except OSError as exc:
-            raise DojoHistoricalJobArchiveError(
-                "archive changed during remote readback split"
-            ) from exc
-        if (
-            _identity(before) != _identity(opened_after)
-            or _identity(opened_after) != _identity(after)
-            or combined_size != archive_size_bytes
-            or combined.hexdigest() != archive_sha256
-        ):
-            raise DojoHistoricalJobArchiveError(
-                "remote readback parts do not reconstruct the archive"
-            )
-        _fsync_directory(part_set_root)
-        expected_names = {Path(row["relative_path"]).name for row in objects}
-        existing_names = {
-            path.name
-            for path in part_set_root.iterdir()
-            if not path.name.startswith(".")
-        }
-        if existing_names != expected_names:
-            raise DojoHistoricalJobArchiveError(
-                "remote readback part directory contains an orphan"
-            )
+                if mutation_guard is not None:
+                    mutation_guard()
+                if final_exists:
+                    _remove_exact_pending(
+                        pending,
+                        field="remote readback part",
+                        expected_sha256=digest,
+                        expected_size_bytes=part_size,
+                    )
+                else:
+                    _prepare_slice_pending(
+                        source_path=source_path,
+                        offset_bytes=offset,
+                        pending_path=pending,
+                        expected_sha256=digest,
+                        expected_size_bytes=part_size,
+                    )
+                    _publish_prepared_pending(
+                        pending_path=pending,
+                        destination_path=final,
+                        expected_sha256=digest,
+                        expected_size_bytes=part_size,
+                        field="remote readback part",
+                        mutation_guard=mutation_guard,
+                    )
+                objects.append(
+                    {
+                        "index": index,
+                        "offset_bytes": offset,
+                        "relative_path": final.relative_to(destination).as_posix(),
+                        "size_bytes": part_size,
+                        "sha256": digest,
+                    }
+                )
+            opened_after = os.fstat(source.fileno())
+        after = source_path.stat(follow_symlinks=False)
+    except DojoHistoricalJobArchiveError:
+        raise
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive changed during remote readback split"
+        ) from exc
+    if (
+        _identity(before) != _identity(opened_after)
+        or _identity(opened_after) != _identity(after)
+        or combined_size != archive_size_bytes
+        or combined.hexdigest() != archive_sha256
+    ):
+        raise DojoHistoricalJobArchiveError(
+            "remote readback parts do not reconstruct the archive"
+        )
+    _fsync_directory(readback_root)
+    expected_names = {Path(row["relative_path"]).name for row in objects}
+    existing_names = {path.name for path in readback_root.glob(f"{stem}-part-*.bin")}
+    if existing_names != expected_names:
+        raise DojoHistoricalJobArchiveError(
+            "remote readback object directory contains a same-job orphan"
+        )
     body = {
         "contract": ARCHIVE_READBACK_CONTRACT,
         "schema_version": 1,
@@ -1428,6 +1970,7 @@ def _verify_remote_readback_objects(
         raise DojoHistoricalJobArchiveError("remote readback object set is invalid")
     total = 0
     combined = hashlib.sha256()
+    layout: str | None = None
     for index, row in enumerate(objects):
         if not isinstance(row, Mapping) or set(row) != {
             "index",
@@ -1457,12 +2000,22 @@ def _verify_remote_readback_objects(
             raise DojoHistoricalJobArchiveError("remote readback object row is invalid")
         safe_relative = _safe_relative(relative)
         expected_small = archive_path.relative_to(destination).as_posix()
-        expected_prefix = f"parts/{stem}/part-{index:05d}-{sha256}.bin"
-        if (len(objects) == 1 and safe_relative != expected_small) or (
-            len(objects) > 1 and safe_relative != expected_prefix
-        ):
+        expected_current = f"readback-objects/{stem}-part-{index:05d}-{sha256}.bin"
+        expected_legacy = f"parts/{stem}/part-{index:05d}-{sha256}.bin"
+        is_current = safe_relative == expected_current
+        is_legacy = safe_relative == (
+            expected_small if len(objects) == 1 else expected_legacy
+        )
+        if not is_current and not is_legacy:
             raise DojoHistoricalJobArchiveError(
                 "remote readback object path is outside its part set"
+            )
+        row_layout = "CURRENT" if is_current else "LEGACY"
+        if layout is None:
+            layout = row_layout
+        elif layout != row_layout:
+            raise DojoHistoricalJobArchiveError(
+                "remote readback object layouts are mixed"
             )
         path = destination / safe_relative
         try:
@@ -1503,7 +2056,12 @@ def _verify_remote_readback_objects(
         )
 
 
-def _write_once(path: Path, value: Mapping[str, Any]) -> None:
+def _write_once(
+    path: Path,
+    value: Mapping[str, Any],
+    *,
+    mutation_guard: Callable[[], None] | None = None,
+) -> None:
     payload = _canonical_bytes(value) + b"\n"
     try:
         current = _stable_regular_bytes(
@@ -1524,36 +2082,124 @@ def _write_once(path: Path, value: Mapping[str, Any]) -> None:
         if current != payload:
             raise DojoHistoricalJobArchiveError("archive receipt already drifted")
         return
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary = Path(temporary_name)
+    pending = path.parent / f".{path.name}.pending"
     try:
-        with os.fdopen(descriptor, "wb", closefd=True) as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        try:
-            os.link(temporary, path)
-        except FileExistsError:
-            current = _stable_regular_bytes(
-                path, field="archive receipt", maximum=MAX_JSON_BYTES
+        pending_state = pending.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        pending_state = None
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive receipt pending is unavailable"
+        ) from exc
+    else:
+        if not stat.S_ISREG(pending_state.st_mode):
+            raise DojoHistoricalJobArchiveError(
+                "archive receipt pending is not regular"
             )
-            if current != payload:
-                raise DojoHistoricalJobArchiveError(
-                    "archive receipt concurrently drifted"
+        if not 0 < pending_state.st_size <= MAX_JSON_BYTES:
+            if mutation_guard is not None:
+                mutation_guard()
+            _remove_exact_pending(pending, field="archive receipt")
+        else:
+            current_pending = _stable_regular_bytes(
+                pending,
+                field="archive receipt pending",
+                maximum=MAX_JSON_BYTES,
+            )
+            if current_pending != payload:
+                if mutation_guard is not None:
+                    mutation_guard()
+                _remove_exact_pending(pending, field="archive receipt")
+            else:
+                if mutation_guard is not None:
+                    mutation_guard()
+                _publish_prepared_pending(
+                    pending_path=pending,
+                    destination_path=path,
+                    expected_sha256=hashlib.sha256(payload).hexdigest(),
+                    expected_size_bytes=len(payload),
+                    field="archive receipt",
+                    mutation_guard=mutation_guard,
                 )
-        _fsync_directory(path.parent)
-    finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+                current = _stable_regular_bytes(
+                    path, field="archive receipt", maximum=MAX_JSON_BYTES
+                )
+                if current != payload:
+                    raise DojoHistoricalJobArchiveError(
+                        "archive receipt concurrently drifted"
+                    )
+                return
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if mutation_guard is not None:
+        mutation_guard()
+    try:
+        descriptor = os.open(pending, flags, 0o600)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive receipt pending cannot be created"
+        ) from exc
+    with os.fdopen(descriptor, "wb", closefd=True) as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    pending_payload = _stable_regular_bytes(
+        pending,
+        field="archive receipt pending",
+        maximum=MAX_JSON_BYTES,
+    )
+    if pending_payload != payload:
+        raise DojoHistoricalJobArchiveError("archive receipt pending bytes drifted")
+    _fsync_directory(path.parent)
+    if mutation_guard is not None:
+        mutation_guard()
+    _publish_prepared_pending(
+        pending_path=pending,
+        destination_path=path,
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+        expected_size_bytes=len(payload),
+        field="archive receipt",
+        mutation_guard=mutation_guard,
+    )
+    current = _stable_regular_bytes(
+        path, field="archive receipt", maximum=MAX_JSON_BYTES
+    )
+    if current != payload:
+        raise DojoHistoricalJobArchiveError("archive receipt concurrently drifted")
 
 
 @contextmanager
-def _job_archive_lock(receipts: Path, job_sha256: str) -> Iterator[None]:
-    lock_path = receipts / f".job-{job_sha256}.lock"
+def _job_archive_lock(
+    receipts: Path,
+    job_sha256: str,
+) -> Iterator[Callable[[], None]]:
+    try:
+        canonical_receipts = receipts.resolve(strict=True)
+        named_directory = canonical_receipts.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "archive lock directory is unavailable"
+        ) from exc
+    if not stat.S_ISDIR(named_directory.st_mode):
+        raise DojoHistoricalJobArchiveError(
+            "archive lock directory must be a real directory"
+        )
+    expected_directory_identity = (
+        named_directory.st_dev,
+        named_directory.st_ino,
+    )
+    lock_name = f".job-{job_sha256}.lock"
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     flags = (
         os.O_RDWR
         | os.O_CREAT
@@ -1561,20 +2207,125 @@ def _job_archive_lock(receipts: Path, job_sha256: str) -> Iterator[None]:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     try:
-        descriptor = os.open(lock_path, flags, 0o600)
+        directory_fd = os.open(canonical_receipts, directory_flags)
     except OSError as exc:
-        raise DojoHistoricalJobArchiveError("archive lock is unavailable") from exc
+        raise DojoHistoricalJobArchiveError(
+            "archive lock directory is unavailable"
+        ) from exc
+    descriptor: int | None = None
+    locked = False
     try:
-        state = os.fstat(descriptor)
-        if not stat.S_ISREG(state.st_mode):
-            raise DojoHistoricalJobArchiveError("archive lock must be a regular file")
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
+
+        def assert_directory_current() -> None:
+            try:
+                opened_directory = os.fstat(directory_fd)
+                current_named_directory = canonical_receipts.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise DojoHistoricalJobArchiveError(
+                    "archive lock directory pathname is unavailable"
+                ) from exc
+            if (
+                not stat.S_ISDIR(opened_directory.st_mode)
+                or not stat.S_ISDIR(current_named_directory.st_mode)
+                or opened_directory.st_nlink < 1
+                or current_named_directory.st_nlink < 1
+                or (
+                    opened_directory.st_dev,
+                    opened_directory.st_ino,
+                )
+                != expected_directory_identity
+                or (
+                    current_named_directory.st_dev,
+                    current_named_directory.st_ino,
+                )
+                != expected_directory_identity
+            ):
+                raise DojoHistoricalJobArchiveError(
+                    "archive lock directory was replaced concurrently"
+                )
+
+        # Opening through the canonical pathname is not sufficient: an
+        # attacker can rename that directory and recreate the same path before
+        # the per-job lock is opened.  Bind both the descriptor and the named
+        # pathname to the directory inode captured above.
+        assert_directory_current()
+        try:
+            for attempt in range(2):
+                try:
+                    descriptor = os.open(
+                        lock_name,
+                        flags,
+                        0o600,
+                        dir_fd=directory_fd,
+                    )
+                except FileNotFoundError:
+                    if attempt == 0:
+                        continue
+                    raise
+                else:
+                    break
+            if descriptor is None:
+                raise OSError("archive lock descriptor was not opened")
+            state = os.fstat(descriptor)
+        except OSError as exc:
+            raise DojoHistoricalJobArchiveError("archive lock is unavailable") from exc
+        if not stat.S_ISREG(state.st_mode) or state.st_nlink != 1:
+            raise DojoHistoricalJobArchiveError(
+                "archive lock must be a singly linked regular file"
+            )
+        expected_identity = _identity(state)
+
+        def assert_current() -> None:
+            assert_directory_current()
+            try:
+                opened = os.fstat(descriptor)
+                named = os.stat(
+                    lock_name,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise DojoHistoricalJobArchiveError(
+                    "archive lock pathname is unavailable"
+                ) from exc
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(named.st_mode)
+                or opened.st_nlink != 1
+                or named.st_nlink != 1
+                or _identity(opened) != expected_identity
+                or _identity(named) != expected_identity
+            ):
+                raise DojoHistoricalJobArchiveError(
+                    "archive lock pathname was replaced concurrently"
+                )
+
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise DojoHistoricalJobArchiveError("archive lock is already held") from exc
+        locked = True
+        assert_current()
+        try:
+            yield assert_current
+        except BaseException as active_error:
+            try:
+                assert_current()
+            except DojoHistoricalJobArchiveError as lock_error:
+                add_note = getattr(active_error, "add_note", None)
+                if callable(add_note):
+                    add_note(f"archive lock release check failed: {lock_error}")
+            raise
+        else:
+            assert_current()
     finally:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            if descriptor is not None and locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
-            os.close(descriptor)
+            if descriptor is not None:
+                os.close(descriptor)
+            os.close(directory_fd)
 
 
 def _validate_receipt(
@@ -1708,6 +2459,234 @@ def inspect_historical_job_archive_source(
     return {**body, "inspection_sha256": _canonical_sha256(body)}
 
 
+def _archive_capacity_upper_bound(manifest: Mapping[str, Any]) -> dict[str, int]:
+    """Bound tar/PAX/zstd bytes without assuming any compression benefit."""
+
+    manifest_bytes = len(_canonical_bytes(manifest))
+    members = [("MANIFEST.json", manifest_bytes)] + [
+        (f"payload/{row['path']}", int(row["size_bytes"])) for row in manifest["files"]
+    ]
+
+    def padded(value: int) -> int:
+        return (
+            (value + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+        ) * tarfile.BLOCKSIZE
+
+    # Reserve a bounded PAX extended-header record for every member even when
+    # tarfile would use only the normal 512-byte header.  The path validator
+    # bounds member names well below this per-member allowance.
+    pax_overhead_per_member = 64 * 1024
+    tar_bytes = tarfile.RECORDSIZE + sum(
+        tarfile.BLOCKSIZE + padded(size) + pax_overhead_per_member
+        for _, size in members
+    )
+    # zstd incompressible framing overhead is much smaller than this 1% +
+    # 128KiB reserve.  Keep both terms so small and multi-gigabyte archives are
+    # admitted without relying on compression.
+    zstd_framing_bytes = max(128 * 1024, (tar_bytes + 99) // 100)
+    return {
+        "manifest_payload_bytes": manifest_bytes,
+        "tar_pax_upper_bound_bytes": tar_bytes,
+        "zstd_framing_upper_bound_bytes": zstd_framing_bytes,
+        "archive_upper_bound_bytes": tar_bytes + zstd_framing_bytes,
+    }
+
+
+def inspect_historical_job_archive_recovery_capacity(
+    *,
+    run_root: Path,
+    job_sha256: str,
+    archive_root: Path,
+    zstd_bin: str = "zstd",
+    local_staging_root: Path | None = None,
+) -> dict[str, Any]:
+    """Deep-validate crash artifacts and return remaining allocation deltas."""
+
+    if _SHA_RE.fullmatch(job_sha256) is None:
+        raise DojoHistoricalJobArchiveError("job SHA-256 is invalid")
+    root = Path(run_root).resolve(strict=True)
+    destination = Path(archive_root).expanduser()
+    if not destination.is_absolute():
+        raise DojoHistoricalJobArchiveError("archive root must be absolute")
+    destination = destination.resolve(strict=False)
+    if destination == root or root in destination.parents:
+        raise DojoHistoricalJobArchiveError("archive root must be outside the run root")
+    completion = _completion(root, job_sha256)
+    bundle_kind = _bundle_kind(completion)
+    files, total = _inventory(root, job_sha256, bundle_kind=bundle_kind)
+    _validate_inventory_links(
+        run_root=root,
+        job_sha256=job_sha256,
+        completion=completion,
+        rows=files,
+        bundle_kind=bundle_kind,
+    )
+    manifest = _build_archive_manifest(
+        job_sha256=job_sha256,
+        completion_sha256=completion["completion_sha256"],
+        bundle_kind=bundle_kind,
+        files=files,
+        total_source_bytes=total,
+    )
+    bounds = _archive_capacity_upper_bound(manifest)
+    stem = f"job-{job_sha256}-{manifest['manifest_sha256']}"
+    archives = destination / "archives"
+    archive_path = archives / f"{stem}.tar.zst"
+    drive_pending = archives / f".{stem}.tar.zst.pending"
+    staging_parent = _resolve_local_staging_parent(
+        local_staging_root,
+        run_root=root,
+        archive_root=destination,
+    )
+    local_pending = staging_parent / f".{stem}.tar.zst.local-pending"
+
+    def verified_archive(path: Path, *, final: bool) -> tuple[str, int] | None:
+        try:
+            path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        try:
+            _verify_archive(
+                path,
+                manifest=manifest,
+                zstd_bin=zstd_bin,
+                expected_job_sha256=job_sha256,
+                expected_completion_sha256=completion["completion_sha256"],
+                expected_bundle_kind=bundle_kind,
+            )
+            observed = _hash_file(path)
+        except DojoHistoricalJobArchiveError:
+            if final:
+                raise
+            return None
+        if observed[1] > bounds["archive_upper_bound_bytes"]:
+            raise DojoHistoricalJobArchiveError(
+                "validated archive exceeds its conservative capacity bound"
+            )
+        return observed
+
+    final_archive = verified_archive(archive_path, final=True)
+    local_archive = verified_archive(local_pending, final=False)
+    drive_archive = verified_archive(drive_pending, final=False)
+    if final_archive is not None:
+        archive_basis = final_archive[1]
+        remaining_local = 0
+        remaining_final = 0
+        source_path = archive_path
+        source_binding = final_archive
+    elif local_archive is not None:
+        archive_basis = local_archive[1]
+        remaining_local = 0
+        drive_reusable = drive_archive == local_archive
+        remaining_final = 0 if drive_reusable else archive_basis
+        source_path = local_pending
+        source_binding = local_archive
+    else:
+        archive_basis = bounds["archive_upper_bound_bytes"]
+        remaining_local = archive_basis
+        remaining_final = archive_basis
+        source_path = None
+        source_binding = None
+
+    validated_readback_final = 0
+    validated_readback_pending = 0
+    if source_path is not None and source_binding is not None:
+        expected_final_names: set[str] = set()
+        with _VerifiedSource(
+            source_path,
+            expected_size=source_binding[1],
+            expected_sha256=source_binding[0],
+        ) as source:
+            index = 0
+            while True:
+                part_digest = hashlib.sha256()
+                part_size = 0
+                while part_size < ARCHIVE_PART_BYTES:
+                    chunk = source.read(
+                        min(HASH_CHUNK_BYTES, ARCHIVE_PART_BYTES - part_size)
+                    )
+                    if not chunk:
+                        break
+                    part_digest.update(chunk)
+                    part_size += len(chunk)
+                if part_size == 0:
+                    break
+                digest = part_digest.hexdigest()
+                final_name = f"{stem}-part-{index:05d}-{digest}.bin"
+                expected_final_names.add(final_name)
+                final_part = destination / "readback-objects" / final_name
+                pending_part = (
+                    destination
+                    / "readback-objects"
+                    / f".{stem}-part-{index:05d}.pending"
+                )
+                expected = (digest, part_size)
+                if final_part.exists():
+                    if _hash_file(final_part) != expected:
+                        raise DojoHistoricalJobArchiveError(
+                            "existing readback part is not reusable"
+                        )
+                    validated_readback_final += part_size
+                elif pending_part.exists():
+                    try:
+                        reusable_pending = _hash_file(pending_part) == expected
+                    except DojoHistoricalJobArchiveError:
+                        reusable_pending = False
+                    if reusable_pending:
+                        validated_readback_pending += part_size
+                index += 1
+            source.verify()
+        readback_root = destination / "readback-objects"
+        existing_final_names = (
+            {path.name for path in readback_root.glob(f"{stem}-part-*.bin")}
+            if readback_root.is_dir()
+            else set()
+        )
+        if not existing_final_names <= expected_final_names:
+            raise DojoHistoricalJobArchiveError(
+                "readback recovery contains an unexpected final part"
+            )
+    validated_readback = validated_readback_final + validated_readback_pending
+    remaining_readback = max(0, archive_basis - validated_readback)
+    remaining_part_temp = min(ARCHIVE_PART_BYTES, remaining_readback)
+    body = {
+        "contract": ARCHIVE_RECOVERY_CAPACITY_CONTRACT,
+        "schema_version": 1,
+        "job_sha256": job_sha256,
+        "manifest_sha256": manifest["manifest_sha256"],
+        "total_source_bytes": total,
+        **bounds,
+        "archive_allocation_basis_bytes": archive_basis,
+        "validated_local_archive_pending_bytes": (
+            local_archive[1] if local_archive is not None else 0
+        ),
+        "validated_archive_final_bytes": (
+            final_archive[1] if final_archive is not None else 0
+        ),
+        "validated_archive_pending_bytes": (
+            drive_archive[1]
+            if local_archive is not None and drive_archive == local_archive
+            else 0
+        ),
+        "validated_readback_final_bytes": validated_readback_final,
+        "validated_readback_pending_bytes": validated_readback_pending,
+        "remaining_local_staging_bytes": remaining_local,
+        "remaining_archive_final_bytes": remaining_final,
+        "remaining_archive_readback_bytes": remaining_readback,
+        "remaining_archive_part_temp_bytes": remaining_part_temp,
+        "remaining_archive_filesystem_bytes": (
+            remaining_final + remaining_readback + remaining_part_temp
+        ),
+        "compression_ratio_assumed": False,
+        "historical_train_is_proof": False,
+        "promotion_eligible": False,
+        "live_permission": False,
+        "order_authority": "NONE",
+        "broker_mutation_allowed": False,
+    }
+    return {**body, "capacity_inspection_sha256": _canonical_sha256(body)}
+
+
 def verify_existing_historical_job_archive(
     *,
     run_root: Path,
@@ -1807,12 +2786,130 @@ def verify_existing_historical_job_archive(
     return dict(receipt)
 
 
+def _resolve_local_staging_parent(
+    value: Path | None,
+    *,
+    run_root: Path,
+    archive_root: Path,
+) -> Path:
+    def uses_file_provider(path: Path) -> bool:
+        candidates = (path, *path.parents)
+        if any(
+            candidate.name.casefold()
+            in {"cloudstorage", "file provider storage", ".fileprovider"}
+            for candidate in candidates
+        ):
+            return True
+        for candidate in candidates:
+            try:
+                attributes = os.listxattr(candidate, follow_symlinks=False)
+            except (AttributeError, OSError):
+                continue
+            if any("fileprovider" in attribute.casefold() for attribute in attributes):
+                return True
+        return False
+
+    if value is None:
+        parent = Path(tempfile.gettempdir()).resolve(strict=True)
+    else:
+        parent = Path(value).expanduser()
+        if not parent.is_absolute():
+            raise DojoHistoricalJobArchiveError("local staging root must be absolute")
+        if uses_file_provider(parent.resolve(strict=False)):
+            raise DojoHistoricalJobArchiveError(
+                "local staging root must not use CloudStorage or File Provider"
+            )
+        _ensure_directory(parent)
+        parent = parent.resolve(strict=True)
+    if uses_file_provider(parent):
+        raise DojoHistoricalJobArchiveError(
+            "local staging root must not use CloudStorage or File Provider"
+        )
+    if parent == archive_root or archive_root in parent.parents:
+        raise DojoHistoricalJobArchiveError(
+            "local staging root must be outside the archive root"
+        )
+    if parent == run_root or run_root in parent.parents:
+        raise DojoHistoricalJobArchiveError(
+            "local staging root must be outside the run root"
+        )
+    return parent
+
+
+def _prepare_local_archive_pending(
+    *,
+    pending_path: Path,
+    run_root: Path,
+    manifest: Mapping[str, Any],
+    zstd_bin: str,
+    job_sha256: str,
+    completion_sha256: str,
+    bundle_kind: str,
+    mutation_guard: Callable[[], None] | None = None,
+) -> tuple[str, int]:
+    if shutil.which(zstd_bin) is None:
+        raise DojoHistoricalJobArchiveError("zstd executable is unavailable")
+    try:
+        pending_path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        try:
+            _verify_archive(
+                pending_path,
+                manifest=manifest,
+                zstd_bin=zstd_bin,
+                expected_job_sha256=job_sha256,
+                expected_completion_sha256=completion_sha256,
+                expected_bundle_kind=bundle_kind,
+            )
+            return _hash_file(pending_path)
+        except DojoHistoricalJobArchiveError:
+            if mutation_guard is not None:
+                mutation_guard()
+            _remove_exact_pending(pending_path, field="local archive")
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    if mutation_guard is not None:
+        mutation_guard()
+    try:
+        descriptor = os.open(pending_path, flags, 0o600)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError(
+            "local archive pending cannot be created"
+        ) from exc
+    with os.fdopen(descriptor, "w+b", closefd=True) as output:
+        _write_archive(
+            output=output,
+            run_root=run_root,
+            manifest=manifest,
+            zstd_bin=zstd_bin,
+        )
+    _verify_archive(
+        pending_path,
+        manifest=manifest,
+        zstd_bin=zstd_bin,
+        expected_job_sha256=job_sha256,
+        expected_completion_sha256=completion_sha256,
+        expected_bundle_kind=bundle_kind,
+    )
+    _fsync_directory(pending_path.parent)
+    return _hash_file(pending_path)
+
+
 def archive_completed_historical_job(
     *,
     run_root: Path,
     job_sha256: str,
     archive_root: Path,
     zstd_bin: str = "zstd",
+    local_staging_root: Path | None = None,
+    expected_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Archive and re-read one sealed terminal job; never delete its source."""
 
@@ -1835,17 +2932,56 @@ def archive_completed_historical_job(
     receipts = destination / "receipts"
     _ensure_directory(archives)
     _ensure_directory(receipts)
-    with _job_archive_lock(receipts, job_sha256):
+    with _job_archive_lock(receipts, job_sha256) as archive_lock_guard:
         completion = _completion(root, job_sha256)
         bundle_kind = _bundle_kind(completion)
         existing_receipts = sorted(receipts.glob(f"job-{job_sha256}-*.json"))
         if existing_receipts:
-            return verify_existing_historical_job_archive(
+            verified_receipt = verify_existing_historical_job_archive(
                 run_root=root,
                 job_sha256=job_sha256,
                 archive_root=destination,
                 zstd_bin=zstd_bin,
             )
+            existing_stem = f"job-{job_sha256}-{verified_receipt['manifest_sha256']}"
+            staging_parent = _resolve_local_staging_parent(
+                local_staging_root,
+                run_root=root,
+                archive_root=destination,
+            )
+            archive_lock_guard()
+            _remove_exact_pending(
+                staging_parent / f".{existing_stem}.tar.zst.local-pending",
+                field="local archive",
+                expected_sha256=verified_receipt["archive_sha256"],
+                expected_size_bytes=verified_receipt["archive_size_bytes"],
+            )
+            archive_lock_guard()
+            _remove_exact_pending(
+                archives / f".{existing_stem}.tar.zst.pending",
+                field="Drive archive",
+                expected_sha256=verified_receipt["archive_sha256"],
+                expected_size_bytes=verified_receipt["archive_size_bytes"],
+            )
+            receipt_payload = _canonical_bytes(verified_receipt) + b"\n"
+            archive_lock_guard()
+            _remove_exact_pending(
+                receipts / f".{existing_stem}.json.pending",
+                field="archive receipt",
+                expected_sha256=hashlib.sha256(receipt_payload).hexdigest(),
+                expected_size_bytes=len(receipt_payload),
+            )
+            for row in verified_receipt["remote_readback_objects"]["objects"]:
+                archive_lock_guard()
+                _remove_exact_pending(
+                    destination
+                    / "readback-objects"
+                    / f".{existing_stem}-part-{row['index']:05d}.pending",
+                    field="remote readback part",
+                    expected_sha256=row["sha256"],
+                    expected_size_bytes=row["size_bytes"],
+                )
+            return verified_receipt
 
         files, total = _inventory(
             root,
@@ -1866,8 +3002,26 @@ def archive_completed_historical_job(
             files=files,
             total_source_bytes=total,
         )
+        if expected_manifest_sha256 is not None and (
+            _SHA_RE.fullmatch(expected_manifest_sha256) is None
+            or manifest["manifest_sha256"] != expected_manifest_sha256
+        ):
+            raise DojoHistoricalJobArchiveError(
+                "archive source changed after capacity inspection"
+            )
+        # Capacity inspection and inventory hashing can be long.  Revalidate
+        # the named lock before entering the first mutation phase.
+        archive_lock_guard()
         stem = f"job-{job_sha256}-{manifest['manifest_sha256']}"
         archive_path = archives / f"{stem}.tar.zst"
+        drive_pending = archives / f".{stem}.tar.zst.pending"
+        staging_parent = _resolve_local_staging_parent(
+            local_staging_root,
+            run_root=root,
+            archive_root=destination,
+        )
+        local_pending = staging_parent / f".{stem}.tar.zst.local-pending"
+        source_for_readback = archive_path
         try:
             archive_state = archive_path.stat(follow_symlinks=False)
         except FileNotFoundError:
@@ -1889,51 +3043,123 @@ def archive_completed_historical_job(
                 expected_completion_sha256=completion["completion_sha256"],
                 expected_bundle_kind=bundle_kind,
             )
-        else:
-            descriptor, part_name = tempfile.mkstemp(
-                prefix=f".{stem}.", suffix=".tar.zst.part", dir=archives
+            archive_sha, archive_size = _hash_file(archive_path)
+            archive_lock_guard()
+            _remove_exact_pending(
+                drive_pending,
+                field="Drive archive",
+                expected_sha256=archive_sha,
+                expected_size_bytes=archive_size,
             )
-            part_path = Path(part_name)
             try:
-                with os.fdopen(descriptor, "w+b", closefd=True) as output:
-                    _write_archive(
-                        output=output,
-                        run_root=root,
-                        manifest=manifest,
-                        zstd_bin=zstd_bin,
-                    )
-                _verify_archive(
-                    part_path,
-                    manifest=manifest,
-                    zstd_bin=zstd_bin,
-                    expected_job_sha256=job_sha256,
-                    expected_completion_sha256=completion["completion_sha256"],
-                    expected_bundle_kind=bundle_kind,
-                )
+                local_pending.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
                 try:
-                    os.link(part_path, archive_path)
-                except FileExistsError:
                     _verify_archive(
-                        archive_path,
+                        local_pending,
                         manifest=manifest,
                         zstd_bin=zstd_bin,
                         expected_job_sha256=job_sha256,
                         expected_completion_sha256=completion["completion_sha256"],
                         expected_bundle_kind=bundle_kind,
                     )
-                _fsync_directory(archives)
-            finally:
+                    local_sha, local_size = _hash_file(local_pending)
+                except DojoHistoricalJobArchiveError:
+                    archive_lock_guard()
+                    _remove_exact_pending(local_pending, field="local archive")
+                else:
+                    if local_sha == archive_sha and local_size == archive_size:
+                        source_for_readback = local_pending
+                    else:
+                        archive_lock_guard()
+                        _remove_exact_pending(
+                            local_pending,
+                            field="local archive",
+                            expected_sha256=local_sha,
+                            expected_size_bytes=local_size,
+                        )
+        else:
+            archive_lock_guard()
+            local_archive_sha, local_archive_size = _prepare_local_archive_pending(
+                pending_path=local_pending,
+                run_root=root,
+                manifest=manifest,
+                zstd_bin=zstd_bin,
+                job_sha256=job_sha256,
+                completion_sha256=completion["completion_sha256"],
+                bundle_kind=bundle_kind,
+                mutation_guard=archive_lock_guard,
+            )
+            archive_lock_guard()
+            _prepare_checked_copy_pending(
+                source_path=local_pending,
+                pending_path=drive_pending,
+                expected_sha256=local_archive_sha,
+                expected_size_bytes=local_archive_size,
+                field="Drive archive",
+                mutation_guard=archive_lock_guard,
+            )
+            try:
+                _verify_archive(
+                    drive_pending,
+                    manifest=manifest,
+                    zstd_bin=zstd_bin,
+                    expected_job_sha256=job_sha256,
+                    expected_completion_sha256=completion["completion_sha256"],
+                    expected_bundle_kind=bundle_kind,
+                )
+                drive_archive_sha, drive_archive_size = _hash_file(drive_pending)
+            except DojoHistoricalJobArchiveError:
+                # The checked copy above already proved the pending object's
+                # stable bytes.  A later deep-read failure can be a transient
+                # File Provider/materialization error, so retain that object
+                # unless a second stable hash proves that its bytes drifted.
+                # An unavailable or identity-unstable re-read is indeterminate
+                # and must not trigger an expensive full upload on retry.
                 try:
-                    part_path.unlink()
-                except FileNotFoundError:
+                    pending_sha256, pending_size = _hash_file(drive_pending)
+                except DojoHistoricalJobArchiveError:
                     pass
-        archive_sha, archive_size = _hash_file(archive_path)
+                else:
+                    if (
+                        pending_sha256 != local_archive_sha
+                        or pending_size != local_archive_size
+                    ):
+                        archive_lock_guard()
+                        _remove_exact_pending(drive_pending, field="Drive archive")
+                raise
+            if (
+                drive_archive_sha != local_archive_sha
+                or drive_archive_size != local_archive_size
+            ):
+                archive_lock_guard()
+                _remove_exact_pending(drive_pending, field="Drive archive")
+                raise DojoHistoricalJobArchiveError(
+                    "Drive archive pending differs from local staging"
+                )
+            archive_lock_guard()
+            _publish_prepared_pending(
+                pending_path=drive_pending,
+                destination_path=archive_path,
+                expected_sha256=local_archive_sha,
+                expected_size_bytes=local_archive_size,
+                field="archive",
+                mutation_guard=archive_lock_guard,
+            )
+            archive_sha = local_archive_sha
+            archive_size = local_archive_size
+            source_for_readback = local_pending
+        archive_lock_guard()
         remote_readback_objects = _build_remote_readback_objects(
             destination=destination,
             archive_path=archive_path,
             archive_sha256=archive_sha,
             archive_size_bytes=archive_size,
             stem=stem,
+            source_archive_path=source_for_readback,
+            mutation_guard=archive_lock_guard,
         )
         _verify_remote_readback_objects(
             remote_readback_objects,
@@ -1974,15 +3200,36 @@ def archive_completed_historical_job(
             **receipt_body,
             "receipt_sha256": _canonical_sha256(receipt_body),
         }
-        _write_once(receipts / f"{stem}.json", receipt)
+        # The Drive final and every readback object have been independently
+        # reconstructed above, so the local staging copy is no longer needed.
+        # Remove it before the receipt becomes the settled lifecycle marker;
+        # otherwise a crash immediately after atomic receipt publication leaves
+        # a full-size pending that archive-next will never revisit.
+        archive_lock_guard()
+        _remove_exact_pending(
+            local_pending,
+            field="local archive",
+            expected_sha256=archive_sha,
+            expected_size_bytes=archive_size,
+        )
+        archive_lock_guard()
+        _write_once(
+            receipts / f"{stem}.json",
+            receipt,
+            mutation_guard=archive_lock_guard,
+        )
+        archive_lock_guard()
         return receipt
 
 
 __all__ = [
+    "ARCHIVE_PART_BYTES",
+    "ARCHIVE_RECOVERY_CAPACITY_CONTRACT",
     "ARCHIVE_RECEIPT_CONTRACT",
     "ARCHIVE_SOURCE_INSPECTION_CONTRACT",
     "DojoHistoricalJobArchiveError",
     "archive_completed_historical_job",
     "inspect_historical_job_archive_source",
+    "inspect_historical_job_archive_recovery_capacity",
     "verify_existing_historical_job_archive",
 ]
