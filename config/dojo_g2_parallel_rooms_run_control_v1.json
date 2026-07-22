@@ -11,13 +11,13 @@
   "contract": "QR_DOJO_G2_HISTORICAL_RUN_CONTROL_V1",
   "execution": {
     "allowed_command": "scripts/run-dojo-historical-train-control.py run-next",
-    "archive_root": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260722-r6",
-    "archive_drive_root_id": "100CAUoJn373qm1e0JzQy-RkWyCptzXFH",
-    "archive_drive_readback_parent_id": "11Mn_tT_yomIb3zAoKKM1Ieu-BnPpHT4E",
-    "archive_drive_remote_receipts_parent_id": "19lbSvTMeqzMryp7YflwLOp0FlaidqLRB",
+    "archive_root": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260722-r7",
+    "archive_drive_root_id": "1PLc7ePdtF5qFhu3b6qwBD2d7dJLrRZ4N",
+    "archive_drive_readback_parent_id": "1qelqTLwDLsfarbwgkXU6275jsXZ7Yups",
+    "archive_drive_remote_receipts_parent_id": "1mbaqLV-n3U2oho7yzgrU18HPrELRUYVx",
     "archive_staging_fraction": 0.3,
     "capacity_baseline": {
-      "baseline_id": "G2_R6_2025_01_MAX_COMPLETE_PATH",
+      "baseline_id": "G2_R7_2025_01_MAX_COMPLETE_PATH",
       "coordinate_count": 2,
       "raw_bytes_per_job": 949557727,
       "source_bytes_per_job": 42067733
@@ -36,11 +36,11 @@
     "max_jobs_per_invocation": 1,
     "max_open_files": 1024,
     "max_parallel_jobs": 1,
-    "max_one_minute_load_per_cpu": 0.8,
+    "max_one_minute_load_per_cpu": 1.2,
     "max_rss_bytes": 8589934592,
     "max_terminal_bytes": 16777216,
     "minimum_free_disk_bytes": 26843545600,
-    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r6",
+    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7",
     "source_slice_policy": "AUTHENTICATED_OBSERVED_EPOCH_UNION_NO_IMPUTATION",
     "training_root_may_be_deleted": false
   },
