@@ -50,6 +50,12 @@ from quant_rabbit.dojo_shared_worker_protocol import (
 
 ATTESTATION_CONTRACT: Final = "QR_DOJO_ANOMALY_DECISION_REEXECUTION_ATTESTATION_V1"
 REQUEST_CONTRACT: Final = "QR_DOJO_ANOMALY_DECISION_REEXECUTION_REQUEST_V1"
+FIXED_ATTESTATION_CONTRACT: Final = (
+    "QR_DOJO_ANOMALY_DECISION_FIXED_DENOMINATOR_ATTESTATION_V1"
+)
+FIXED_REQUEST_CONTRACT: Final = (
+    "QR_DOJO_ANOMALY_DECISION_FIXED_DENOMINATOR_REQUEST_V1"
+)
 SCHEMA_VERSION: Final = 1
 GENESIS_SHA256: Final = "0" * 64
 MAX_RECORD_BYTES: Final = 32 * 1024 * 1024
@@ -116,6 +122,20 @@ _REQUEST_KEYS: Final = frozenset(
         "job",
         "predecessor_economic_carry",
         "expected_runtime_evidence_summary",
+        "request_sha256",
+    }
+)
+_FIXED_REQUEST_KEYS: Final = frozenset(
+    {
+        "contract",
+        "schema_version",
+        "expected_coordinate_ids",
+        "economic_attestations_by_coordinate",
+        "transcript_paths_by_coordinate",
+        "runtime_seal",
+        "job",
+        "predecessor_economic_carries_by_coordinate",
+        "expected_runtime_evidence_summaries_by_coordinate",
         "request_sha256",
     }
 )
@@ -755,6 +775,180 @@ def score_anomaly_decision_transcript(
     }
 
 
+def score_fixed_anomaly_decision_denominator(
+    *,
+    expected_coordinate_ids: Sequence[str],
+    economic_attestations_by_coordinate: Mapping[str, Mapping[str, Any]],
+    runtime_seal: Mapping[str, Any],
+    job: Mapping[str, Any],
+    predecessor_economic_carries_by_coordinate: Mapping[
+        str, Mapping[str, Any] | None
+    ],
+    expected_runtime_evidence_summaries_by_coordinate: Mapping[
+        str, Mapping[str, Any]
+    ],
+    transcript_paths_by_coordinate: Mapping[str, Path],
+    repo_root: Path,
+) -> dict[str, Any]:
+    """Reexecute every predeclared coordinate before emitting one pass/fail seal."""
+
+    raw_ids = _sequence(
+        expected_coordinate_ids, field="expected_coordinate_ids"
+    )
+    coordinate_ids: list[str] = []
+    for index, value in enumerate(raw_ids):
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value.encode("utf-8")) > 512
+        ):
+            raise DojoAnomalyDecisionScorerError(
+                f"expected_coordinate_ids[{index}] is invalid"
+            )
+        coordinate_ids.append(value)
+    if not coordinate_ids or coordinate_ids != sorted(set(coordinate_ids)):
+        raise DojoAnomalyDecisionScorerError(
+            "expected coordinate denominator must be non-empty, unique, and sorted"
+        )
+    expected = set(coordinate_ids)
+    economic = _mapping(
+        economic_attestations_by_coordinate,
+        field="economic_attestations_by_coordinate",
+    )
+    carries = _mapping(
+        predecessor_economic_carries_by_coordinate,
+        field="predecessor_economic_carries_by_coordinate",
+    )
+    summaries = _mapping(
+        expected_runtime_evidence_summaries_by_coordinate,
+        field="expected_runtime_evidence_summaries_by_coordinate",
+    )
+    paths = dict(transcript_paths_by_coordinate)
+    if any(not isinstance(key, str) for key in paths):
+        raise DojoAnomalyDecisionScorerError(
+            "transcript_paths_by_coordinate keys must be strings"
+        )
+    for field, values in (
+        ("economic attestations", economic),
+        ("predecessor carries", carries),
+        ("runtime evidence summaries", summaries),
+        ("transcript paths", paths),
+    ):
+        if set(values) != expected:
+            raise DojoAnomalyDecisionScorerError(
+                f"{field} do not equal the fixed coordinate denominator"
+            )
+
+    normalized_job = _mapping(job, field="job")
+    job_coordinates = _sequence(
+        normalized_job.get("coordinates"), field="job.coordinates"
+    )
+    job_coordinate_ids = sorted(
+        row.get("coordinate_id")
+        for row in job_coordinates
+        if isinstance(row, Mapping)
+        and isinstance(row.get("coordinate_id"), str)
+    )
+    if job_coordinate_ids != coordinate_ids:
+        raise DojoAnomalyDecisionScorerError(
+            "job coordinates do not equal the fixed decision denominator"
+        )
+
+    attestations: dict[str, dict[str, Any]] = {}
+    dependency_rows: list[dict[str, Any]] | None = None
+    dependency_sha: str | None = None
+    runtime_sha: str | None = None
+    policy_sha: str | None = None
+    for coordinate_id in coordinate_ids:
+        result = score_anomaly_decision_transcript(
+            Path(paths[coordinate_id]),
+            economic_attestation=economic[coordinate_id],
+            runtime_seal=runtime_seal,
+            job=normalized_job,
+            predecessor_economic_carry=carries[coordinate_id],
+            expected_runtime_evidence_summary=summaries[coordinate_id],
+            repo_root=repo_root,
+        )
+        if (
+            result["coordinate_id"] != coordinate_id
+            or result["strategy_decision_reexecution_passed"] is not True
+            or result["hidden_upstream_candidate_reconstruction_passed"] is not True
+            or result["hold_resize_next_rank_reconstruction_passed"] is not True
+        ):
+            raise DojoAnomalyDecisionScorerError(
+                "coordinate decision attestation is not a complete pass"
+            )
+        current_dependencies = result["scorer_dependencies"]
+        current_dependency_sha = result["scorer_dependencies_sha256"]
+        current_runtime_sha = result["runtime_binding_sha256"]
+        current_policy_sha = result["policy_sha256"]
+        if dependency_rows is None:
+            dependency_rows = current_dependencies
+            dependency_sha = current_dependency_sha
+            runtime_sha = current_runtime_sha
+            policy_sha = current_policy_sha
+        elif (
+            current_dependencies != dependency_rows
+            or current_dependency_sha != dependency_sha
+            or current_runtime_sha != runtime_sha
+            or current_policy_sha != policy_sha
+        ):
+            raise DojoAnomalyDecisionScorerError(
+                "fixed-denominator scorer dependencies or runtime changed"
+            )
+        attestations[coordinate_id] = result
+
+    if (
+        dependency_rows is None
+        or dependency_sha is None
+        or runtime_sha is None
+        or policy_sha is None
+    ):
+        raise DojoAnomalyDecisionScorerError(
+            "fixed denominator produced no verified dependency binding"
+        )
+    body = {
+        "contract": FIXED_ATTESTATION_CONTRACT,
+        "schema_version": SCHEMA_VERSION,
+        "status": "VERIFIED_COMPLETE",
+        "job_sha256": normalized_job["job_sha256"],
+        "runtime_binding_sha256": runtime_sha,
+        "policy_sha256": policy_sha,
+        "expected_coordinate_count": len(coordinate_ids),
+        "verified_coordinate_count": len(attestations),
+        "expected_coordinate_ids_sha256": canonical_portfolio_sha256(
+            coordinate_ids
+        ),
+        "decision_reexecution_attestation_sha256_by_coordinate": {
+            coordinate_id: attestations[coordinate_id][
+                "decision_reexecution_attestation_sha256"
+            ]
+            for coordinate_id in coordinate_ids
+        },
+        "economic_reexecution_attestation_sha256_by_coordinate": {
+            coordinate_id: attestations[coordinate_id][
+                "economic_reexecution_attestation_sha256"
+            ]
+            for coordinate_id in coordinate_ids
+        },
+        "scorer_dependencies": dependency_rows,
+        "scorer_dependencies_sha256": dependency_sha,
+        "fixed_denominator_decision_reexecution_passed": True,
+        "hidden_upstream_candidate_reconstruction_passed": True,
+        "hold_resize_next_rank_reconstruction_passed": True,
+        "held_economic_counterfactual_reexecution_passed": False,
+        "partial_decision_evidence_reported": False,
+        "official_evidence_eligible": False,
+        "authority": _copy(_AUTHORITY),
+    }
+    return {
+        **body,
+        "fixed_denominator_decision_attestation_sha256": (
+            canonical_portfolio_sha256(body)
+        ),
+    }
+
+
 def _read_request(path: Path) -> dict[str, Any]:
     request_path = Path(path)
     row = _mapping(
@@ -781,23 +975,99 @@ def _read_request(path: Path) -> dict[str, Any]:
     return row
 
 
+def _read_fixed_request(path: Path) -> dict[str, Any]:
+    request_path = Path(path)
+    row = _mapping(
+        _strict_json(
+            _read_stable_file(
+                request_path,
+                maximum_bytes=MAX_REQUEST_BYTES,
+                field="fixed decision scorer request",
+            ),
+            field="fixed decision scorer request",
+        ),
+        field="fixed decision scorer request",
+    )
+    if set(row) != set(_FIXED_REQUEST_KEYS):
+        raise DojoAnomalyDecisionScorerError("fixed request schema mismatch")
+    claimed = row["request_sha256"]
+    body = {key: item for key, item in row.items() if key != "request_sha256"}
+    if (
+        row["contract"] != FIXED_REQUEST_CONTRACT
+        or row["schema_version"] != SCHEMA_VERSION
+        or claimed != canonical_portfolio_sha256(body)
+    ):
+        raise DojoAnomalyDecisionScorerError("fixed request seal is invalid")
+    return row
+
+
+def _fixed_request_transcript_paths(
+    request_path: Path, value: Mapping[str, Any]
+) -> dict[str, Path]:
+    root = Path(request_path).resolve(strict=True).parent
+    rows = _mapping(value, field="transcript_paths_by_coordinate")
+    resolved: dict[str, Path] = {}
+    for coordinate_id, raw_path in rows.items():
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path
+            or Path(raw_path).is_absolute()
+        ):
+            raise DojoAnomalyDecisionScorerError(
+                "fixed request transcript paths must be relative filenames"
+            )
+        candidate = (root / raw_path).resolve(strict=True)
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise DojoAnomalyDecisionScorerError(
+                "fixed request transcript path escapes its evidence directory"
+            ) from exc
+        resolved[coordinate_id] = candidate
+    return resolved
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--request", required=True, type=Path)
+    request_group = parser.add_mutually_exclusive_group(required=True)
+    request_group.add_argument("--request", type=Path)
+    request_group.add_argument("--fixed-request", type=Path)
     parser.add_argument("--repo-root", required=True, type=Path)
     args = parser.parse_args(argv)
-    request = _read_request(args.request)
-    result = score_anomaly_decision_transcript(
-        Path(request["transcript_path"]),
-        economic_attestation=request["economic_attestation"],
-        runtime_seal=request["runtime_seal"],
-        job=request["job"],
-        predecessor_economic_carry=request["predecessor_economic_carry"],
-        expected_runtime_evidence_summary=request[
-            "expected_runtime_evidence_summary"
-        ],
-        repo_root=args.repo_root,
-    )
+    if args.fixed_request is not None:
+        request = _read_fixed_request(args.fixed_request)
+        result = score_fixed_anomaly_decision_denominator(
+            expected_coordinate_ids=request["expected_coordinate_ids"],
+            economic_attestations_by_coordinate=request[
+                "economic_attestations_by_coordinate"
+            ],
+            runtime_seal=request["runtime_seal"],
+            job=request["job"],
+            predecessor_economic_carries_by_coordinate=request[
+                "predecessor_economic_carries_by_coordinate"
+            ],
+            expected_runtime_evidence_summaries_by_coordinate=request[
+                "expected_runtime_evidence_summaries_by_coordinate"
+            ],
+            transcript_paths_by_coordinate=_fixed_request_transcript_paths(
+                args.fixed_request,
+                request["transcript_paths_by_coordinate"],
+            ),
+            repo_root=args.repo_root,
+        )
+    else:
+        request = _read_request(args.request)
+        result = score_anomaly_decision_transcript(
+            Path(request["transcript_path"]),
+            economic_attestation=request["economic_attestation"],
+            runtime_seal=request["runtime_seal"],
+            job=request["job"],
+            predecessor_economic_carry=request["predecessor_economic_carry"],
+            expected_runtime_evidence_summary=request[
+                "expected_runtime_evidence_summary"
+            ],
+            repo_root=args.repo_root,
+        )
     print(_canonical_bytes(result).decode("utf-8"))
     return 0
 
@@ -809,6 +1079,9 @@ if __name__ == "__main__":  # pragma: no cover - exercised through subprocess
 __all__ = [
     "ATTESTATION_CONTRACT",
     "DojoAnomalyDecisionScorerError",
+    "FIXED_ATTESTATION_CONTRACT",
+    "FIXED_REQUEST_CONTRACT",
     "REQUEST_CONTRACT",
+    "score_fixed_anomaly_decision_denominator",
     "score_anomaly_decision_transcript",
 ]

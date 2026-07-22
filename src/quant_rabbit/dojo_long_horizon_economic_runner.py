@@ -57,6 +57,10 @@ from quant_rabbit.dojo_anomaly_admission_runtime import (
     SealedAnomalyAdmissionRuntimeFactory,
     verify_anomaly_admission_runtime_seal,
 )
+from quant_rabbit.dojo_anomaly_decision_scorer import (
+    FIXED_ATTESTATION_CONTRACT as ANOMALY_FIXED_ATTESTATION_CONTRACT,
+    FIXED_REQUEST_CONTRACT as ANOMALY_FIXED_REQUEST_CONTRACT,
+)
 from quant_rabbit.dojo_long_horizon_plan import (
     STARTING_EQUITY_JPY,
     canonical_sha256,
@@ -354,6 +358,72 @@ def _reexecute_transcript_in_separate_process(path: Path) -> dict[str, Any]:
         field=f"reexecution attestation for {path.name}",
     )
     return dict(row)
+
+
+def _reexecute_fixed_anomaly_decisions_in_separate_process(
+    *,
+    request_path: Path,
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Seal and run the all-coordinate anomaly scorer outside the runner."""
+
+    body = dict(request)
+    sealed_request = {**body, "request_sha256": canonical_sha256(body)}
+    _write_exclusive_json(request_path, sealed_request)
+    repository_root = Path(__file__).resolve().parents[2]
+    source_root = repository_root / "src"
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath = str(source_root)
+    if inherited_pythonpath:
+        pythonpath = os.pathsep.join((pythonpath, inherited_pythonpath))
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.dojo_anomaly_decision_scorer",
+            "--fixed-request",
+            str(request_path),
+            "--repo-root",
+            str(repository_root),
+        ],
+        cwd=repository_root,
+        env={**os.environ, "PYTHONPATH": pythonpath},
+        check=False,
+        capture_output=True,
+    )
+    if (
+        completed.returncode != 0
+        or completed.stderr
+        or not completed.stdout
+        or len(completed.stdout) > MAX_REEXECUTION_ATTESTATION_BYTES
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "separate-process fixed anomaly decision reexecution failed"
+        )
+    result = dict(
+        _strict_json_line(
+            completed.stdout,
+            field="fixed anomaly decision reexecution attestation",
+        )
+    )
+    claimed = result.get("fixed_denominator_decision_attestation_sha256")
+    result_body = {
+        key: value
+        for key, value in result.items()
+        if key != "fixed_denominator_decision_attestation_sha256"
+    }
+    if (
+        result.get("contract") != ANOMALY_FIXED_ATTESTATION_CONTRACT
+        or result.get("schema_version") != SCHEMA_VERSION
+        or result.get("status") != "VERIFIED_COMPLETE"
+        or result.get("fixed_denominator_decision_reexecution_passed") is not True
+        or result.get("partial_decision_evidence_reported") is not False
+        or claimed != canonical_sha256(result_body)
+    ):
+        raise DojoLongHorizonEconomicRunnerError(
+            "fixed anomaly decision attestation is invalid"
+        )
+    return result
 
 
 def _reexecute_v2_chain_in_separate_process(
@@ -1758,6 +1828,7 @@ def run_long_horizon_economic_job(
     transcript_paths: dict[str, Path] = {}
     terminal_transcript_ids: set[str] = set()
     predecessor_sha: dict[str, str | None] = {}
+    predecessor_carries_by_coordinate: dict[str, dict[str, Any] | None] = {}
     failures: dict[str, tuple[str, str]] = {}
     portfolio_results: dict[str, dict[str, Any]] = {}
     economic_carries: dict[str, dict[str, Any]] = {}
@@ -1789,6 +1860,7 @@ def run_long_horizon_economic_job(
                     "economic carry disagrees with execution carry receipt"
                 )
             predecessor_sha[coordinate_id] = verified_carry["state_sha256"]
+            predecessor_carries_by_coordinate[coordinate_id] = verified_carry
             portfolio_carry = verified_carry["portfolio_carry_state"]
             prior_worker_state = verified_carry["worker_state"]
             predecessor_watermarks.add(
@@ -1810,6 +1882,7 @@ def run_long_horizon_economic_job(
             predecessor_last_epochs.add(cursor["last_epoch"])
         else:
             predecessor_sha[coordinate_id] = None
+            predecessor_carries_by_coordinate[coordinate_id] = None
         transcript_id = canonical_sha256(
             {
                 "contract": (
@@ -2512,6 +2585,66 @@ def run_long_horizon_economic_job(
         f"{job['job_sha256']}.{claim['claim_sha256']}.fixed-denominator-attestation.json"
     )
     _write_exclusive_json(fixed_attestation_path, fixed_attestation)
+    fixed_decision_attestation: dict[str, Any] | None = None
+    fixed_decision_attestation_path: Path | None = None
+    fixed_decision_request_path: Path | None = None
+    if (
+        worker_runtime_mode == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+        and economic_transcript_format == ECONOMIC_TRANSCRIPT_V1_JSONL
+        and failed_count == 0
+    ):
+        if verified_runtime_seal is None:
+            raise DojoLongHorizonEconomicRunnerError(
+                "anomaly fixed decision scoring requires its verified runtime seal"
+            )
+        fixed_decision_request_path = evidence_root / (
+            f"{job['job_sha256']}.{claim['claim_sha256']}."
+            "fixed-decision-request.json"
+        )
+        fixed_decision_attestation = (
+            _reexecute_fixed_anomaly_decisions_in_separate_process(
+                request_path=fixed_decision_request_path,
+                request={
+                    "contract": ANOMALY_FIXED_REQUEST_CONTRACT,
+                    "schema_version": SCHEMA_VERSION,
+                    "expected_coordinate_ids": expected_coordinate_ids,
+                    "economic_attestations_by_coordinate": (
+                        attestations_by_coordinate
+                    ),
+                    "transcript_paths_by_coordinate": {
+                        coordinate_id: transcript_paths[coordinate_id].name
+                        for coordinate_id in expected_coordinate_ids
+                    },
+                    "runtime_seal": verified_runtime_seal,
+                    "job": job,
+                    "predecessor_economic_carries_by_coordinate": (
+                        predecessor_carries_by_coordinate
+                    ),
+                    "expected_runtime_evidence_summaries_by_coordinate": (
+                        worker_runtime_evidence
+                    ),
+                },
+            )
+        )
+        if (
+            fixed_decision_attestation["expected_coordinate_count"]
+            != len(expected_coordinate_ids)
+            or fixed_decision_attestation["verified_coordinate_count"]
+            != len(expected_coordinate_ids)
+            or fixed_decision_attestation["job_sha256"] != job["job_sha256"]
+            or fixed_decision_attestation["runtime_binding_sha256"]
+            != verified_runtime_seal["runtime_binding_sha256"]
+        ):
+            raise DojoLongHorizonEconomicRunnerError(
+                "fixed anomaly decision denominator differs from the runner job"
+            )
+        fixed_decision_attestation_path = evidence_root / (
+            f"{job['job_sha256']}.{claim['claim_sha256']}."
+            "fixed-decision-attestation.json"
+        )
+        _write_exclusive_json(
+            fixed_decision_attestation_path, fixed_decision_attestation
+        )
     source_quote_coverage_proved = receipt["parent_quote_coverage_complete"] is True
     independent_reexecution_passed = (
         fixed_attestation["status"] == "VERIFIED_COMPLETE"
@@ -2575,9 +2708,33 @@ def run_long_horizon_economic_job(
             worker_runtime_evidence if failed_count == 0 else {}
         ),
         "strategy_decision_reexecution_passed": (
-            False
+            fixed_decision_attestation is not None
+            and fixed_decision_attestation[
+                "fixed_denominator_decision_reexecution_passed"
+            ]
+            is True
             if worker_runtime_mode
             == "SEALED_ANOMALY_ADMISSION_OVER_TUNED_STRATEGY"
+            else None
+        ),
+        "fixed_denominator_decision_reexecution_attestation": (
+            fixed_decision_attestation
+        ),
+        "fixed_denominator_decision_reexecution_attestation_filename": (
+            fixed_decision_attestation_path.name
+            if fixed_decision_attestation_path is not None
+            else None
+        ),
+        "fixed_denominator_decision_reexecution_attestation_sha256": (
+            fixed_decision_attestation[
+                "fixed_denominator_decision_attestation_sha256"
+            ]
+            if fixed_decision_attestation is not None
+            else None
+        ),
+        "fixed_denominator_decision_reexecution_request_filename": (
+            fixed_decision_request_path.name
+            if fixed_decision_request_path is not None
             else None
         ),
         "worker_runtime_seal_sha256": (

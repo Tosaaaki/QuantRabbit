@@ -1034,7 +1034,66 @@ def test_anomaly_admission_wraps_actual_exact28_job_order_diagnostically(
     assert result["worker_runtime_seal_sha256"] == anomaly_seal[
         "runtime_binding_sha256"
     ]
-    assert result["strategy_decision_reexecution_passed"] is False
+    assert result["strategy_decision_reexecution_passed"] is True
+    fixed_decisions = result[
+        "fixed_denominator_decision_reexecution_attestation"
+    ]
+    assert fixed_decisions["status"] == "VERIFIED_COMPLETE"
+    assert fixed_decisions["expected_coordinate_count"] == len(
+        handoff["runnable_coordinate_ids"]
+    )
+    assert fixed_decisions["verified_coordinate_count"] == len(
+        handoff["runnable_coordinate_ids"]
+    )
+    assert (
+        set(
+            fixed_decisions[
+                "decision_reexecution_attestation_sha256_by_coordinate"
+            ]
+        )
+        == set(handoff["runnable_coordinate_ids"])
+    )
+    assert fixed_decisions["fixed_denominator_decision_reexecution_passed"] is True
+    assert fixed_decisions["held_economic_counterfactual_reexecution_passed"] is False
+    fixed_request_path = (
+        tmp_path
+        / "economic-evidence"
+        / result["fixed_denominator_decision_reexecution_request_filename"]
+    )
+    omitted_request = json.loads(fixed_request_path.read_text())
+    omitted_request["expected_runtime_evidence_summaries_by_coordinate"].pop(
+        handoff["runnable_coordinate_ids"][0]
+    )
+    omitted_body = {
+        key: value
+        for key, value in omitted_request.items()
+        if key != "request_sha256"
+    }
+    omitted_request["request_sha256"] = canonical_sha256(omitted_body)
+    omitted_request_path = tmp_path / "omitted-fixed-decision-request.json"
+    omitted_request_path.write_text(
+        json.dumps(omitted_request, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    repository_root = Path(__file__).resolve().parents[1]
+    omitted = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quant_rabbit.dojo_anomaly_decision_scorer",
+            "--fixed-request",
+            str(omitted_request_path),
+            "--repo-root",
+            str(repository_root),
+        ],
+        cwd=repository_root,
+        env={**os.environ, "PYTHONPATH": str(repository_root / "src")},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert omitted.returncode != 0
+    assert "do not equal the fixed coordinate denominator" in omitted.stderr
     assert result["official_evidence_eligible"] is False
     assert result["independent_economic_reexecution_passed"] is True
     assert len(result["worker_runtime_evidence_by_coordinate"]) == len(
