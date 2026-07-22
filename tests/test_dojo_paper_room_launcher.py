@@ -124,6 +124,25 @@ def test_wave_uses_one_detached_owner_name_and_session_per_room():
         assert row["command"][-2:] == ["--room-id", row["room_id"]]
 
 
+def test_wave_screen_command_uses_macos_compatible_detached_owner():
+    wave = _load_wave()
+    row = {
+        "screen_name": "qr-dojo-room-01",
+        "command": ["/fixed/python3", "/fixed/runner.py"],
+    }
+
+    command = wave.build_screen_command(row)
+
+    assert command == [
+        "screen",
+        "-dmS",
+        "qr-dojo-room-01",
+        "/fixed/python3",
+        "/fixed/runner.py",
+    ]
+    assert "-Logfile" not in command
+
+
 @pytest.mark.parametrize(
     ("room_id", "slippage", "financing"),
     [

@@ -71,6 +71,11 @@ def _assert_launch_window(registry_path: Path, lead_seconds: int) -> None:
         raise RuntimeError("paper wave window has ended")
 
 
+def build_screen_command(row: dict) -> list[str]:
+    """Build a detached owner command supported by the bundled macOS screen."""
+    return ["screen", "-dmS", row["screen_name"], *row["command"]]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -111,19 +116,7 @@ def main() -> int:
             continue
         session_dir = row["session_dir"]
         session_dir.mkdir(parents=True, exist_ok=True)
-        log_path = session_dir / "screen.log"
-        subprocess.run(
-            [
-                "screen",
-                "-L",
-                "-Logfile",
-                str(log_path),
-                "-dmS",
-                name,
-                *row["command"],
-            ],
-            check=True,
-        )
+        subprocess.run(build_screen_command(row), check=True)
         started.append(name)
     print(json.dumps({"started": started}, sort_keys=True))
     return 0
