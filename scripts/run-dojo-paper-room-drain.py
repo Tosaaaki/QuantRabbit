@@ -38,6 +38,9 @@ def build_drain_launch(
     pairs = defaults.get("pairs")
     if not isinstance(pairs, list) or not pairs:
         raise launcher.RoomRegistryError("room drain requires registered pairs")
+    feed_pairs = defaults.get("feed_pairs", pairs)
+    if not isinstance(feed_pairs, list) or not feed_pairs:
+        raise launcher.RoomRegistryError("room drain requires registered feed_pairs")
     _, _, session_dir = launcher.build_launch(
         registry_path=registry_path,
         room_id=room_id,
@@ -51,7 +54,7 @@ def build_drain_launch(
         "--session-dir",
         str(session_dir),
         "--pairs",
-        ",".join(pairs),
+        ",".join(feed_pairs),
         "--balance",
         str(float(defaults["balance_jpy"])),
         "--minutes",

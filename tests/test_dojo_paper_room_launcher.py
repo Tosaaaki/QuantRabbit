@@ -110,6 +110,66 @@ def test_smoke_registry_can_be_explicitly_diagnostic(tmp_path):
     assert command[command.index("--paper-proof-mode") + 1] == "diagnostic"
 
 
+def test_non_jpy_room_can_add_conversion_feed_without_bot_trading_it(tmp_path):
+    launcher = _load_launcher()
+    source = json.loads(
+        (ROOT / "config/dojo_paper_rooms_v1.json").read_text(encoding="utf-8")
+    )
+    source["defaults"]["pairs"] = ["EUR_USD"]
+    source["defaults"]["feed_pairs"] = ["EUR_USD", "USD_JPY"]
+    for room in source["rooms"]:
+        room["bot_config"]["pairs"] = ["EUR_USD"]
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+
+    command, env, _ = launcher.build_launch(
+        registry_path=path,
+        room_id=source["rooms"][0]["room_id"],
+        python_executable="/fixed/python3",
+    )
+
+    assert command[command.index("--pairs") + 1] == "EUR_USD,USD_JPY"
+    assert json.loads(env["DOJO_BOT_CONFIG"])["pairs"] == ["EUR_USD"]
+
+
+def test_registry_refuses_conversion_feed_that_omits_bot_pair(tmp_path):
+    launcher = _load_launcher()
+    source = json.loads(
+        (ROOT / "config/dojo_paper_rooms_v1.json").read_text(encoding="utf-8")
+    )
+    source["defaults"]["feed_pairs"] = ["EUR_USD"]
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+
+    with pytest.raises(launcher.RoomRegistryError, match="present in feed_pairs"):
+        launcher.build_launch(
+            registry_path=path,
+            room_id=source["rooms"][0]["room_id"],
+            python_executable="/fixed/python3",
+        )
+
+
+def test_non_jpy_room_drain_keeps_conversion_feed(tmp_path):
+    drain = _load_drain_launcher()
+    source = json.loads(
+        (ROOT / "config/dojo_paper_rooms_v1.json").read_text(encoding="utf-8")
+    )
+    source["defaults"]["pairs"] = ["EUR_USD"]
+    source["defaults"]["feed_pairs"] = ["EUR_USD", "USD_JPY"]
+    for room in source["rooms"]:
+        room["bot_config"]["pairs"] = ["EUR_USD"]
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+
+    command, _, _ = drain.build_drain_launch(
+        registry_path=path,
+        room_id=source["rooms"][0]["room_id"],
+        python_executable="/fixed/python3",
+    )
+
+    assert command[command.index("--pairs") + 1] == "EUR_USD,USD_JPY"
+
+
 def test_wave_uses_one_detached_owner_name_and_session_per_room():
     wave = _load_wave()
     registry_path = ROOT / "config/dojo_paper_rooms_v1.json"

@@ -76,7 +76,16 @@ def build_launch(
     if not isinstance(pairs, list) or not pairs or len(pairs) != len(set(pairs)):
         raise RoomRegistryError("default pairs must be non-empty and unique")
     if sorted(config.get("pairs") or []) != sorted(pairs):
-        raise RoomRegistryError("room bot pairs must exactly match feed pairs")
+        raise RoomRegistryError("room bot pairs must exactly match registered pairs")
+    feed_pairs = defaults.get("feed_pairs", pairs)
+    if (
+        not isinstance(feed_pairs, list)
+        or not feed_pairs
+        or len(feed_pairs) != len(set(feed_pairs))
+    ):
+        raise RoomRegistryError("default feed_pairs must be non-empty and unique")
+    if not set(pairs).issubset(feed_pairs):
+        raise RoomRegistryError("every bot pair must be present in feed_pairs")
 
     experiment_id = str(required["experiment_id"])
     if not SAFE_ID.fullmatch(experiment_id):
@@ -99,7 +108,7 @@ def build_launch(
         "--session-dir",
         str(session_dir),
         "--pairs",
-        ",".join(pairs),
+        ",".join(feed_pairs),
         "--balance",
         str(float(defaults["balance_jpy"])),
         "--window-start-utc",
