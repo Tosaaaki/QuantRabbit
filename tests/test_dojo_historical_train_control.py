@@ -17,6 +17,7 @@ from quant_rabbit.dojo_historical_train_control import (
     _baseline_raw_bytes,
     _conflicting_generation_statuses,
     _disk_capacity_snapshot,
+    _effective_archive_staging_fraction,
     _g2_room_bindings,
     _milestone_status,
     _room_binding_sha256,
@@ -30,10 +31,10 @@ from quant_rabbit.dojo_historical_train_control import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTROL_PATH = REPO_ROOT / "config" / "dojo_g2_historical_run_control_v1.json"
-ROOM_CONTROL_PATH = (
-    REPO_ROOT / "config" / "dojo_g2_parallel_rooms_run_control_v1.json"
+ROOM_CONTROL_PATH = REPO_ROOT / "config" / "dojo_g2_parallel_rooms_run_control_v1.json"
+REGISTRY_PATH = (
+    REPO_ROOT / "research" / "registries" / "dojo_g2_baseline_revision_v1.json"
 )
-REGISTRY_PATH = REPO_ROOT / "research" / "registries" / "dojo_g2_baseline_revision_v1.json"
 
 
 def _load(path: Path) -> dict:
@@ -46,7 +47,10 @@ def test_reviewed_control_is_six_month_research_only() -> None:
     assert control["contract"] == CONTROL_CONTRACT
     assert control["trainer_milestones"]["m5_completed_months_per_review"] == 6
     assert control["trainer_milestones"]["partial_month_tuning_allowed"] is False
-    assert control["trainer_milestones"]["parameter_change_applies_only_to_new_generation"] is True
+    assert (
+        control["trainer_milestones"]["parameter_change_applies_only_to_new_generation"]
+        is True
+    )
     assert control["authority"]["historical_replay_process_start_allowed"] is True
     assert control["authority"]["broker_mutation_allowed"] is False
     assert control["authority"]["live_permission"] is False
@@ -117,16 +121,13 @@ def test_room_generation_prepares_twelve_stream_jobs_and_144_room_cells(
     assert manifest["room_family_bindings_sha256"] == _room_binding_sha256()
     assert all(job["coordinate_count"] == 12 for job in schedule["jobs"])
     assert {
-        coordinate["fold_label"]
-        for coordinate in schedule["jobs"][0]["coordinates"]
+        coordinate["fold_label"] for coordinate in schedule["jobs"][0]["coordinates"]
     } == {row["room_id"] for row in _g2_room_bindings()}
     assert all(
         coordinate["active_worker_count"] == 1
         for coordinate in schedule["jobs"][0]["coordinates"]
     )
-    assert [
-        row["artifact_id"] for row in manifest["sealed_input_artifacts"]
-    ] == [
+    assert [row["artifact_id"] for row in manifest["sealed_input_artifacts"]] == [
         "IMPLEMENTATION_MANIFEST",
         "RUN_CONTROL",
         "SOURCE_MANIFEST",
@@ -203,8 +204,11 @@ def test_conflicting_runner_lock_is_held_for_the_caller_lifetime(
     tmp_path: Path,
 ) -> None:
     control = _load(ROOM_CONTROL_PATH)
-    lock_path = tmp_path / "old-run.lock"
+    conflict_root = tmp_path / "old-run"
+    conflict_root.mkdir()
+    lock_path = conflict_root / ".historical-train.lock"
     lock_path.touch()
+    control["execution"]["conflicting_execution_roots"] = [str(conflict_root)]
     control["execution"]["conflicting_run_lock_paths"] = [str(lock_path)]
 
     descriptors = _acquire_conflicting_run_locks(control)
@@ -214,7 +218,7 @@ def test_conflicting_runner_lock_is_held_for_the_caller_lifetime(
             fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         os.close(competing)
-        for descriptor in descriptors:
+        for descriptor in descriptors.values():
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
 
@@ -248,7 +252,9 @@ def test_conflicting_generation_status_blocks_orphaned_active_claim(
     conflict_root = tmp_path / "old-generation"
     conflict_root.mkdir()
     control["execution"]["conflicting_execution_roots"] = [str(conflict_root)]
-    control["execution"]["conflicting_run_lock_paths"] = []
+    control["execution"]["conflicting_run_lock_paths"] = [
+        str(conflict_root / ".historical-train.lock")
+    ]
     monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
     )
@@ -258,13 +264,15 @@ def test_conflicting_generation_status_blocks_orphaned_active_claim(
     )
     monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control._conflicting_generation_statuses",
-        lambda value: [
+        lambda value, **kwargs: [
             {
                 "output_root": str(conflict_root),
                 "exists": True,
                 "active_job_count": 1,
                 "terminal_job_count": 3,
                 "status_sha256": "1" * 64,
+                "superseded_by_current_generation": False,
+                "supersede_receipt_sha256": None,
             }
         ],
     )
@@ -276,10 +284,42 @@ def test_conflicting_generation_status_blocks_orphaned_active_claim(
         _assert_dynamic_machine_capacity(control)
 
 
+def test_verified_supersede_excludes_orphan_from_active_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control = _load(ROOM_CONTROL_PATH)
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
+        lambda: (1.0, 1.0, 1.0),
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control._conflicting_generation_statuses",
+        lambda value, **kwargs: [
+            {
+                "output_root": "/old",
+                "exists": True,
+                "active_job_count": 1,
+                "terminal_job_count": 3,
+                "status_sha256": "1" * 64,
+                "superseded_by_current_generation": True,
+                "supersede_receipt_sha256": "2" * 64,
+            }
+        ],
+    )
+
+    _assert_dynamic_machine_capacity(control)
+
+
 def test_conflicting_generation_status_reports_absent_root() -> None:
     control = _load(ROOM_CONTROL_PATH)
     control["execution"]["conflicting_execution_roots"] = [
         "/definitely/absent/dojo-generation"
+    ]
+    control["execution"]["conflicting_run_lock_paths"] = [
+        "/definitely/absent/dojo-generation/.historical-train.lock"
     ]
 
     assert _conflicting_generation_statuses(control) == [
@@ -288,6 +328,8 @@ def test_conflicting_generation_status_reports_absent_root() -> None:
             "exists": False,
             "active_job_count": 0,
             "terminal_job_count": 0,
+            "superseded_by_current_generation": False,
+            "supersede_receipt_sha256": None,
         }
     ]
 
@@ -311,6 +353,16 @@ def test_disk_capacity_compares_shared_raw_and_archive_filesystem(
         control["execution"]["minimum_free_disk_bytes"] + 1_250
     )
     assert snapshot["archive_required_bytes"] == 0
+
+
+def test_archive_staging_uses_sealed_conservative_floor(tmp_path: Path) -> None:
+    control = _load(ROOM_CONTROL_PATH)
+
+    assert _effective_archive_staging_fraction(
+        control=control,
+        archive_root=tmp_path / "absent-archive",
+    ) == pytest.approx(0.3)
+
 
 def test_read_only_milestone_status_does_not_publish(tmp_path: Path) -> None:
     status = _milestone_status(tmp_path, {"jobs": []}, publish=False)

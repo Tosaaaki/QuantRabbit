@@ -29,6 +29,9 @@ import fcntl
 ARCHIVE_RECEIPT_CONTRACT: Final = "QR_DOJO_HISTORICAL_JOB_ARCHIVE_V1"
 ARCHIVE_MANIFEST_CONTRACT: Final = "QR_DOJO_HISTORICAL_JOB_ARCHIVE_MANIFEST_V1"
 ARCHIVE_READBACK_CONTRACT: Final = "QR_DOJO_ARCHIVE_READBACK_OBJECT_SET_V1"
+ARCHIVE_SOURCE_INSPECTION_CONTRACT: Final = (
+    "QR_DOJO_HISTORICAL_JOB_ARCHIVE_SOURCE_INSPECTION_V1"
+)
 JOB_COMPLETION_CONTRACT: Final = "QR_DOJO_HISTORICAL_TRAIN_JOB_COMPLETION_V1"
 SOURCE_FAILURE_CONTRACT: Final = "QR_DOJO_HISTORICAL_SOURCE_FAILURE_V1"
 ECONOMIC_JOB_RESULT_CONTRACT: Final = "QR_DOJO_LONG_HORIZON_ECONOMIC_JOB_RESULT_V1"
@@ -562,6 +565,20 @@ def _collect_files(
 ) -> list[str]:
     paths = set(_FIXED_ARTIFACTS)
     paths.update(_validate_sealed_inputs(run_root))
+    transition_root = run_root / "transition-receipts"
+    if _entry_exists(transition_root):
+        if (
+            _collect_regular_tree(
+                run_root=run_root,
+                tree_root=transition_root,
+                paths=paths,
+                field="generation transition evidence",
+            )
+            == 0
+        ):
+            raise DojoHistoricalJobArchiveError(
+                "generation transition evidence is empty"
+            )
     job_root = run_root / "jobs" / job_sha256
     if (
         _collect_regular_tree(
@@ -981,6 +998,37 @@ def _validate_manifest(
             "archive manifest inventory is not canonical"
         )
     return dict(value)
+
+
+def _build_archive_manifest(
+    *,
+    job_sha256: str,
+    completion_sha256: str,
+    bundle_kind: str,
+    files: list[dict[str, Any]],
+    total_source_bytes: int,
+) -> dict[str, Any]:
+    body = {
+        "contract": ARCHIVE_MANIFEST_CONTRACT,
+        "schema_version": 1,
+        "job_sha256": job_sha256,
+        "completion_sha256": completion_sha256,
+        "bundle_kind": bundle_kind,
+        "file_count": len(files),
+        "total_source_bytes": total_source_bytes,
+        "files": files,
+        "historical_train_is_proof": False,
+        "promotion_eligible": False,
+        "live_permission": False,
+        "order_authority": "NONE",
+        "broker_mutation_allowed": False,
+    }
+    return _validate_manifest(
+        {**body, "manifest_sha256": _canonical_sha256(body)},
+        expected_job_sha256=job_sha256,
+        expected_completion_sha256=completion_sha256,
+        expected_bundle_kind=bundle_kind,
+    )
 
 
 def _read_member_bytes(
@@ -1597,6 +1645,69 @@ def _require_real_directory(path: Path, *, field: str) -> None:
         raise DojoHistoricalJobArchiveError(f"{field} must be a real directory")
 
 
+def inspect_historical_job_archive_source(
+    *,
+    run_root: Path,
+    job_sha256: str,
+) -> dict[str, Any]:
+    """Return the exact prospective archive binding without creating anything."""
+
+    if _SHA_RE.fullmatch(job_sha256) is None:
+        raise DojoHistoricalJobArchiveError("job SHA-256 is invalid")
+    try:
+        root = Path(run_root).resolve(strict=True)
+    except OSError as exc:
+        raise DojoHistoricalJobArchiveError("run root is unavailable") from exc
+    _require_real_directory(root, field="run root")
+    completion = _completion(root, job_sha256)
+    bundle_kind = _bundle_kind(completion)
+    files, total = _inventory(
+        root,
+        job_sha256,
+        bundle_kind=bundle_kind,
+    )
+    _validate_inventory_links(
+        run_root=root,
+        job_sha256=job_sha256,
+        completion=completion,
+        rows=files,
+        bundle_kind=bundle_kind,
+    )
+    repeated_files, repeated_total = _inventory(
+        root,
+        job_sha256,
+        bundle_kind=bundle_kind,
+    )
+    if repeated_files != files or repeated_total != total:
+        raise DojoHistoricalJobArchiveError(
+            "archive source inventory changed while inspected"
+        )
+    manifest = _build_archive_manifest(
+        job_sha256=job_sha256,
+        completion_sha256=completion["completion_sha256"],
+        bundle_kind=bundle_kind,
+        files=files,
+        total_source_bytes=total,
+    )
+    body = {
+        "contract": ARCHIVE_SOURCE_INSPECTION_CONTRACT,
+        "schema_version": 1,
+        "job_sha256": job_sha256,
+        "completion_sha256": completion["completion_sha256"],
+        "bundle_kind": bundle_kind,
+        "file_count": len(files),
+        "total_source_bytes": total,
+        "source_inventory_sha256": _canonical_sha256(files),
+        "manifest_sha256": manifest["manifest_sha256"],
+        "historical_train_is_proof": False,
+        "promotion_eligible": False,
+        "live_permission": False,
+        "order_authority": "NONE",
+        "broker_mutation_allowed": False,
+    }
+    return {**body, "inspection_sha256": _canonical_sha256(body)}
+
+
 def verify_existing_historical_job_archive(
     *,
     run_root: Path,
@@ -1748,29 +1859,12 @@ def archive_completed_historical_job(
             rows=files,
             bundle_kind=bundle_kind,
         )
-        manifest_body = {
-            "contract": ARCHIVE_MANIFEST_CONTRACT,
-            "schema_version": 1,
-            "job_sha256": job_sha256,
-            "completion_sha256": completion["completion_sha256"],
-            "bundle_kind": bundle_kind,
-            "file_count": len(files),
-            "total_source_bytes": total,
-            "files": files,
-            "historical_train_is_proof": False,
-            "promotion_eligible": False,
-            "live_permission": False,
-            "order_authority": "NONE",
-            "broker_mutation_allowed": False,
-        }
-        manifest = _validate_manifest(
-            {
-                **manifest_body,
-                "manifest_sha256": _canonical_sha256(manifest_body),
-            },
-            expected_job_sha256=job_sha256,
-            expected_completion_sha256=completion["completion_sha256"],
-            expected_bundle_kind=bundle_kind,
+        manifest = _build_archive_manifest(
+            job_sha256=job_sha256,
+            completion_sha256=completion["completion_sha256"],
+            bundle_kind=bundle_kind,
+            files=files,
+            total_source_bytes=total,
         )
         stem = f"job-{job_sha256}-{manifest['manifest_sha256']}"
         archive_path = archives / f"{stem}.tar.zst"
@@ -1886,7 +1980,9 @@ def archive_completed_historical_job(
 
 __all__ = [
     "ARCHIVE_RECEIPT_CONTRACT",
+    "ARCHIVE_SOURCE_INSPECTION_CONTRACT",
     "DojoHistoricalJobArchiveError",
     "archive_completed_historical_job",
+    "inspect_historical_job_archive_source",
     "verify_existing_historical_job_archive",
 ]

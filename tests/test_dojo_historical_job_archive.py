@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
+import quant_rabbit.dojo_historical_job_archive as archive_module
 from quant_rabbit.dojo_historical_job_archive import (
     ARCHIVE_MANIFEST_CONTRACT,
+    ARCHIVE_SOURCE_INSPECTION_CONTRACT,
     FAILED_SOURCE_BUNDLE_KIND,
     IMPLEMENTATION_MANIFEST_CONTRACT,
     JOB_COMPLETION_CONTRACT,
@@ -25,6 +27,7 @@ from quant_rabbit.dojo_historical_job_archive import (
     _tar_info,
     _verify_archive,
     archive_completed_historical_job,
+    inspect_historical_job_archive_source,
     verify_existing_historical_job_archive,
 )
 
@@ -309,6 +312,16 @@ def test_archive_is_deterministic_streamed_and_idempotent(tmp_path: Path) -> Non
     first_root = tmp_path / "drive-a"
     second_root = tmp_path / "drive-b"
 
+    inspection = inspect_historical_job_archive_source(
+        run_root=root,
+        job_sha256=JOB_SHA256,
+    )
+    assert inspection["contract"] == ARCHIVE_SOURCE_INSPECTION_CONTRACT
+    assert inspection["inspection_sha256"] == _canonical_sha256(
+        {key: value for key, value in inspection.items() if key != "inspection_sha256"}
+    )
+    assert not first_root.exists()
+
     first = archive_completed_historical_job(
         run_root=root,
         job_sha256=JOB_SHA256,
@@ -332,6 +345,10 @@ def test_archive_is_deterministic_streamed_and_idempotent(tmp_path: Path) -> Non
     assert first["source_deletion_allowed"] is False
     assert first["remote_verification"]["remote_verified"] is False
     assert first["bundle_kind"] == SUCCESS_BUNDLE_KIND
+    assert inspection["bundle_kind"] == first["bundle_kind"]
+    assert inspection["file_count"] == first["file_count"]
+    assert inspection["total_source_bytes"] == first["total_source_bytes"]
+    assert inspection["manifest_sha256"] == first["manifest_sha256"]
     assert (
         verify_existing_historical_job_archive(
             run_root=root,
@@ -360,6 +377,10 @@ def test_failed_source_is_archived_as_an_explicit_non_economic_bundle(
 ) -> None:
     root = _failed_source_run(tmp_path)
     archive_root = tmp_path / "drive"
+    inspection = inspect_historical_job_archive_source(
+        run_root=root,
+        job_sha256=JOB_SHA256,
+    )
 
     receipt = archive_completed_historical_job(
         run_root=root,
@@ -368,6 +389,8 @@ def test_failed_source_is_archived_as_an_explicit_non_economic_bundle(
     )
 
     assert receipt["bundle_kind"] == FAILED_SOURCE_BUNDLE_KIND
+    assert inspection["bundle_kind"] == FAILED_SOURCE_BUNDLE_KIND
+    assert inspection["manifest_sha256"] == receipt["manifest_sha256"]
     assert (
         verify_existing_historical_job_archive(
             run_root=root,
@@ -387,6 +410,31 @@ def test_failed_source_is_archived_as_an_explicit_non_economic_bundle(
     assert f"jobs/{JOB_SHA256}/source-failure.json" in paths
     assert f"job-results/{JOB_SHA256}.json" not in paths
     assert f"jobs/{JOB_SHA256}/source-slice-receipt.json" not in paths
+
+
+def test_generation_transition_receipt_is_bound_into_job_archive(
+    tmp_path: Path,
+) -> None:
+    root = _terminal_run(tmp_path)
+    transition = root / "transition-receipts" / "supersede-test.json"
+    _write_json(transition, {"contract": "TEST_TRANSITION", "schema_version": 1})
+
+    receipt = archive_completed_historical_job(
+        run_root=root,
+        job_sha256=JOB_SHA256,
+        archive_root=tmp_path / "drive",
+    )
+    manifest = _verify_archive(
+        Path(receipt["archive_path"]),
+        zstd_bin="zstd",
+        expected_job_sha256=JOB_SHA256,
+        expected_completion_sha256=receipt["completion_sha256"],
+        expected_bundle_kind=SUCCESS_BUNDLE_KIND,
+    )
+
+    assert "transition-receipts/supersede-test.json" in {
+        row["path"] for row in manifest["files"]
+    }
 
 
 def test_incomplete_economic_result_remains_an_archivable_economic_bundle(
@@ -486,6 +534,54 @@ def test_read_only_verifier_does_not_create_missing_archive_root(
     assert not missing.exists()
 
 
+def test_source_inspection_rejects_inventory_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _terminal_run(tmp_path)
+    original = archive_module._inventory
+    call_count = 0
+
+    def drifting_inventory(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        files, total = original(*args, **kwargs)
+        if call_count == 2:
+            return files, total + 1
+        return files, total
+
+    monkeypatch.setattr(archive_module, "_inventory", drifting_inventory)
+
+    with pytest.raises(
+        DojoHistoricalJobArchiveError,
+        match="inventory changed while inspected",
+    ):
+        inspect_historical_job_archive_source(
+            run_root=root,
+            job_sha256=JOB_SHA256,
+        )
+
+
+def test_source_inspection_rejects_source_receipt_traversal(tmp_path: Path) -> None:
+    root = _terminal_run(tmp_path)
+    receipt_path = root / "jobs" / JOB_SHA256 / "source-slice-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["relative_path"] = "../outside.jsonl"
+    receipt_body = {
+        key: value
+        for key, value in receipt.items()
+        if key != "source_slice_receipt_sha256"
+    }
+    receipt["source_slice_receipt_sha256"] = _canonical_sha256(receipt_body)
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(DojoHistoricalJobArchiveError, match="member path is unsafe"):
+        inspect_historical_job_archive_source(
+            run_root=root,
+            job_sha256=JOB_SHA256,
+        )
+
+
 def test_sealed_common_input_tamper_fails_closed(tmp_path: Path) -> None:
     root = _terminal_run(tmp_path)
     path = root / "sealed-inputs" / "strategy-registry.json"
@@ -510,6 +606,14 @@ def test_inventory_rejects_symlinked_parent_outside_run_root(tmp_path: Path) -> 
     sealed.rename(outside)
     sealed.symlink_to(outside, target_is_directory=True)
 
+    with pytest.raises(
+        DojoHistoricalJobArchiveError,
+        match="source path contains a symlink",
+    ):
+        inspect_historical_job_archive_source(
+            run_root=root,
+            job_sha256=JOB_SHA256,
+        )
     with pytest.raises(
         DojoHistoricalJobArchiveError,
         match="source path contains a symlink",

@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import tarfile
+import unicodedata
 import fcntl
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -158,6 +159,19 @@ _FINALIZATION_KEYS: Final = frozenset(
 
 class DojoDriveArchiveError(ValueError):
     """Raised when an archive cannot be built without weakening provenance."""
+
+
+def _same_unicode_canonical_file(left: Path | str, right: Path | str) -> bool:
+    left_path = Path(os.path.abspath(left))
+    right_path = Path(os.path.abspath(right))
+    if unicodedata.normalize("NFC", os.fspath(left_path)) != unicodedata.normalize(
+        "NFC", os.fspath(right_path)
+    ):
+        return False
+    try:
+        return os.path.samefile(left_path, right_path)
+    except OSError:
+        return False
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -1116,7 +1130,7 @@ def _validate_plan(plan_path: Path | str) -> tuple[dict[str, Any], Path, Path]:
     expected_path = (
         destination / "plans" / f"{chunk_kind}-{chunk_id}-{plan['plan_sha256']}.json"
     )
-    if Path(os.path.abspath(path)) != expected_path:
+    if not _same_unicode_canonical_file(path, expected_path):
         raise DojoDriveArchiveError(
             "archive plan path is not its canonical destination"
         )
@@ -1459,7 +1473,9 @@ def verify_finalized_archive(
     if (
         receipt.get("contract") != FINALIZATION_CONTRACT
         or receipt.get("schema_version") != 1
-        or receipt.get("plan_path") != os.fspath(expected_plan_path)
+        or not _same_unicode_canonical_file(
+            receipt.get("plan_path", ""), expected_plan_path
+        )
         or receipt.get("plan_sha256") != plan["plan_sha256"]
         or receipt.get("content_tree_sha256") != plan["content_tree_sha256"]
         or receipt.get("chunk_kind") != plan["chunk_kind"]

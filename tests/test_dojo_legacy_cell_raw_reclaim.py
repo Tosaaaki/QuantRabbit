@@ -69,6 +69,7 @@ def _terminal_run(tmp_path: Path) -> tuple[Path, dict[str, list[str]]]:
         for relative, held_out in sessions:
             session = root / relative
             session.mkdir(parents=True)
+            (session / "inbox" / "processed").mkdir(parents=True)
             _write_json(
                 session / "broker_snapshot.json",
                 {"candidate": candidate, "held_out": held_out, "balance": 1},
@@ -296,6 +297,26 @@ def _raw_paths(root: Path, sessions: list[str]) -> set[Path]:
     return {
         root / session / filename for session in sessions for filename in RAW_FILENAMES
     }
+
+
+def test_files_under_accepts_only_the_empty_runtime_inbox(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    session = root / "sessions" / "session-1"
+    (session / "inbox" / "processed").mkdir(parents=True)
+    for filename in RAW_FILENAMES:
+        (session / filename).write_text("evidence", encoding="utf-8")
+
+    rows = reclaim_module._files_under(root, "sessions/session-1")
+
+    assert {Path(row).name for row in rows} == RAW_FILENAMES
+    (session / "inbox" / "processed" / "foreign.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    with pytest.raises(
+        DojoLegacyCellRawReclaimError,
+        match="processed inbox is not an empty real directory",
+    ):
+        reclaim_module._files_under(root, "sessions/session-1")
 
 
 def test_verify_is_read_only_and_excludes_unverified_local_archive(

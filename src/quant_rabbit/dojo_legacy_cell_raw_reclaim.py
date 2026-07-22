@@ -417,6 +417,27 @@ def _session_owners(
     return coordinates, owners
 
 
+def _verify_empty_runtime_inbox(path: Path) -> None:
+    state = path.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(state.st_mode) or path.is_symlink():
+        raise DojoLegacyCellRawReclaimError(
+            "legacy session inbox is not a real directory"
+        )
+    inbox_children = sorted(path.iterdir(), key=lambda child: child.name)
+    if len(inbox_children) != 1 or inbox_children[0].name != "processed":
+        raise DojoLegacyCellRawReclaimError("legacy session inbox shape is invalid")
+    processed = inbox_children[0]
+    processed_state = processed.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(processed_state.st_mode)
+        or processed.is_symlink()
+        or any(processed.iterdir())
+    ):
+        raise DojoLegacyCellRawReclaimError(
+            "legacy session processed inbox is not an empty real directory"
+        )
+
+
 def _files_under(root: Path, prefix: str) -> list[str]:
     directory = _safe_path(root, prefix)
     try:
@@ -428,6 +449,9 @@ def _files_under(root: Path, prefix: str) -> list[str]:
     rows: list[str] = []
     for item in sorted(directory.iterdir(), key=lambda path: path.name):
         item_state = item.stat(follow_symlinks=False)
+        if item.name == "inbox":
+            _verify_empty_runtime_inbox(item)
+            continue
         if not stat.S_ISREG(item_state.st_mode) or item.is_symlink():
             raise DojoLegacyCellRawReclaimError(
                 "legacy session contains a non-regular direct child"
@@ -605,12 +629,16 @@ def _static_archive_bundle(
     if (
         receipt.get("contract") != drive_archive.FINALIZATION_CONTRACT
         or receipt.get("schema_version") != 1
-        or receipt.get("plan_path") != os.fspath(plan_path.resolve(strict=True))
+        or not drive_archive._same_unicode_canonical_file(
+            receipt.get("plan_path", ""), plan_path.resolve(strict=True)
+        )
         or receipt.get("plan_sha256") != plan_sha256
         or receipt.get("content_tree_sha256") != plan["content_tree_sha256"]
         or receipt.get("chunk_kind") != "cell"
         or receipt.get("chunk_id") != coordinate_id
-        or receipt.get("archive_path") != os.fspath(archive_path)
+        or not drive_archive._same_unicode_canonical_file(
+            receipt.get("archive_path", ""), archive_path
+        )
         or receipt.get("file_count") != plan["file_count"]
         or receipt.get("total_source_bytes") != plan["total_source_bytes"]
         or receipt.get("local_payload_verified") is not True
@@ -720,7 +748,9 @@ def _validate_remote_receipt(
             raise DojoLegacyCellRawReclaimError(
                 "remote receipt names another source run"
             )
-        if local_archive.resolve(strict=True) != archive_path.resolve(strict=True):
+        if not drive_archive._same_unicode_canonical_file(
+            local_archive, archive_path.resolve(strict=True)
+        ):
             raise DojoLegacyCellRawReclaimError(
                 "remote receipt names another local archive"
             )
@@ -1129,6 +1159,9 @@ def _validate_plan_resume(
             directory = _safe_path(root, prefix)
             observed: set[str] = set()
             for item in directory.iterdir():
+                if item.name == "inbox":
+                    _verify_empty_runtime_inbox(item)
+                    continue
                 state = item.stat(follow_symlinks=False)
                 if item.is_symlink() or not stat.S_ISREG(state.st_mode):
                     raise DojoLegacyCellRawReclaimError(

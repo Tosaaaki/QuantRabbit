@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
@@ -149,6 +150,25 @@ def _terminal_run(tmp_path: Path) -> Path:
     run = {**run_body, "run_sha256": canonical_sha256(run_body)}
     _write_json(root / "run.json", run)
     return root
+
+
+def test_verify_accepts_unicode_equivalent_canonical_drive_path(
+    tmp_path: Path,
+) -> None:
+    root = _terminal_run(tmp_path)
+    destination = tmp_path / unicodedata.normalize("NFD", "マイドライブ")
+    plan = plan_archive(
+        source_run=root,
+        destination=destination,
+        chunk_kind="cell",
+        chunk_id="C1|OHLC|BASE",
+    )
+    finalize_archive(plan_path=plan["plan_path"])
+    equivalent_path = Path(unicodedata.normalize("NFC", plan["plan_path"]))
+
+    verified = verify_finalized_archive(plan_path=equivalent_path)
+
+    assert verified["plan_sha256"] == plan["plan_sha256"]
 
 
 def test_terminal_run_and_cell_plan_are_strict_and_content_addressed(

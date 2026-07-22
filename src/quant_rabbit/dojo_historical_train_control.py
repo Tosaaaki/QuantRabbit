@@ -34,12 +34,19 @@ from quant_rabbit.dojo_historical_job_archive import (
     ARCHIVE_RECEIPT_CONTRACT,
     DojoHistoricalJobArchiveError,
     archive_completed_historical_job,
+    inspect_historical_job_archive_source,
     verify_existing_historical_job_archive,
 )
 from quant_rabbit.dojo_historical_raw_reclaim import (
+    RECLAIM_RECEIPT_CONTRACT,
+    REMOTE_READBACK_RECEIPT_CONTRACT,
     DojoHistoricalRawReclaimError,
     verify_existing_historical_job_raw_reclaim,
-    verify_historical_job_raw_reclaim,
+)
+from quant_rabbit.dojo_historical_supersede_receipt import (
+    DojoHistoricalSupersedeReceiptError,
+    verify_historical_supersede_receipt_file,
+    verify_historical_supersede_receipt_store_locked,
 )
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     DojoLongHorizonEconomicRunnerError,
@@ -186,10 +193,12 @@ def _is_room_generation(fixed: Mapping[str, Any]) -> bool:
 
 def _generation_ordinal(fixed: Mapping[str, Any]) -> int:
     value = fixed.get("strategy_generation_ordinal", GENERATION_ORDINAL)
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10_000:
-        raise DojoHistoricalTrainControlError(
-            "strategy generation ordinal is invalid"
-        )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= 10_000
+    ):
+        raise DojoHistoricalTrainControlError("strategy generation ordinal is invalid")
     return value
 
 
@@ -202,9 +211,7 @@ def _runner_id(fixed: Mapping[str, Any]) -> str:
             {
                 "generation": fixed["generation"],
                 "registry_artifact_sha256": fixed["registry_artifact_sha256"],
-                "room_family_bindings_sha256": fixed[
-                    "room_family_bindings_sha256"
-                ],
+                "room_family_bindings_sha256": fixed["room_family_bindings_sha256"],
             }
         )[:16]
     )
@@ -318,9 +325,7 @@ def _write_once(path: Path, value: Mapping[str, Any]) -> None:
         os.link(temporary, path, follow_symlinks=False)
         directory_fd = os.open(
             path.parent,
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
         )
         try:
             os.fsync(directory_fd)
@@ -355,7 +360,10 @@ def _verified_control(
     repo_root: Path,
 ) -> dict[str, Any]:
     control = _read_json(run_control_path, field="run control")
-    if control.get("contract") != CONTROL_CONTRACT or control.get("schema_version") != 1:
+    if (
+        control.get("contract") != CONTROL_CONTRACT
+        or control.get("schema_version") != 1
+    ):
         raise DojoHistoricalTrainControlError("run-control contract/version drifted")
     authority = control.get("authority")
     if not isinstance(authority, Mapping) or (
@@ -415,7 +423,11 @@ def _verified_control(
         raise DojoHistoricalTrainControlError("run-control fixed boundary drifted")
     for key in ("registry_path", "source_manifest_path"):
         relative = fixed.get(key)
-        if not isinstance(relative, str) or Path(relative).is_absolute() or ".." in Path(relative).parts:
+        if (
+            not isinstance(relative, str)
+            or Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+        ):
             raise DojoHistoricalTrainControlError(f"run-control {key} is unsafe")
         if not (repo_root / relative).is_file():
             raise DojoHistoricalTrainControlError(f"run-control {key} is missing")
@@ -439,11 +451,7 @@ def _verified_control(
         }
         for key, minimum in resource_bounds.items():
             value = execution.get(key)
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < minimum
-            ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
                 raise DojoHistoricalTrainControlError(
                     f"room run-control {key} is invalid"
                 )
@@ -457,7 +465,8 @@ def _verified_control(
                 not isinstance(value, str)
                 or not 8 <= len(value) <= 256
                 or any(
-                    character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+                    character
+                    not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
                     for character in value
                 )
             ):
@@ -480,6 +489,22 @@ def _verified_control(
             raise DojoHistoricalTrainControlError(
                 "room run-control conflicting execution roots are invalid"
             )
+        conflicting_locks = execution.get("conflicting_run_lock_paths")
+        if (
+            not isinstance(conflicting_locks, list)
+            or len(conflicting_locks) != len(conflicting_roots)
+            or not all(
+                isinstance(value, str) and Path(value).is_absolute()
+                for value in conflicting_locks
+            )
+            or any(
+                Path(lock) != Path(root) / ".historical-train.lock"
+                for root, lock in zip(conflicting_roots, conflicting_locks, strict=True)
+            )
+        ):
+            raise DojoHistoricalTrainControlError(
+                "room run-control conflicting locks must map one-to-one to roots"
+            )
         baseline = execution.get("capacity_baseline")
         required_baseline_keys = {
             "baseline_id",
@@ -491,9 +516,7 @@ def _verified_control(
             raise DojoHistoricalTrainControlError(
                 "room run-control capacity baseline schema is invalid"
             )
-        if not isinstance(baseline["baseline_id"], str) or not baseline[
-            "baseline_id"
-        ]:
+        if not isinstance(baseline["baseline_id"], str) or not baseline["baseline_id"]:
             raise DojoHistoricalTrainControlError(
                 "room run-control capacity baseline id is invalid"
             )
@@ -508,7 +531,11 @@ def _verified_control(
                 "room run-control capacity baseline source bytes are invalid"
             )
     minimum_free = execution.get("minimum_free_disk_bytes")
-    if isinstance(minimum_free, bool) or not isinstance(minimum_free, int) or minimum_free < 20 * 1024**3:
+    if (
+        isinstance(minimum_free, bool)
+        or not isinstance(minimum_free, int)
+        or minimum_free < 20 * 1024**3
+    ):
         raise DojoHistoricalTrainControlError("run-control disk floor is too low")
     return control
 
@@ -545,10 +572,9 @@ def _candidate_proposals(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "risk_increase": False,
             }
         )
-        if (
-            proposal["config_sha256"] != worker.get("config_sha256")
-            or proposal["catalog_sha256"] != worker.get("catalog_sha256")
-        ):
+        if proposal["config_sha256"] != worker.get("config_sha256") or proposal[
+            "catalog_sha256"
+        ] != worker.get("catalog_sha256"):
             raise DojoHistoricalTrainControlError(
                 "G2 worker config/catalog binding drifted"
             )
@@ -601,17 +627,11 @@ def _cost_profiles(
             raise DojoHistoricalTrainControlError(
                 f"{scenario} cost profile schema is not exact"
             )
-        if not isinstance(row["financing_policy"], str) or not row[
-            "financing_policy"
-        ]:
+        if not isinstance(row["financing_policy"], str) or not row["financing_policy"]:
             raise DojoHistoricalTrainControlError(
                 f"{scenario} financing policy is invalid"
             )
-        values = {
-            key: row[key]
-            for key in keys
-            if key != "financing_policy"
-        }
+        values = {key: row[key] for key in keys if key != "financing_policy"}
         if any(
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -628,9 +648,7 @@ def _cost_profiles(
         }
     for key in keys - {"financing_policy"}:
         if result["STRESS"][key] < result["BASE"][key]:
-            raise DojoHistoricalTrainControlError(
-                f"STRESS cost {key} is below BASE"
-            )
+            raise DojoHistoricalTrainControlError(f"STRESS cost {key} is below BASE")
     return result
 
 
@@ -746,6 +764,7 @@ def _implementation_digests(
                 "src/quant_rabbit/dojo_historical_train_control.py",
                 "src/quant_rabbit/dojo_historical_job_archive.py",
                 "src/quant_rabbit/dojo_historical_raw_reclaim.py",
+                "src/quant_rabbit/dojo_historical_supersede_receipt.py",
                 "src/quant_rabbit/dojo_long_horizon_plan.py",
                 "src/quant_rabbit/dojo_long_horizon_schedule.py",
                 "src/quant_rabbit/dojo_market_calendar.py",
@@ -754,6 +773,7 @@ def _implementation_digests(
                 "src/quant_rabbit/dojo_sparse_replay.py",
                 "src/quant_rabbit/dojo_sparse_source_slice_v2.py",
                 "scripts/run-dojo-historical-raw-reclaim.py",
+                "scripts/run-dojo-historical-supersede-receipt.py",
             ),
         ),
         "risk_policy_sha256": canonical_sha256(_risk_envelope(registry)),
@@ -786,15 +806,11 @@ def _resource_policy(
         "max_resident_coordinates": min(
             max_job_coordinate_count, result_coordinate_count
         ),
-        "max_rss_bytes": int(
-            control["execution"].get("max_rss_bytes", 8 * 1024**3)
-        ),
+        "max_rss_bytes": int(control["execution"].get("max_rss_bytes", 8 * 1024**3)),
         "max_open_files": int(control["execution"].get("max_open_files", 1024)),
         "min_free_disk_bytes": control["execution"]["minimum_free_disk_bytes"],
         "max_checkpoint_bytes": int(
-            control["execution"].get(
-                "max_checkpoint_bytes", 16 * 1024 * 1024
-            )
+            control["execution"].get("max_checkpoint_bytes", 16 * 1024 * 1024)
         ),
         "max_terminal_bytes": int(
             control["execution"].get("max_terminal_bytes", 16 * 1024 * 1024)
@@ -858,15 +874,10 @@ def prepare_generation(
         room_train_months=(fixed.get("train_months") if room_generation else None),
     )
     worker_bindings = [
-        {
-            key: row[key]
-            for key in ("worker_id", "family_id", "config_sha256")
-        }
+        {key: row[key] for key in ("worker_id", "family_id", "config_sha256")}
         for row in runtime_seal["worker_catalog"]
     ]
-    schedule = build_long_horizon_stream_schedule(
-        plan, worker_bindings=worker_bindings
-    )
+    schedule = build_long_horizon_stream_schedule(plan, worker_bindings=worker_bindings)
     output_root = Path(control["execution"]["output_root"])
     output_root.mkdir(parents=True, exist_ok=True)
     paths = {key: output_root / name for key, name in _ARTIFACT_NAMES.items()}
@@ -874,9 +885,7 @@ def prepare_generation(
         "contract": "QR_DOJO_IMPLEMENTATION_DIGEST_MANIFEST_V1",
         "schema_version": 1,
         "implementation_digests": implementation_digests,
-        "implementation_digests_sha256": canonical_sha256(
-            implementation_digests
-        ),
+        "implementation_digests_sha256": canonical_sha256(implementation_digests),
         **_AUTHORITY,
     }
     implementation_manifest = {
@@ -961,14 +970,14 @@ def prepare_generation(
         "schema_version": SCHEMA_VERSION,
         "classification": "WORN_HISTORICAL_TRAIN_ONLY",
         "rapid_train_evaluation_mode": "INDEPENDENT_MONTH",
-        "continuous_account_role": (
-            "SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE"
-        ),
+        "continuous_account_role": ("SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE"),
         "non_overlapping_six_month_blocks_required": True,
         "generation": fixed["generation"],
         "registry_artifact_sha256": registry_sha,
         "source_manifest_sha256": source_manifest["source_manifest_sha256"],
-        "run_control_sha256": hashlib.sha256(Path(run_control_path).read_bytes()).hexdigest(),
+        "run_control_sha256": hashlib.sha256(
+            Path(run_control_path).read_bytes()
+        ).hexdigest(),
         "plan_sha256": plan["plan_sha256"],
         "schedule_sha256": schedule["schedule_sha256"],
         "runtime_binding_sha256": runtime_seal["runtime_binding_sha256"],
@@ -987,9 +996,7 @@ def prepare_generation(
         "result_coordinate_count": schedule["result_coordinate_count"],
         "trainer_milestone_policy": dict(control["trainer_milestones"]),
         "sealed_input_artifacts": sealed_input_artifacts,
-        "sealed_input_artifacts_sha256": canonical_sha256(
-            sealed_input_artifacts
-        ),
+        "sealed_input_artifacts_sha256": canonical_sha256(sealed_input_artifacts),
         "artifact_sha256": {
             key: hashlib.sha256(paths[key].read_bytes()).hexdigest()
             for key in (
@@ -1020,20 +1027,30 @@ def prepare_generation(
 
 def _load_generation(
     *, repo_root: Path, run_control_path: Path
-) -> tuple[dict[str, Any], Path, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    dict[str, Any],
+    Path,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
     repo = Path(repo_root).resolve(strict=True)
     control = _verified_control(run_control_path, repo_root=repo)
     root = Path(control["execution"]["output_root"]).resolve(strict=True)
-    manifest = _read_json(root / _ARTIFACT_NAMES["control_manifest"], field="control manifest")
+    manifest = _read_json(
+        root / _ARTIFACT_NAMES["control_manifest"], field="control manifest"
+    )
     body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
-    if (
-        manifest.get("contract") != MANIFEST_CONTRACT
-        or manifest.get("manifest_sha256") != canonical_sha256(body)
-    ):
+    if manifest.get("contract") != MANIFEST_CONTRACT or manifest.get(
+        "manifest_sha256"
+    ) != canonical_sha256(body):
         raise DojoHistoricalTrainControlError("generation control manifest drifted")
-    if manifest.get("run_control_sha256") != hashlib.sha256(
-        Path(run_control_path).read_bytes()
-    ).hexdigest():
+    if (
+        manifest.get("run_control_sha256")
+        != hashlib.sha256(Path(run_control_path).read_bytes()).hexdigest()
+    ):
         raise DojoHistoricalTrainControlError(
             "generation run-control bytes differ from the prepared manifest"
         )
@@ -1070,9 +1087,7 @@ def _load_generation(
                 "generation sealed input path is invalid"
             )
         path = root / relative
-        raw = _stable_regular_bytes(
-            path, field=f"sealed input {row['artifact_id']}"
-        )
+        raw = _stable_regular_bytes(path, field=f"sealed input {row['artifact_id']}")
         if (
             hashlib.sha256(raw).hexdigest() != row["file_sha256"]
             or len(raw) != row["file_size_bytes"]
@@ -1093,14 +1108,11 @@ def _load_generation(
         for key, value in implementation_manifest.items()
         if key != "implementation_manifest_sha256"
     }
-    if (
-        implementation_manifest.get("implementation_manifest_sha256")
-        != canonical_sha256(implementation_body)
-        or implementation_manifest.get("implementation_digests_sha256")
-        != canonical_sha256(
-            implementation_manifest.get("implementation_digests")
-        )
-    ):
+    if implementation_manifest.get(
+        "implementation_manifest_sha256"
+    ) != canonical_sha256(implementation_body) or implementation_manifest.get(
+        "implementation_digests_sha256"
+    ) != canonical_sha256(implementation_manifest.get("implementation_digests")):
         raise DojoHistoricalTrainControlError(
             "generation implementation manifest drifted"
         )
@@ -1114,15 +1126,16 @@ def _load_generation(
         "worker_catalog",
     ):
         path = root / _ARTIFACT_NAMES[key]
-        if hashlib.sha256(
-            _stable_regular_bytes(path, field=f"generation {key}")
-        ).hexdigest() != manifest["artifact_sha256"][key]:
+        if (
+            hashlib.sha256(
+                _stable_regular_bytes(path, field=f"generation {key}")
+            ).hexdigest()
+            != manifest["artifact_sha256"][key]
+        ):
             raise DojoHistoricalTrainControlError(f"generation {key} bytes drifted")
         artifacts[key] = _read_json(path, field=key)
     plan = validate_long_horizon_train_plan(artifacts["plan"])
-    schedule = validate_long_horizon_stream_schedule(
-        artifacts["schedule"], plan=plan
-    )
+    schedule = validate_long_horizon_stream_schedule(artifacts["schedule"], plan=plan)
     runtime_seal = verify_tuned_strategy_runtime_seal(
         artifacts["runtime_seal"], repo_root=repo
     )
@@ -1206,7 +1219,9 @@ def _coordinate_runtimes(
         ]
         trade_pairs = [
             pair
-            for pair, bit in zip(job["feed_pairs"], coordinate["trade_pair_mask"], strict=True)
+            for pair, bit in zip(
+                job["feed_pairs"], coordinate["trade_pair_mask"], strict=True
+            )
             if bit == "1"
         ]
         scenario = coordinate["cost_scenario"]
@@ -1227,9 +1242,7 @@ def _coordinate_runtimes(
                     "max_portfolio_stop_risk_fraction"
                 ],
                 "max_open_and_pending_total": risk["max_open_and_pending_total"],
-                "max_open_and_pending_per_pair": risk[
-                    "max_open_and_pending_per_pair"
-                ],
+                "max_open_and_pending_per_pair": risk["max_open_and_pending_per_pair"],
                 "max_open_and_pending_per_family": risk[
                     "max_open_and_pending_per_family"
                 ],
@@ -1299,7 +1312,9 @@ def _coordinate_runtimes(
 def _verified_job_result(
     value: Mapping[str, Any], *, handoff: Mapping[str, Any]
 ) -> dict[str, Any]:
-    body = {key: item for key, item in value.items() if key != "economic_job_result_sha256"}
+    body = {
+        key: item for key, item in value.items() if key != "economic_job_result_sha256"
+    }
     if (
         value.get("contract") != ECONOMIC_JOB_RESULT_CONTRACT
         or value.get("economic_job_result_sha256") != canonical_sha256(body)
@@ -1358,9 +1373,7 @@ def _milestone_status(
             or not isinstance(configured, int)
             or configured < 1
         ):
-            raise DojoHistoricalTrainControlError(
-                "trainer review cadence is invalid"
-            )
+            raise DojoHistoricalTrainControlError("trainer review cadence is invalid")
         review_months = configured
     jobs_by_sha = {job["job_sha256"]: job for job in schedule["jobs"]}
     completed_paths: dict[str, set[str]] = {}
@@ -1386,9 +1399,7 @@ def _milestone_status(
         "schema_version": SCHEMA_VERSION,
         "classification": "WORN_HISTORICAL_TRAIN_ONLY",
         "rapid_train_evaluation_mode": "INDEPENDENT_MONTH",
-        "continuous_account_role": (
-            "SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE"
-        ),
+        "continuous_account_role": ("SEPARATE_LONG_PROFILE_NOT_RAPID_TUNING_GATE"),
         "non_overlapping_six_month_blocks_required": True,
         "completed_job_count": completed_jobs,
         "completed_m5_month_count": len(completed_months),
@@ -1396,13 +1407,10 @@ def _milestone_status(
         "complete_six_month_trainer_block_count": block_count,
         "trainer_review_month_count": review_months,
         "complete_trainer_block_count": block_count,
-        "next_trainer_review_at_completed_m5_month_count": (
-            block_count + 1
-        )
+        "next_trainer_review_at_completed_m5_month_count": (block_count + 1)
         * review_months,
         "trainer_review_due": (
-            len(completed_months) > 0
-            and len(completed_months) % review_months == 0
+            len(completed_months) > 0 and len(completed_months) % review_months == 0
         ),
         "partial_month_economics_may_tune": False,
         "parameter_change_requires_new_generation": True,
@@ -1587,6 +1595,15 @@ def _archive_pending_completed_jobs(
                     f"existing completed job archive failed for {job_sha}: {exc}"
                 ) from exc
             continue
+        inspection = inspect_historical_job_archive_source(
+            run_root=root,
+            job_sha256=job_sha,
+        )
+        _assert_archive_staging_capacity(
+            root=root,
+            control=control,
+            source_bytes=inspection["total_source_bytes"],
+        )
         try:
             receipt = archive_completed_historical_job(
                 run_root=root,
@@ -1651,9 +1668,7 @@ def _estimated_next_job_bytes(
             except DojoHistoricalTrainControlError:
                 continue
             body = {
-                key: value
-                for key, value in receipt.items()
-                if key != "receipt_sha256"
+                key: value for key, value in receipt.items() if key != "receipt_sha256"
             }
             archive_path = Path(receipt.get("archive_path", ""))
             if (
@@ -1678,22 +1693,233 @@ def _estimated_next_job_bytes(
         or not isinstance(headroom, (int, float))
         or not 0 <= float(headroom) <= 1
     ):
-        raise DojoHistoricalTrainControlError(
-            "job-space headroom fraction is invalid"
-        )
+        raise DojoHistoricalTrainControlError("job-space headroom fraction is invalid")
     raw_reserve = math.ceil(
         max(bootstrap, measured, normalized_baseline) * (1.0 + float(headroom))
     )
-    staging = execution.get("archive_staging_fraction", 0.10)
+    staging = _effective_archive_staging_fraction(
+        control=control,
+        archive_root=archive_root,
+    )
+    return raw_reserve, raw_reserve + math.ceil(raw_reserve * staging)
+
+
+def _effective_archive_staging_fraction(
+    *, control: Mapping[str, Any], archive_root: Path | None
+) -> float:
+    execution = control["execution"]
+    staging = execution.get("archive_staging_fraction", 0.25)
     if (
         isinstance(staging, bool)
         or not isinstance(staging, (int, float))
-        or not 0 <= float(staging) <= 0.5
+        or not 0.20 <= float(staging) <= 1.0
+    ):
+        raise DojoHistoricalTrainControlError("archive staging fraction is invalid")
+    observed: list[float] = []
+    if archive_root is not None and (archive_root / "receipts").is_dir():
+        for path in sorted((archive_root / "receipts").glob("job-*.json")):
+            receipt = _read_json(path, field="historical archive receipt")
+            body = {
+                key: value for key, value in receipt.items() if key != "receipt_sha256"
+            }
+            readback = receipt.get("remote_readback_objects")
+            source_bytes = receipt.get("total_source_bytes")
+            archive_bytes = receipt.get("archive_size_bytes")
+            readback_bytes = (
+                readback.get("total_size_bytes")
+                if isinstance(readback, Mapping)
+                else None
+            )
+            if (
+                receipt.get("contract") != ARCHIVE_RECEIPT_CONTRACT
+                or receipt.get("receipt_sha256") != canonical_sha256(body)
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                    for value in (source_bytes, archive_bytes, readback_bytes)
+                )
+            ):
+                raise DojoHistoricalTrainControlError(
+                    "archive receipt cannot calibrate staging capacity"
+                )
+            observed.append(
+                (int(archive_bytes) + int(readback_bytes)) / int(source_bytes)
+            )
+    return max(float(staging), max(observed, default=0.0))
+
+
+def _assert_archive_staging_capacity(
+    *, root: Path, control: Mapping[str, Any], source_bytes: int
+) -> dict[str, Any]:
+    if (
+        isinstance(source_bytes, bool)
+        or not isinstance(source_bytes, int)
+        or source_bytes < 1
+    ):
+        raise DojoHistoricalTrainControlError("archive source byte estimate is invalid")
+    archive_root = _archive_root(control)
+    if archive_root is None:
+        raise DojoHistoricalTrainControlError("archive root is unavailable")
+    fraction = _effective_archive_staging_fraction(
+        control=control, archive_root=archive_root
+    )
+    staging_bytes = math.ceil(source_bytes * fraction)
+    recovery_floor = control["execution"]["bootstrap_job_working_set_bytes"]
+    run_probe = _nearest_existing_parent(root)
+    archive_probe = _nearest_existing_parent(archive_root)
+    run_free = shutil.disk_usage(run_probe).free
+    archive_free = shutil.disk_usage(archive_probe).free
+    shared = os.stat(run_probe).st_dev == os.stat(archive_probe).st_dev
+    if shared:
+        required = recovery_floor + staging_bytes
+        if run_free < required:
+            raise DojoHistoricalTrainControlError(
+                "shared filesystem cannot stage the pending archive: "
+                f"free={run_free}, required={required}"
+            )
+    elif archive_free < recovery_floor + staging_bytes:
+        raise DojoHistoricalTrainControlError(
+            "archive filesystem cannot stage the pending archive: "
+            f"free={archive_free}, required={recovery_floor + staging_bytes}"
+        )
+    return {
+        "shared_filesystem": shared,
+        "source_bytes": source_bytes,
+        "effective_staging_fraction": fraction,
+        "staging_bytes": staging_bytes,
+        "recovery_floor_bytes": recovery_floor,
+        "run_free_bytes": run_free,
+        "archive_free_bytes": archive_free,
+    }
+
+
+def _compact_archive_receipt(
+    *,
+    receipt_path: Path,
+    archive_root: Path,
+    expected_job_sha256: str,
+) -> dict[str, Any]:
+    receipt = _read_json(receipt_path, field="historical archive receipt")
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    archive_path = Path(receipt.get("archive_path", ""))
+    readback = receipt.get("remote_readback_objects")
+    if (
+        receipt.get("contract") != ARCHIVE_RECEIPT_CONTRACT
+        or receipt.get("job_sha256") != expected_job_sha256
+        or receipt.get("receipt_sha256") != canonical_sha256(body)
+        or receipt.get("local_payload_verified") is not True
+        or not archive_path.is_absolute()
+        or archive_root not in archive_path.parents
+        or not isinstance(readback, Mapping)
     ):
         raise DojoHistoricalTrainControlError(
-            "archive staging fraction is invalid"
+            "historical archive compact receipt is invalid"
         )
-    return raw_reserve, raw_reserve + math.ceil(raw_reserve * float(staging))
+    try:
+        state = archive_path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalTrainControlError(
+            "historical archive bytes are unavailable"
+        ) from exc
+    if (
+        archive_path.is_symlink()
+        or not stat.S_ISREG(state.st_mode)
+        or state.st_size != receipt.get("archive_size_bytes")
+    ):
+        raise DojoHistoricalTrainControlError("historical archive metadata drifted")
+    return receipt
+
+
+def _archive_local_footprint_bytes(
+    receipt: Mapping[str, Any], *, archive_root: Path
+) -> int:
+    archive_path = Path(receipt["archive_path"])
+    relative = archive_path.relative_to(archive_root).as_posix()
+    sizes = {relative: int(receipt["archive_size_bytes"])}
+    readback = receipt.get("remote_readback_objects")
+    objects = readback.get("objects") if isinstance(readback, Mapping) else None
+    if not isinstance(objects, list):
+        raise DojoHistoricalTrainControlError(
+            "archive readback object inventory is unavailable"
+        )
+    for row in objects:
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("relative_path"), str)
+            or isinstance(row.get("size_bytes"), bool)
+            or not isinstance(row.get("size_bytes"), int)
+            or row["size_bytes"] < 1
+        ):
+            raise DojoHistoricalTrainControlError(
+                "archive readback object inventory is invalid"
+            )
+        sizes[row["relative_path"]] = int(row["size_bytes"])
+    return sum(sizes.values())
+
+
+def _compact_remote_receipt(
+    *, path: Path, local_receipt: Mapping[str, Any]
+) -> dict[str, Any]:
+    receipt = _read_json(path, field="remote archive readback receipt")
+    body = {
+        key: value
+        for key, value in receipt.items()
+        if key != "remote_receipt_sha256"
+    }
+    digest = receipt.get("remote_receipt_sha256")
+    expected_name = (
+        f"remote-job-{local_receipt['job_sha256']}-"
+        f"{local_receipt['manifest_sha256']}-{digest}.json"
+    )
+    if (
+        receipt.get("contract") != REMOTE_READBACK_RECEIPT_CONTRACT
+        or receipt.get("status") != "REMOTE_VERIFIED"
+        or receipt.get("job_sha256") != local_receipt["job_sha256"]
+        or receipt.get("manifest_sha256") != local_receipt["manifest_sha256"]
+        or receipt.get("local_archive_receipt_sha256")
+        != local_receipt["receipt_sha256"]
+        or receipt.get("remote_verified") is not True
+        or receipt.get("raw_reclaim_eligible") is not True
+        or receipt.get("promotion_eligible") is not False
+        or receipt.get("live_permission") is not False
+        or receipt.get("order_authority") != "NONE"
+        or receipt.get("broker_mutation_allowed") is not False
+        or not isinstance(digest, str)
+        or digest != canonical_sha256(body)
+        or path.name != expected_name
+    ):
+        raise DojoHistoricalTrainControlError(
+            "remote readback compact receipt is invalid"
+        )
+    return receipt
+
+
+def _compact_reclaim_receipt(*, path: Path, job_sha256: str) -> dict[str, Any]:
+    receipt = _read_json(path, field="historical raw reclaim receipt")
+    body = {
+        key: value
+        for key, value in receipt.items()
+        if key != "reclaim_receipt_sha256"
+    }
+    digest = receipt.get("reclaim_receipt_sha256")
+    if (
+        receipt.get("contract") != RECLAIM_RECEIPT_CONTRACT
+        or receipt.get("status") != "RAW_RECLAIMED"
+        or receipt.get("job_sha256") != job_sha256
+        or receipt.get("promotion_eligible") is not False
+        or receipt.get("live_permission") is not False
+        or receipt.get("order_authority") != "NONE"
+        or receipt.get("broker_mutation_allowed") is not False
+        or isinstance(receipt.get("reclaimed_logical_bytes"), bool)
+        or not isinstance(receipt.get("reclaimed_logical_bytes"), int)
+        or receipt["reclaimed_logical_bytes"] < 1
+        or not isinstance(digest, str)
+        or digest != canonical_sha256(body)
+        or path.name != f"reclaim-{job_sha256}-{digest}.json"
+    ):
+        raise DojoHistoricalTrainControlError(
+            "historical raw reclaim compact receipt is invalid"
+        )
+    return receipt
 
 
 def _nearest_existing_parent(path: Path) -> Path:
@@ -1735,9 +1961,7 @@ def _disk_capacity_snapshot(
         "shared_filesystem": shared,
         "run_free_bytes": run_free,
         "run_required_bytes": (
-            floor + estimated_peak_bytes
-            if shared
-            else floor + estimated_raw_bytes
+            floor + estimated_peak_bytes if shared else floor + estimated_raw_bytes
         ),
         "archive_free_bytes": archive_free,
         "archive_required_bytes": 0 if shared else staging_bytes,
@@ -1764,12 +1988,96 @@ def _assert_disk_capacity(snapshot: Mapping[str, Any]) -> None:
         )
 
 
+def _configured_conflicting_pairs(
+    control: Mapping[str, Any],
+) -> list[tuple[Path, Path]]:
+    execution = control["execution"]
+    roots = execution.get("conflicting_execution_roots", [])
+    locks = execution.get("conflicting_run_lock_paths", [])
+    if (
+        not isinstance(roots, list)
+        or not isinstance(locks, list)
+        or len(roots) != len(locks)
+    ):
+        raise DojoHistoricalTrainControlError(
+            "conflicting roots and locks must be one-to-one"
+        )
+    pairs = []
+    for root_value, lock_value in zip(roots, locks, strict=True):
+        if (
+            not isinstance(root_value, str)
+            or not isinstance(lock_value, str)
+            or not Path(root_value).is_absolute()
+            or Path(lock_value) != Path(root_value) / ".historical-train.lock"
+        ):
+            raise DojoHistoricalTrainControlError(
+                "conflicting root and lock binding is invalid"
+            )
+        pairs.append((Path(root_value), Path(lock_value)))
+    if pairs != sorted(pairs, key=lambda row: os.fspath(row[0])):
+        raise DojoHistoricalTrainControlError(
+            "conflicting roots must use canonical lock order"
+        )
+    return pairs
+
+
+def _validate_conflicting_lock(path: Path) -> os.stat_result:
+    try:
+        state = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalTrainControlError(
+            f"configured conflicting lock is unavailable: {path}"
+        ) from exc
+    if path.is_symlink() or not stat.S_ISREG(state.st_mode):
+        raise DojoHistoricalTrainControlError(
+            f"configured conflicting lock is unsafe: {path}"
+        )
+    return state
+
+
+def _find_supersede_receipt_for_root(
+    *, current_root: Path, conflicting_root: Path
+) -> Path | None:
+    store = current_root / "transition-receipts"
+    if not store.exists():
+        return None
+    try:
+        state = store.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise DojoHistoricalTrainControlError(
+            "generation transition receipt store is unavailable"
+        ) from exc
+    if store.is_symlink() or not stat.S_ISDIR(state.st_mode):
+        raise DojoHistoricalTrainControlError(
+            "generation transition receipt store is unsafe"
+        )
+    matches = []
+    for path in sorted(store.iterdir()):
+        if path.is_symlink() or not path.is_file() or path.suffix != ".json":
+            raise DojoHistoricalTrainControlError(
+                "generation transition receipt store contains an unknown entry"
+            )
+        value = _read_json(path, field="generation supersede receipt")
+        old_generation = value.get("old_generation")
+        if isinstance(old_generation, Mapping) and old_generation.get(
+            "root"
+        ) == os.fspath(conflicting_root):
+            matches.append(path)
+    if len(matches) > 1:
+        raise DojoHistoricalTrainControlError(
+            "multiple supersede receipts name one conflicting generation"
+        )
+    return matches[0] if matches else None
+
+
 def _conflicting_generation_statuses(
     control: Mapping[str, Any],
+    *,
+    current_root: Path | None = None,
+    locked_descriptors: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
-    for value in control["execution"].get("conflicting_execution_roots", []):
-        root = Path(value)
+    for root, lock_path in _configured_conflicting_pairs(control):
         if not root.exists():
             rows.append(
                 {
@@ -1777,21 +2085,54 @@ def _conflicting_generation_statuses(
                     "exists": False,
                     "active_job_count": 0,
                     "terminal_job_count": 0,
+                    "superseded_by_current_generation": False,
+                    "supersede_receipt_sha256": None,
                 }
             )
             continue
+        _validate_conflicting_lock(lock_path)
         plan = validate_long_horizon_train_plan(
             _read_json(root / "plan.json", field="conflicting generation plan")
         )
         schedule = validate_long_horizon_stream_schedule(
-            _read_json(
-                root / "schedule.json", field="conflicting generation schedule"
-            ),
+            _read_json(root / "schedule.json", field="conflicting generation schedule"),
             plan=plan,
         )
         status = long_horizon_execution_status(
             root / "execution-state", schedule=schedule, plan=plan
         )
+        superseded = False
+        supersede_receipt_sha256 = None
+        if status["active_job_count"] > 0 and current_root is not None:
+            receipt_path = _find_supersede_receipt_for_root(
+                current_root=current_root,
+                conflicting_root=root,
+            )
+            if receipt_path is not None:
+                try:
+                    descriptor = (
+                        locked_descriptors.get(os.fspath(root))
+                        if locked_descriptors is not None
+                        else None
+                    )
+                    if descriptor is None:
+                        receipt = verify_historical_supersede_receipt_file(
+                            receipt_path,
+                            old_root=root,
+                            new_root=current_root,
+                        )
+                    else:
+                        receipt = verify_historical_supersede_receipt_store_locked(
+                            old_root=root,
+                            new_root=current_root,
+                            old_lock_descriptor=descriptor,
+                        )
+                except DojoHistoricalSupersedeReceiptError as exc:
+                    raise DojoHistoricalTrainControlError(
+                        "generation supersede receipt failed verification: " f"{exc}"
+                    ) from exc
+                superseded = True
+                supersede_receipt_sha256 = receipt["receipt_sha256"]
         rows.append(
             {
                 "output_root": str(root),
@@ -1799,12 +2140,19 @@ def _conflicting_generation_statuses(
                 "active_job_count": status["active_job_count"],
                 "terminal_job_count": status["terminal_job_count"],
                 "status_sha256": status["status_sha256"],
+                "superseded_by_current_generation": superseded,
+                "supersede_receipt_sha256": supersede_receipt_sha256,
             }
         )
     return rows
 
 
-def _assert_dynamic_machine_capacity(control: Mapping[str, Any]) -> None:
+def _assert_dynamic_machine_capacity(
+    control: Mapping[str, Any],
+    *,
+    current_root: Path | None = None,
+    locked_descriptors: Mapping[str, int] | None = None,
+) -> None:
     execution = control["execution"]
     load_fraction = execution.get("max_one_minute_load_per_cpu", 0.8)
     if (
@@ -1822,15 +2170,14 @@ def _assert_dynamic_machine_capacity(control: Mapping[str, Any]) -> None:
             f"load_1m={one_minute_load:.2f}, limit={load_limit:.2f}, "
             f"logical_cpu={cpu_count}"
         )
-    conflicts = execution.get("conflicting_run_lock_paths", [])
-    if not isinstance(conflicts, list) or not all(
-        isinstance(value, str) and Path(value).is_absolute() for value in conflicts
-    ):
-        raise DojoHistoricalTrainControlError("conflicting run-lock list is invalid")
     active_conflicts = [
         row
-        for row in _conflicting_generation_statuses(control)
-        if row["active_job_count"] > 0
+        for row in _conflicting_generation_statuses(
+            control,
+            current_root=current_root,
+            locked_descriptors=locked_descriptors,
+        )
+        if row["active_job_count"] > 0 and not row["superseded_by_current_generation"]
     ]
     if active_conflicts:
         raise DojoHistoricalTrainControlError(
@@ -1839,27 +2186,39 @@ def _assert_dynamic_machine_capacity(control: Mapping[str, Any]) -> None:
         )
 
 
-def _acquire_conflicting_run_locks(control: Mapping[str, Any]) -> list[int]:
-    descriptors: list[int] = []
+def _acquire_conflicting_run_locks(control: Mapping[str, Any]) -> dict[str, int]:
+    descriptors: dict[str, int] = {}
     try:
-        for value in control["execution"].get("conflicting_run_lock_paths", []):
-            path = Path(value)
-            if not path.exists():
+        for root, path in _configured_conflicting_pairs(control):
+            if not root.exists():
                 continue
+            before = _validate_conflicting_lock(path)
             descriptor = os.open(
-                path, os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+                path,
+                os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
             )
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
+                opened = os.fstat(descriptor)
+                if (before.st_dev, before.st_ino) != (
+                    opened.st_dev,
+                    opened.st_ino,
+                ):
+                    raise DojoHistoricalTrainControlError(
+                        f"configured conflicting lock changed: {path}"
+                    )
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise DojoHistoricalTrainControlError(
+                        f"another heavy DOJO run owns the configured lock: {path}"
+                    ) from exc
+            except BaseException:
                 os.close(descriptor)
-                raise DojoHistoricalTrainControlError(
-                    f"another heavy DOJO run owns the configured lock: {path}"
-                ) from exc
-            descriptors.append(descriptor)
+                raise
+            descriptors[os.fspath(root)] = descriptor
         return descriptors
     except BaseException:
-        for descriptor in reversed(descriptors):
+        for descriptor in reversed(list(descriptors.values())):
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
@@ -1890,7 +2249,7 @@ def run_next_job(
         0o600,
     )
     global_lock_descriptor: int | None = None
-    conflicting_lock_descriptors: list[int] = []
+    conflicting_lock_descriptors: dict[str, int] = {}
     try:
         try:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1908,18 +2267,18 @@ def run_next_job(
                 0o600,
             )
             try:
-                fcntl.flock(
-                    global_lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB
-                )
+                fcntl.flock(global_lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise DojoHistoricalTrainControlError(
                     "another DOJO heavy operation owns the machine-wide lease"
                 ) from exc
         conflicting_lock_descriptors = _acquire_conflicting_run_locks(control)
-        _assert_dynamic_machine_capacity(control)
-        recovered_archives = _archive_pending_completed_jobs(
-            root=root, control=control
+        _assert_dynamic_machine_capacity(
+            control,
+            current_root=root,
+            locked_descriptors=conflicting_lock_descriptors,
         )
+        recovered_archives = _archive_pending_completed_jobs(root=root, control=control)
         if recovered_archives:
             return {
                 "status": "ARCHIVE_RECOVERED",
@@ -2036,9 +2395,7 @@ def run_next_job(
                 worker_catalog=catalog,
                 coordinate_runtimes=runtimes,
                 worker_runtime_factory=runtime_factory,
-                worker_runtime_binding_sha256=runtime_seal[
-                    "runtime_binding_sha256"
-                ],
+                worker_runtime_binding_sha256=runtime_seal["runtime_binding_sha256"],
                 worker_runtime_seal=runtime_seal,
                 worker_runtime_repo_root=repo,
                 carry_states_by_slot=carries,
@@ -2084,6 +2441,15 @@ def run_next_job(
         archive_receipt = None
         archive_destination = _archive_root(control)
         if archive_destination is not None:
+            inspection = inspect_historical_job_archive_source(
+                run_root=root,
+                job_sha256=job_sha,
+            )
+            _assert_archive_staging_capacity(
+                root=root,
+                control=control,
+                source_bytes=inspection["total_source_bytes"],
+            )
             try:
                 archive_receipt = archive_completed_historical_job(
                     run_root=root,
@@ -2112,7 +2478,7 @@ def run_next_job(
             **_AUTHORITY,
         }
     finally:
-        for descriptor in reversed(conflicting_lock_descriptors):
+        for descriptor in reversed(list(conflicting_lock_descriptors.values())):
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
@@ -2128,9 +2494,7 @@ def run_next_job(
             os.close(lock_descriptor)
 
 
-def generation_status(
-    *, repo_root: Path, run_control_path: Path
-) -> dict[str, Any]:
+def generation_status(*, repo_root: Path, run_control_path: Path) -> dict[str, Any]:
     """Return verified compact progress without opening partial economics."""
 
     control, root, plan, schedule, _, _, _ = _load_generation(
@@ -2144,51 +2508,37 @@ def generation_status(
     archive_receipts = []
     reclaimed_verifications = []
     remotely_verified_jobs: set[str] = set()
+    remote_receipt_candidate_count = 0
     reclaimable_bytes = 0
     if archive_root is not None and (archive_root / "receipts").is_dir():
         matched_receipt_paths: set[Path] = set()
         for completion_path in sorted((root / "jobs").glob("*/completion.json")):
             job_sha = completion_path.parent.name
-            matches = sorted(
-                (archive_root / "receipts").glob(f"job-{job_sha}-*.json")
-            )
+            matches = sorted((archive_root / "receipts").glob(f"job-{job_sha}-*.json"))
             if not matches:
                 continue
             reclaimed = sorted(
                 (root / "reclaim-receipts").glob(f"reclaim-{job_sha}-*.json")
             )
             if reclaimed:
-                try:
-                    verification = verify_existing_historical_job_raw_reclaim(
-                        run_root=root,
-                        archive_root=archive_root,
-                        job_sha256=job_sha,
-                        expected_drive_parent_id=control["execution"][
-                            "archive_drive_readback_parent_id"
-                        ],
-                    )
-                except DojoHistoricalRawReclaimError as exc:
+                if len(reclaimed) != 1:
                     raise DojoHistoricalTrainControlError(
-                        "historical raw reclaim failed deep verification: "
-                        f"{exc}"
-                    ) from exc
+                        "multiple raw reclaim receipts name one job"
+                    )
+                verification = _compact_reclaim_receipt(
+                    path=reclaimed[0], job_sha256=job_sha
+                )
                 receipt = _read_json(
                     matches[0], field="reclaimed historical archive receipt"
                 )
                 reclaimed_verifications.append(verification)
                 remotely_verified_jobs.add(job_sha)
             else:
-                try:
-                    receipt = verify_existing_historical_job_archive(
-                        run_root=root,
-                        job_sha256=job_sha,
-                        archive_root=archive_root,
-                    )
-                except DojoHistoricalJobArchiveError as exc:
-                    raise DojoHistoricalTrainControlError(
-                        "historical archive receipt failed deep verification: "
-                        f"{exc}"
-                    ) from exc
+                receipt = _compact_archive_receipt(
+                    receipt_path=matches[0],
+                    archive_root=archive_root,
+                    expected_job_sha256=job_sha,
+                )
                 remote_paths = sorted(
                     (archive_root / "remote-receipts").glob(
                         f"remote-job-{job_sha}-{receipt['manifest_sha256']}-*.json"
@@ -2199,27 +2549,13 @@ def generation_status(
                         raise DojoHistoricalTrainControlError(
                             "multiple remote readback receipts name one job"
                         )
-                    try:
-                        eligibility = verify_historical_job_raw_reclaim(
-                            run_root=root,
-                            archive_receipt_path=matches[0],
-                            remote_receipt_path=remote_paths[0],
-                            expected_drive_parent_id=control["execution"][
-                                "archive_drive_readback_parent_id"
-                            ],
-                        )
-                    except DojoHistoricalRawReclaimError as exc:
-                        raise DojoHistoricalTrainControlError(
-                            "remote readback receipt failed verification: "
-                            f"{exc}"
-                        ) from exc
-                    remotely_verified_jobs.add(job_sha)
-                    reclaimable_bytes += eligibility["plan"]["target_bytes"]
+                    _compact_remote_receipt(
+                        path=remote_paths[0], local_receipt=receipt
+                    )
+                    remote_receipt_candidate_count += 1
             archive_receipts.append(receipt)
             matched_receipt_paths.update(matches)
-        all_receipt_paths = set(
-            (archive_root / "receipts").glob("job-*.json")
-        )
+        all_receipt_paths = set((archive_root / "receipts").glob("job-*.json"))
         if all_receipt_paths != matched_receipt_paths:
             raise DojoHistoricalTrainControlError(
                 "historical archive receipt does not name a completed job"
@@ -2229,13 +2565,9 @@ def generation_status(
     archived_job_count = len(archive_receipts)
     baseline = control["execution"].get("capacity_baseline", {})
     baseline_raw = (
-        baseline.get("raw_bytes_per_job")
-        if isinstance(baseline, Mapping)
-        else None
+        baseline.get("raw_bytes_per_job") if isinstance(baseline, Mapping) else None
     )
-    planned_coordinate_count = max(
-        job["coordinate_count"] for job in schedule["jobs"]
-    )
+    planned_coordinate_count = max(job["coordinate_count"] for job in schedule["jobs"])
     next_raw, next_peak = _estimated_next_job_bytes(
         control=control,
         archive_root=archive_root,
@@ -2263,19 +2595,29 @@ def generation_status(
         ),
         "terminal_completion_count": completion_count,
         "locally_verified_archive_count": archived_job_count,
-        "unarchived_terminal_count": max(
-            0, completion_count - archived_job_count
-        ),
+        "unarchived_terminal_count": max(0, completion_count - archived_job_count),
         "raw_bytes_bound_by_archive_receipts": sum(
             row["total_source_bytes"] for row in archive_receipts
         ),
         "archive_bytes": sum(row["archive_size_bytes"] for row in archive_receipts),
+        "archive_and_readback_local_footprint_bytes": sum(
+            _archive_local_footprint_bytes(row, archive_root=archive_root)
+            for row in archive_receipts
+        )
+        if archive_root is not None
+        else 0,
+        "heartbeat_archive_verification_level": (
+            "RECEIPT_SEAL_AND_LOCAL_METADATA_ONLY"
+        ),
+        "deep_archive_verification_before_next_job": True,
         "remote_verified_archive_count": len(remotely_verified_jobs),
+        "remote_receipt_candidate_count": remote_receipt_candidate_count,
         "raw_reclaimed_job_count": len(reclaimed_verifications),
         "raw_reclaimed_logical_bytes": sum(
             row["reclaimed_logical_bytes"] for row in reclaimed_verifications
         ),
         "reclaimable_bytes": reclaimable_bytes,
+        "reclaimable_bytes_requires_deep_verification": True,
         "raw_reclaim_requires_remote_readback": True,
     }
     return {
@@ -2294,7 +2636,8 @@ def generation_status(
             ),
         },
         "conflicting_generation_statuses": _conflicting_generation_statuses(
-            control
+            control,
+            current_root=root,
         ),
         "free_disk_bytes": shutil.disk_usage(root).free,
         **_AUTHORITY,
