@@ -142,6 +142,12 @@ def _identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
     )
 
 
+def _lock_inode_identity(value: os.stat_result) -> tuple[int, int, int]:
+    """Stable lock authority fields; timestamps are not lock identity."""
+
+    return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode)
+
+
 def _stable_regular_bytes(path: Path, *, field: str, maximum: int) -> bytes:
     try:
         before = path.stat(follow_symlinks=False)
@@ -2273,7 +2279,7 @@ def _job_archive_lock(
             raise DojoHistoricalJobArchiveError(
                 "archive lock must be a singly linked regular file"
             )
-        expected_identity = _identity(state)
+        expected_identity = _lock_inode_identity(state)
 
         def assert_current() -> None:
             assert_directory_current()
@@ -2293,8 +2299,8 @@ def _job_archive_lock(
                 or not stat.S_ISREG(named.st_mode)
                 or opened.st_nlink != 1
                 or named.st_nlink != 1
-                or _identity(opened) != expected_identity
-                or _identity(named) != expected_identity
+                or _lock_inode_identity(opened) != expected_identity
+                or _lock_inode_identity(named) != expected_identity
             ):
                 raise DojoHistoricalJobArchiveError(
                     "archive lock pathname was replaced concurrently"

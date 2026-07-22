@@ -1475,6 +1475,47 @@ def test_job_archive_lock_contention_is_immediate_backpressure(tmp_path: Path) -
     assert not list(receipts.glob("*.json"))
 
 
+def test_job_archive_lock_tolerates_metadata_only_timestamp_refresh(
+    tmp_path: Path,
+) -> None:
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    lock_path = receipts / f".job-{JOB_SHA256}.lock"
+
+    with archive_module._job_archive_lock(receipts, JOB_SHA256) as guard:
+        before = lock_path.stat(follow_symlinks=False)
+        os.utime(
+            lock_path,
+            ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000),
+            follow_symlinks=False,
+        )
+        after = lock_path.stat(follow_symlinks=False)
+        assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+        assert (after.st_mtime_ns, after.st_ctime_ns) != (
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        guard()
+
+
+def test_job_archive_lock_rejects_hardlink_added_while_held(tmp_path: Path) -> None:
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    lock_path = receipts / f".job-{JOB_SHA256}.lock"
+    alias_path = receipts / "lock-alias"
+
+    with archive_module._job_archive_lock(receipts, JOB_SHA256) as guard:
+        os.link(lock_path, alias_path)
+        try:
+            with pytest.raises(
+                archive_module.DojoHistoricalJobArchiveError,
+                match="archive lock pathname was replaced concurrently",
+            ):
+                guard()
+        finally:
+            alias_path.unlink()
+
+
 def test_replaced_job_lock_stops_before_first_archive_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
