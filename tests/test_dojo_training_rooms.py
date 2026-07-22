@@ -11,10 +11,13 @@ from quant_rabbit.dojo_training_rooms import (
     QUEUE_BOUND_COMMON_SPARRING_HANDOFF_CONTRACT,
     QUEUE_BOUND_ROOM_RECEIPT_CONTRACT,
     ROOM_TAXONOMY_README,
+    ROOM_TAXONOMY_V2,
+    ROOM_TAXONOMY_V2_README,
     DojoTrainingRoomError,
     build_common_sparring_handoff,
     build_training_room_receipt,
     build_training_room_registry,
+    build_training_room_registry_v2,
     canonical_room_sha256,
     validate_common_sparring_handoff,
     validate_training_room_receipt,
@@ -66,6 +69,38 @@ def registry(shared_bindings: dict, room_controls: dict) -> dict:
         registry_revision="revision-1",
         shared_bindings=shared_bindings,
         room_controls=room_controls,
+    )
+
+
+@pytest.fixture(scope="module")
+def v2_room_controls() -> dict:
+    return {
+        taxonomy.room_id: {
+            "trainer_lineage_id": f"{taxonomy.room_id}:lineage-v2",
+            "search_budget": {
+                "max_attempts": 3,
+                "max_hypotheses": 4,
+                "max_parameter_revisions": 8,
+                "max_model_calls": 12 if taxonomy.room_id == "room-ai-01" else 0,
+            },
+            "artifact_namespace": f"research/dojo/training_rooms/{taxonomy.room_id}",
+            "fixed_train_denominator": {
+                "denominator_id": f"{taxonomy.room_id}:train-denominator-v2",
+                "coordinate_set_sha256": _sha(f"coordinates-v2:{taxonomy.room_id}"),
+                "expected_coordinate_count": 96,
+            },
+        }
+        for taxonomy in ROOM_TAXONOMY_V2
+    }
+
+
+@pytest.fixture(scope="module")
+def v2_registry(shared_bindings: dict, v2_room_controls: dict) -> dict:
+    return build_training_room_registry_v2(
+        registry_id="dojo-room-registry-v2",
+        registry_revision="revision-2",
+        shared_bindings=shared_bindings,
+        room_controls=v2_room_controls,
     )
 
 
@@ -153,6 +188,25 @@ def test_taxonomy_and_readme_fix_one_thesis_per_room() -> None:
     )
     assert "H1" in portfolio.thesis
     assert portfolio.input_class == ("CAUSAL_MULTI_PAIR_CLOSED_H1_AND_PORTFOLIO_STATE")
+    assert "room-meta-01" not in ROOM_TAXONOMY_README
+
+
+def test_v2_taxonomy_separates_relative_strength_alpha_and_anomaly_admission() -> None:
+    taxonomy = {room.room_id: room.strategy_family for room in ROOM_TAXONOMY_V2}
+    assert taxonomy["room-03"] == "g8_relative_strength_alpha"
+    assert taxonomy["room-meta-01"] == "anomaly_admission_controller"
+    assert len(taxonomy) == 11
+    admission = next(
+        room for room in ROOM_TAXONOMY_V2 if room.room_id == "room-meta-01"
+    )
+    assert "without predicting direction" in admission.thesis
+    assert admission.decision_context_policy == (
+        "DETERMINISTIC_DIRECTION_NEUTRAL_ADMISSION_NO_MODEL_CONTEXT"
+    )
+    assert all(
+        room_id in ROOM_TAXONOMY_V2_README
+        for room_id in ("room-03", "room-meta-01", "room-ai-01")
+    )
 
 
 def test_new_room_ids_and_families_match_the_content_addressed_research_queue() -> None:
@@ -190,6 +244,50 @@ def test_registry_isolates_lineage_budget_namespace_and_train_denominator(
     ]
     assert normalized["authority"]["live_permission"] is False
     assert normalized["authority"]["order_authority"] == "NONE"
+
+
+def test_v2_registry_adds_meta_room_without_rewriting_v1(
+    registry: dict,
+    v2_registry: dict,
+) -> None:
+    normalized_v1 = validate_training_room_registry(registry)
+    normalized_v2 = validate_training_room_registry(v2_registry)
+    assert normalized_v1["contract"] == "QR_DOJO_TRAINING_ROOM_REGISTRY_V1"
+    assert normalized_v1["registry_sha256"] == (
+        "53e1d9eaffa28875015cb97cd02f551b7ca0563713d27baa13d8d5b4a2695379"
+    )
+    assert normalized_v1["room_count"] == 10
+    assert normalized_v2["contract"] == "QR_DOJO_TRAINING_ROOM_REGISTRY_V2"
+    assert normalized_v2["schema_version"] == 2
+    assert normalized_v2["room_count"] == 11
+    families = {
+        room["room_id"]: room["strategy_family"] for room in normalized_v2["rooms"]
+    }
+    assert families["room-03"] == "g8_relative_strength_alpha"
+    assert families["room-meta-01"] == "anomaly_admission_controller"
+    assert normalized_v1["registry_sha256"] != normalized_v2["registry_sha256"]
+
+
+def test_v2_meta_room_can_issue_receipt_and_enter_common_sparring(
+    v2_registry: dict,
+) -> None:
+    alpha = _receipt(v2_registry, "room-03")
+    admission = _receipt(v2_registry, "room-meta-01")
+    assert (
+        validate_training_room_receipt(admission, registry=v2_registry)["room_id"]
+        == "room-meta-01"
+    )
+    handoff = build_common_sparring_handoff(
+        registry=v2_registry,
+        handoff_id="common-sparring-v2",
+        handoff_revision="revision-2",
+        room_receipts=[admission, alpha],
+        fixed_denominator=_common_denominator(),
+    )
+    assert [row["room_id"] for row in handoff["candidates"]] == [
+        "room-03",
+        "room-meta-01",
+    ]
 
 
 def test_registry_rejects_shared_room_local_identity_and_room_override(

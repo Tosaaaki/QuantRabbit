@@ -27,6 +27,7 @@ from typing import Any, Final
 
 
 ROOM_REGISTRY_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_REGISTRY_V1"
+ROOM_REGISTRY_V2_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_REGISTRY_V2"
 ROOM_RECEIPT_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_RECEIPT_V1"
 QUEUE_BOUND_ROOM_RECEIPT_CONTRACT: Final = "QR_DOJO_TRAINING_ROOM_RECEIPT_V2"
 ROOM_DENOMINATOR_CONTRACT: Final = "QR_DOJO_ROOM_FIXED_TRAIN_DENOMINATOR_V1"
@@ -40,6 +41,7 @@ COMMON_SPARRING_DENOMINATOR_CONTRACT: Final = (
 SCHEMA_VERSION: Final = 1
 QUEUE_BOUND_SCHEMA_VERSION: Final = 2
 TAXONOMY_REVISION: Final = "DOJO_ONE_THESIS_PER_ROOM_TAXONOMY_V1"
+TAXONOMY_V2_REVISION: Final = "DOJO_ONE_THESIS_PER_ROOM_TAXONOMY_V2"
 ROOM_ARTIFACT_ROOT: Final = "research/dojo/training_rooms"
 COMMON_SPARRING_SLOTS: Final = 4
 
@@ -260,8 +262,43 @@ room.  Holdout examination and the fixed-version forward arena are separate
 stages and never inherit TRAIN authority.
 """
 
-_TAXONOMY_BY_ID: Final = {room.room_id: room for room in INITIAL_ROOM_TAXONOMY}
-_TAXONOMY_ROOM_IDS: Final = tuple(room.room_id for room in INITIAL_ROOM_TAXONOMY)
+ANOMALY_ADMISSION_ROOM: Final = TrainingRoomTaxonomy(
+    "room-meta-01",
+    "anomaly_admission_controller",
+    "Veto or trim existing bot candidates for extreme momentum, reversal, volatility, spread, correlation, and currency-exposure anomalies without predicting direction.",
+    "CAUSAL_EXACT28_COMPLETED_H1_AND_PORTFOLIO_STATE",
+    "DETERMINISTIC_DIRECTION_NEUTRAL_ADMISSION_NO_MODEL_CONTEXT",
+)
+
+RELATIVE_STRENGTH_ALPHA_ROOM: Final = TrainingRoomTaxonomy(
+    "room-03",
+    "g8_relative_strength_alpha",
+    "Generate relative-strength alpha from strongest-versus-weakest G8 pairs using closed H1 evidence without anomaly vetoes or portfolio sizing.",
+    "CAUSAL_EXACT28_COMPLETED_H1_STRENGTH",
+    "DETERMINISTIC_ALPHA_WORKER_NO_MODEL_CONTEXT",
+)
+
+_ROOM_TAXONOMY_V2_BASE: Final = tuple(
+    RELATIVE_STRENGTH_ALPHA_ROOM if room.room_id == "room-03" else room
+    for room in INITIAL_ROOM_TAXONOMY
+)
+ROOM_TAXONOMY_V2: Final = (
+    *_ROOM_TAXONOMY_V2_BASE[:-1],
+    ANOMALY_ADMISSION_ROOM,
+    _ROOM_TAXONOMY_V2_BASE[-1],
+)
+ROOM_TAXONOMY_V2_README: Final = """DOJO training-room taxonomy V2
+
+V1 remains immutable.  V2 revises room-03 to G8 relative-strength alpha only
+and adds room-meta-01 as a separate, direction-neutral anomaly admission
+controller.  room-meta-01 may only veto or trim an upstream candidate and never
+creates or changes its direction or rank.  room-ai-01 remains the separate
+one-decision-per-fresh-context exit/capital-recycle room.  Common sparring is
+still the only integration point.  Holdout examination and the fixed-version
+forward arena remain separate stages and inherit no TRAIN authority.
+"""
+
+_TAXONOMY_BY_ID: Final = {room.room_id: room for room in ROOM_TAXONOMY_V2}
 
 
 def canonical_room_sha256(value: Any) -> str:
@@ -287,37 +324,89 @@ def build_training_room_registry(
     shared_bindings: Mapping[str, Mapping[str, Any]],
     room_controls: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Build the exact ten-room, one-thesis-per-room V1 registry."""
+    """Build the immutable exact ten-room V1 registry."""
+
+    return _build_training_room_registry(
+        registry_id=registry_id,
+        registry_revision=registry_revision,
+        shared_bindings=shared_bindings,
+        room_controls=room_controls,
+        taxonomy=INITIAL_ROOM_TAXONOMY,
+        registry_contract=ROOM_REGISTRY_CONTRACT,
+        schema_version=SCHEMA_VERSION,
+        taxonomy_revision=TAXONOMY_REVISION,
+        taxonomy_readme=ROOM_TAXONOMY_README,
+    )
+
+
+def build_training_room_registry_v2(
+    *,
+    registry_id: str,
+    registry_revision: str,
+    shared_bindings: Mapping[str, Mapping[str, Any]],
+    room_controls: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the versioned exact eleven-room V2 registry."""
+
+    return _build_training_room_registry(
+        registry_id=registry_id,
+        registry_revision=registry_revision,
+        shared_bindings=shared_bindings,
+        room_controls=room_controls,
+        taxonomy=ROOM_TAXONOMY_V2,
+        registry_contract=ROOM_REGISTRY_V2_CONTRACT,
+        schema_version=2,
+        taxonomy_revision=TAXONOMY_V2_REVISION,
+        taxonomy_readme=ROOM_TAXONOMY_V2_README,
+    )
+
+
+def _build_training_room_registry(
+    *,
+    registry_id: str,
+    registry_revision: str,
+    shared_bindings: Mapping[str, Mapping[str, Any]],
+    room_controls: Mapping[str, Mapping[str, Any]],
+    taxonomy: Sequence[TrainingRoomTaxonomy],
+    registry_contract: str,
+    schema_version: int,
+    taxonomy_revision: str,
+    taxonomy_readme: str,
+) -> dict[str, Any]:
+    """Build one exact immutable taxonomy revision."""
 
     normalized_shared = _normalize_shared_bindings(shared_bindings)
-    if set(room_controls) != set(_TAXONOMY_ROOM_IDS):
+    taxonomy_room_ids = tuple(room.room_id for room in taxonomy)
+    if set(room_controls) != set(taxonomy_room_ids):
         raise DojoTrainingRoomError(
-            "room controls must cover the exact initial room taxonomy"
+            "room controls must cover the exact selected room taxonomy"
         )
     rooms: list[dict[str, Any]] = []
     lineage_ids: set[str] = set()
     namespaces: set[str] = set()
     denominator_ids: set[str] = set()
-    for taxonomy in INITIAL_ROOM_TAXONOMY:
+    for room_taxonomy in taxonomy:
         control = _exact_mapping(
-            room_controls[taxonomy.room_id],
+            room_controls[room_taxonomy.room_id],
             {
                 "trainer_lineage_id",
                 "search_budget",
                 "artifact_namespace",
                 "fixed_train_denominator",
             },
-            field=f"room control {taxonomy.room_id}",
+            field=f"room control {room_taxonomy.room_id}",
         )
         lineage_id = _room_scoped_identifier(
             control["trainer_lineage_id"],
-            taxonomy.room_id,
+            room_taxonomy.room_id,
             field="trainer_lineage_id",
         )
-        namespace = _room_namespace(control["artifact_namespace"], taxonomy.room_id)
+        namespace = _room_namespace(
+            control["artifact_namespace"], room_taxonomy.room_id
+        )
         budget = _normalize_search_budget(control["search_budget"])
         denominator = _build_room_denominator(
-            taxonomy.room_id, control["fixed_train_denominator"]
+            room_taxonomy.room_id, control["fixed_train_denominator"]
         )
         if lineage_id in lineage_ids:
             raise DojoTrainingRoomError("trainer lineage is shared across rooms")
@@ -329,10 +418,10 @@ def build_training_room_registry(
         namespaces.add(namespace)
         denominator_ids.add(denominator["denominator_id"])
         room_body = {
-            **taxonomy.as_dict(),
+            **room_taxonomy.as_dict(),
             "trainer_lineage": {
                 "lineage_id": lineage_id,
-                "room_id": taxonomy.room_id,
+                "room_id": room_taxonomy.room_id,
                 "cross_room_lineage_reuse_allowed": False,
             },
             "search_budget": budget,
@@ -350,13 +439,13 @@ def build_training_room_registry(
         rooms.append({**room_body, "room_sha256": canonical_room_sha256(room_body)})
 
     body = {
-        "contract": ROOM_REGISTRY_CONTRACT,
-        "schema_version": SCHEMA_VERSION,
+        "contract": registry_contract,
+        "schema_version": schema_version,
         "registry_id": _identifier(registry_id, field="registry_id"),
         "registry_revision": _identifier(registry_revision, field="registry_revision"),
-        "taxonomy_revision": TAXONOMY_REVISION,
-        "taxonomy_readme": ROOM_TAXONOMY_README,
-        "taxonomy_readme_sha256": canonical_room_sha256(ROOM_TAXONOMY_README),
+        "taxonomy_revision": taxonomy_revision,
+        "taxonomy_readme": taxonomy_readme,
+        "taxonomy_readme_sha256": canonical_room_sha256(taxonomy_readme),
         "room_count": len(rooms),
         "shared_bindings": normalized_shared,
         "sharing_policy": _strict_clone(_SHARING_POLICY),
@@ -391,7 +480,18 @@ def validate_training_room_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         },
         field="room registry",
     )
-    if row["contract"] != ROOM_REGISTRY_CONTRACT or row["schema_version"] != 1:
+    registry_identity = (
+        row["contract"],
+        row["schema_version"],
+        row["taxonomy_revision"],
+    )
+    if registry_identity == (ROOM_REGISTRY_CONTRACT, 1, TAXONOMY_REVISION):
+        builder = build_training_room_registry
+        canonical_label = "V1"
+    elif registry_identity == (ROOM_REGISTRY_V2_CONTRACT, 2, TAXONOMY_V2_REVISION):
+        builder = build_training_room_registry_v2
+        canonical_label = "V2"
+    else:
         raise DojoTrainingRoomError("room registry contract/version is invalid")
     rooms = _sequence(row["rooms"], field="rooms")
     controls: dict[str, dict[str, Any]] = {}
@@ -413,7 +513,7 @@ def validate_training_room_registry(value: Mapping[str, Any]) -> dict[str, Any]:
                 key: denominator.get(key) for key in _DENOMINATOR_INPUT_KEYS
             },
         }
-    expected = build_training_room_registry(
+    expected = builder(
         registry_id=row["registry_id"],
         registry_revision=row["registry_revision"],
         shared_bindings={
@@ -426,7 +526,9 @@ def validate_training_room_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         room_controls=controls,
     )
     if row != expected:
-        raise DojoTrainingRoomError("room registry differs from canonical V1")
+        raise DojoTrainingRoomError(
+            f"room registry differs from canonical {canonical_label}"
+        )
     return row
 
 
@@ -675,7 +777,8 @@ def build_common_sparring_handoff(
         by_room[room_id] = receipt
     denominator = _build_common_denominator(fixed_denominator)
     candidates: list[dict[str, Any]] = []
-    for room_id in _TAXONOMY_ROOM_IDS:
+    for registered_room in normalized_registry["rooms"]:
+        room_id = registered_room["room_id"]
         receipt = by_room.get(room_id)
         if receipt is None:
             continue
@@ -1070,18 +1173,25 @@ __all__ = [
     "COMMON_SPARRING_HANDOFF_CONTRACT",
     "COMMON_SPARRING_SLOTS",
     "INITIAL_ROOM_TAXONOMY",
+    "ANOMALY_ADMISSION_ROOM",
+    "RELATIVE_STRENGTH_ALPHA_ROOM",
+    "ROOM_TAXONOMY_V2",
     "ROOM_ARTIFACT_ROOT",
     "ROOM_DENOMINATOR_CONTRACT",
     "ROOM_RECEIPT_CONTRACT",
     "ROOM_REGISTRY_CONTRACT",
+    "ROOM_REGISTRY_V2_CONTRACT",
     "ROOM_TAXONOMY_README",
+    "ROOM_TAXONOMY_V2_README",
     "SCHEMA_VERSION",
     "TAXONOMY_REVISION",
+    "TAXONOMY_V2_REVISION",
     "DojoTrainingRoomError",
     "TrainingRoomTaxonomy",
     "build_common_sparring_handoff",
     "build_training_room_receipt",
     "build_training_room_registry",
+    "build_training_room_registry_v2",
     "canonical_room_sha256",
     "validate_common_sparring_handoff",
     "validate_training_room_receipt",
