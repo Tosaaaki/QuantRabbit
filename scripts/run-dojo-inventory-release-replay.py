@@ -64,6 +64,27 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def market_event_time(row: dict[str, Any]) -> datetime:
+    """Return the immutable replay-market time carried by the quote.
+
+    ``ts_utc`` is the append wall clock.  In a fast replay, thousands of
+    historical events can therefore share the same real-world second and it
+    must never be used for holding time, active-day, or daily-risk metrics.
+    """
+
+    payload = row.get("payload") or {}
+    quote = payload.get("quote") or {}
+    raw = quote.get("ts")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            f"replay event lacks payload.quote.ts: {row.get('event')}"
+        )
+    value = datetime.fromisoformat(raw.split("#", 1)[0])
+    if value.tzinfo is None:
+        raise ValueError("replay market timestamp must be timezone-aware")
+    return value
+
+
 def ledger_metrics(session_dir: Path) -> dict[str, Any]:
     rows = [
         json.loads(line)
@@ -110,14 +131,14 @@ def ledger_metrics(session_dir: Path) -> dict[str, Any]:
         cumulative += value
         high_water = max(high_water, cumulative)
         realized_drawdown = max(realized_drawdown, high_water - cumulative)
-        exit_time = datetime.fromisoformat(row["ts_utc"])
+        exit_time = market_event_time(row)
         day_jst = (exit_time + timedelta(hours=9)).date().isoformat()
         daily[day_jst] += value
         active_days.add(day_jst)
         trade_id = str(row["payload"].get("trade_id") or "")
         fill = fills.get(trade_id)
         if fill is not None:
-            opened = datetime.fromisoformat(fill["ts_utc"])
+            opened = market_event_time(fill)
             holds.append((exit_time - opened).total_seconds() / 60.0)
 
     return {
@@ -138,6 +159,7 @@ def ledger_metrics(session_dir: Path) -> dict[str, Any]:
         "unresolved_positions": len(snapshot.get("positions") or []),
         "unresolved_orders": len(snapshot.get("orders") or []),
         "terminal_ledger_sha256": snapshot.get("ledger_sha"),
+        "measurement_clock": "payload.quote.ts",
     }
 
 

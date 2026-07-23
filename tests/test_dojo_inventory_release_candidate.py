@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
 
 from bots.inventory_release_candidate import Bot
 from quant_rabbit.virtual_broker import VirtualBroker
@@ -18,6 +23,74 @@ def _bar(epoch: int, close: float) -> dict:
         "ask_l": close - 0.006,
         "ask_c": close + 0.004,
     }
+
+
+def _load_replay_module():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run-dojo-inventory-release-replay.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "dojo_inventory_release_replay", path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_replay_metrics_use_market_quote_time_not_append_wall_clock(tmp_path):
+    replay = _load_replay_module()
+    rows = [
+        {
+            "event": "FILL_LIMIT",
+            "ts_utc": "2026-07-23T11:51:04.000001+00:00",
+            "payload": {
+                "trade_id": "T1",
+                "quote": {
+                    "ts": "2026-01-05T00:01:00+00:00#H",
+                },
+            },
+        },
+        {
+            "event": "CLOSE",
+            "ts_utc": "2026-07-23T11:51:04.000002+00:00",
+            "payload": {
+                "trade_id": "T1",
+                "pl_jpy": -100.0,
+                "quote": {
+                    "ts": "2026-01-05T01:01:00+00:00#C",
+                },
+            },
+        },
+    ]
+    (tmp_path / "ledger.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "broker_snapshot.json").write_text(
+        json.dumps({"positions": [], "orders": [], "ledger_sha": "a" * 64}),
+        encoding="utf-8",
+    )
+
+    metrics = replay.ledger_metrics(tmp_path)
+
+    assert metrics["average_hold_minutes"] == 60.0
+    assert metrics["active_days"] == 1
+    assert metrics["measurement_clock"] == "payload.quote.ts"
+
+
+def test_replay_market_time_fails_closed_without_quote_timestamp():
+    replay = _load_replay_module()
+    with pytest.raises(ValueError, match="payload.quote.ts"):
+        replay.market_event_time(
+            {
+                "event": "CLOSE",
+                "ts_utc": "2026-07-23T11:51:04+00:00",
+                "payload": {"trade_id": "T1", "pl_jpy": -1.0},
+            }
+        )
 
 
 def _config() -> dict:
