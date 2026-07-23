@@ -355,6 +355,22 @@ def cutoff_payload(
     return {**body, "cutoff_sha256": _canonical_sha256(body)}
 
 
+def quote_response_cutoff(
+    *,
+    acquired_at_utc: datetime | str,
+    quote_timestamp_utc: datetime | str,
+) -> datetime:
+    """Bind a quote to a cutoff captured after the response was acquired."""
+
+    acquired_at = _utc(acquired_at_utc, "acquired_at_utc")
+    quote_timestamp = _utc(quote_timestamp_utc, "quote_timestamp_utc")
+    if quote_timestamp > acquired_at:
+        raise CompletedM1EvidenceError(
+            "quote timestamp is after acquisition cutoff"
+        )
+    return acquired_at
+
+
 def restore_consumed_bars(
     ledger_path: Path,
     *,
@@ -670,12 +686,19 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
                 broker._log("QUOTE_ERROR", {"error": str(exc)[:200]})
                 time_mod.sleep(runtime.POLL_SECONDS)
                 continue
+            # ``now`` above is intentionally captured before the network call
+            # for window/market gates.  A quote returned by that call can
+            # validly be newer than that pre-request timestamp, so seal the
+            # decision evidence against a new post-response acquisition
+            # cutoff.  A source timestamp beyond even this cutoff still fails
+            # closed as clock-skew/future evidence.
+            quote_acquired_at = datetime.now(UTC)
             if set(quotes) != set(feed_pairs):
                 raise CompletedM1EvidenceError(
                     "read-only quote response does not cover feed pairs"
                 )
             stale = any(
-                (now - quote.timestamp_utc).total_seconds()
+                (quote_acquired_at - quote.timestamp_utc).total_seconds()
                 > runtime.STALE_QUOTE_MAX_S
                 for quote in quotes.values()
             )
@@ -702,7 +725,10 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
             if bot is not None:
                 for pair in bot_pairs:
                     quote = quotes[pair]
-                    cutoff = min(now, quote.timestamp_utc)
+                    cutoff = quote_response_cutoff(
+                        acquired_at_utc=quote_acquired_at,
+                        quote_timestamp_utc=quote.timestamp_utc,
+                    )
                     latest_complete_epoch = (
                         int(cutoff.timestamp() // 60) * 60 - 60
                     )
@@ -807,6 +833,7 @@ __all__ = [
     "cutoff_payload",
     "fetch_completed_m1_fail_closed",
     "make_completed_m1_run_live",
+    "quote_response_cutoff",
     "restore_consumed_bars",
     "seed_completed_m1_history",
 ]

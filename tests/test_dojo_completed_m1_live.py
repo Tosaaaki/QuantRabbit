@@ -16,6 +16,7 @@ from quant_rabbit.dojo_completed_m1_live import (
     completed_m1_bars,
     cutoff_payload,
     fetch_completed_m1_fail_closed,
+    quote_response_cutoff,
     restore_consumed_bars,
     seed_completed_m1_history,
 )
@@ -148,6 +149,24 @@ def test_cutoff_is_paper_only_and_refuses_future_quote():
             cutoff_utc="2026-07-23T01:02:30Z",
             quote_timestamp_utc="2026-07-23T01:02:31Z",
             decision_mode="ACTION",
+        )
+
+
+def test_quote_response_cutoff_is_post_acquisition_and_refuses_clock_skew():
+    cutoff = quote_response_cutoff(
+        acquired_at_utc="2026-07-23T01:02:31Z",
+        quote_timestamp_utc="2026-07-23T01:02:30Z",
+    )
+
+    assert cutoff == datetime(2026, 7, 23, 1, 2, 31, tzinfo=UTC)
+
+    with pytest.raises(
+        CompletedM1EvidenceError,
+        match="after acquisition cutoff",
+    ):
+        quote_response_cutoff(
+            acquired_at_utc="2026-07-23T01:02:29Z",
+            quote_timestamp_utc="2026-07-23T01:02:30Z",
         )
 
 
