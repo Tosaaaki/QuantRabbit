@@ -184,6 +184,59 @@ def test_wave_uses_one_detached_owner_name_and_session_per_room():
         assert row["command"][-2:] == ["--room-id", row["room_id"]]
 
 
+def test_usdjpy_level_fade_registry_is_four_isolated_nearest_level_rooms():
+    launcher = _load_launcher()
+    registry_path = (
+        ROOT / "config/dojo_paper_rooms_usdjpy_level_fades_20260723_v1.json"
+    )
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    observed = {}
+
+    assert registry["proof_mode"] == "diagnostic"
+    assert registry["research_contract"]["capital_aggregation_allowed"] is False
+    assert registry["research_contract"]["promotion_allowed"] is False
+    assert registry["research_contract"]["order_authority"] == "NONE"
+    assert registry["research_contract"]["operator_benchmarks"] == {
+        "per_strategy_growth_multiplier": 3.0,
+        "daily_return_pct": 2.0,
+        "acceptance_shortcut": False,
+        "lot_multiplier": False,
+        "guarantee": False,
+    }
+
+    for room in registry["rooms"]:
+        command, env, session_dir = launcher.build_launch(
+            registry_path=registry_path,
+            room_id=room["room_id"],
+            python_executable="/fixed/python3",
+        )
+        config = json.loads(env["DOJO_BOT_CONFIG"])
+        assert command[command.index("--pairs") + 1] == "USD_JPY"
+        assert command[command.index("--paper-proof-mode") + 1] == "diagnostic"
+        assert config["max_concurrent"] == 1
+        assert config["max_concurrent_per_pair"] == 1
+        assert config["global_max_concurrent"] == 1
+        assert config["per_pos_lev"] == 2.0
+        assert config["tp_atr"] == 3.0
+        assert config["sl_pips"] == 25.0
+        assert config["ceiling_min"] == 60
+        assert config["order_authority"] == "NONE"
+        observed[(config["signal"], room["arm"])] = (
+            float(command[command.index("--slippage-pips") + 1]),
+            float(command[command.index("--financing-pips-day") + 1]),
+            str(session_dir),
+        )
+
+    assert set(observed) == {
+        ("prev_day_extreme_fade", "BASE"),
+        ("prev_day_extreme_fade", "STRESS"),
+        ("round_number_fade", "BASE"),
+        ("round_number_fade", "STRESS"),
+    }
+    assert {value[:2] for value in observed.values()} == {(0.0, 0.0), (0.3, 0.8)}
+    assert len({value[2] for value in observed.values()}) == 4
+
+
 def test_wave_screen_command_uses_macos_compatible_detached_owner():
     wave = _load_wave()
     row = {

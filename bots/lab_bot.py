@@ -19,6 +19,7 @@ ring, Wilder ATR(14), 6h efficiency ratio.  Trades only USD_JPY.
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -63,7 +64,21 @@ class Bot:
         self.tp_atr = cfg.get("tp_atr")  # scale-free take: TP = tp_atr x ATR
         self.sl_pips = cfg.get("sl_pips")
         self.ceiling_s = int(cfg["ceiling_min"]) * 60
-        self.max_concurrent = int(cfg.get("max_concurrent", 3))
+        legacy_pair_cap = cfg.get("max_concurrent")
+        declared_pair_cap = cfg.get("max_concurrent_per_pair")
+        if (
+            legacy_pair_cap is not None
+            and declared_pair_cap is not None
+            and int(legacy_pair_cap) != int(declared_pair_cap)
+        ):
+            raise ValueError(
+                "max_concurrent and max_concurrent_per_pair must match"
+            )
+        self.max_concurrent = int(
+            declared_pair_cap
+            if declared_pair_cap is not None
+            else legacy_pair_cap if legacy_pair_cap is not None else 3
+        )
         self.per_pos_lev = float(cfg.get("per_pos_lev", 4.3))
         self.atr_floor = float(cfg.get("atr_floor_pips", 1.0))
         self.pull_atr = float(cfg.get("pull_atr", 0.6))
@@ -410,14 +425,33 @@ class Bot:
                 return
             units = units_for(mid_c)
             if units <= 0: return
-            for side, level in (("SHORT", st.prev_day_high), ("LONG", st.prev_day_low)):
-                if abs(level - mid_c) > 40 * pip:  # only near levels
-                    continue
-                try:
-                    oid = self._limit_order(pair, side, units,
-                        price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
-                    st.my_orders.append(oid)
-                except VirtualBrokerError: pass
+            eligible = [
+                (abs(float(level) - mid_c), side, float(level))
+                for side, level in (
+                    ("SHORT", st.prev_day_high),
+                    ("LONG", st.prev_day_low),
+                )
+                if level is not None and abs(float(level) - mid_c) <= 40 * pip
+            ]
+            if not eligible:
+                return
+            # Match the sealed historical capability:
+            # NEAREST_PREVIOUS_DAY_EXTREME_LIMIT_V1.  Placing both sides
+            # changes inventory and is not the strategy that produced the
+            # referenced diagnostic result.
+            _, side, level = min(eligible)
+            try:
+                oid = self._limit_order(
+                    pair,
+                    side,
+                    units,
+                    price=round(level, digits),
+                    tp_pips=tp_pips,
+                    sl_pips=self.sl_pips,
+                )
+                st.my_orders = [oid]
+            except VirtualBrokerError:
+                pass
 
         elif self.signal == "round_number_fade":
             for oid in st.my_orders:
@@ -426,18 +460,32 @@ class Bot:
             st.my_orders = []
             if open_n >= self.max_concurrent: return
             step = 0.50 if pair.endswith("JPY") else 0.0050
-            above = (int(mid_c / step) + 1) * step
-            below = int(mid_c / step) * step
+            above = (math.floor(mid_c / step) + 1) * step
+            below = math.floor(mid_c / step) * step
             units = units_for(mid_c)
             if units <= 0: return
-            for side, level in (("SHORT", above), ("LONG", below)):
-                if abs(level - mid_c) > 25 * pip or abs(level - mid_c) < 3 * pip:
-                    continue
-                try:
-                    oid = self._limit_order(pair, side, units,
-                        price=round(level, digits), tp_pips=tp_pips, sl_pips=self.sl_pips)
-                    st.my_orders.append(oid)
-                except VirtualBrokerError: pass
+            eligible = [
+                (abs(level - mid_c), side, level)
+                for side, level in (("SHORT", above), ("LONG", below))
+                if 3 * pip <= abs(level - mid_c) <= 25 * pip
+            ]
+            if not eligible:
+                return
+            # Match NEAREST_MAJOR_FIGURE_LIMIT_V1, including deterministic
+            # LONG/below selection when the midpoint is exactly equidistant.
+            _, side, level = min(eligible)
+            try:
+                oid = self._limit_order(
+                    pair,
+                    side,
+                    units,
+                    price=round(level, digits),
+                    tp_pips=tp_pips,
+                    sl_pips=self.sl_pips,
+                )
+                st.my_orders = [oid]
+            except VirtualBrokerError:
+                pass
 
         elif self.signal == "daily_break_pullback":
             for oid in st.my_orders:

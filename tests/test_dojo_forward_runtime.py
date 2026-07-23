@@ -103,6 +103,88 @@ def test_long_trend_countertrend_short_candidate_only_blocks_short(tmp_path):
     assert [order.side for order in broker.orders.values()] == ["LONG"]
 
 
+def _level_fade_config(signal: str, **overrides):
+    return {
+        "signal": signal,
+        "strategy_tag": f"TEST_{signal.upper()}",
+        "pairs": ["USD_JPY"],
+        "tp_atr": 3.0,
+        "sl_pips": 25.0,
+        "ceiling_min": 60,
+        "max_concurrent": 1,
+        "max_concurrent_per_pair": 1,
+        "global_max_concurrent": 1,
+        "per_pos_lev": 2.0,
+        "atr_floor_pips": 0.5,
+        **overrides,
+    }
+
+
+def test_prev_day_extreme_fade_places_only_nearest_eligible_level(tmp_path):
+    lab_bot = _load_module(
+        "dojo_lab_bot_prev_day_nearest_test", ROOT / "bots" / "lab_bot.py"
+    )
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)
+    current = datetime(2026, 7, 23, 9, 0, tzinfo=timezone.utc)
+    epoch = int(current.timestamp())
+    broker.on_quote("USD_JPY", 150.195, 150.205, current.isoformat())
+    bot = lab_bot.Bot(
+        broker, _level_fade_config("prev_day_extreme_fade")
+    )
+    _prime_long_trend_state(bot)
+    state = bot.state["USD_JPY"]
+    state.day = current.date().isoformat()
+    state.today_high = 150.30
+    state.today_low = 150.10
+    state.prev_day_high = 150.35
+    state.prev_day_low = 149.95
+
+    bot.on_bar_closed("USD_JPY", _bar(epoch, 150.20), epoch)
+
+    orders = list(broker.orders.values())
+    assert len(orders) == 1
+    assert orders[0].side == "SHORT"
+    assert orders[0].limit_price == pytest.approx(150.35)
+    assert bot.state["USD_JPY"].my_orders == [orders[0].order_id]
+
+
+def test_round_number_fade_equidistant_case_is_one_deterministic_order(tmp_path):
+    lab_bot = _load_module(
+        "dojo_lab_bot_round_nearest_test", ROOT / "bots" / "lab_bot.py"
+    )
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)
+    current = datetime(2026, 7, 23, 9, 0, tzinfo=timezone.utc)
+    epoch = int(current.timestamp())
+    broker.on_quote("USD_JPY", 150.245, 150.255, current.isoformat())
+    bot = lab_bot.Bot(broker, _level_fade_config("round_number_fade"))
+    _prime_long_trend_state(bot)
+
+    bot.on_bar_closed("USD_JPY", _bar(epoch, 150.25), epoch)
+
+    orders = list(broker.orders.values())
+    assert len(orders) == 1
+    assert orders[0].side == "LONG"
+    assert orders[0].limit_price == pytest.approx(150.0)
+    assert bot.state["USD_JPY"].my_orders == [orders[0].order_id]
+
+
+def test_lab_bot_refuses_conflicting_pair_concurrency_aliases(tmp_path):
+    lab_bot = _load_module(
+        "dojo_lab_bot_pair_cap_alias_test", ROOT / "bots" / "lab_bot.py"
+    )
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)
+
+    with pytest.raises(ValueError, match="must match"):
+        lab_bot.Bot(
+            broker,
+            _level_fade_config(
+                "round_number_fade",
+                max_concurrent=2,
+                max_concurrent_per_pair=1,
+            ),
+        )
+
+
 def test_daily_equity_dd_candidate_cancels_orders_and_blocks_new_entries(tmp_path):
     lab_bot = _load_module("dojo_lab_bot_dd_guard_test", ROOT / "bots" / "lab_bot.py")
     broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)

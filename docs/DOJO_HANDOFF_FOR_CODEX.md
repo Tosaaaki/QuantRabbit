@@ -23,7 +23,7 @@
 | `scripts/run-dojo-lab.py` | 宣言済みグリッド一括審判（TRAIN→VAL→OLHCブラケット） |
 | `scripts/run-pair-adaptation-lab.py` | ペア別幾何適応（screen→専用服→VAL/S5処刑）。換算フィード同席は`feed_pairs()`が担保 |
 | `scripts/run-live-shadow-environment.py` | 受動シャドー環境（黄金日MomentumBurst観測用・二重出口簿記） |
-| `scripts/run-dojo-forward-cycle.sh` | W_FADE + W_SPIKE_FADE の恒久ライブペーパー起動契約（12時間、`ORDER AUTHORITY: NONE`） |
+| `scripts/run-dojo-forward-cycle.sh` | **廃止済み。実行禁止。** 旧W_FADE + W_SPIKE_FADE混合セッション用で、現在は単一戦略・単一口座room registryへ置換済み |
 | `scripts/run-dojo-entry-guard-replay.py` | 固定M1/S5 shardだけを読む、逆行SHORT制限と日次DD停止の独立比較。終端未決済を利益に含めない |
 | `config/dojo_entry_guard_*_sources_v1.json` | リプレイに許可するUSD_JPY bid/ask shardの絶対path・SHA-256。root探索や重複shard選択は禁止 |
 | `scripts/oanda_history_fetch_m1.py` | M1取得（凍結fetcherの削除ガード準拠派生。原本 `oanda_history_fetch.py` は編集禁止） |
@@ -55,12 +55,13 @@ QR_OANDA_ENV_FILE=/Users/tossaki/App/QuantRabbit-live/.env.local ... --feed live
 ```
 台帳集計: ledger.jsonl の EXIT_*/CLOSE/MARGIN_* 行の pl_jpy を日次合算（既存ラボスクリプトの report() を流用）。
 
-### 恒久forward運用（2026-07-22引き継ぎ）
+### 旧mixed forward運用（2026-07-22引き継ぎ、現在はdrain後SEALED）
 
-- supervisor: detached screen `qr-dojo-episode-s5-forward`
+- 旧entry supervisorは再起動禁止。未決済だけを処理したownerはdetached screen `qr-dojo-episode-s5-drain`
 - session: `research/data/dojo_forward_20260720`
-- launcher: `./scripts/run-dojo-forward-cycle.sh`
-- Codex monitor: `qr-dojo-episode-s5-forward-monitor`（30分ごと。正常な`SESSION_STOP`とledger/snapshot SHA一致時だけ次周回を起動）
+- entry launcher `./scripts/run-dojo-forward-cycle.sh` は廃止済みで、絶対に実行しない
+- drain launcherは`./scripts/run-dojo-forward-drain.sh`だけ。新規entryは禁止
+- Codex monitor: `qr-dojo-episode-s5-forward-monitor`（45分ごと。現行の分離paper roomを監視）
 - snapshotはstate更新ごとに原子的保存し、`ledger_sha`がterminal SHAと違えば再開をfail-closedする。起動時にledger全hash-chainを再検証する。
 - 2026-07-22の旧cycle 4は、再起動時に8h天井をリセットしていたため前向き証拠として無効。`T000184` / `T000207` / `T000229` の後続決済もcarry-repairとして分離する。クリーンなpost-fix成績は `trade_id > T000229` の新規約定から数える。
 
@@ -78,6 +79,15 @@ QR_OANDA_ENV_FILE=/Users/tossaki/App/QuantRabbit-live/.env.local ... --feed live
 - `ai_shadow_ledger.jsonl` は、判断時点、ledger/state/snapshot SHA、quote、参照データwatermark、ポジション、ナラティブ、反証条件をhash-chainで固定する。宣言horizonまたはbound settlementより前の採点と、判断時点より未来のsource watermarkを拒否する。
 - `candidate_ledger.jsonl` と `active_candidate.json` は、同時に1候補だけを `PREREGISTERED -> REPLAY_STARTED -> REPLAY_PASSED/REJECTED -> PAPER_ELIGIBLE` で追跡する。候補は1つの論理変更、分離TRAIN/VAL/S5、BASE/STRESS、OHLC/OLHC、終端強制決済利益なしを事前固定する。
 - この基盤は判断・採点・候補審判だけを所有する。`order_authority=NONE`、`live_permission=false`で、active/fixed paper roomや実注文を変更しない。
+
+### USD/JPY level-fade 追加診断（2026-07-23）
+
+- オペレーター指定の`prev_day_extreme_fade`と`round_number_fade`を、既存W_FADE/W_SPIKEとは別の4口座（各20万円、BASE/STRESS）で前向き診断する。registryは`config/dojo_paper_rooms_usdjpy_level_fades_20260723_v1.json`、raw SHA-256は`72dca44b6662a60944371b24930371cde2744f757f93213e2470bb010f18bba9`、固定窓は`[2026-07-23T10:30:00Z, 2026-09-21T10:30:00Z)`。
+- 過去の好成績版はそれぞれ`NEAREST_PREVIOUS_DAY_EXTREME_LIMIT_V1` / `NEAREST_MAJOR_FIGURE_LIMIT_V1`、すなわち条件を満たす**最寄り1水準だけ**を出す。旧`bots/lab_bot.py`は両側を同時に出せたため、過去版と異なる在庫を作る測定バグだった。追加診断前に最寄り1本へ一致させ、同距離時も決定的に1本だけになる回帰testを固定した。既存稼働中のW_FADE/W_SPIKEはこのsignalを使わないため変更しない。
+- 幾何は参照結果と同じ`TP=3 ATR / SL=25p / 60分天井 / 1 pair 1 position / 1 room 1 position / per-position leverage 2.0`。BASE追加費用0/0、STRESSはfill slippage 0.3p・financing 0.8p/day。USD_JPY以外は取引しない。
+- January診断のオペレーター提示値はprev-day BASE `+5,784円` / STRESS `+2,537円`、round-number BASE `+5,441円` / STRESS `+4,784円`。ただし広い通貨集合の単月診断であり、このUSD_JPY-only未来窓の証明には流用しない。特に旧USD_JPY prev-day系は長期で負だったため、昇格候補ではなく反証を受ける診断armとして扱う。
+- 1armあたり30決済かつ20 active days未満は結論保留。採用方向の最低条件はSTRESS PF `>=1.25`、net/expectancy正、worst-day/DD非悪化、margin closeout・終端未解決なし。4口座の元本・損益・returnを合算しない。
+- 各戦略3倍と日次+2%は別掲ベンチマークで、合格近道・保証・ロット倍率ではない。`proof_mode=diagnostic`、`promotion_allowed=false`、`order_authority=NONE`、live permissionなし。
 
 ## 5. 確定済みの結論（W37〜W55、詳細は台帳）
 
