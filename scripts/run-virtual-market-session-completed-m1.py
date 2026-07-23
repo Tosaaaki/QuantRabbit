@@ -97,6 +97,9 @@ def main() -> int:
                     "seed_cutoff_policy": (
                         "fixed_window_start_exclusive_completed_m1"
                     ),
+                    "seed_gap_policy": (
+                        "resume_from_actual_last_seed_bar_then_seed_only"
+                    ),
                     "restart_policy": (
                         "persist_cutoff_before_action_then_seed_only_restore"
                     ),

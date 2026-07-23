@@ -204,6 +204,12 @@ def test_seed_history_is_fixed_to_window_and_content_addressed(
     )
 
     assert manifest["pair_counts"] == {"EUR_USD": 1441}
+    assert manifest["pair_last_bar_epochs"] == {
+        "EUR_USD": int(window_start.timestamp()) - 60
+    }
+    assert manifest["pair_last_bar_end_utc"] == {
+        "EUR_USD": window_start.isoformat()
+    }
     assert manifest["files"][0]["sha256"]
     assert manifest["window_start_utc"] == window_start.isoformat()
     assert manifest["order_authority"] == "NONE"
@@ -291,6 +297,35 @@ def test_restore_replays_cutoffs_as_seed_only_and_fails_closed_on_gap(
             bot=_SeedRecorder(),
             pairs=["EUR_USD"],
             initial_epoch=int(start.timestamp()) - 60,
+        )
+
+
+def test_restore_uses_exact_per_pair_seed_cursor(tmp_path: Path):
+    ledger = tmp_path / "absent-ledger.jsonl"
+    cursors = restore_consumed_bars(
+        ledger,
+        bot=_SeedRecorder(),
+        pairs=["EUR_USD", "USD_JPY"],
+        initial_epochs={
+            "EUR_USD": 1_700_000_000,
+            "USD_JPY": 1_700_000_060,
+        },
+    )
+
+    assert cursors == {
+        "EUR_USD": 1_700_000_000,
+        "USD_JPY": 1_700_000_060,
+    }
+
+    with pytest.raises(
+        CompletedM1EvidenceError,
+        match="exactly cover bot pairs",
+    ):
+        restore_consumed_bars(
+            ledger,
+            bot=_SeedRecorder(),
+            pairs=["EUR_USD", "USD_JPY"],
+            initial_epochs={"EUR_USD": 1_700_000_000},
         )
 
 

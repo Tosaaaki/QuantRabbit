@@ -219,6 +219,8 @@ def seed_completed_m1_history(
         raise CompletedM1EvidenceError("seed_hours must be positive")
     seed_start = window_start - timedelta(hours=hours)
     pair_counts: dict[str, int] = {}
+    pair_last_bar_epochs: dict[str, int] = {}
+    pair_last_bar_end_utc: dict[str, str] = {}
     source_records: list[dict[str, Any]] = []
 
     for pair in pairs:
@@ -290,6 +292,8 @@ def seed_completed_m1_history(
         for bar in bars:
             bot.seed_bar(pair, _bar_for_bot(bar))
         pair_counts[pair] = len(bars)
+        pair_last_bar_epochs[pair] = int(bars[-1]["epoch"])
+        pair_last_bar_end_utc[pair] = str(bars[-1]["source"]["end_utc"])
 
     body = {
         "contract": COMPLETED_M1_SEED_CONTRACT,
@@ -299,6 +303,8 @@ def seed_completed_m1_history(
         "window_start_utc": window_start.isoformat(),
         "seed_hours": hours,
         "pair_counts": pair_counts,
+        "pair_last_bar_epochs": pair_last_bar_epochs,
+        "pair_last_bar_end_utc": pair_last_bar_end_utc,
         "files": sorted(
             source_records,
             key=lambda row: (row["pair"], row["path"]),
@@ -354,11 +360,23 @@ def restore_consumed_bars(
     *,
     bot: Any,
     pairs: list[str],
-    initial_epoch: int,
+    initial_epoch: int | None = None,
+    initial_epochs: Mapping[str, int] | None = None,
 ) -> dict[str, int]:
     """Warm post-seed bot state from pre-decision cutoff records only."""
 
-    cursors = {pair: int(initial_epoch) for pair in pairs}
+    if (initial_epoch is None) == (initial_epochs is None):
+        raise CompletedM1EvidenceError(
+            "exactly one initial cursor source is required"
+        )
+    if initial_epochs is not None:
+        if set(initial_epochs) != set(pairs):
+            raise CompletedM1EvidenceError(
+                "per-pair initial cursors must exactly cover bot pairs"
+            )
+        cursors = {pair: int(initial_epochs[pair]) for pair in pairs}
+    else:
+        cursors = {pair: int(initial_epoch) for pair in pairs}
     if not ledger_path.is_file():
         return cursors
     seen: dict[tuple[str, int], str] = {}
@@ -603,12 +621,19 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
                 seed_hours=args.seed_hours,
             )
             broker._log("BOT_SEEDED", seed_manifest)
-        initial_epoch = int(window_start.timestamp() // 60) * 60 - 60
+        initial_epochs = (
+            {
+                pair: int(seed_manifest["pair_last_bar_epochs"][pair])
+                for pair in bot_pairs
+            }
+            if bot is not None
+            else {}
+        )
         cursors = restore_consumed_bars(
             session_dir / "ledger.jsonl",
             bot=bot,
             pairs=bot_pairs,
-            initial_epoch=initial_epoch,
+            initial_epochs=initial_epochs,
         )
         source_error_fingerprints: dict[str, str] = {}
 
