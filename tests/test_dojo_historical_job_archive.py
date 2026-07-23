@@ -311,6 +311,179 @@ def _rewrite_receipt(path: Path, mutate) -> dict:
     return receipt
 
 
+def test_hash_allows_metadata_refresh_on_the_same_content_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "drivefs-pending.tar.zst"
+    payload = b"stable archive payload" * 4096
+    path.write_bytes(payload)
+    original_pass = archive_module._hash_open_pass
+    pass_count = 0
+
+    def refresh_metadata(handle):
+        nonlocal pass_count
+        result = original_pass(handle)
+        pass_count += 1
+        if pass_count == 1:
+            state = path.stat(follow_symlinks=False)
+            os.utime(
+                path,
+                ns=(state.st_atime_ns, state.st_mtime_ns + 1_000_000_000),
+                follow_symlinks=False,
+            )
+        return result
+
+    monkeypatch.setattr(archive_module, "_hash_open_pass", refresh_metadata)
+
+    digest, size, device, inode = archive_module._hash_file_with_identity(path)
+
+    state = path.stat(follow_symlinks=False)
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert size == len(payload)
+    assert (device, inode) == (state.st_dev, state.st_ino)
+    assert pass_count == 2
+
+
+def test_hash_rejects_same_inode_same_size_content_drift_between_readbacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "mutated-pending.tar.zst"
+    original = b"A" * (128 * 1024)
+    replacement = b"B" * len(original)
+    path.write_bytes(original)
+    original_inode = path.stat(follow_symlinks=False).st_ino
+    original_pass = archive_module._hash_open_pass
+    pass_count = 0
+
+    def mutate_after_first_read(handle):
+        nonlocal pass_count
+        result = original_pass(handle)
+        pass_count += 1
+        if pass_count == 1:
+            path.write_bytes(replacement)
+            assert path.stat(follow_symlinks=False).st_ino == original_inode
+        return result
+
+    monkeypatch.setattr(
+        archive_module,
+        "_hash_open_pass",
+        mutate_after_first_read,
+    )
+
+    with pytest.raises(
+        DojoHistoricalJobArchiveError,
+        match="archive source changed while hashing",
+    ):
+        archive_module._hash_file_with_identity(path)
+
+
+def test_hash_rejects_rename_and_same_size_recreate_between_readbacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "replaced-pending.tar.zst"
+    displaced = tmp_path / "displaced-pending.tar.zst"
+    payload = b"same bytes" * 8192
+    path.write_bytes(payload)
+    original_inode = path.stat(follow_symlinks=False).st_ino
+    original_pass = archive_module._hash_open_pass
+    pass_count = 0
+
+    def replace_after_first_read(handle):
+        nonlocal pass_count
+        result = original_pass(handle)
+        pass_count += 1
+        if pass_count == 1:
+            path.rename(displaced)
+            path.write_bytes(payload)
+            assert path.stat(follow_symlinks=False).st_ino != original_inode
+        return result
+
+    monkeypatch.setattr(archive_module, "_hash_open_pass", replace_after_first_read)
+
+    with pytest.raises(
+        DojoHistoricalJobArchiveError,
+        match="archive source changed while hashing",
+    ):
+        archive_module._hash_file_with_identity(path)
+
+
+def test_bounded_read_rejects_same_inode_same_size_byte_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "receipt.json"
+    original = b'{"a":1}'
+    replacement = b'{"b":2}'
+    path.write_bytes(original)
+    original_inode = path.stat(follow_symlinks=False).st_ino
+    original_pass = archive_module._read_open_bounded_pass
+    pass_count = 0
+
+    def mutate_after_first_read(handle, *, maximum: int):
+        nonlocal pass_count
+        result = original_pass(handle, maximum=maximum)
+        pass_count += 1
+        if pass_count == 1:
+            path.write_bytes(replacement)
+            assert path.stat(follow_symlinks=False).st_ino == original_inode
+        return result
+
+    monkeypatch.setattr(
+        archive_module,
+        "_read_open_bounded_pass",
+        mutate_after_first_read,
+    )
+
+    with pytest.raises(
+        DojoHistoricalJobArchiveError,
+        match="receipt changed while read",
+    ):
+        archive_module._stable_regular_bytes(path, field="receipt", maximum=1024)
+
+
+def test_bounded_read_allows_metadata_refresh_on_the_same_content_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "drivefs-receipt.json"
+    payload = b'{"stable":true}'
+    path.write_bytes(payload)
+    original_pass = archive_module._read_open_bounded_pass
+    pass_count = 0
+
+    def refresh_metadata(handle, *, maximum: int):
+        nonlocal pass_count
+        result = original_pass(handle, maximum=maximum)
+        pass_count += 1
+        if pass_count == 1:
+            state = path.stat(follow_symlinks=False)
+            os.utime(
+                path,
+                ns=(state.st_atime_ns, state.st_mtime_ns + 1_000_000_000),
+                follow_symlinks=False,
+            )
+        return result
+
+    monkeypatch.setattr(
+        archive_module,
+        "_read_open_bounded_pass",
+        refresh_metadata,
+    )
+
+    assert (
+        archive_module._stable_regular_bytes(
+            path,
+            field="receipt",
+            maximum=1024,
+        )
+        == payload
+    )
+    assert pass_count == 2
+
+
 def test_archive_is_deterministic_streamed_and_idempotent(tmp_path: Path) -> None:
     root = _terminal_run(tmp_path)
     first_root = tmp_path / "drive-a"

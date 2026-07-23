@@ -132,6 +132,8 @@ def _decode_json_object(raw: bytes, *, field: str) -> dict[str, Any]:
 
 
 def _identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Strict metadata identity retained for raw-reclaim compatibility."""
+
     return (
         value.st_dev,
         value.st_ino,
@@ -142,10 +144,29 @@ def _identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
     )
 
 
+def _content_identity(value: os.stat_result) -> tuple[int, int, int, int]:
+    """Content-bearing identity; DriveFS timestamp refreshes are metadata-only."""
+
+    return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size
+
+
 def _lock_inode_identity(value: os.stat_result) -> tuple[int, int, int]:
     """Stable lock authority fields; timestamps are not lock identity."""
 
     return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode)
+
+
+def _read_open_bounded_pass(handle: BinaryIO, *, maximum: int) -> bytes:
+    return handle.read(maximum + 1)
+
+
+def _hash_open_pass(handle: BinaryIO) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := handle.read(HASH_CHUNK_BYTES):
+        digest.update(chunk)
+        size += len(chunk)
+    return digest.hexdigest(), size
 
 
 def _stable_regular_bytes(path: Path, *, field: str, maximum: int) -> bytes:
@@ -158,17 +179,23 @@ def _stable_regular_bytes(path: Path, *, field: str, maximum: int) -> bytes:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         with os.fdopen(descriptor, "rb", closefd=True) as handle:
-            raw = handle.read(maximum + 1)
-            opened = os.fstat(handle.fileno())
+            raw = _read_open_bounded_pass(handle, maximum=maximum)
+            opened_after_first = os.fstat(handle.fileno())
+            handle.seek(0)
+            confirmed_raw = _read_open_bounded_pass(handle, maximum=maximum)
+            opened_after_second = os.fstat(handle.fileno())
         after = path.stat(follow_symlinks=False)
     except DojoHistoricalJobArchiveError:
         raise
     except OSError as exc:
         raise DojoHistoricalJobArchiveError(f"{field} is unavailable") from exc
     if (
-        _identity(before) != _identity(opened)
-        or _identity(opened) != _identity(after)
+        _content_identity(before) != _content_identity(opened_after_first)
+        or _content_identity(opened_after_first)
+        != _content_identity(opened_after_second)
+        or _content_identity(opened_after_second) != _content_identity(after)
         or len(raw) != before.st_size
+        or raw != confirmed_raw
     ):
         raise DojoHistoricalJobArchiveError(f"{field} changed while read")
     return raw
@@ -188,15 +215,14 @@ def _hash_file_with_identity(path: Path) -> tuple[str, int, int, int]:
             raise DojoHistoricalJobArchiveError(
                 f"archive source is not regular: {path}"
             )
-        digest = hashlib.sha256()
-        size = 0
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         with os.fdopen(descriptor, "rb", closefd=True) as handle:
-            while chunk := handle.read(HASH_CHUNK_BYTES):
-                digest.update(chunk)
-                size += len(chunk)
-            opened = os.fstat(handle.fileno())
+            digest, size = _hash_open_pass(handle)
+            opened_after_first = os.fstat(handle.fileno())
+            handle.seek(0)
+            confirmed_digest, confirmed_size = _hash_open_pass(handle)
+            opened_after_second = os.fstat(handle.fileno())
         after = path.stat(follow_symlinks=False)
     except DojoHistoricalJobArchiveError:
         raise
@@ -205,14 +231,18 @@ def _hash_file_with_identity(path: Path) -> tuple[str, int, int, int]:
             f"archive source is unavailable: {path}"
         ) from exc
     if (
-        _identity(before) != _identity(opened)
-        or _identity(opened) != _identity(after)
+        _content_identity(before) != _content_identity(opened_after_first)
+        or _content_identity(opened_after_first)
+        != _content_identity(opened_after_second)
+        or _content_identity(opened_after_second) != _content_identity(after)
         or size != before.st_size
+        or confirmed_size != size
+        or confirmed_digest != digest
     ):
         raise DojoHistoricalJobArchiveError(
             f"archive source changed while hashing: {path}"
         )
-    return digest.hexdigest(), size, after.st_dev, after.st_ino
+    return digest, size, after.st_dev, after.st_ino
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
@@ -808,7 +838,7 @@ class _VerifiedSource:
             raise DojoHistoricalJobArchiveError(
                 f"archive source is unavailable: {path}"
             ) from exc
-        if _identity(self._before) != _identity(self._opened):
+        if _content_identity(self._before) != _content_identity(self._opened):
             self._handle.close()
             raise DojoHistoricalJobArchiveError(
                 f"archive source changed while opened: {path}"
@@ -831,8 +861,8 @@ class _VerifiedSource:
                 f"archive source disappeared while streaming: {self._path}"
             ) from exc
         if (
-            _identity(self._before) != _identity(opened_after)
-            or _identity(opened_after) != _identity(after)
+            _content_identity(self._before) != _content_identity(opened_after)
+            or _content_identity(opened_after) != _content_identity(after)
             or self._size != self._expected_size
             or self._digest.hexdigest() != self._expected_sha256
         ):
@@ -1106,7 +1136,7 @@ def _verify_archive(
         raise
     except OSError as exc:
         raise DojoHistoricalJobArchiveError("archive is unavailable") from exc
-    if _identity(archive_before) != _identity(archive_opened):
+    if _content_identity(archive_before) != _content_identity(archive_opened):
         os.close(archive_descriptor)
         raise DojoHistoricalJobArchiveError("archive changed while opened")
     verified: dict[str, Any] | None = None
@@ -1211,9 +1241,11 @@ def _verify_archive(
                 "archive disappeared while verified"
             ) from exc
         os.close(archive_descriptor)
-        if _identity(archive_before) != _identity(archive_opened_after) or _identity(
+        if _content_identity(archive_before) != _content_identity(
             archive_opened_after
-        ) != _identity(archive_after):
+        ) or _content_identity(archive_opened_after) != _content_identity(
+            archive_after
+        ):
             raise DojoHistoricalJobArchiveError("archive changed while verified")
         process_error.seek(0)
         error = process_error.read(4096)
@@ -1285,7 +1317,7 @@ def _copy_regular_file_to_output(
         raise
     except OSError as exc:
         raise DojoHistoricalJobArchiveError(f"{field} source is unavailable") from exc
-    if _identity(before) != _identity(opened):
+    if _content_identity(before) != _content_identity(opened):
         os.close(descriptor)
         raise DojoHistoricalJobArchiveError(f"{field} source changed while opened")
     digest = hashlib.sha256()
@@ -1303,8 +1335,8 @@ def _copy_regular_file_to_output(
     except OSError as exc:
         raise DojoHistoricalJobArchiveError(f"{field} copy failed") from exc
     if (
-        _identity(before) != _identity(opened_after)
-        or _identity(opened_after) != _identity(after)
+        _content_identity(before) != _content_identity(opened_after)
+        or _content_identity(opened_after) != _content_identity(after)
         or size != expected_size_bytes
         or digest.hexdigest() != expected_sha256
     ):
@@ -1732,7 +1764,9 @@ def _prepare_slice_pending(
         raise DojoHistoricalJobArchiveError(
             "archive source is unavailable while preparing readback part"
         ) from exc
-    if not stat.S_ISREG(before.st_mode) or _identity(before) != _identity(opened):
+    if not stat.S_ISREG(before.st_mode) or _content_identity(
+        before
+    ) != _content_identity(opened):
         os.close(source_descriptor)
         raise DojoHistoricalJobArchiveError(
             "archive source drifted before preparing readback part"
@@ -1774,8 +1808,8 @@ def _prepare_slice_pending(
             "remote readback part pending copy failed"
         ) from exc
     if (
-        _identity(before) != _identity(opened_after)
-        or _identity(opened_after) != _identity(after)
+        _content_identity(before) != _content_identity(opened_after)
+        or _content_identity(opened_after) != _content_identity(after)
         or copied != expected_size_bytes
         or digest.hexdigest() != expected_sha256
     ):
@@ -1819,7 +1853,7 @@ def _build_remote_readback_objects(
         ) from exc
     if (
         not stat.S_ISREG(before.st_mode)
-        or _identity(before) != _identity(opened)
+        or _content_identity(before) != _content_identity(opened)
         or before.st_size != archive_size_bytes
     ):
         os.close(descriptor)
@@ -1915,8 +1949,8 @@ def _build_remote_readback_objects(
             "archive changed during remote readback split"
         ) from exc
     if (
-        _identity(before) != _identity(opened_after)
-        or _identity(opened_after) != _identity(after)
+        _content_identity(before) != _content_identity(opened_after)
+        or _content_identity(opened_after) != _content_identity(after)
         or combined_size != archive_size_bytes
         or combined.hexdigest() != archive_sha256
     ):
@@ -2048,9 +2082,9 @@ def _verify_remote_readback_objects(
             ) from exc
         if (
             not stat.S_ISREG(before.st_mode)
-            or _identity(before) != _identity(opened)
-            or _identity(opened) != _identity(opened_after)
-            or _identity(opened_after) != _identity(after)
+            or _content_identity(before) != _content_identity(opened)
+            or _content_identity(opened) != _content_identity(opened_after)
+            or _content_identity(opened_after) != _content_identity(after)
             or observed_size != size
             or digest.hexdigest() != sha256
         ):

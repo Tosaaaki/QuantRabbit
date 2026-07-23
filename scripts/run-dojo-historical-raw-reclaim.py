@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_rabbit.dojo_historical_raw_reclaim import (
     enroll_historical_job_attestation_public_key,
+    historical_global_heavy_lock_path,
     publish_historical_job_signed_remote_readback_receipt,
     reclaim_historical_job_raw,
     restore_historical_job_raw,
@@ -42,6 +43,14 @@ def _parser() -> argparse.ArgumentParser:
             "--zstd-bin",
             required=True,
             help="absolute path to the sealed zstd executable",
+        )
+        command.add_argument(
+            "--global-heavy-lock",
+            type=Path,
+            help=(
+                "machine-wide heavy-operation lease; when omitted, use the path "
+                "from the generation's sealed run control"
+            ),
         )
         if name == "reclaim":
             command.add_argument(
@@ -119,6 +128,11 @@ def main(argv: list[str] | None = None) -> int:
         "expected_drive_parent_id": args.expected_drive_parent_id,
         "attestation_authority_seal_path": args.attestation_authority_seal,
         "zstd_bin": args.zstd_bin,
+        "global_heavy_lock_path": (
+            args.global_heavy_lock
+            if args.global_heavy_lock is not None
+            else historical_global_heavy_lock_path(run_root=args.run_root)
+        ),
     }
     if args.command == "verify":
         result = verify_historical_job_raw_reclaim(**common)

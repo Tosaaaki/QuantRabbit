@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import ast
 import base64
+import fcntl
 import hashlib
 import inspect
 import json
+import os
 import random
 import shutil
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -63,6 +67,7 @@ def _terminal_run(
     *,
     source_size: int = 256 * 1024,
     incompressible: bool = False,
+    global_heavy_lock_path: Path | None = None,
 ) -> tuple[Path, list[Path]]:
     root = tmp_path / "run"
     implementation_digests = {
@@ -100,6 +105,10 @@ def _terminal_run(
             "order_authority": "NONE",
         },
     }
+    if global_heavy_lock_path is not None:
+        run_control["execution"] = {
+            "global_heavy_lock_path": str(global_heavy_lock_path)
+        }
     source_manifest = _sealed(
         {
             "contract": "QR_DOJO_LONG_HORIZON_SOURCE_MANIFEST_V1",
@@ -440,6 +449,7 @@ def _signed_remote_lineage(
     issued_at: datetime | None = None,
     expires_at: datetime | None = None,
     verification_now: datetime | None = None,
+    global_heavy_lock_path: Path | None = None,
 ) -> tuple[
     Path,
     Path,
@@ -450,7 +460,10 @@ def _signed_remote_lineage(
     Ed25519PrivateKey,
     datetime,
 ]:
-    root, raw_paths = _terminal_run(tmp_path)
+    root, raw_paths = _terminal_run(
+        tmp_path,
+        global_heavy_lock_path=global_heavy_lock_path,
+    )
     archive_root = tmp_path / "drive"
     local = archive_completed_historical_job(
         run_root=root,
@@ -1129,6 +1142,179 @@ def test_reclaim_lock_replacement_stops_before_first_raw_retirement(
     assert not list((root / "reclaim-v2-receipts").glob("reclaim-*.json"))
 
 
+def test_separate_generation_global_lease_blocks_double_reclaim_execution(
+    tmp_path: Path,
+) -> None:
+    global_lock = tmp_path / "global-heavy.lock"
+    root, local_path, seal_path, remote_path, raw_paths, _, _, now = (
+        _signed_remote_lineage(
+            tmp_path,
+            global_heavy_lock_path=global_lock,
+        )
+    )
+    verified = verify_historical_job_raw_reclaim(
+        run_root=root,
+        archive_receipt_path=local_path,
+        remote_receipt_path=remote_path,
+        expected_drive_parent_id=DRIVE_PARENT_ID,
+        zstd_bin=ZSTD_BIN,
+        attestation_authority_seal_path=seal_path,
+        global_heavy_lock_path=global_lock,
+        now_utc=now,
+    )
+    plan = verified["plan"]
+    owner = os.open(global_lock, os.O_RDWR)
+    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with pytest.raises(
+            DojoHistoricalRawReclaimError,
+            match="global heavy operation lease is already held",
+        ):
+            reclaim_historical_job_raw(
+                run_root=root,
+                archive_receipt_path=local_path,
+                remote_receipt_path=remote_path,
+                expected_drive_parent_id=DRIVE_PARENT_ID,
+                zstd_bin=ZSTD_BIN,
+                attestation_authority_seal_path=seal_path,
+                confirmed_plan_sha256=plan["plan_sha256"],
+                confirmed_target_count=plan["target_count"],
+                confirmed_target_bytes=plan["target_bytes"],
+                global_heavy_lock_path=global_lock,
+                now_utc=now,
+            )
+    finally:
+        fcntl.flock(owner, fcntl.LOCK_UN)
+        os.close(owner)
+    assert all(path.is_file() for path in raw_paths)
+    assert not list((root / "reclaim-v2-receipts").glob("plan-job-*.json"))
+
+
+def test_explicit_global_lease_must_match_the_sealed_run_control(
+    tmp_path: Path,
+) -> None:
+    global_lock = tmp_path / "global-heavy.lock"
+    root, local_path, seal_path, remote_path, raw_paths, _, _, now = (
+        _signed_remote_lineage(
+            tmp_path,
+            global_heavy_lock_path=global_lock,
+        )
+    )
+    with pytest.raises(
+        DojoHistoricalRawReclaimError,
+        match="differs from the sealed run control",
+    ):
+        verify_historical_job_raw_reclaim(
+            run_root=root,
+            archive_receipt_path=local_path,
+            remote_receipt_path=remote_path,
+            expected_drive_parent_id=DRIVE_PARENT_ID,
+            zstd_bin=ZSTD_BIN,
+            attestation_authority_seal_path=seal_path,
+            global_heavy_lock_path=tmp_path / "wrong-global-heavy.lock",
+            now_utc=now,
+        )
+    assert all(path.is_file() for path in raw_paths)
+
+
+def test_global_lease_replacement_stops_before_first_raw_retirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global_lock = tmp_path / "global-heavy.lock"
+    root, local_path, seal_path, remote_path, raw_paths, _, _, now = (
+        _signed_remote_lineage(
+            tmp_path,
+            global_heavy_lock_path=global_lock,
+        )
+    )
+    verified = verify_historical_job_raw_reclaim(
+        run_root=root,
+        archive_receipt_path=local_path,
+        remote_receipt_path=remote_path,
+        expected_drive_parent_id=DRIVE_PARENT_ID,
+        zstd_bin=ZSTD_BIN,
+        attestation_authority_seal_path=seal_path,
+        global_heavy_lock_path=global_lock,
+        now_utc=now,
+    )
+    plan = verified["plan"]
+    original_write = reclaim_module._write_once
+
+    def replace_global_lock(path: Path, value: dict, *, field: str) -> None:
+        original_write(path, value, field=field)
+        if field != "raw reclaim plan":
+            return
+        displaced = global_lock.with_suffix(".displaced")
+        global_lock.rename(displaced)
+        global_lock.write_bytes(b"replacement")
+
+    monkeypatch.setattr(reclaim_module, "_write_once", replace_global_lock)
+    with pytest.raises(
+        DojoHistoricalRawReclaimError,
+        match="global heavy operation lease path identity changed",
+    ):
+        reclaim_historical_job_raw(
+            run_root=root,
+            archive_receipt_path=local_path,
+            remote_receipt_path=remote_path,
+            expected_drive_parent_id=DRIVE_PARENT_ID,
+            zstd_bin=ZSTD_BIN,
+            attestation_authority_seal_path=seal_path,
+            confirmed_plan_sha256=plan["plan_sha256"],
+            confirmed_target_count=plan["target_count"],
+            confirmed_target_bytes=plan["target_bytes"],
+            global_heavy_lock_path=global_lock,
+            now_utc=now,
+        )
+    assert all(path.is_file() for path in raw_paths)
+    assert not list((root / "reclaim-v2-receipts").glob("reclaim-*.json"))
+
+
+def test_cli_uses_sealed_global_lease_without_an_extra_flag(tmp_path: Path) -> None:
+    global_lock = tmp_path / "global-heavy.lock"
+    root, local_path, seal_path, remote_path, raw_paths, _, _, _ = (
+        _signed_remote_lineage(
+            tmp_path,
+            global_heavy_lock_path=global_lock,
+        )
+    )
+    owner = os.open(global_lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        script = (
+            Path(__file__).parents[1] / "scripts" / "run-dojo-historical-raw-reclaim.py"
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "verify",
+                "--run-root",
+                str(root),
+                "--archive-receipt",
+                str(local_path),
+                "--remote-receipt",
+                str(remote_path),
+                "--expected-drive-parent-id",
+                DRIVE_PARENT_ID,
+                "--attestation-authority-seal",
+                str(seal_path),
+                "--zstd-bin",
+                ZSTD_BIN,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        fcntl.flock(owner, fcntl.LOCK_UN)
+        os.close(owner)
+    assert completed.returncode != 0
+    assert "global heavy operation lease is already held" in completed.stderr
+    assert all(path.is_file() for path in raw_paths)
+
+
 def test_hidden_second_key_fork_blocks_enroll_publish_verify_and_reclaim(
     tmp_path: Path,
 ) -> None:
@@ -1419,6 +1605,66 @@ def test_signed_attestation_id_replay_is_rejected(tmp_path: Path) -> None:
             zstd_bin=ZSTD_BIN,
             now_utc=now,
         )
+
+
+def test_signed_attestation_is_exact_one_per_job_manifest_and_retry_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    root, local_path, seal_path, remote_path, _, local, signer, now = (
+        _signed_remote_lineage(tmp_path)
+    )
+    first = json.loads(remote_path.read_text(encoding="utf-8"))
+
+    retry = publish_historical_job_signed_remote_readback_receipt(
+        run_root=root,
+        archive_receipt_path=local_path,
+        signed_attestation_path=remote_path,
+        expected_drive_parent_id=DRIVE_PARENT_ID,
+        attestation_authority_seal_path=seal_path,
+        zstd_bin=ZSTD_BIN,
+        now_utc=now,
+    )
+
+    assert retry == first
+    lineage_pattern = f"signed-job-{JOB_SHA256}-{local['manifest_sha256']}-*.json"
+    assert list(remote_path.parent.glob(lineage_pattern)) == [remote_path]
+
+    second_body = json.loads(json.dumps(first["body"]))
+    second_body["attestation_id"] = "f" * 64
+    signature = base64.b64encode(signer.sign(_canonical_bytes(second_body))).decode(
+        "ascii"
+    )
+    envelope_body = {
+        "contract": REMOTE_READBACK_SIGNED_ATTESTATION_CONTRACT,
+        "schema_version": 2,
+        "algorithm": "ED25519",
+        "public_key_sha256": first["public_key_sha256"],
+        "body": second_body,
+        "signature_base64": signature,
+    }
+    second = {
+        **envelope_body,
+        "remote_receipt_sha256": _canonical_sha256(envelope_body),
+    }
+    second_path = tmp_path / "second-different-id.json"
+    _write_json(second_path, second)
+
+    with pytest.raises(
+        DojoHistoricalRawReclaimError,
+        match="another signed Drive attestation already exists",
+    ):
+        publish_historical_job_signed_remote_readback_receipt(
+            run_root=root,
+            archive_receipt_path=local_path,
+            signed_attestation_path=second_path,
+            expected_drive_parent_id=DRIVE_PARENT_ID,
+            attestation_authority_seal_path=seal_path,
+            zstd_bin=ZSTD_BIN,
+            now_utc=now,
+        )
+
+    assert list(remote_path.parent.glob(lineage_pattern)) == [remote_path]
+    assert json.loads(remote_path.read_text(encoding="utf-8")) == first
 
 
 def test_private_key_material_is_not_an_api_or_persistence_surface() -> None:

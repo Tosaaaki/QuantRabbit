@@ -3153,6 +3153,13 @@ def evaluate_historical_lifecycle(
     execution = long_horizon_execution_status(
         root / "execution-state", schedule=schedule, plan=plan
     )
+    manifest_path = root / _ARTIFACT_NAMES["control_manifest"]
+    milestone = (
+        _milestone_status(root, schedule, publish=False)
+        if manifest_path.is_file()
+        else None
+    )
+    trainer_review_due = bool(milestone is not None and milestone["trainer_review_due"])
     scheduled = [job["job_sha256"] for job in schedule["jobs"]]
     scheduled_set = set(scheduled)
     terminal_history = _job_artifact_files(
@@ -3434,6 +3441,10 @@ def evaluate_historical_lifecycle(
         else:
             state = "WAIT_FOR_SIGNED_REMOTE_ATTESTATION"
         transition = "NONE"
+    elif trainer_review_due and execution["ready_job_count"]:
+        state = "TRAINER_REVIEW_REQUIRED"
+        transition = "NONE"
+        blockers.append("TRAINER_REVIEW_DUE")
     elif execution["ready_job_count"]:
         state = "READY_TO_CLAIM"
         transition = "CLAIM_NEXT_JOB"
@@ -3465,6 +3476,7 @@ def evaluate_historical_lifecycle(
         "raw_reclaim_transition_allowed": False,
         "status_custody_validation": "COMPACT_ONLY",
         "deep_custody_verification_before_claim": True,
+        "trainer_review_due": trainer_review_due,
         "lifecycle_barrier_policy_enabled": barrier_policy_enabled,
         "unreclaimed_terminal_job_count": len(unsettled_for_claim),
         "max_unreclaimed_terminal_jobs": (
@@ -4403,6 +4415,14 @@ def run_next_job(
             plan=plan,
             schedule=schedule,
         )
+        milestone = _milestone_status(root, schedule, publish=False)
+        if (
+            milestone["trainer_review_due"]
+            and lifecycle["execution"]["ready_job_count"]
+        ):
+            raise DojoHistoricalTrainControlError(
+                "trainer review is due before the next historical claim"
+            )
         if lifecycle["state"] != "READY_TO_CLAIM":
             raise DojoHistoricalTrainControlError(
                 "run-next lifecycle does not permit a claim: "

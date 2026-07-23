@@ -38,7 +38,7 @@ import sys
 import tarfile
 import tempfile
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
@@ -2155,6 +2155,119 @@ def _open_absolute_parent(path: Path, *, field: str) -> tuple[int, str]:
         raise
 
 
+def _sealed_run_control_global_heavy_lock(root: Path) -> Path | None:
+    """Read the optional global lease binding from the sealed run control."""
+
+    manifest_path = root / "control-manifest.json"
+    control_path = root / "sealed-inputs" / "run-control.json"
+    manifest = _read_canonical_json(
+        manifest_path,
+        field="generation control manifest for global heavy lease",
+    )
+    manifest_body = {
+        key: value for key, value in manifest.items() if key != "manifest_sha256"
+    }
+    if manifest.get("manifest_sha256") != _canonical_sha256(manifest_body):
+        raise DojoHistoricalRawReclaimError(
+            "generation control manifest global lease binding is unsealed"
+        )
+    rows = manifest.get("sealed_input_artifacts")
+    if not isinstance(rows, list) or manifest.get(
+        "sealed_input_artifacts_sha256"
+    ) != _canonical_sha256(rows):
+        raise DojoHistoricalRawReclaimError(
+            "generation sealed input inventory global lease binding is invalid"
+        )
+    run_control_rows = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and row.get("artifact_id") == "RUN_CONTROL"
+    ]
+    if len(run_control_rows) != 1:
+        raise DojoHistoricalRawReclaimError(
+            "generation has no unique sealed run-control global lease binding"
+        )
+    row = _exact(
+        run_control_rows[0],
+        {"artifact_id", "relative_path", "file_sha256", "file_size_bytes"},
+        "sealed run-control inventory row",
+    )
+    if row.get("relative_path") != "sealed-inputs/run-control.json":
+        raise DojoHistoricalRawReclaimError(
+            "sealed run-control global lease path is noncanonical"
+        )
+    raw = _stable_regular_bytes(
+        control_path,
+        field="sealed run control for global heavy lease",
+        maximum=MAX_JSON_BYTES,
+    )
+    if _sha(
+        row.get("file_sha256"), "sealed run-control file SHA-256"
+    ) != hashlib.sha256(raw).hexdigest() or _positive_integer(
+        row.get("file_size_bytes"), "sealed run-control file size"
+    ) != len(raw):
+        raise DojoHistoricalRawReclaimError(
+            "sealed run-control bytes do not match the generation manifest"
+        )
+    control = _read_canonical_json(
+        control_path,
+        field="sealed run control for global heavy lease",
+    )
+    execution = control.get("execution")
+    if execution is None:
+        return None
+    if not isinstance(execution, Mapping):
+        raise DojoHistoricalRawReclaimError(
+            "sealed run-control execution binding is invalid"
+        )
+    value = execution.get("global_heavy_lock_path")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise DojoHistoricalRawReclaimError("sealed global heavy lock path is invalid")
+    path = Path(value)
+    if (
+        not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or any(part in {"", ".", ".."} for part in path.parts[1:])
+    ):
+        raise DojoHistoricalRawReclaimError("sealed global heavy lock path is unsafe")
+    return path
+
+
+def historical_global_heavy_lock_path(*, run_root: Path) -> Path | None:
+    """Return the machine-wide lease path sealed into one generation."""
+
+    root = Path(run_root).resolve(strict=True)
+    return _sealed_run_control_global_heavy_lock(root)
+
+
+def _bound_global_heavy_lock_path(
+    *, root: Path, requested_path: Path | None
+) -> Path | None:
+    """Validate an explicit lease against the sealed control when available."""
+
+    if requested_path is None:
+        # The train controller already owns this lease when it calls custody
+        # verification.  Absence therefore preserves that nested call path.
+        return None
+    path = Path(requested_path)
+    if (
+        not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or any(part in {"", ".", ".."} for part in path.parts[1:])
+    ):
+        raise DojoHistoricalRawReclaimError(
+            "global heavy operation lease path is unsafe"
+        )
+    sealed_path = _sealed_run_control_global_heavy_lock(root)
+    if sealed_path is not None and path != sealed_path:
+        raise DojoHistoricalRawReclaimError(
+            "explicit global heavy lease differs from the sealed run control"
+        )
+    return path
+
+
 @contextmanager
 def _exclusive_lock(path: Path, *, field: str) -> Iterator[_OpenedLock]:
     lock_path = Path(path)
@@ -2213,6 +2326,20 @@ def _exclusive_lock(path: Path, *, field: str) -> Iterator[_OpenedLock]:
             finally:
                 os.close(descriptor)
                 os.close(parent_descriptor)
+
+
+@contextmanager
+def _optional_global_heavy_lease(
+    *, root: Path, requested_path: Path | None
+) -> Iterator[_OpenedLock | None]:
+    path = _bound_global_heavy_lock_path(root=root, requested_path=requested_path)
+    if path is None:
+        yield None
+        return
+    with _exclusive_lock(path, field="global heavy operation lease") as guard:
+        guard.assert_stable()
+        yield guard
+        guard.assert_stable()
 
 
 def _ensure_remote_candidate_directory(archive_root: Path) -> Path:
@@ -2563,6 +2690,31 @@ def publish_historical_job_signed_remote_readback_receipt(
             local=local,
             expected_drive_parent_id=expected_drive_parent_id,
         )
+        same_lineage_paths = sorted(remote_root.glob(f"{prefix}-*.json"))
+        if len(same_lineage_paths) > 1:
+            raise DojoHistoricalRawReclaimError(
+                "multiple signed Drive attestations exist for this job and manifest"
+            )
+        if same_lineage_paths:
+            existing_path = same_lineage_paths[0]
+            existing = _read_canonical_json(
+                existing_path,
+                field="existing signed Drive receipt for job and manifest",
+            )
+            if existing_path == output and existing == receipt:
+                return existing
+            existing_body = existing.get("body")
+            if (
+                isinstance(existing_body, Mapping)
+                and existing_body.get("attestation_id")
+                == receipt["body"]["attestation_id"]
+            ):
+                raise DojoHistoricalRawReclaimError(
+                    "signed Drive attestation id was replayed"
+                )
+            raise DojoHistoricalRawReclaimError(
+                "another signed Drive attestation already exists for this job and manifest"
+            )
         attestation_id = receipt["body"]["attestation_id"]
         for existing_path in sorted(remote_root.glob("signed-job-*.json")):
             existing = _read_canonical_json(
@@ -2587,9 +2739,13 @@ def publish_historical_job_signed_remote_readback_receipt(
             expected_drive_parent_id=expected_drive_parent_id,
         )
         publication_lock.assert_stable()
+        if list(remote_root.glob(f"{prefix}-*.json")):
+            raise DojoHistoricalRawReclaimError(
+                "another signed Drive attestation appeared for this job and manifest"
+            )
         _write_once(output, receipt, field="signed Drive attestation receipt")
         publication_lock.assert_stable()
-        return _validate_remote_receipt(
+        published = _validate_remote_receipt(
             remote_receipt_path=output,
             archive_root=archive_root,
             local=local,
@@ -2597,6 +2753,11 @@ def publish_historical_job_signed_remote_readback_receipt(
             attestation_authority_seal_path=attestation_authority_seal_path,
             now_utc=now_utc,
         )
+        if sorted(remote_root.glob(f"{prefix}-*.json")) != [output]:
+            raise DojoHistoricalRawReclaimError(
+                "signed Drive attestation lineage is no longer exact-one"
+            )
+        return published
 
 
 def _raw_retirement_anchor_name(row: Mapping[str, Any]) -> str:
@@ -2741,26 +2902,36 @@ def verify_historical_job_raw_reclaim(
     expected_drive_parent_id: str,
     zstd_bin: str,
     attestation_authority_seal_path: Path | None = None,
+    global_heavy_lock_path: Path | None = None,
     now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Read-only eligibility check; it never writes a receipt or removes data."""
 
-    prepared = _prepare_reclaim(
-        run_root=Path(run_root),
-        archive_receipt_path=Path(archive_receipt_path),
-        remote_receipt_path=Path(remote_receipt_path),
-        expected_drive_parent_id=expected_drive_parent_id,
-        attestation_authority_seal_path=attestation_authority_seal_path,
-        permit_missing_targets=False,
-        zstd_bin=zstd_bin,
-        now_utc=now_utc,
-    )
-    body = _plan_body(prepared)
-    return {
-        "status": "RAW_RECLAIM_VERIFIED_NOT_EXECUTED",
-        "plan": {**body, "plan_sha256": _canonical_sha256(body)},
-        **_AUTHORITY,
-    }
+    root = Path(run_root).resolve(strict=True)
+    with _optional_global_heavy_lease(
+        root=root,
+        requested_path=global_heavy_lock_path,
+    ) as global_lock_guard:
+        if global_lock_guard is not None:
+            global_lock_guard.assert_stable()
+        prepared = _prepare_reclaim(
+            run_root=root,
+            archive_receipt_path=Path(archive_receipt_path),
+            remote_receipt_path=Path(remote_receipt_path),
+            expected_drive_parent_id=expected_drive_parent_id,
+            attestation_authority_seal_path=attestation_authority_seal_path,
+            permit_missing_targets=False,
+            zstd_bin=zstd_bin,
+            now_utc=now_utc,
+        )
+        if global_lock_guard is not None:
+            global_lock_guard.assert_stable()
+        body = _plan_body(prepared)
+        return {
+            "status": "RAW_RECLAIM_VERIFIED_NOT_EXECUTED",
+            "plan": {**body, "plan_sha256": _canonical_sha256(body)},
+            **_AUTHORITY,
+        }
 
 
 def _validate_plan(path: Path, expected_body: Mapping[str, Any]) -> dict[str, Any]:
@@ -2978,16 +3149,26 @@ def reclaim_historical_job_raw(
     confirmed_plan_sha256: str | None = None,
     confirmed_target_count: int | None = None,
     confirmed_target_bytes: int | None = None,
+    global_heavy_lock_path: Path | None = None,
     now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Remove only raw transcripts/source after complete local+remote proof."""
 
     root = Path(run_root).resolve(strict=True)
     run_lock = root / ".historical-train.lock"
-    with _exclusive_lock(
-        run_lock,
-        field="historical train run lock",
-    ) as run_lock_guard:
+    with ExitStack() as lock_stack:
+        run_lock_guard = lock_stack.enter_context(
+            _exclusive_lock(
+                run_lock,
+                field="historical train run lock",
+            )
+        )
+        global_lock_guard = lock_stack.enter_context(
+            _optional_global_heavy_lease(
+                root=root,
+                requested_path=global_heavy_lock_path,
+            )
+        )
         preliminary_archive = _read_canonical_json(
             Path(archive_receipt_path), field="local archive receipt"
         )
@@ -3001,6 +3182,8 @@ def reclaim_historical_job_raw(
 
             def assert_reclaim_locks() -> None:
                 run_lock_guard.assert_stable()
+                if global_lock_guard is not None:
+                    global_lock_guard.assert_stable()
                 job_lock_guard.assert_stable()
 
             assert_reclaim_locks()
@@ -3044,6 +3227,7 @@ def reclaim_historical_job_raw(
                 zstd_bin=zstd_bin,
                 now_utc=now_utc,
             )
+            assert_reclaim_locks()
             plan_body = _plan_body(prepared)
             plan = {**plan_body, "plan_sha256": _canonical_sha256(plan_body)}
             if (
@@ -4578,6 +4762,7 @@ __all__ = [
     "create_historical_job_remote_readback_receipt",
     "enroll_historical_job_attestation_public_key",
     "historical_raw_storage_boundary",
+    "historical_global_heavy_lock_path",
     "publish_historical_job_signed_remote_readback_receipt",
     "reclaim_historical_job_raw",
     "restore_historical_job_raw",

@@ -48,6 +48,7 @@ from quant_rabbit.dojo_historical_train_control import (
     evaluate_historical_lifecycle,
     generation_status,
     prepare_generation,
+    run_next_job,
 )
 
 
@@ -945,6 +946,84 @@ def test_lifecycle_ready_terminal_and_completion_transitions(
         "COMPLETION_PUBLISHED",
         "ARCHIVE_NEXT",
     )
+
+
+def test_trainer_review_due_blocks_claim_but_not_archive_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ready_job = "1" * 64
+    completed_job = "2" * 64
+    (tmp_path / "control-manifest.json").write_text("{}", encoding="utf-8")
+    statuses = iter(
+        (
+            _fake_execution_status(terminal=0, ready=1),
+            _fake_execution_status(terminal=1, ready=1),
+        )
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control.long_horizon_execution_status",
+        lambda *args, **kwargs: next(statuses),
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control._milestone_status",
+        lambda *args, **kwargs: {"trainer_review_due": True},
+    )
+    control = {
+        "fixed_inputs": {},
+        "execution": {"archive_root": str(tmp_path / "archive")},
+    }
+
+    review_gate = evaluate_historical_lifecycle(
+        root=tmp_path,
+        control=control,
+        plan={},
+        schedule={"jobs": [{"job_sha256": ready_job}]},
+    )
+
+    assert review_gate["state"] == "TRAINER_REVIEW_REQUIRED"
+    assert review_gate["next_transition"] == "NONE"
+    assert review_gate["blockers"] == ["TRAINER_REVIEW_DUE"]
+    assert review_gate["trainer_review_due"] is True
+
+    terminal_sha = _publish_fake_terminal(tmp_path, completed_job)
+    _publish_fake_completion(tmp_path, completed_job, terminal_sha)
+    archive_first = evaluate_historical_lifecycle(
+        root=tmp_path,
+        control=control,
+        plan={},
+        schedule={
+            "jobs": [
+                {"job_sha256": completed_job},
+                {"job_sha256": ready_job},
+            ]
+        },
+    )
+
+    assert archive_first["state"] == "COMPLETION_PUBLISHED"
+    assert archive_first["next_transition"] == "ARCHIVE_NEXT"
+    assert archive_first["trainer_review_due"] is True
+
+
+def test_run_next_rechecks_trainer_review_before_claim_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_path = _prepare_archive_only_generation(tmp_path)
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control._milestone_status",
+        lambda *args, **kwargs: {"trainer_review_due": True},
+    )
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control.claim_next_long_horizon_job",
+        lambda *args, **kwargs: pytest.fail(
+            "trainer review gate must prevent the next claim"
+        ),
+    )
+
+    with pytest.raises(
+        DojoHistoricalTrainControlError,
+        match="trainer review is due before the next historical claim",
+    ):
+        run_next_job(repo_root=REPO_ROOT, run_control_path=control_path)
 
 
 def test_lifecycle_rejects_completion_without_terminal(
