@@ -29,6 +29,7 @@ COMPLETED_M1_SOURCE = "OANDA_COMPLETED_M1_BID_ASK_V1"
 COMPLETED_M1_CUTOFF_CONTRACT = "QR_DOJO_COMPLETED_M1_CUTOFF_V1"
 COMPLETED_M1_MISSED_CONTRACT = "QR_DOJO_COMPLETED_M1_MISSED_V1"
 COMPLETED_M1_SEED_CONTRACT = "QR_DOJO_COMPLETED_M1_SEED_V1"
+COMPLETED_M1_SOURCE_ERROR_CONTRACT = "QR_DOJO_COMPLETED_M1_SOURCE_ERROR_V1"
 MAX_DECISION_BAR_AGE_SECONDS = 90.0
 MIN_OBSERVED_LAB_SEED_BARS = 1441
 
@@ -458,6 +459,111 @@ def _fetch_completed_m1(
     )
 
 
+def fetch_completed_m1_fail_closed(
+    client: Any,
+    *,
+    broker: Any,
+    bot: Any,
+    pair: str,
+    after_epoch: int,
+    cutoff: datetime,
+    error_fingerprints: dict[str, str],
+) -> list[dict[str, Any]] | None:
+    """Fetch one causal M1 suffix without letting source failure stale orders.
+
+    A source/transport/shape exception is evidence unavailability, not a
+    reason to terminate the paper owner and strand its resting orders.  The
+    cursor remains unchanged, every strategy-owned pending order for the pair
+    is cancelled, and the same suffix is retried on the next poll.  Repeated
+    identical errors at the same cursor are ledger-idempotent.
+    """
+
+    try:
+        bars = _fetch_completed_m1(
+            client,
+            pair=pair,
+            after_epoch=after_epoch,
+            cutoff=cutoff,
+        )
+    except Exception as exc:
+        error_type = type(exc).__name__
+        error_message = str(exc)[:200]
+        fingerprint_body = {
+            "pair": pair,
+            "after_epoch": int(after_epoch),
+            "error_type": error_type,
+            "error_message": error_message,
+        }
+        fingerprint = _canonical_sha256(fingerprint_body)
+        if error_fingerprints.get(pair) != fingerprint:
+            body = {
+                "contract": COMPLETED_M1_SOURCE_ERROR_CONTRACT,
+                **fingerprint_body,
+                "as_of_utc": cutoff.astimezone(UTC).isoformat(),
+                "source": COMPLETED_M1_SOURCE,
+                "retry_same_cursor": True,
+                "new_entries_allowed": False,
+                "paper_only": True,
+                "order_authority": "NONE",
+                "live_permission": False,
+                "error_fingerprint_sha256": fingerprint,
+            }
+            broker._log(
+                "BOT_M1_SOURCE_ERROR",
+                {
+                    "payload": {
+                        **body,
+                        "source_error_sha256": _canonical_sha256(body),
+                    }
+                },
+            )
+            error_fingerprints[pair] = fingerprint
+        strategy_tag = str(getattr(bot, "strategy_tag", "") or "")
+        for order_id, order in list(broker.orders.items()):
+            if (
+                order.pair == pair
+                and strategy_tag
+                and order.strategy_tag == strategy_tag
+            ):
+                broker._log(
+                    "BOT_M1_SOURCE_ORDER_CANCEL",
+                    {
+                        "order_id": order_id,
+                        "pair": pair,
+                        "strategy_tag": strategy_tag,
+                        "error_fingerprint_sha256": fingerprint,
+                        "new_entries_allowed": False,
+                        "order_authority": "NONE",
+                    },
+                )
+                broker.cancel_order(order_id)
+        return None
+
+    previous = error_fingerprints.pop(pair, None)
+    if previous is not None:
+        body = {
+            "contract": COMPLETED_M1_SOURCE_ERROR_CONTRACT,
+            "pair": pair,
+            "after_epoch": int(after_epoch),
+            "recovered_at_utc": cutoff.astimezone(UTC).isoformat(),
+            "previous_error_fingerprint_sha256": previous,
+            "source": COMPLETED_M1_SOURCE,
+            "paper_only": True,
+            "order_authority": "NONE",
+            "live_permission": False,
+        }
+        broker._log(
+            "BOT_M1_SOURCE_RECOVERED",
+            {
+                "payload": {
+                    **body,
+                    "source_recovery_sha256": _canonical_sha256(body),
+                }
+            },
+        )
+    return bars
+
+
 def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
     """Bind the frozen paper runtime helpers to the completed-M1 live loop."""
 
@@ -504,6 +610,7 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
             pairs=bot_pairs,
             initial_epoch=initial_epoch,
         )
+        source_error_fingerprints: dict[str, str] = {}
 
         while time_mod.time() < deadline:
             now = datetime.now(UTC)
@@ -566,6 +673,7 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
                     quote.timestamp_utc.isoformat(),
                 )
 
+            source_blocked_pairs: list[str] = []
             if bot is not None:
                 for pair in bot_pairs:
                     quote = quotes[pair]
@@ -575,12 +683,18 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
                     )
                     if latest_complete_epoch <= cursors[pair]:
                         continue
-                    bars = _fetch_completed_m1(
+                    bars = fetch_completed_m1_fail_closed(
                         client,
+                        broker=broker,
+                        bot=bot,
                         pair=pair,
                         after_epoch=cursors[pair],
                         cutoff=cutoff,
+                        error_fingerprints=source_error_fingerprints,
                     )
+                    if bars is None:
+                        source_blocked_pairs.append(pair)
+                        continue
                     if not bars:
                         continue
                     for bar in bars:
@@ -638,13 +752,19 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
                             )
                         cursors[pair] = int(bar["epoch"])
 
-            if not args.drain_only:
+            if not args.drain_only and not source_blocked_pairs:
                 runtime._process_inbox(session_dir, broker)
             runtime._write_state(
                 session_dir,
                 broker,
                 now.isoformat(),
                 "live",
+                (
+                    "BOT_M1_SOURCE_UNAVAILABLE: no new entries; retrying "
+                    + ",".join(sorted(source_blocked_pairs))
+                    if source_blocked_pairs
+                    else ""
+                ),
             )
             if args.drain_only and not broker.positions and not broker.orders:
                 return
@@ -656,9 +776,11 @@ def make_completed_m1_run_live(runtime: Any) -> Callable[..., None]:
 __all__ = [
     "COMPLETED_M1_CUTOFF_CONTRACT",
     "COMPLETED_M1_SOURCE",
+    "COMPLETED_M1_SOURCE_ERROR_CONTRACT",
     "CompletedM1EvidenceError",
     "completed_m1_bars",
     "cutoff_payload",
+    "fetch_completed_m1_fail_closed",
     "make_completed_m1_run_live",
     "restore_consumed_bars",
     "seed_completed_m1_history",

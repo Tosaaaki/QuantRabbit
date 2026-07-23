@@ -8,8 +8,11 @@ replay path, and CLI, replacing only the live bot-decision loop.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +42,43 @@ def _frozen_runtime() -> Any:
 
 def main() -> int:
     runtime = _frozen_runtime()
-    runtime.run_live = make_completed_m1_run_live(runtime)
+    completed_m1_run_live = make_completed_m1_run_live(runtime)
+
+    def run_live_with_error_receipt(
+        args: Any,
+        broker: Any,
+        session_dir: Path,
+        bot: Any = None,
+    ) -> None:
+        try:
+            completed_m1_run_live(args, broker, session_dir, bot=bot)
+        except Exception as exc:
+            body = {
+                "contract": "QR_DOJO_COMPLETED_M1_RUNTIME_ERROR_V1",
+                "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:400],
+                "paper_only": True,
+                "order_authority": "NONE",
+                "live_permission": False,
+                "broker_mutation_allowed": False,
+            }
+            digest = hashlib.sha256(
+                json.dumps(
+                    body,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            broker._log(
+                "SESSION_ERROR",
+                {**body, "session_error_sha256": digest},
+            )
+            raise
+
+    runtime.run_live = run_live_with_error_receipt
 
     original_contract_builder = runtime.build_session_contract
 

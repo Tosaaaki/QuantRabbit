@@ -11,9 +11,11 @@ import pytest
 
 from quant_rabbit.dojo_completed_m1_live import (
     COMPLETED_M1_SOURCE,
+    COMPLETED_M1_SOURCE_ERROR_CONTRACT,
     CompletedM1EvidenceError,
     completed_m1_bars,
     cutoff_payload,
+    fetch_completed_m1_fail_closed,
     restore_consumed_bars,
     seed_completed_m1_history,
 )
@@ -355,6 +357,86 @@ def test_observed_bot_records_exact_no_entry_reason(tmp_path: Path):
     assert len(payload["decision_sha256"]) == 64
     assert not broker.positions
     assert not broker.orders
+
+
+def test_completed_m1_source_error_cancels_stale_orders_and_retries_cursor(
+    tmp_path: Path,
+):
+    class BrokenThenRecoveredClient:
+        calls = 0
+
+        def get_json(self, _path: str, _query: dict[str, str]) -> dict:
+            self.calls += 1
+            if self.calls <= 2:
+                raise TimeoutError("bounded read timeout")
+            return {"candles": []}
+
+    class BotStub:
+        strategy_tag = "W_FADE_EURUSD_COMPLETED_M1_DIAGNOSTIC"
+
+    broker = VirtualBroker(tmp_path / "ledger.jsonl", balance_jpy=200_000.0)
+    broker.limit_order(
+        "EUR_USD",
+        "LONG",
+        1_000,
+        1.1,
+        strategy_tag=BotStub.strategy_tag,
+    )
+    cursor = int(datetime(2026, 7, 23, 6, 0, tzinfo=UTC).timestamp())
+    fingerprints: dict[str, str] = {}
+    client = BrokenThenRecoveredClient()
+
+    first = fetch_completed_m1_fail_closed(
+        client,
+        broker=broker,
+        bot=BotStub(),
+        pair="EUR_USD",
+        after_epoch=cursor,
+        cutoff=datetime(2026, 7, 23, 6, 2, tzinfo=UTC),
+        error_fingerprints=fingerprints,
+    )
+    second = fetch_completed_m1_fail_closed(
+        client,
+        broker=broker,
+        bot=BotStub(),
+        pair="EUR_USD",
+        after_epoch=cursor,
+        cutoff=datetime(2026, 7, 23, 6, 2, 5, tzinfo=UTC),
+        error_fingerprints=fingerprints,
+    )
+    recovered = fetch_completed_m1_fail_closed(
+        client,
+        broker=broker,
+        bot=BotStub(),
+        pair="EUR_USD",
+        after_epoch=cursor,
+        cutoff=datetime(2026, 7, 23, 6, 2, 10, tzinfo=UTC),
+        error_fingerprints=fingerprints,
+    )
+
+    assert first is None
+    assert second is None
+    assert recovered == []
+    assert not broker.orders
+    rows = [
+        json.loads(line)
+        for line in broker.ledger_path.read_text(encoding="utf-8").splitlines()
+    ]
+    source_errors = [
+        row for row in rows if row["event"] == "BOT_M1_SOURCE_ERROR"
+    ]
+    assert len(source_errors) == 1
+    payload = source_errors[0]["payload"]["payload"]
+    assert payload["contract"] == COMPLETED_M1_SOURCE_ERROR_CONTRACT
+    assert payload["retry_same_cursor"] is True
+    assert payload["new_entries_allowed"] is False
+    assert payload["order_authority"] == "NONE"
+    assert len(payload["source_error_sha256"]) == 64
+    assert sum(
+        row["event"] == "BOT_M1_SOURCE_ORDER_CANCEL" for row in rows
+    ) == 1
+    assert sum(row["event"] == "BOT_M1_SOURCE_RECOVERED" for row in rows) == 1
+    assert fingerprints == {}
 
 
 def test_completed_m1_launcher_is_diagnostic_only_and_binds_new_runtime(
