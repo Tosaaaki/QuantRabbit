@@ -440,6 +440,43 @@ def test_candidate_lifecycle_blocks_competitor_and_weak_pass(
         payload=started,
         recorded_at_utc=NOW + timedelta(seconds=3),
     )
+    failed = {
+        **_guard(),
+        "candidate_id": candidate_id,
+        "failure_code": "MEASUREMENT",
+        "reason": "replay metrics used append wall clock",
+        "artifact_sha256": "8" * 64,
+    }
+    append_candidate_event(
+        tmp_path,
+        event_type="REPLAY_FAILED",
+        payload=failed,
+        recorded_at_utc=NOW + timedelta(seconds=4),
+    )
+    assert validate_research_root(tmp_path)["active_candidate"] == {
+        "candidate_id": candidate_id,
+        "status": "FAILED",
+    }
+    retry = {
+        **started,
+        "job_lock": {
+            **started["job_lock"],
+            "git_head_sha256": "9" * 64,
+            "output_manifest_sha256": "a" * 64,
+            "process_command_sha256": "b" * 64,
+            "pid": 5678,
+        },
+    }
+    append_candidate_event(
+        tmp_path,
+        event_type="REPLAY_RETRY_STARTED",
+        payload=retry,
+        recorded_at_utc=NOW + timedelta(seconds=5),
+    )
+    assert validate_research_root(tmp_path)["active_candidate"] == {
+        "candidate_id": candidate_id,
+        "status": "STARTED",
+    }
     weak = {
         **_guard(),
         "candidate_id": candidate_id,
@@ -458,7 +495,7 @@ def test_candidate_lifecycle_blocks_competitor_and_weak_pass(
             tmp_path,
             event_type="REPLAY_PASSED",
             payload=weak,
-            recorded_at_utc=NOW + timedelta(seconds=4),
+            recorded_at_utc=NOW + timedelta(seconds=6),
         )
     rejected = {
         **_guard(),
@@ -470,7 +507,7 @@ def test_candidate_lifecycle_blocks_competitor_and_weak_pass(
         tmp_path,
         event_type="REPLAY_REJECTED",
         payload=rejected,
-        recorded_at_utc=NOW + timedelta(seconds=5),
+        recorded_at_utc=NOW + timedelta(seconds=7),
     )
     assert validate_research_root(tmp_path)["active_candidate"] is None
 

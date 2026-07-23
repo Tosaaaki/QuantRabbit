@@ -64,6 +64,8 @@ CANDIDATE_EVENTS = frozenset(
         "SYSTEM_BOOTSTRAPPED",
         "CANDIDATE_PREREGISTERED",
         "REPLAY_STARTED",
+        "REPLAY_FAILED",
+        "REPLAY_RETRY_STARTED",
         "REPLAY_REJECTED",
         "REPLAY_PASSED",
         "PAPER_ELIGIBLE",
@@ -926,7 +928,12 @@ def _candidate_state(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None
                 )
             allowed = {
                 "PREREGISTERED": {"REPLAY_STARTED", "REPLAY_REJECTED"},
-                "STARTED": {"REPLAY_REJECTED", "REPLAY_PASSED"},
+                "STARTED": {
+                    "REPLAY_FAILED",
+                    "REPLAY_REJECTED",
+                    "REPLAY_PASSED",
+                },
+                "FAILED": {"REPLAY_RETRY_STARTED", "REPLAY_REJECTED"},
                 "PASSED": {"PAPER_ELIGIBLE"},
             }.get(active["status"], set())
             if event not in allowed:
@@ -935,6 +942,8 @@ def _candidate_state(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None
                 )
             active["status"] = {
                 "REPLAY_STARTED": "STARTED",
+                "REPLAY_FAILED": "FAILED",
+                "REPLAY_RETRY_STARTED": "STARTED",
                 "REPLAY_PASSED": "PASSED",
                 "REPLAY_REJECTED": "REJECTED",
                 "PAPER_ELIGIBLE": "PAPER_ELIGIBLE",
@@ -1077,7 +1086,7 @@ def append_candidate_event(
                     raise DojoAutonomousEvidenceError(
                         "candidate event does not bind the active candidate"
                     )
-                if event_type == "REPLAY_STARTED":
+                if event_type in {"REPLAY_STARTED", "REPLAY_RETRY_STARTED"}:
                     job = event_payload.get("job_lock")
                     if not isinstance(job, Mapping):
                         raise DojoAutonomousEvidenceError(
@@ -1110,6 +1119,18 @@ def append_candidate_event(
                     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
                         raise DojoAutonomousEvidenceError("job pid must be positive")
                     _sha(job.get("process_command_sha256"), "process_command_sha256")
+                elif event_type == "REPLAY_FAILED":
+                    if event_payload.get("failure_code") not in DEATH_CODES:
+                        raise DojoAutonomousEvidenceError(
+                            "replay failure code is invalid"
+                        )
+                    _required_text(
+                        event_payload.get("reason"), "replay failure reason"
+                    )
+                    _sha(
+                        event_payload.get("artifact_sha256"),
+                        "artifact_sha256",
+                    )
                 elif event_type == "REPLAY_REJECTED":
                     if event_payload.get("death_code") not in DEATH_CODES:
                         raise DojoAutonomousEvidenceError(
@@ -1220,7 +1241,7 @@ def validate_research_root(root: Path) -> dict[str, Any]:
                     "candidate rejection death code is invalid"
                 )
             _required_text(payload.get("reason"), "candidate rejection reason")
-        elif event_type == "REPLAY_STARTED":
+        elif event_type in {"REPLAY_STARTED", "REPLAY_RETRY_STARTED"}:
             job = payload.get("job_lock")
             if not isinstance(job, Mapping):
                 raise DojoAutonomousEvidenceError("candidate job lock is invalid")
@@ -1246,6 +1267,13 @@ def validate_research_root(root: Path) -> dict[str, Any]:
             pid = job.get("pid")
             if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
                 raise DojoAutonomousEvidenceError("candidate pid is invalid")
+        elif event_type == "REPLAY_FAILED":
+            if payload.get("failure_code") not in DEATH_CODES:
+                raise DojoAutonomousEvidenceError(
+                    "candidate replay failure code is invalid"
+                )
+            _required_text(payload.get("reason"), "candidate replay failure reason")
+            _sha(payload.get("artifact_sha256"), "artifact_sha256")
         elif event_type == "REPLAY_PASSED":
             metrics = payload.get("independent_stress_metrics")
             if not isinstance(metrics, Mapping) or (
