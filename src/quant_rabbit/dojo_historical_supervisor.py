@@ -20,6 +20,9 @@ from quant_rabbit import dojo_historical_train_control as control_plane
 from quant_rabbit.dojo_historical_crash_supervisor import (
     advance_one_supervised_transition,
 )
+from quant_rabbit.dojo_historical_train_control import (
+    DojoHistoricalTrainControlError,
+)
 
 
 LAUNCH_REQUEST_CONTRACT: Final = "QR_DOJO_HISTORICAL_SUPERVISOR_LAUNCH_REQUEST_V1"
@@ -520,12 +523,24 @@ def supervisor_status(*, repo_root: Path, run_control_path: Path) -> dict[str, A
     else:
         running = False
         _release_launch_lease(descriptor)
+    try:
+        generation = control_plane.generation_status(
+            repo_root=repo_root, run_control_path=run_control_path
+        )
+    except DojoHistoricalTrainControlError as exc:
+        if not running or "old historical run still owns its lock" not in str(exc):
+            raise
+        generation = {
+            "status": "RUNNING",
+            "output_root": str(run_root),
+            "status_probe_deferred_to_live_child": True,
+            "status_probe_error_type": type(exc).__name__,
+            "status_probe_error": str(exc),
+        }
     return {
         "status": "SUPERVISOR_RUNNING" if running else "SUPERVISOR_IDLE",
         "kernel_lease_owned": running,
-        "generation": control_plane.generation_status(
-            repo_root=repo_root, run_control_path=run_control_path
-        ),
+        "generation": generation,
         "partial_economics_reported": False,
         "trainer_action_allowed": False,
         **_AUTHORITY,

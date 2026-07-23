@@ -16,7 +16,9 @@ from quant_rabbit.dojo_historical_crash_supervisor import (
 from quant_rabbit.dojo_historical_supervisor import (
     _open_launch_lease,
     _release_launch_lease,
+    supervisor_status,
 )
+from quant_rabbit.dojo_historical_train_control import DojoHistoricalTrainControlError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -299,3 +301,48 @@ def test_supervisor_script_is_valid_json_on_status_rejection(tmp_path: Path) -> 
     assert payload["status"] == "REJECTED"
     assert payload["partial_economics_reported"] is False
     assert payload["trainer_action_allowed"] is False
+
+
+def test_supervisor_status_degrades_to_running_when_live_child_holds_old_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_supervisor.control_plane._load_generation",
+        lambda **kwargs: ({}, run_root, {}, {}, {}, {}, {}),
+    )
+
+    supervisor_root = run_root / "supervisor"
+    supervisor_root.mkdir()
+    descriptor, _ = _open_launch_lease(supervisor_root)
+    try:
+        def _raise_status(**kwargs: object) -> dict[str, object]:
+            raise DojoHistoricalTrainControlError(
+                "generation supersede receipt chain failed verification: "
+                "old historical run still owns its lock"
+            )
+
+        monkeypatch.setattr(
+            "quant_rabbit.dojo_historical_supervisor.control_plane.generation_status",
+            _raise_status,
+        )
+
+        status = supervisor_status(
+            repo_root=REPO_ROOT, run_control_path=tmp_path / "control.json"
+        )
+    finally:
+        _release_launch_lease(descriptor)
+
+    assert status["status"] == "SUPERVISOR_RUNNING"
+    assert status["kernel_lease_owned"] is True
+    assert status["generation"] == {
+        "status": "RUNNING",
+        "output_root": str(run_root),
+        "status_probe_deferred_to_live_child": True,
+        "status_probe_error_type": "DojoHistoricalTrainControlError",
+        "status_probe_error": (
+            "generation supersede receipt chain failed verification: "
+            "old historical run still owns its lock"
+        ),
+    }
