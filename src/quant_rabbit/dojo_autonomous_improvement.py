@@ -24,6 +24,7 @@ SHADOW_LEDGER_CONTRACT = "QR_DOJO_AI_SHADOW_LEDGER_V1"
 CANDIDATE_LEDGER_CONTRACT = "QR_DOJO_AUTONOMOUS_CANDIDATE_LEDGER_V1"
 SHADOW_ASSESSMENT_CONTRACT = "QR_DOJO_AI_SHADOW_ASSESSMENT_V1"
 SHADOW_OUTCOME_CONTRACT = "QR_DOJO_AI_SHADOW_OUTCOME_V1"
+SHADOW_OUTCOME_CONTRACT_V2 = "QR_DOJO_AI_SHADOW_OUTCOME_V2"
 CANDIDATE_SPEC_CONTRACT = "QR_DOJO_AUTONOMOUS_CANDIDATE_SPEC_V1"
 ACTIVE_CHECKPOINT_CONTRACT = "QR_DOJO_AUTONOMOUS_ACTIVE_CANDIDATE_V1"
 
@@ -300,7 +301,8 @@ def build_shadow_outcome(
     body = dict(payload)
     body.pop("outcome_sha256", None)
     body.pop("outcome_id", None)
-    if body.get("contract") != SHADOW_OUTCOME_CONTRACT:
+    contract = body.get("contract")
+    if contract not in {SHADOW_OUTCOME_CONTRACT, SHADOW_OUTCOME_CONTRACT_V2}:
         raise DojoAutonomousEvidenceError("outcome contract is invalid")
     _paper_guard(body, "outcome")
     if body.get("assessment_id") != assessment.get("assessment_id"):
@@ -310,6 +312,28 @@ def build_shadow_outcome(
     recorded = _utc(recorded_at_utc, "recorded_at_utc")
     horizon = _utc(assessment.get("horizon_end_utc"), "assessment horizon")
     as_of = _utc(assessment.get("as_of_utc"), "assessment cutoff")
+    assessment_positions = assessment.get("positions")
+    if not isinstance(assessment_positions, list) or not assessment_positions:
+        raise DojoAutonomousEvidenceError(
+            "outcome assessment must contain at least one position"
+        )
+    if (
+        contract == SHADOW_OUTCOME_CONTRACT
+        and len(assessment_positions) != 1
+    ):
+        raise DojoAutonomousEvidenceError(
+            "multi-position assessment requires outcome V2"
+        )
+    if contract == SHADOW_OUTCOME_CONTRACT_V2:
+        return _build_shadow_outcome_v2(
+            body,
+            assessment=assessment,
+            assessment_positions=assessment_positions,
+            recorded=recorded,
+            horizon=horizon,
+            as_of=as_of,
+        )
+
     settled_at_raw = body.get("settled_at_utc")
     settled_at = (
         _utc(settled_at_raw, "settled_at_utc") if settled_at_raw else None
@@ -338,6 +362,167 @@ def build_shadow_outcome(
         raise DojoAutonomousEvidenceError("regime_correct must be boolean")
     body["observed_through_utc"] = observed.isoformat()
     body["settled_at_utc"] = settled_at.isoformat() if settled_at else None
+    body["scored_at_utc"] = recorded.isoformat()
+    outcome_id = canonical_sha256(body)
+    sealed = {**body, "outcome_id": outcome_id}
+    return {**sealed, "outcome_sha256": canonical_sha256(sealed)}
+
+
+def _build_shadow_outcome_v2(
+    body: dict[str, Any],
+    *,
+    assessment: Mapping[str, Any],
+    assessment_positions: Sequence[Mapping[str, Any]],
+    recorded: datetime,
+    horizon: datetime,
+    as_of: datetime,
+) -> dict[str, Any]:
+    """Seal a per-position outcome without collapsing mixed inventory."""
+
+    if recorded < horizon:
+        raise DojoAutonomousEvidenceError(
+            "multi-position outcome is not mature"
+        )
+    observed = _utc(body.get("observed_through_utc"), "observed_through_utc")
+    if observed < as_of or observed > recorded:
+        raise DojoAutonomousEvidenceError(
+            "outcome watermark is outside the scoring cutoff"
+        )
+    if not isinstance(body.get("regime_correct"), bool):
+        raise DojoAutonomousEvidenceError("regime_correct must be boolean")
+
+    expected_ids = [
+        _required_text(position.get("position_id"), "assessment position_id")
+        for position in assessment_positions
+    ]
+    raw_outcomes = body.get("position_outcomes")
+    if not isinstance(raw_outcomes, list) or not raw_outcomes:
+        raise DojoAutonomousEvidenceError(
+            "position_outcomes must not be empty"
+        )
+    by_id: dict[str, Mapping[str, Any]] = {}
+    for index, item in enumerate(raw_outcomes):
+        if not isinstance(item, Mapping):
+            raise DojoAutonomousEvidenceError(
+                f"position outcome {index} is invalid"
+            )
+        position_id = _required_text(
+            item.get("position_id"), "position outcome position_id"
+        )
+        if position_id in by_id:
+            raise DojoAutonomousEvidenceError(
+                "position outcome identity is duplicated"
+            )
+        by_id[position_id] = item
+    if set(by_id) != set(expected_ids):
+        raise DojoAutonomousEvidenceError(
+            "position outcomes do not exactly cover the assessment"
+        )
+
+    normalized: list[dict[str, Any]] = []
+    portfolio_pnl = 0.0
+    portfolio_delta = 0.0
+    for position_id in expected_ids:
+        item = dict(by_id[position_id])
+        status = item.get("status")
+        if status not in {"HORIZON_MARK", "SETTLED"}:
+            raise DojoAutonomousEvidenceError(
+                "position outcome status is invalid"
+            )
+        side = str(item.get("side") or "").upper()
+        if side not in {"LONG", "SHORT"}:
+            raise DojoAutonomousEvidenceError(
+                "position outcome side is invalid"
+            )
+        position_observed = _utc(
+            item.get("observed_through_utc"),
+            "position outcome observed_through_utc",
+        )
+        if (
+            position_observed < as_of
+            or position_observed > observed
+            or position_observed > recorded
+        ):
+            raise DojoAutonomousEvidenceError(
+                "position outcome watermark is outside the scoring cutoff"
+            )
+        settled_raw = item.get("settled_at_utc")
+        settled = (
+            _utc(settled_raw, "position outcome settled_at_utc")
+            if settled_raw
+            else None
+        )
+        if status == "SETTLED":
+            if (
+                settled is None
+                or settled <= as_of
+                or settled > position_observed
+            ):
+                raise DojoAutonomousEvidenceError(
+                    "settled position outcome has an invalid settlement"
+                )
+        elif settled is not None:
+            raise DojoAutonomousEvidenceError(
+                "horizon-mark position outcome cannot have a settlement"
+            )
+
+        metrics: dict[str, float] = {}
+        for field in (
+            "realized_pnl_jpy",
+            "mfe_pips",
+            "mae_pips",
+            "actual_exit_price",
+            "counterfactual_exit_price",
+            "counterfactual_delta_jpy",
+        ):
+            metrics[field] = _finite(
+                item.get(field), f"position outcome {field}"
+            )
+        if metrics["mfe_pips"] < 0.0 or metrics["mae_pips"] > 0.0:
+            raise DojoAutonomousEvidenceError(
+                "position outcome MFE/MAE signs are invalid"
+            )
+        if (
+            metrics["actual_exit_price"] <= 0.0
+            or metrics["counterfactual_exit_price"] <= 0.0
+        ):
+            raise DojoAutonomousEvidenceError(
+                "position outcome exit prices must be positive"
+            )
+        portfolio_pnl += metrics["realized_pnl_jpy"]
+        portfolio_delta += metrics["counterfactual_delta_jpy"]
+        normalized.append(
+            {
+                **item,
+                "position_id": position_id,
+                "side": side,
+                "status": status,
+                "observed_through_utc": position_observed.isoformat(),
+                "settled_at_utc": settled.isoformat() if settled else None,
+                **metrics,
+            }
+        )
+
+    declared_pnl = _finite(
+        body.get("portfolio_pnl_jpy"), "portfolio_pnl_jpy"
+    )
+    declared_delta = _finite(
+        body.get("portfolio_counterfactual_delta_jpy"),
+        "portfolio_counterfactual_delta_jpy",
+    )
+    if not math.isclose(
+        declared_pnl, portfolio_pnl, rel_tol=0.0, abs_tol=1e-6
+    ) or not math.isclose(
+        declared_delta, portfolio_delta, rel_tol=0.0, abs_tol=1e-6
+    ):
+        raise DojoAutonomousEvidenceError(
+            "portfolio outcome totals do not match position outcomes"
+        )
+
+    body["position_outcomes"] = normalized
+    body["portfolio_pnl_jpy"] = declared_pnl
+    body["portfolio_counterfactual_delta_jpy"] = declared_delta
+    body["observed_through_utc"] = observed.isoformat()
     body["scored_at_utc"] = recorded.isoformat()
     outcome_id = canonical_sha256(body)
     sealed = {**body, "outcome_id": outcome_id}

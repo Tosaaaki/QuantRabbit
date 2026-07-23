@@ -10,12 +10,14 @@ from quant_rabbit.dojo_autonomous_improvement import (
     CANDIDATE_SPEC_CONTRACT,
     SHADOW_ASSESSMENT_CONTRACT,
     SHADOW_OUTCOME_CONTRACT,
+    SHADOW_OUTCOME_CONTRACT_V2,
     DojoAutonomousEvidenceError,
     append_candidate_event,
     append_shadow_assessment,
     append_shadow_outcome,
     build_candidate_spec,
     build_shadow_assessment,
+    build_shadow_outcome,
     initialize_research_root,
     validate_research_root,
 )
@@ -102,6 +104,71 @@ def _outcome(assessment_id: str) -> dict:
         "counterfactual_exit_price": 1.14,
         "counterfactual_delta_jpy": 20.0,
         "regime_correct": True,
+    }
+
+
+def _multi_assessment() -> dict:
+    assessment = _assessment()
+    assessment["positions"].append(
+        {
+            "position_id": "T2",
+            "entry_context_sha256": "f" * 64,
+            "opened_at_utc": (NOW - timedelta(minutes=20)).isoformat(),
+            "units": 800,
+            "entry_price": 1.141,
+            "executable_mark": 1.14008,
+            "unrealized_pnl_jpy": 80.0,
+            "tp_progress": 0.3,
+            "ceiling_remaining_minutes": 460,
+            "margin_usage": 0.15,
+            "capital_lock_jpy": 6000.0,
+            "thesis": "ALIVE",
+            "inventory": "TRAPPED",
+            "shadow_action": "OBSERVE_HOLD",
+        }
+    )
+    return assessment
+
+
+def _multi_outcome(assessment_id: str) -> dict:
+    observed = (NOW + timedelta(hours=1)).isoformat()
+    position_outcomes = [
+        {
+            "position_id": "T1",
+            "side": "LONG",
+            "status": "HORIZON_MARK",
+            "observed_through_utc": observed,
+            "settled_at_utc": None,
+            "realized_pnl_jpy": 110.0,
+            "mfe_pips": 4.0,
+            "mae_pips": -2.0,
+            "actual_exit_price": 1.1401,
+            "counterfactual_exit_price": 1.14,
+            "counterfactual_delta_jpy": 10.0,
+        },
+        {
+            "position_id": "T2",
+            "side": "SHORT",
+            "status": "HORIZON_MARK",
+            "observed_through_utc": observed,
+            "settled_at_utc": None,
+            "realized_pnl_jpy": 70.0,
+            "mfe_pips": 3.0,
+            "mae_pips": -1.0,
+            "actual_exit_price": 1.1402,
+            "counterfactual_exit_price": 1.14008,
+            "counterfactual_delta_jpy": -10.0,
+        },
+    ]
+    return {
+        "contract": SHADOW_OUTCOME_CONTRACT_V2,
+        **_guard(),
+        "assessment_id": assessment_id,
+        "observed_through_utc": observed,
+        "portfolio_pnl_jpy": 180.0,
+        "portfolio_counterfactual_delta_jpy": 0.0,
+        "regime_correct": True,
+        "position_outcomes": position_outcomes,
     }
 
 
@@ -215,6 +282,85 @@ def test_shadow_rejects_hindsight_backfill(tmp_path: Path) -> None:
             tmp_path / "shadow.jsonl",
             _assessment(),
             recorded_at_utc=NOW + timedelta(minutes=6),
+        )
+
+
+def test_multi_position_shadow_requires_v2_and_scores_each_position(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "ai_shadow_ledger.jsonl"
+    assessment_row, appended = append_shadow_assessment(
+        ledger, _multi_assessment(), recorded_at_utc=NOW
+    )
+    assert appended
+    assessment_id = assessment_row["payload"]["assessment_id"]
+    with pytest.raises(
+        DojoAutonomousEvidenceError, match="requires outcome V2"
+    ):
+        append_shadow_outcome(
+            ledger,
+            _outcome(assessment_id),
+            recorded_at_utc=NOW + timedelta(hours=1),
+        )
+    outcome_row, appended = append_shadow_outcome(
+        ledger,
+        _multi_outcome(assessment_id),
+        recorded_at_utc=NOW + timedelta(hours=1),
+    )
+    assert appended
+    outcome = outcome_row["payload"]
+    assert outcome["contract"] == SHADOW_OUTCOME_CONTRACT_V2
+    assert [item["position_id"] for item in outcome["position_outcomes"]] == [
+        "T1",
+        "T2",
+    ]
+    assert validate_research_root(tmp_path)["shadow"]["status"] == "VALID"
+
+
+def test_multi_position_shadow_rejects_missing_identity_and_bad_totals() -> None:
+    assessment = build_shadow_assessment(_multi_assessment())
+    missing = _multi_outcome(assessment["assessment_id"])
+    missing["position_outcomes"].pop()
+    with pytest.raises(
+        DojoAutonomousEvidenceError, match="exactly cover"
+    ):
+        build_shadow_outcome(
+            missing,
+            assessment=assessment,
+            recorded_at_utc=NOW + timedelta(hours=1),
+        )
+    bad_total = _multi_outcome(assessment["assessment_id"])
+    bad_total["portfolio_pnl_jpy"] = 181.0
+    with pytest.raises(
+        DojoAutonomousEvidenceError, match="totals do not match"
+    ):
+        build_shadow_outcome(
+            bad_total,
+            assessment=assessment,
+            recorded_at_utc=NOW + timedelta(hours=1),
+        )
+
+
+def test_multi_position_shadow_rejects_early_or_future_scoring() -> None:
+    assessment = build_shadow_assessment(_multi_assessment())
+    payload = _multi_outcome(assessment["assessment_id"])
+    with pytest.raises(DojoAutonomousEvidenceError, match="not mature"):
+        build_shadow_outcome(
+            payload,
+            assessment=assessment,
+            recorded_at_utc=NOW + timedelta(minutes=59),
+        )
+    future = _multi_outcome(assessment["assessment_id"])
+    future["position_outcomes"][0]["observed_through_utc"] = (
+        NOW + timedelta(hours=2)
+    ).isoformat()
+    with pytest.raises(
+        DojoAutonomousEvidenceError, match="outside the scoring cutoff"
+    ):
+        build_shadow_outcome(
+            future,
+            assessment=assessment,
+            recorded_at_utc=NOW + timedelta(hours=1),
         )
 
 
