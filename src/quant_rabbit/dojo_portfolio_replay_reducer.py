@@ -20,7 +20,7 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
-from typing import Any, Final, Mapping, Sequence
+from typing import Any, Callable, Final, Mapping, Sequence
 
 from quant_rabbit.dojo_shared_worker_protocol import (
     ProtocolViolation,
@@ -1104,6 +1104,12 @@ def _event(state: dict[str, Any], kind: str, payload: Mapping[str, Any]) -> None
     }
     state["event_chain_sha256"] = canonical_portfolio_sha256(body)
     state["event_count"] += 1
+    listener = state.get("_event_listener")
+    if listener is not None:
+        # Opt-in research observers receive reducer-produced evidence only
+        # after its canonical hash is fixed. They are excluded from carry and
+        # result artifacts and cannot affect fills, ordering, or authority.
+        listener({**body, "event_sha256": state["event_chain_sha256"]})
 
 
 def _record_equity(state: dict[str, Any], equity: float) -> None:
@@ -2053,6 +2059,7 @@ class PortfolioReplaySession:
         policy: Mapping[str, Any],
         initial_balance_jpy: int | float | None = None,
         carry_state: Mapping[str, Any] | None = None,
+        event_listener: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self.policy = verify_portfolio_policy(policy)
         self.indexes = _policy_indexes(self.policy)
@@ -2071,6 +2078,8 @@ class PortfolioReplaySession:
                     "initial_balance_jpy and carry_state are mutually exclusive"
                 )
             self.state = _state_from_carry(carry_state, self.policy)
+        if event_listener is not None:
+            self.state["_event_listener"] = event_listener
         self._prepared: dict[str, Any] | None = None
         self._processed_coordinate_count = 0
         # ``state.coordinate_seq`` can already be non-zero when a replay job

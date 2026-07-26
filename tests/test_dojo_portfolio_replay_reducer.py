@@ -1302,3 +1302,30 @@ def test_result_hash_detects_terminal_metric_tampering() -> None:
     assert canonical_portfolio_sha256(tampered) != result["result_sha256"]
     with pytest.raises(DojoPortfolioReplayError, match="result_sha256"):
         validate_portfolio_replay_result(tampered)
+
+
+def test_optional_event_listener_observes_without_changing_result_hash() -> None:
+    epoch = 1_704_067_200
+    policy = make_policy()
+    observed: list[dict] = []
+    session = PortfolioReplaySession(
+        policy=policy,
+        initial_balance_jpy=200_000,
+        event_listener=observed.append,
+    )
+    quotes = make_quotes(epoch, "O", {"USD_JPY": (145.0, 145.02)})
+    snapshot = session.prepare_coordinate(
+        coordinate_id="listener-test",
+        epoch=epoch,
+        phase="O",
+        intrabar="OHLC",
+        quote_watermark=1,
+        quotes=quotes,
+    )
+    session.consume_proposal_batch(make_batch(snapshot))
+    result = session.finalize(terminal_policy=MONTH_END_FLAT_SETTLEMENT)
+
+    assert observed
+    assert observed[0]["kind"] == "POST_EXIT_SNAPSHOT_ACK"
+    assert observed[0]["event_sha256"] == result["event_chain_sha256"]
+    validate_portfolio_replay_result(result)
