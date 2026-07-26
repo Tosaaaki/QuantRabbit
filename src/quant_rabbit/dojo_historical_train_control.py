@@ -27,6 +27,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -120,6 +121,15 @@ GENERATION_ORDINAL: Final = 2
 RUNNER_ID: Final = "dojo-g2-historical-train-v1"
 MAX_JSON_BYTES: Final = 256 * 1024 * 1024
 NON_JPY_STRESS_FINANCING_JPY_PER_UNIT_DAY: Final = 0.02
+MACHINE_RESOURCE_GATE_CONTRACT: Final = "QR_DOJO_HISTORICAL_MACHINE_RESOURCE_GATE_V1"
+_MACHINE_RESOURCE_GATE_POLICY: Final = {
+    "elastic_load_per_logical_cpu_max": 2.0,
+    "archive_minimum_cpu_idle_percent": 25.0,
+    "claim_minimum_cpu_idle_percent": 35.0,
+    "minimum_memory_available_percent": 15.0,
+    "swap_pressure_memory_available_percent": 25.0,
+    "maximum_swap_used_percent_under_memory_pressure": 75.0,
+}
 
 _AUTHORITY: Final = {
     "automatic_deployment_allowed": False,
@@ -3888,23 +3898,37 @@ def _assert_dynamic_machine_capacity(
     *,
     current_root: Path | None = None,
     locked_descriptors: Mapping[str, int] | None = None,
+    operation: str = "claim",
+    resource_snapshot: Mapping[str, Any] | None = None,
 ) -> None:
-    execution = control["execution"]
-    load_fraction = execution.get("max_one_minute_load_per_cpu", 0.8)
-    if (
-        isinstance(load_fraction, bool)
-        or not isinstance(load_fraction, (int, float))
-        or not 0.1 <= float(load_fraction) <= 2.0
-    ):
-        raise DojoHistoricalTrainControlError("load-per-CPU gate is invalid")
-    cpu_count = os.cpu_count() or 1
-    one_minute_load = os.getloadavg()[0]
-    load_limit = cpu_count * float(load_fraction)
-    if one_minute_load > load_limit:
+    evaluation = _evaluate_machine_resource_gate(
+        control,
+        operation=operation,
+        snapshot=(
+            resource_snapshot
+            if resource_snapshot is not None
+            else _machine_resource_snapshot(
+                control,
+                current_root=(
+                    current_root
+                    if current_root is not None
+                    else Path(control["execution"]["output_root"])
+                ),
+            )
+        ),
+    )
+    if not evaluation["allowed"]:
         raise DojoHistoricalTrainControlError(
-            "machine load is above the dynamic historical TRAIN gate: "
-            f"load_1m={one_minute_load:.2f}, limit={load_limit:.2f}, "
-            f"logical_cpu={cpu_count}"
+            "machine resource gate rejected the historical transition: "
+            f"operation={operation}, "
+            f"blockers={','.join(evaluation['blockers'])}, "
+            f"load_1m={evaluation['snapshot']['load_average_1m']:.2f}, "
+            f"base_limit={evaluation['base_load_limit']:.2f}, "
+            f"elastic_limit={evaluation['elastic_load_limit']:.2f}, "
+            "logical_cpu="
+            f"{evaluation['snapshot']['logical_cpu_count']}, "
+            "cpu_idle_percent="
+            f"{evaluation['snapshot']['cpu_idle_percent']}"
         )
     active_conflicts = [
         row
@@ -3920,6 +3944,360 @@ def _assert_dynamic_machine_capacity(
             "a conflicting historical generation has an active or orphaned claim: "
             + ", ".join(row["output_root"] for row in active_conflicts)
         )
+
+
+def _run_machine_resource_probe(command: Sequence[str]) -> str | None:
+    try:
+        result = subprocess.run(
+            list(command),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    return output.strip() or None
+
+
+def _darwin_sysctl_int(name: str) -> int | None:
+    output = _run_machine_resource_probe(("sysctl", "-n", name))
+    if output is None:
+        return None
+    try:
+        value = int(output)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _darwin_cpu_idle_percent() -> float | None:
+    output = _run_machine_resource_probe(("/usr/sbin/iostat", "-c", "2", "-w", "1"))
+    if output is not None:
+        for row in reversed(output.splitlines()):
+            fields = row.split()
+            if len(fields) < 6:
+                continue
+            try:
+                idle = float(fields[-4])
+            except ValueError:
+                continue
+            if 0.0 <= idle <= 100.0:
+                return idle
+    output = _run_machine_resource_probe(("/usr/bin/top", "-l", "1", "-n", "0"))
+    if output is not None:
+        matches = re.findall(r"([0-9]+(?:\.[0-9]+)?)%\s+idle", output)
+        if matches:
+            return float(matches[-1])
+    return None
+
+
+def _linux_cpu_idle_percent() -> float | None:
+    def read_cpu() -> tuple[int, int] | None:
+        try:
+            fields = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
+            values = [int(value) for value in fields.split()[1:]]
+        except (OSError, ValueError, IndexError):
+            return None
+        if len(values) < 5:
+            return None
+        idle = values[3] + values[4]
+        return idle, sum(values)
+
+    before = read_cpu()
+    if before is None:
+        return None
+    time.sleep(0.1)
+    after = read_cpu()
+    if after is None:
+        return None
+    idle_delta = after[0] - before[0]
+    total_delta = after[1] - before[1]
+    if total_delta <= 0 or idle_delta < 0:
+        return None
+    return 100.0 * idle_delta / total_delta
+
+
+def _darwin_memory_available_percent() -> float | None:
+    output = _run_machine_resource_probe(("memory_pressure", "-Q"))
+    if output is None:
+        return None
+    match = re.search(
+        r"System-wide memory free percentage:\s*([0-9]+(?:\.[0-9]+)?)%",
+        output,
+    )
+    return float(match.group(1)) if match else None
+
+
+def _linux_memory_snapshot() -> tuple[float | None, int | None, int | None]:
+    try:
+        rows = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, value = line.split(":", 1)
+            rows[key] = int(value.strip().split()[0]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None, None, None
+    total = rows.get("MemTotal")
+    available = rows.get("MemAvailable")
+    available_percent = (
+        100.0 * available / total
+        if isinstance(total, int)
+        and total > 0
+        and isinstance(available, int)
+        and available >= 0
+        else None
+    )
+    return (
+        available_percent,
+        rows.get("SwapTotal"),
+        (
+            rows.get("SwapTotal", 0) - rows.get("SwapFree", 0)
+            if "SwapTotal" in rows and "SwapFree" in rows
+            else None
+        ),
+    )
+
+
+def _scaled_bytes(value: str, unit: str) -> int:
+    scale = {
+        "K": 1024,
+        "M": 1024**2,
+        "G": 1024**3,
+        "T": 1024**4,
+    }[unit.upper()]
+    return int(float(value) * scale)
+
+
+def _darwin_swap_snapshot() -> tuple[int | None, int | None]:
+    output = _run_machine_resource_probe(("sysctl", "vm.swapusage"))
+    if output is None:
+        return None, None
+    total = re.search(r"total\s*=\s*([0-9.]+)([KMGT])", output)
+    used = re.search(r"used\s*=\s*([0-9.]+)([KMGT])", output)
+    if total is None or used is None:
+        return None, None
+    return (
+        _scaled_bytes(total.group(1), total.group(2)),
+        _scaled_bytes(used.group(1), used.group(2)),
+    )
+
+
+def _darwin_thermal_state() -> str:
+    output = _run_machine_resource_probe(("pmset", "-g", "therm"))
+    if output is None:
+        return "UNAVAILABLE"
+    lowered = output.lower()
+    if (
+        "no thermal warning level has been recorded" in lowered
+        and "no performance warning level has been recorded" in lowered
+    ):
+        return "NOMINAL"
+    return "WARNING"
+
+
+def _minimum_local_disk_free_bytes(
+    control: Mapping[str, Any], *, current_root: Path
+) -> tuple[int | None, list[str]]:
+    execution = control["execution"]
+    candidates = [current_root]
+    staging = execution.get("archive_local_staging_root")
+    if isinstance(staging, str):
+        candidates.append(Path(staging))
+    free_rows: list[int] = []
+    resolved: list[str] = []
+    for candidate in candidates:
+        probe = candidate
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        try:
+            free_rows.append(shutil.disk_usage(probe).free)
+        except OSError:
+            continue
+        resolved.append(os.fspath(probe))
+    return (min(free_rows) if free_rows else None), resolved
+
+
+def _machine_resource_snapshot(
+    control: Mapping[str, Any], *, current_root: Path
+) -> dict[str, Any]:
+    system = os.uname().sysname if hasattr(os, "uname") else "UNKNOWN"
+    logical = os.cpu_count() or 1
+    physical: int | None = None
+    cpu_idle: float | None = None
+    memory_available: float | None = None
+    swap_total: int | None = None
+    swap_used: int | None = None
+    thermal_state = "UNAVAILABLE"
+    runnable_process_count: int | None = None
+    if system == "Darwin":
+        logical = _darwin_sysctl_int("hw.logicalcpu") or logical
+        physical = _darwin_sysctl_int("hw.physicalcpu")
+        cpu_idle = _darwin_cpu_idle_percent()
+        memory_available = _darwin_memory_available_percent()
+        swap_total, swap_used = _darwin_swap_snapshot()
+        thermal_state = _darwin_thermal_state()
+        process_states = _run_machine_resource_probe(("ps", "-A", "-o", "state="))
+        if process_states is not None:
+            runnable_process_count = sum(
+                1 for row in process_states.splitlines() if row.strip().startswith("R")
+            )
+    elif system == "Linux":
+        cpu_idle = _linux_cpu_idle_percent()
+        memory_available, swap_total, swap_used = _linux_memory_snapshot()
+    disk_free, disk_paths = _minimum_local_disk_free_bytes(
+        control, current_root=current_root
+    )
+    swap_used_percent = (
+        100.0 * swap_used / swap_total
+        if isinstance(swap_total, int)
+        and swap_total > 0
+        and isinstance(swap_used, int)
+        and swap_used >= 0
+        else 0.0
+        if swap_total == 0 and swap_used == 0
+        else None
+    )
+    return {
+        "contract": MACHINE_RESOURCE_GATE_CONTRACT,
+        "system": system,
+        "physical_cpu_count": physical,
+        "logical_cpu_count": logical,
+        "load_average_1m": os.getloadavg()[0],
+        "cpu_idle_percent": cpu_idle,
+        "runnable_process_count": runnable_process_count,
+        "memory_available_percent": memory_available,
+        "swap_total_bytes": swap_total,
+        "swap_used_bytes": swap_used,
+        "swap_used_percent": swap_used_percent,
+        "thermal_state": thermal_state,
+        "minimum_local_disk_free_bytes": disk_free,
+        "local_disk_probe_paths": disk_paths,
+    }
+
+
+def _evaluate_machine_resource_gate(
+    control: Mapping[str, Any],
+    *,
+    operation: str,
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Combine lagging run-queue load with current independent safety vetoes.
+
+    The one-minute load average is queued/runnable work, not CPU utilization.
+    Its sealed per-CPU limit remains the normal admission boundary.  A bounded
+    elastic range avoids waiting only for that rolling average to decay, but
+    is usable only while current CPU, memory, thermal, and disk probes all
+    prove headroom.
+    """
+
+    if operation not in {"archive", "claim"}:
+        raise DojoHistoricalTrainControlError(
+            "machine resource gate operation is invalid"
+        )
+    execution = control["execution"]
+    load_fraction = execution.get("max_one_minute_load_per_cpu", 0.8)
+    if (
+        isinstance(load_fraction, bool)
+        or not isinstance(load_fraction, (int, float))
+        or not 0.1 <= float(load_fraction) <= 2.0
+    ):
+        raise DojoHistoricalTrainControlError("load-per-CPU gate is invalid")
+    logical = snapshot.get("logical_cpu_count")
+    one_minute_load = snapshot.get("load_average_1m")
+    if (
+        isinstance(logical, bool)
+        or not isinstance(logical, int)
+        or logical < 1
+        or isinstance(one_minute_load, bool)
+        or not isinstance(one_minute_load, (int, float))
+        or float(one_minute_load) < 0
+    ):
+        raise DojoHistoricalTrainControlError(
+            "machine resource snapshot CPU/load fields are invalid"
+        )
+    base_ratio = float(load_fraction)
+    elastic_ratio = min(
+        float(_MACHINE_RESOURCE_GATE_POLICY["elastic_load_per_logical_cpu_max"]),
+        base_ratio + 0.8,
+    )
+    base_limit = logical * base_ratio
+    elastic_limit = logical * max(base_ratio, elastic_ratio)
+    minimum_idle = float(
+        _MACHINE_RESOURCE_GATE_POLICY[
+            (
+                "archive_minimum_cpu_idle_percent"
+                if operation == "archive"
+                else "claim_minimum_cpu_idle_percent"
+            )
+        ]
+    )
+    blockers: list[str] = []
+    if float(one_minute_load) > elastic_limit:
+        blockers.append("LOAD_ABOVE_ELASTIC_CEILING")
+    cpu_idle = snapshot.get("cpu_idle_percent")
+    if not isinstance(cpu_idle, (int, float)) or isinstance(cpu_idle, bool):
+        blockers.append("CPU_IDLE_PROBE_UNAVAILABLE")
+    elif float(cpu_idle) < minimum_idle:
+        blockers.append("CPU_IDLE_HEADROOM_LOW")
+    memory_available = snapshot.get("memory_available_percent")
+    if not isinstance(memory_available, (int, float)) or isinstance(
+        memory_available, bool
+    ):
+        blockers.append("MEMORY_PRESSURE_PROBE_UNAVAILABLE")
+    elif float(memory_available) < float(
+        _MACHINE_RESOURCE_GATE_POLICY["minimum_memory_available_percent"]
+    ):
+        blockers.append("MEMORY_AVAILABLE_LOW")
+    swap_used_percent = snapshot.get("swap_used_percent")
+    if (
+        isinstance(swap_used_percent, (int, float))
+        and not isinstance(swap_used_percent, bool)
+        and isinstance(memory_available, (int, float))
+        and not isinstance(memory_available, bool)
+        and float(memory_available)
+        < float(_MACHINE_RESOURCE_GATE_POLICY["swap_pressure_memory_available_percent"])
+        and float(swap_used_percent)
+        > float(
+            _MACHINE_RESOURCE_GATE_POLICY[
+                "maximum_swap_used_percent_under_memory_pressure"
+            ]
+        )
+    ):
+        blockers.append("SWAP_PRESSURE_HIGH")
+    thermal_state = snapshot.get("thermal_state")
+    if thermal_state != "NOMINAL":
+        blockers.append(
+            "THERMAL_WARNING"
+            if thermal_state == "WARNING"
+            else "THERMAL_PROBE_UNAVAILABLE"
+        )
+    disk_free = snapshot.get("minimum_local_disk_free_bytes")
+    disk_floor = execution.get("minimum_free_disk_bytes")
+    if (
+        isinstance(disk_free, bool)
+        or not isinstance(disk_free, int)
+        or isinstance(disk_floor, bool)
+        or not isinstance(disk_floor, int)
+    ):
+        blockers.append("LOCAL_DISK_PROBE_UNAVAILABLE")
+    elif disk_free < disk_floor:
+        blockers.append("LOCAL_DISK_BELOW_SEALED_FLOOR")
+    return {
+        "contract": MACHINE_RESOURCE_GATE_CONTRACT,
+        "allowed": not blockers,
+        "operation": operation,
+        "base_load_per_logical_cpu": base_ratio,
+        "elastic_load_per_logical_cpu": max(base_ratio, elastic_ratio),
+        "base_load_limit": base_limit,
+        "elastic_load_limit": elastic_limit,
+        "minimum_cpu_idle_percent": minimum_idle,
+        "load_above_base_limit": float(one_minute_load) > base_limit,
+        "blockers": blockers,
+        "snapshot": dict(snapshot),
+        "policy": dict(_MACHINE_RESOURCE_GATE_POLICY),
+        **_AUTHORITY,
+    }
 
 
 def _acquire_conflicting_run_locks(control: Mapping[str, Any]) -> dict[str, int]:
@@ -4280,6 +4658,7 @@ def archive_next_completed_job(
             control,
             current_root=root,
             locked_descriptors=conflicting_lock_descriptors,
+            operation="archive",
         )
         recovered_archives = _archive_pending_completed_jobs(
             root=root,
@@ -4432,6 +4811,7 @@ def run_next_job(
             control,
             current_root=root,
             locked_descriptors=conflicting_lock_descriptors,
+            operation="claim",
         )
         _deep_verify_completed_job_custody(root=root, control=control)
         planned_coordinate_count = max(
@@ -4785,6 +5165,14 @@ def generation_status(*, repo_root: Path, run_control_path: Path) -> dict[str, A
         estimated_archive_upper_bytes=next_archive_upper,
         estimated_peak_bytes=next_peak,
     )
+    machine_snapshot = _machine_resource_snapshot(control, current_root=root)
+    machine_gate = _evaluate_machine_resource_gate(
+        control,
+        operation=(
+            "archive" if lifecycle["next_transition"] == "ARCHIVE_NEXT" else "claim"
+        ),
+        snapshot=machine_snapshot,
+    )
     capacity_comparison = {
         "baseline": dict(baseline) if isinstance(baseline, Mapping) else {},
         "planned_coordinate_count_per_job": max(
@@ -4866,11 +5254,13 @@ def generation_status(*, repo_root: Path, run_control_path: Path) -> dict[str, A
         "capacity_comparison": capacity_comparison,
         "disk_capacity": disk_capacity,
         "machine_load": {
-            "logical_cpu_count": os.cpu_count() or 1,
-            "load_average_1m": os.getloadavg()[0],
+            "logical_cpu_count": machine_snapshot["logical_cpu_count"],
+            "physical_cpu_count": machine_snapshot["physical_cpu_count"],
+            "load_average_1m": machine_snapshot["load_average_1m"],
             "configured_load_per_cpu_max": control["execution"].get(
                 "max_one_minute_load_per_cpu"
             ),
+            "resource_gate": machine_gate,
         },
         "conflicting_generation_statuses": _conflicting_generation_statuses(
             control,

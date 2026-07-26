@@ -27,8 +27,10 @@ from quant_rabbit.dojo_historical_train_control import (
     _candidate_proposals,
     _conflicting_generation_statuses,
     _deep_verify_completed_job_custody,
+    _darwin_cpu_idle_percent,
     _disk_capacity_snapshot,
     _effective_archive_staging_fraction,
+    _evaluate_machine_resource_gate,
     _filesystem_capacity_reservations,
     _find_supersede_receipt_for_root,
     _g2_room_bindings,
@@ -65,6 +67,34 @@ REGISTRY_PATH = (
 
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _healthy_machine_snapshot(
+    *,
+    logical_cpu_count: int = 10,
+    load_average_1m: float = 1.0,
+    cpu_idle_percent: float | None = 80.0,
+    memory_available_percent: float | None = 80.0,
+    swap_used_percent: float | None = 0.0,
+    thermal_state: str = "NOMINAL",
+    minimum_local_disk_free_bytes: int | None = 1024**4,
+) -> dict:
+    return {
+        "contract": "QR_DOJO_HISTORICAL_MACHINE_RESOURCE_GATE_V1",
+        "system": "Darwin",
+        "physical_cpu_count": logical_cpu_count,
+        "logical_cpu_count": logical_cpu_count,
+        "load_average_1m": load_average_1m,
+        "cpu_idle_percent": cpu_idle_percent,
+        "runnable_process_count": 1,
+        "memory_available_percent": memory_available_percent,
+        "swap_total_bytes": 0,
+        "swap_used_bytes": 0,
+        "swap_used_percent": swap_used_percent,
+        "thermal_state": thermal_state,
+        "minimum_local_disk_free_bytes": minimum_local_disk_free_bytes,
+        "local_disk_probe_paths": ["/tmp"],
+    }
 
 
 def _publish_compact_signed_attestation(
@@ -699,11 +729,8 @@ def test_archive_next_without_terminal_never_claims_job(
 ) -> None:
     control_path = _prepare_archive_only_generation(tmp_path)
     monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
-    )
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
-        lambda: (1.0, 1.0, 1.0),
+        "quant_rabbit.dojo_historical_train_control._machine_resource_snapshot",
+        lambda *args, **kwargs: _healthy_machine_snapshot(),
     )
     monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control.claim_next_long_horizon_job",
@@ -727,11 +754,8 @@ def test_archive_next_returns_one_recovery_without_claiming_job(
     control_path = _prepare_archive_only_generation(tmp_path)
     receipt = {"receipt_sha256": "1" * 64}
     monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
-    )
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
-        lambda: (1.0, 1.0, 1.0),
+        "quant_rabbit.dojo_historical_train_control._machine_resource_snapshot",
+        lambda *args, **kwargs: _healthy_machine_snapshot(),
     )
     monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control._archive_pending_completed_jobs",
@@ -1605,23 +1629,88 @@ def test_allocator_values_are_generation_sealed_but_not_engine_literals() -> Non
         _risk_envelope(unsafe)
 
 
-def test_dynamic_machine_load_gate_blocks_another_heavy_replay(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_dynamic_machine_load_gate_blocks_another_heavy_replay() -> None:
     control = _load(ROOM_CONTROL_PATH)
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
-    )
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
-        lambda: (21.0, 20.0, 19.0),
-    )
 
     with pytest.raises(
         DojoHistoricalTrainControlError,
-        match="machine load is above",
+        match="machine resource gate rejected",
     ):
-        _assert_dynamic_machine_capacity(control)
+        _assert_dynamic_machine_capacity(
+            control,
+            resource_snapshot=_healthy_machine_snapshot(load_average_1m=21.0),
+        )
+
+
+def test_darwin_cpu_idle_probe_uses_interval_iostat_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "quant_rabbit.dojo_historical_train_control._run_machine_resource_probe",
+        lambda command: (
+            "disk cpu load average\n"
+            "25.56 360 8.98 31 10 59 24.31 23.73 25.59\n"
+            "27.27 842 22.41 46 26 28 24.31 23.73 25.59\n"
+        ),
+    )
+
+    assert _darwin_cpu_idle_percent() == 28.0
+
+
+@pytest.mark.parametrize("logical_cpu_count", [10, 32])
+def test_adaptive_machine_load_gate_allows_healthy_elastic_headroom(
+    logical_cpu_count: int,
+) -> None:
+    control = _load(ROOM_CONTROL_PATH)
+
+    evaluation = _evaluate_machine_resource_gate(
+        control,
+        operation="claim",
+        snapshot=_healthy_machine_snapshot(
+            logical_cpu_count=logical_cpu_count,
+            load_average_1m=logical_cpu_count * 1.5,
+            cpu_idle_percent=50.0,
+        ),
+    )
+
+    assert evaluation["allowed"] is True
+    assert evaluation["load_above_base_limit"] is True
+    assert evaluation["base_load_limit"] == logical_cpu_count * 1.2
+    assert evaluation["elastic_load_limit"] == logical_cpu_count * 2.0
+
+
+@pytest.mark.parametrize(
+    ("updates", "blocker"),
+    [
+        ({"cpu_idle_percent": 20.0}, "CPU_IDLE_HEADROOM_LOW"),
+        ({"memory_available_percent": 10.0}, "MEMORY_AVAILABLE_LOW"),
+        (
+            {"memory_available_percent": 20.0, "swap_used_percent": 80.0},
+            "SWAP_PRESSURE_HIGH",
+        ),
+        ({"thermal_state": "WARNING"}, "THERMAL_WARNING"),
+        (
+            {"minimum_local_disk_free_bytes": 20 * 1024**3},
+            "LOCAL_DISK_BELOW_SEALED_FLOOR",
+        ),
+    ],
+)
+def test_adaptive_machine_resource_gate_keeps_independent_safety_vetoes(
+    updates: dict,
+    blocker: str,
+) -> None:
+    control = _load(ROOM_CONTROL_PATH)
+    snapshot = _healthy_machine_snapshot(load_average_1m=15.0)
+    snapshot.update(updates)
+
+    evaluation = _evaluate_machine_resource_gate(
+        control,
+        operation="claim",
+        snapshot=snapshot,
+    )
+
+    assert evaluation["allowed"] is False
+    assert blocker in evaluation["blockers"]
 
 
 def test_conflicting_runner_lock_is_held_for_the_caller_lifetime(
@@ -1771,13 +1860,6 @@ def test_conflicting_generation_status_blocks_orphaned_active_claim(
         str(conflict_root / ".historical-train.lock")
     ]
     monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
-    )
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
-        lambda: (1.0, 1.0, 1.0),
-    )
-    monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control._conflicting_generation_statuses",
         lambda value, **kwargs: [
             {
@@ -1796,20 +1878,16 @@ def test_conflicting_generation_status_blocks_orphaned_active_claim(
         DojoHistoricalTrainControlError,
         match="active or orphaned claim",
     ):
-        _assert_dynamic_machine_capacity(control)
+        _assert_dynamic_machine_capacity(
+            control,
+            resource_snapshot=_healthy_machine_snapshot(),
+        )
 
 
 def test_verified_supersede_excludes_orphan_from_active_conflicts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     control = _load(ROOM_CONTROL_PATH)
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.cpu_count", lambda: 10
-    )
-    monkeypatch.setattr(
-        "quant_rabbit.dojo_historical_train_control.os.getloadavg",
-        lambda: (1.0, 1.0, 1.0),
-    )
     monkeypatch.setattr(
         "quant_rabbit.dojo_historical_train_control._conflicting_generation_statuses",
         lambda value, **kwargs: [
@@ -1825,7 +1903,10 @@ def test_verified_supersede_excludes_orphan_from_active_conflicts(
         ],
     )
 
-    _assert_dynamic_machine_capacity(control)
+    _assert_dynamic_machine_capacity(
+        control,
+        resource_snapshot=_healthy_machine_snapshot(),
+    )
 
 
 def test_supersede_receipt_lookup_accepts_v2_durable_pending_anchor(
