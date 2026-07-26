@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from quant_rabbit.analysis.market_status import compute_market_status
+
 
 SHADOW_LEDGER_CONTRACT = "QR_DOJO_AI_SHADOW_LEDGER_V1"
 CANDIDATE_LEDGER_CONTRACT = "QR_DOJO_AUTONOMOUS_CANDIDATE_LEDGER_V1"
@@ -31,12 +33,8 @@ ACTIVE_CHECKPOINT_CONTRACT = "QR_DOJO_AUTONOMOUS_ACTIVE_CANDIDATE_V1"
 REGIMES = frozenset({"TREND", "RANGE", "SQUEEZE", "EVENT", "UNCLEAR"})
 SUPERVISION = frozenset({"GO", "CAUTION", "STOP"})
 POSITION_STATES = frozenset({"ALIVE", "WOUNDED", "INVALIDATED", "UNCLEAR"})
-INVENTORY_STATES = frozenset(
-    {"BALANCED", "CONCENTRATED", "TRAPPED", "CAPITAL_LOCKED"}
-)
-SHADOW_ACTIONS = frozenset(
-    {"OBSERVE_HOLD", "NO_NEW_ENTRY_TEST", "EXIT_TEST_CANDIDATE"}
-)
+INVENTORY_STATES = frozenset({"BALANCED", "CONCENTRATED", "TRAPPED", "CAPITAL_LOCKED"})
+SHADOW_ACTIONS = frozenset({"OBSERVE_HOLD", "NO_NEW_ENTRY_TEST", "EXIT_TEST_CANDIDATE"})
 CANDIDATE_FAMILIES = frozenset(
     {
         "CONDITIONAL_EXIT",
@@ -80,6 +78,12 @@ class DojoAutonomousEvidenceError(ValueError):
     """Point-in-time evidence or an append-only chain is invalid."""
 
 
+def _utc_now() -> datetime:
+    """Return the writer clock used for non-idempotent assessment appends."""
+
+    return datetime.now(timezone.utc)
+
+
 def canonical_sha256(value: Any) -> str:
     raw = json.dumps(
         value,
@@ -120,9 +124,7 @@ def _utc(value: Any, label: str) -> datetime:
 
 def _sha(value: Any, label: str) -> str:
     text = str(value or "")
-    if len(text) != _SHA_LENGTH or any(
-        ch not in "0123456789abcdef" for ch in text
-    ):
+    if len(text) != _SHA_LENGTH or any(ch not in "0123456789abcdef" for ch in text):
         raise DojoAutonomousEvidenceError(f"{label} must be a lowercase sha256")
     return text
 
@@ -149,9 +151,7 @@ def _paper_guard(value: Mapping[str, Any], label: str) -> None:
         or value.get("paper_only") is not True
         or value.get("live_permission") is not False
     ):
-        raise DojoAutonomousEvidenceError(
-            f"{label} must be paper-only authority NONE"
-        )
+        raise DojoAutonomousEvidenceError(f"{label} must be paper-only authority NONE")
 
 
 def build_shadow_assessment(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -168,9 +168,7 @@ def build_shadow_assessment(payload: Mapping[str, Any]) -> dict[str, Any]:
     as_of = _utc(body.get("as_of_utc"), "as_of_utc")
     horizon = _utc(body.get("horizon_end_utc"), "horizon_end_utc")
     if horizon <= as_of:
-        raise DojoAutonomousEvidenceError(
-            "horizon_end_utc must be after as_of_utc"
-        )
+        raise DojoAutonomousEvidenceError("horizon_end_utc must be after as_of_utc")
     for field in ("ledger_sha256", "state_sha256", "snapshot_sha256"):
         _sha(body.get(field), field)
     pair = _required_text(body.get("pair"), "pair").upper()
@@ -183,14 +181,10 @@ def build_shadow_assessment(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise DojoAutonomousEvidenceError("supervision is invalid")
     confidence = _finite(body.get("confidence"), "confidence")
     if not 0.0 <= confidence <= 1.0:
-        raise DojoAutonomousEvidenceError(
-            "confidence must be between zero and one"
-        )
+        raise DojoAutonomousEvidenceError("confidence must be between zero and one")
     facts = body.get("facts")
     if not isinstance(facts, list) or not 1 <= len(facts) <= 3:
-        raise DojoAutonomousEvidenceError(
-            "facts must contain one to three items"
-        )
+        raise DojoAutonomousEvidenceError("facts must contain one to three items")
     body["facts"] = [_required_text(item, "fact") for item in facts]
     for field in (
         "primary_path",
@@ -217,25 +211,15 @@ def build_shadow_assessment(payload: Mapping[str, Any]) -> dict[str, Any]:
     normalized_watermarks: list[dict[str, Any]] = []
     for index, item in enumerate(watermarks):
         if not isinstance(item, Mapping):
-            raise DojoAutonomousEvidenceError(
-                f"source watermark {index} is invalid"
-            )
-        observed = _utc(
-            item.get("observed_through_utc"), f"watermark {index} time"
-        )
+            raise DojoAutonomousEvidenceError(f"source watermark {index} is invalid")
+        observed = _utc(item.get("observed_through_utc"), f"watermark {index} time")
         if observed > as_of:
-            raise DojoAutonomousEvidenceError(
-                "source watermark is after as_of_utc"
-            )
+            raise DojoAutonomousEvidenceError("source watermark is after as_of_utc")
         normalized_watermarks.append(
             {
-                "kind": _required_text(
-                    item.get("kind"), f"watermark {index} kind"
-                ),
+                "kind": _required_text(item.get("kind"), f"watermark {index} kind"),
                 "observed_through_utc": observed.isoformat(),
-                "sha256": _sha(
-                    item.get("sha256"), f"watermark {index} sha256"
-                ),
+                "sha256": _sha(item.get("sha256"), f"watermark {index} sha256"),
             }
         )
     body["source_watermarks"] = normalized_watermarks
@@ -256,17 +240,13 @@ def build_shadow_assessment(payload: Mapping[str, Any]) -> dict[str, Any]:
         if position.get("thesis") not in POSITION_STATES:
             raise DojoAutonomousEvidenceError("position thesis is invalid")
         if position.get("inventory") not in INVENTORY_STATES:
-            raise DojoAutonomousEvidenceError(
-                "position inventory state is invalid"
-            )
+            raise DojoAutonomousEvidenceError("position inventory state is invalid")
         if position.get("shadow_action") not in SHADOW_ACTIONS:
             raise DojoAutonomousEvidenceError("position shadow action is invalid")
         _sha(position.get("entry_context_sha256"), "entry_context_sha256")
         opened = _utc(position.get("opened_at_utc"), "opened_at_utc")
         if opened > as_of:
-            raise DojoAutonomousEvidenceError(
-                "position opened after as_of_utc"
-            )
+            raise DojoAutonomousEvidenceError("position opened after as_of_utc")
         for field in (
             "units",
             "entry_price",
@@ -308,9 +288,7 @@ def build_shadow_outcome(
         raise DojoAutonomousEvidenceError("outcome contract is invalid")
     _paper_guard(body, "outcome")
     if body.get("assessment_id") != assessment.get("assessment_id"):
-        raise DojoAutonomousEvidenceError(
-            "outcome assessment binding is invalid"
-        )
+        raise DojoAutonomousEvidenceError("outcome assessment binding is invalid")
     recorded = _utc(recorded_at_utc, "recorded_at_utc")
     horizon = _utc(assessment.get("horizon_end_utc"), "assessment horizon")
     as_of = _utc(assessment.get("as_of_utc"), "assessment cutoff")
@@ -319,10 +297,7 @@ def build_shadow_outcome(
         raise DojoAutonomousEvidenceError(
             "outcome assessment must contain at least one position"
         )
-    if (
-        contract == SHADOW_OUTCOME_CONTRACT
-        and len(assessment_positions) != 1
-    ):
+    if contract == SHADOW_OUTCOME_CONTRACT and len(assessment_positions) != 1:
         raise DojoAutonomousEvidenceError(
             "multi-position assessment requires outcome V2"
         )
@@ -337,9 +312,7 @@ def build_shadow_outcome(
         )
 
     settled_at_raw = body.get("settled_at_utc")
-    settled_at = (
-        _utc(settled_at_raw, "settled_at_utc") if settled_at_raw else None
-    )
+    settled_at = _utc(settled_at_raw, "settled_at_utc") if settled_at_raw else None
     if recorded < horizon and (settled_at is None or settled_at > recorded):
         raise DojoAutonomousEvidenceError("outcome is not mature")
     if settled_at is not None and settled_at <= as_of:
@@ -382,9 +355,7 @@ def _build_shadow_outcome_v2(
     """Seal a per-position outcome without collapsing mixed inventory."""
 
     if recorded < horizon:
-        raise DojoAutonomousEvidenceError(
-            "multi-position outcome is not mature"
-        )
+        raise DojoAutonomousEvidenceError("multi-position outcome is not mature")
     observed = _utc(body.get("observed_through_utc"), "observed_through_utc")
     if observed < as_of or observed > recorded:
         raise DojoAutonomousEvidenceError(
@@ -399,22 +370,16 @@ def _build_shadow_outcome_v2(
     ]
     raw_outcomes = body.get("position_outcomes")
     if not isinstance(raw_outcomes, list) or not raw_outcomes:
-        raise DojoAutonomousEvidenceError(
-            "position_outcomes must not be empty"
-        )
+        raise DojoAutonomousEvidenceError("position_outcomes must not be empty")
     by_id: dict[str, Mapping[str, Any]] = {}
     for index, item in enumerate(raw_outcomes):
         if not isinstance(item, Mapping):
-            raise DojoAutonomousEvidenceError(
-                f"position outcome {index} is invalid"
-            )
+            raise DojoAutonomousEvidenceError(f"position outcome {index} is invalid")
         position_id = _required_text(
             item.get("position_id"), "position outcome position_id"
         )
         if position_id in by_id:
-            raise DojoAutonomousEvidenceError(
-                "position outcome identity is duplicated"
-            )
+            raise DojoAutonomousEvidenceError("position outcome identity is duplicated")
         by_id[position_id] = item
     if set(by_id) != set(expected_ids):
         raise DojoAutonomousEvidenceError(
@@ -428,14 +393,10 @@ def _build_shadow_outcome_v2(
         item = dict(by_id[position_id])
         status = item.get("status")
         if status not in {"HORIZON_MARK", "SETTLED"}:
-            raise DojoAutonomousEvidenceError(
-                "position outcome status is invalid"
-            )
+            raise DojoAutonomousEvidenceError("position outcome status is invalid")
         side = str(item.get("side") or "").upper()
         if side not in {"LONG", "SHORT"}:
-            raise DojoAutonomousEvidenceError(
-                "position outcome side is invalid"
-            )
+            raise DojoAutonomousEvidenceError("position outcome side is invalid")
         position_observed = _utc(
             item.get("observed_through_utc"),
             "position outcome observed_through_utc",
@@ -455,11 +416,7 @@ def _build_shadow_outcome_v2(
             else None
         )
         if status == "SETTLED":
-            if (
-                settled is None
-                or settled <= as_of
-                or settled > position_observed
-            ):
+            if settled is None or settled <= as_of or settled > position_observed:
                 raise DojoAutonomousEvidenceError(
                     "settled position outcome has an invalid settlement"
                 )
@@ -477,9 +434,7 @@ def _build_shadow_outcome_v2(
             "counterfactual_exit_price",
             "counterfactual_delta_jpy",
         ):
-            metrics[field] = _finite(
-                item.get(field), f"position outcome {field}"
-            )
+            metrics[field] = _finite(item.get(field), f"position outcome {field}")
         if metrics["mfe_pips"] < 0.0 or metrics["mae_pips"] > 0.0:
             raise DojoAutonomousEvidenceError(
                 "position outcome MFE/MAE signs are invalid"
@@ -505,18 +460,14 @@ def _build_shadow_outcome_v2(
             }
         )
 
-    declared_pnl = _finite(
-        body.get("portfolio_pnl_jpy"), "portfolio_pnl_jpy"
-    )
+    declared_pnl = _finite(body.get("portfolio_pnl_jpy"), "portfolio_pnl_jpy")
     declared_delta = _finite(
         body.get("portfolio_counterfactual_delta_jpy"),
         "portfolio_counterfactual_delta_jpy",
     )
     if not math.isclose(
         declared_pnl, portfolio_pnl, rel_tol=0.0, abs_tol=1e-6
-    ) or not math.isclose(
-        declared_delta, portfolio_delta, rel_tol=0.0, abs_tol=1e-6
-    ):
+    ) or not math.isclose(declared_delta, portfolio_delta, rel_tol=0.0, abs_tol=1e-6):
         raise DojoAutonomousEvidenceError(
             "portfolio outcome totals do not match position outcomes"
         )
@@ -566,29 +517,21 @@ def build_candidate_spec(payload: Mapping[str, Any]) -> dict[str, Any]:
             "changed_rule must describe exactly one change"
         )
     if rule.get("baseline") == rule.get("candidate"):
-        raise DojoAutonomousEvidenceError(
-            "candidate value must differ from baseline"
-        )
+        raise DojoAutonomousEvidenceError("candidate value must differ from baseline")
     controls = body.get("unchanged_controls")
     if not isinstance(controls, list) or not controls:
-        raise DojoAutonomousEvidenceError(
-            "unchanged_controls must not be empty"
-        )
+        raise DojoAutonomousEvidenceError("unchanged_controls must not be empty")
     evidence = body.get("evidence_sha256s")
     if not isinstance(evidence, list) or not evidence:
         raise DojoAutonomousEvidenceError("evidence_sha256s must not be empty")
-    body["evidence_sha256s"] = [
-        _sha(item, "evidence sha256") for item in evidence
-    ]
+    body["evidence_sha256s"] = [_sha(item, "evidence sha256") for item in evidence]
     windows = body.get("windows")
     if not isinstance(windows, Mapping) or set(windows) != {
         "TRAIN",
         "VAL",
         "S5",
     }:
-        raise DojoAutonomousEvidenceError(
-            "windows must contain TRAIN, VAL, and S5"
-        )
+        raise DojoAutonomousEvidenceError("windows must contain TRAIN, VAL, and S5")
     normalized_windows: dict[str, Any] = {}
     last_end: datetime | None = None
     for name in ("TRAIN", "VAL", "S5"):
@@ -605,9 +548,7 @@ def build_candidate_spec(payload: Mapping[str, Any]) -> dict[str, Any]:
         normalized_windows[name] = {
             "from_utc": start.isoformat(),
             "to_utc": end.isoformat(),
-            "source_sha256": _sha(
-                item.get("source_sha256"), f"{name}.source_sha256"
-            ),
+            "source_sha256": _sha(item.get("source_sha256"), f"{name}.source_sha256"),
         }
     body["windows"] = normalized_windows
     costs = body.get("costs")
@@ -621,23 +562,17 @@ def build_candidate_spec(payload: Mapping[str, Any]) -> dict[str, Any]:
             "financing_pips_per_day",
         ):
             if _finite(costs[name].get(field), f"{name}.{field}") < 0.0:
-                raise DojoAutonomousEvidenceError(
-                    "cost inputs cannot be negative"
-                )
+                raise DojoAutonomousEvidenceError("cost inputs cannot be negative")
     if body.get("intrabar_paths") != ["OHLC", "OLHC"]:
         raise DojoAutonomousEvidenceError("both intrabar paths must be fixed")
     if body.get("end_of_replay_forced_close_benefit") is not False:
-        raise DojoAutonomousEvidenceError(
-            "forced-close benefit must be disabled"
-        )
+        raise DojoAutonomousEvidenceError("forced-close benefit must be disabled")
     gates = body.get("risk_gates")
     if (
         not isinstance(gates, Mapping)
         or float(gates.get("min_independent_stress_pf", 0.0)) < 1.25
     ):
-        raise DojoAutonomousEvidenceError(
-            "risk gates must require stress PF >= 1.25"
-        )
+        raise DojoAutonomousEvidenceError("risk gates must require stress PF >= 1.25")
     if body.get("death_codes") != sorted(DEATH_CODES):
         raise DojoAutonomousEvidenceError(
             "candidate must freeze the complete rejection taxonomy"
@@ -680,9 +615,7 @@ def _read_ledger(handle: Any, contract: str) -> list[dict[str, Any]]:
         if previous_time is not None and recorded < previous_time:
             raise DojoAutonomousEvidenceError("ledger time regressed")
         if row.get("payload_sha256") != canonical_sha256(row.get("payload")):
-            raise DojoAutonomousEvidenceError(
-                "ledger payload digest is invalid"
-            )
+            raise DojoAutonomousEvidenceError("ledger payload digest is invalid")
         previous = row["event_sha256"]
         previous_time = recorded
         rows.append(row)
@@ -712,9 +645,7 @@ def _validate_shadow_rows(rows: Sequence[Mapping[str, Any]]) -> None:
         event_type = row.get("event_type")
         payload = row.get("payload")
         if not isinstance(payload, Mapping):
-            raise DojoAutonomousEvidenceError(
-                f"shadow payload invalid at row {index}"
-            )
+            raise DojoAutonomousEvidenceError(f"shadow payload invalid at row {index}")
         if event_type == "ASSESSMENT_RECORDED":
             rebuilt = build_shadow_assessment(payload)
             if rebuilt != dict(payload):
@@ -787,6 +718,7 @@ def _append_event(
     payload: Mapping[str, Any],
     recorded_at_utc: datetime | str,
     identity: str,
+    new_assessment_as_of_utc: datetime | str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     path.parent.mkdir(parents=True, exist_ok=True)
     recorded = _utc(recorded_at_utc, "recorded_at_utc")
@@ -797,17 +729,52 @@ def _append_event(
             for row in rows:
                 if row.get("identity") == identity:
                     if row.get("payload_sha256") != canonical_sha256(payload):
-                        raise DojoAutonomousEvidenceError(
-                            "ledger identity collision"
-                        )
+                        raise DojoAutonomousEvidenceError("ledger identity collision")
                     return row, False
+            if new_assessment_as_of_utc is not None:
+                as_of = _utc(new_assessment_as_of_utc, "as_of_utc")
+                lag_seconds = (recorded - as_of).total_seconds()
+                if lag_seconds < 0:
+                    raise DojoAutonomousEvidenceError(
+                        "assessment cannot be recorded before its cutoff"
+                    )
+                if lag_seconds > MAX_ASSESSMENT_RECORD_LAG_SECONDS:
+                    raise DojoAutonomousEvidenceError(
+                        "assessment record lag permits hindsight"
+                    )
+                writer_now = _utc(_utc_now(), "writer_now_utc")
+                # This gate applies only to a new append.  Historical rows stay
+                # valid, and an exact idempotent retry above may return while
+                # the market is closed without creating new AI evaluation.
+                for label, instant in (
+                    ("as_of_utc", as_of),
+                    ("recorded_at_utc", recorded),
+                    ("writer_now_utc", writer_now),
+                ):
+                    try:
+                        is_open = compute_market_status(instant).is_fx_open
+                    except Exception as exc:
+                        raise DojoAutonomousEvidenceError(
+                            f"{label} FX market status is unavailable"
+                        ) from exc
+                    if not is_open:
+                        raise DojoAutonomousEvidenceError(
+                            f"new shadow assessment blocked while FX market is closed at {label}"
+                        )
+                writer_lag_seconds = (writer_now - recorded).total_seconds()
+                if writer_lag_seconds < 0:
+                    raise DojoAutonomousEvidenceError(
+                        "assessment recorded_at_utc is after the internal writer clock"
+                    )
+                if writer_lag_seconds > MAX_ASSESSMENT_RECORD_LAG_SECONDS:
+                    raise DojoAutonomousEvidenceError(
+                        "internal writer clock proves assessment backfill"
+                    )
             previous = rows[-1]["event_sha256"] if rows else None
             if rows and recorded < _utc(
                 rows[-1].get("recorded_at_utc"), "previous recorded_at_utc"
             ):
-                raise DojoAutonomousEvidenceError(
-                    "new ledger event time regressed"
-                )
+                raise DojoAutonomousEvidenceError("new ledger event time regressed")
             body = {
                 "contract": contract,
                 "sequence": len(rows) + 1,
@@ -838,24 +805,14 @@ def append_shadow_assessment(
     recorded_at_utc: datetime | str,
 ) -> tuple[dict[str, Any], bool]:
     assessment = build_shadow_assessment(payload)
-    recorded = _utc(recorded_at_utc, "recorded_at_utc")
-    as_of = _utc(assessment["as_of_utc"], "as_of_utc")
-    lag_seconds = (recorded - as_of).total_seconds()
-    if lag_seconds < 0:
-        raise DojoAutonomousEvidenceError(
-            "assessment cannot be recorded before its cutoff"
-        )
-    if lag_seconds > MAX_ASSESSMENT_RECORD_LAG_SECONDS:
-        raise DojoAutonomousEvidenceError(
-            "assessment record lag permits hindsight"
-        )
     return _append_event(
         path,
         contract=SHADOW_LEDGER_CONTRACT,
         event_type="ASSESSMENT_RECORDED",
         payload=assessment,
-        recorded_at_utc=recorded,
+        recorded_at_utc=recorded_at_utc,
         identity=assessment["assessment_id"],
+        new_assessment_as_of_utc=assessment["as_of_utc"],
     )
 
 
@@ -887,9 +844,7 @@ def append_shadow_outcome(
                 and row.get("payload", {}).get("assessment_id") == assessment_id
                 for row in rows
             ):
-                raise DojoAutonomousEvidenceError(
-                    "assessment outcome already exists"
-                )
+                raise DojoAutonomousEvidenceError("assessment outcome already exists")
             outcome = build_shadow_outcome(
                 payload,
                 assessment=assessments[assessment_id],
@@ -917,9 +872,7 @@ def _candidate_state(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None
         candidate_id = str(payload.get("candidate_id") or "")
         if event == "CANDIDATE_PREREGISTERED":
             if active is not None:
-                raise DojoAutonomousEvidenceError(
-                    "multiple active candidates detected"
-                )
+                raise DojoAutonomousEvidenceError("multiple active candidates detected")
             active = {"candidate_id": candidate_id, "status": "PREREGISTERED"}
         else:
             if active is None or active["candidate_id"] != candidate_id:
@@ -997,9 +950,7 @@ def initialize_research_root(
     implementation_sha256: str,
 ) -> tuple[dict[str, Any], bool]:
     payload = {
-        "implementation_sha256": _sha(
-            implementation_sha256, "implementation_sha256"
-        ),
+        "implementation_sha256": _sha(implementation_sha256, "implementation_sha256"),
         "paper_only": True,
         "order_authority": "NONE",
         "live_permission": False,
@@ -1101,9 +1052,7 @@ def append_candidate_event(
                         _sha(job.get(field), field)
                     argv = job.get("argv")
                     if not isinstance(argv, list) or not argv:
-                        raise DojoAutonomousEvidenceError(
-                            "job argv must not be empty"
-                        )
+                        raise DojoAutonomousEvidenceError("job argv must not be empty")
                     allowlist = job.get("environment_allowlist")
                     if not isinstance(allowlist, list):
                         raise DojoAutonomousEvidenceError(
@@ -1124,9 +1073,7 @@ def append_candidate_event(
                         raise DojoAutonomousEvidenceError(
                             "replay failure code is invalid"
                         )
-                    _required_text(
-                        event_payload.get("reason"), "replay failure reason"
-                    )
+                    _required_text(event_payload.get("reason"), "replay failure reason")
                     _sha(
                         event_payload.get("artifact_sha256"),
                         "artifact_sha256",
@@ -1136,9 +1083,7 @@ def append_candidate_event(
                         raise DojoAutonomousEvidenceError(
                             "rejection death code is invalid"
                         )
-                    _required_text(
-                        event_payload.get("reason"), "rejection reason"
-                    )
+                    _required_text(event_payload.get("reason"), "rejection reason")
                 elif event_type == "REPLAY_PASSED":
                     metrics = event_payload.get("independent_stress_metrics")
                     if not isinstance(metrics, Mapping):
@@ -1179,9 +1124,7 @@ def append_candidate_event(
             with ledger_path.open("r", encoding="utf-8") as handle:
                 final_rows = _read_ledger(handle, CANDIDATE_LEDGER_CONTRACT)
             final_active = _candidate_state(final_rows)
-            _write_active_checkpoint(
-                root, final_active, final_rows[-1]["event_sha256"]
-            )
+            _write_active_checkpoint(root, final_active, final_rows[-1]["event_sha256"])
             return row, appended
         finally:
             fcntl.flock(lifecycle_lock.fileno(), fcntl.LOCK_UN)
@@ -1201,9 +1144,7 @@ def validate_research_root(root: Path) -> dict[str, Any]:
         rows = _read_ledger(handle, CANDIDATE_LEDGER_CONTRACT)
     for row in rows:
         if row.get("event_type") not in CANDIDATE_EVENTS:
-            raise DojoAutonomousEvidenceError(
-                "candidate ledger event is invalid"
-            )
+            raise DojoAutonomousEvidenceError("candidate ledger event is invalid")
         payload = row.get("payload")
         if not isinstance(payload, Mapping):
             raise DojoAutonomousEvidenceError("candidate payload is invalid")
@@ -1216,9 +1157,7 @@ def validate_research_root(root: Path) -> dict[str, Any]:
             expected_identity = canonical_sha256(payload)
             _sha(payload.get("implementation_sha256"), "implementation_sha256")
         if row.get("identity") != expected_identity:
-            raise DojoAutonomousEvidenceError(
-                "candidate ledger identity is invalid"
-            )
+            raise DojoAutonomousEvidenceError("candidate ledger identity is invalid")
         if event_type == "CANDIDATE_PREREGISTERED":
             spec = build_candidate_spec(payload.get("spec") or {})
             if (
@@ -1229,9 +1168,10 @@ def validate_research_root(root: Path) -> dict[str, Any]:
                     "candidate registration is not canonical"
                 )
             spec_path = root / "candidates" / spec["candidate_id"] / "spec.json"
-            if not spec_path.is_file() or json.loads(
-                spec_path.read_text(encoding="utf-8")
-            ) != spec:
+            if (
+                not spec_path.is_file()
+                or json.loads(spec_path.read_text(encoding="utf-8")) != spec
+            ):
                 raise DojoAutonomousEvidenceError(
                     "candidate immutable spec is missing or changed"
                 )
@@ -1260,9 +1200,9 @@ def validate_research_root(root: Path) -> dict[str, Any]:
                     "candidate environment allowlist is invalid"
                 )
             _required_text(job.get("output_directory"), "output_directory")
-            if not _required_text(
-                job.get("screen_name"), "screen_name"
-            ).startswith("qr-dojo-improve-"):
+            if not _required_text(job.get("screen_name"), "screen_name").startswith(
+                "qr-dojo-improve-"
+            ):
                 raise DojoAutonomousEvidenceError("candidate screen is invalid")
             pid = job.get("pid")
             if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
@@ -1293,31 +1233,22 @@ def validate_research_root(root: Path) -> dict[str, Any]:
                 payload.get("implementation_commit_sha256"),
                 "implementation_commit_sha256",
             )
-            _required_text(
-                payload.get("future_experiment_id"), "future_experiment_id"
-            )
+            _required_text(payload.get("future_experiment_id"), "future_experiment_id")
     active = _candidate_state(rows)
     checkpoint_path = root / "active_candidate.json"
     if not checkpoint_path.exists():
-        raise DojoAutonomousEvidenceError(
-            "active candidate checkpoint is missing"
-        )
+        raise DojoAutonomousEvidenceError("active candidate checkpoint is missing")
     checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
     body = {
-        key: value
-        for key, value in checkpoint.items()
-        if key != "checkpoint_sha256"
+        key: value for key, value in checkpoint.items() if key != "checkpoint_sha256"
     }
     if (
         checkpoint.get("checkpoint_sha256") != canonical_sha256(body)
         or checkpoint.get("contract") != ACTIVE_CHECKPOINT_CONTRACT
-        or checkpoint.get("candidate_ledger_tip_sha256")
-        != candidate["tip_sha256"]
+        or checkpoint.get("candidate_ledger_tip_sha256") != candidate["tip_sha256"]
         or checkpoint.get("active_candidate") != active
     ):
-        raise DojoAutonomousEvidenceError(
-            "active candidate checkpoint is invalid"
-        )
+        raise DojoAutonomousEvidenceError("active candidate checkpoint is invalid")
     _paper_guard(checkpoint, "active checkpoint")
     return {
         "status": "VALID",

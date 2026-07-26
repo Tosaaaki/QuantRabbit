@@ -14,7 +14,6 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -97,7 +96,10 @@ def ledger_metrics(session_dir: Path) -> dict[str, Any]:
     fills: dict[str, dict[str, Any]] = {}
     settlements: list[dict[str, Any]] = []
     margin_events = 0
+    ruin_events = 0
     release_decisions = 0
+    forced_close_count = 0
+    forced_close_net_jpy = 0.0
     for row in rows:
         event = row.get("event")
         payload = row.get("payload") or {}
@@ -110,6 +112,16 @@ def ledger_metrics(session_dir: Path) -> dict[str, Any]:
             settlements.append(row)
         if str(event).startswith("MARGIN"):
             margin_events += 1
+        if event in {"RUIN", "ACCOUNT_RUIN"}:
+            ruin_events += 1
+        reason = str(payload.get("reason") or "").upper()
+        if event in SETTLEMENT_EVENTS and reason in {
+            "END_OF_REPLAY",
+            "REPLAY_END",
+            "FORCED_REPLAY_END",
+        }:
+            forced_close_count += 1
+            forced_close_net_jpy += float(payload.get("pl_jpy") or 0.0)
         if event == "INVENTORY_RELEASE_DECISION":
             release_decisions += 1
 
@@ -155,9 +167,12 @@ def ledger_metrics(session_dir: Path) -> dict[str, Any]:
         "active_days": len(active_days),
         "average_hold_minutes": sum(holds) / len(holds) if holds else 0.0,
         "margin_events": margin_events,
+        "ruin_events": ruin_events,
         "release_decisions": release_decisions,
         "unresolved_positions": len(snapshot.get("positions") or []),
         "unresolved_orders": len(snapshot.get("orders") or []),
+        "end_of_replay_forced_close_count": forced_close_count,
+        "end_of_replay_forced_close_net_jpy": forced_close_net_jpy,
         "terminal_ledger_sha256": snapshot.get("ledger_sha"),
         "measurement_clock": "payload.quote.ts",
     }
@@ -173,9 +188,11 @@ def run_arm(
     cost_name: str,
     costs: dict[str, Any],
     intrabar: str,
+    source_manifest: Path | None = None,
 ) -> dict[str, Any]:
     granularity = "S5" if window_name == "S5" else "M1"
-    source_manifest = S5_MANIFEST if granularity == "S5" else M1_MANIFEST
+    if source_manifest is None:
+        source_manifest = S5_MANIFEST if granularity == "S5" else M1_MANIFEST
     session_dir = (
         output_root
         / window_name.lower()
@@ -315,8 +332,11 @@ def train_select(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
                 > baseline["realized_drawdown_jpy"]
             ):
                 reasons.append(f"{cost}/{path}: risk worsened")
-            if candidate["margin_events"] > baseline["margin_events"]:
-                reasons.append(f"{cost}/{path}: margin events worsened")
+            if (
+                candidate["margin_events"] > baseline["margin_events"]
+                or candidate["ruin_events"] > baseline["ruin_events"]
+            ):
+                reasons.append(f"{cost}/{path}: margin/ruin worsened")
             if (
                 candidate["unresolved_positions"]
                 > baseline["unresolved_positions"]
@@ -324,6 +344,11 @@ def train_select(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
                 > baseline["unresolved_orders"]
             ):
                 reasons.append(f"{cost}/{path}: unresolved exposure worsened")
+            if (
+                candidate["end_of_replay_forced_close_count"] != 0
+                or candidate["end_of_replay_forced_close_net_jpy"] != 0.0
+            ):
+                reasons.append(f"{cost}/{path}: forced-close benefit detected")
     return not reasons, reasons
 
 
@@ -331,9 +356,23 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--source-manifest-dir", type=Path)
     args = parser.parse_args()
     spec = load_json(args.spec.resolve())
     candidate_id = str(spec["candidate_id"])
+    source_manifests = {
+        window: (
+            args.source_manifest_dir.resolve() / f"{window}.json"
+            if args.source_manifest_dir is not None
+            else (S5_MANIFEST if window == "S5" else M1_MANIFEST)
+        )
+        for window in ("TRAIN", "VAL", "S5")
+    }
+    for window, path in source_manifests.items():
+        if not path.is_file():
+            raise ValueError(f"{window} source manifest is missing: {path}")
+        if file_sha256(path) != spec["windows"][window]["source_sha256"]:
+            raise ValueError(f"{window} source manifest digest mismatch")
     args.output_root.mkdir(parents=True, exist_ok=False)
     rows: list[dict[str, Any]] = []
     for policy in ("BASELINE", "CANDIDATE"):
@@ -349,6 +388,7 @@ def main() -> int:
                         cost_name=cost_name,
                         costs=spec["costs"][cost_name],
                         intrabar=intrabar,
+                        source_manifest=source_manifests["TRAIN"],
                     )
                 )
     selected, reasons = train_select(rows)
@@ -367,6 +407,7 @@ def main() -> int:
                                 cost_name=cost_name,
                                 costs=spec["costs"][cost_name],
                                 intrabar=intrabar,
+                                source_manifest=source_manifests[window_name],
                             )
                         )
     result = {

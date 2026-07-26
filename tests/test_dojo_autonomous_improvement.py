@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import quant_rabbit.dojo_autonomous_improvement as autonomous_improvement
 from quant_rabbit.dojo_autonomous_improvement import (
     CANDIDATE_SPEC_CONTRACT,
     SHADOW_ASSESSMENT_CONTRACT,
+    SHADOW_LEDGER_CONTRACT,
     SHADOW_OUTCOME_CONTRACT,
     SHADOW_OUTCOME_CONTRACT_V2,
     DojoAutonomousEvidenceError,
@@ -18,13 +21,20 @@ from quant_rabbit.dojo_autonomous_improvement import (
     build_candidate_spec,
     build_shadow_assessment,
     build_shadow_outcome,
+    canonical_sha256,
     initialize_research_root,
     validate_research_root,
+    validate_shadow_ledger,
 )
 
 
 NOW = datetime(2026, 7, 22, 18, 0, tzinfo=timezone.utc)
 SHA = "a" * 64
+
+
+@pytest.fixture(autouse=True)
+def _fixed_internal_writer_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(autonomous_improvement, "_utc_now", lambda: NOW)
 
 
 def _guard() -> dict:
@@ -63,9 +73,7 @@ def _assessment() -> dict:
         "source_watermarks": [
             {
                 "kind": "m1_bid_ask",
-                "observed_through_utc": (
-                    NOW - timedelta(seconds=1)
-                ).isoformat(),
+                "observed_through_utc": (NOW - timedelta(seconds=1)).isoformat(),
                 "sha256": "d" * 64,
             }
         ],
@@ -88,6 +96,19 @@ def _assessment() -> dict:
             }
         ],
     }
+
+
+def _assessment_at(as_of: datetime) -> dict:
+    assessment = deepcopy(_assessment())
+    assessment["as_of_utc"] = as_of.isoformat()
+    assessment["horizon_end_utc"] = (as_of + timedelta(hours=1)).isoformat()
+    assessment["quote"]["ts_utc"] = (as_of - timedelta(seconds=1)).isoformat()
+    assessment["source_watermarks"][0]["observed_through_utc"] = (
+        as_of - timedelta(seconds=1)
+    ).isoformat()
+    for position in assessment["positions"]:
+        position["opened_at_utc"] = (as_of - timedelta(minutes=30)).isoformat()
+    return assessment
 
 
 def _outcome(assessment_id: str) -> dict:
@@ -238,9 +259,7 @@ def test_shadow_is_cutoff_bound_and_outcome_waits_for_maturity(
     tmp_path: Path,
 ) -> None:
     ledger = tmp_path / "ai_shadow_ledger.jsonl"
-    row, appended = append_shadow_assessment(
-        ledger, _assessment(), recorded_at_utc=NOW
-    )
+    row, appended = append_shadow_assessment(ledger, _assessment(), recorded_at_utc=NOW)
     assert appended
     assessment = row["payload"]
     with pytest.raises(DojoAutonomousEvidenceError, match="not mature"):
@@ -285,6 +304,94 @@ def test_shadow_rejects_hindsight_backfill(tmp_path: Path) -> None:
         )
 
 
+def test_shadow_writer_blocks_new_weekend_assessment_but_retry_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = tmp_path / "shadow.jsonl"
+    friday = datetime(2026, 7, 24, 20, 59, 0, tzinfo=timezone.utc)
+    friday_payload = _assessment_at(friday)
+    monkeypatch.setattr(
+        autonomous_improvement,
+        "_utc_now",
+        lambda: friday + timedelta(seconds=10),
+    )
+    first, appended = append_shadow_assessment(
+        ledger,
+        friday_payload,
+        recorded_at_utc=friday + timedelta(seconds=10),
+    )
+    assert appended
+
+    # The existing identity is returned before the new-append weekend and lag
+    # gates.  No second assessment is created.
+    saturday = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(autonomous_improvement, "_utc_now", lambda: saturday)
+    retry, appended = append_shadow_assessment(
+        ledger,
+        friday_payload,
+        recorded_at_utc=saturday,
+    )
+    assert not appended
+    assert retry == first
+    assert len(ledger.read_text().splitlines()) == 1
+
+    with pytest.raises(DojoAutonomousEvidenceError, match="FX market is closed"):
+        append_shadow_assessment(
+            ledger,
+            _assessment_at(saturday),
+            recorded_at_utc=saturday,
+        )
+
+
+def test_shadow_writer_rejects_backdated_friday_clock_during_weekend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    friday = datetime(2026, 7, 24, 20, 59, 0, tzinfo=timezone.utc)
+    saturday = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(autonomous_improvement, "_utc_now", lambda: saturday)
+
+    ledger = tmp_path / "shadow.jsonl"
+    with pytest.raises(
+        DojoAutonomousEvidenceError,
+        match="FX market is closed at writer_now_utc",
+    ):
+        append_shadow_assessment(
+            ledger,
+            _assessment_at(friday),
+            recorded_at_utc=friday + timedelta(seconds=10),
+        )
+    assert ledger.read_bytes() == b""
+
+
+def test_shadow_weekend_gate_does_not_retroactively_invalidate_history(
+    tmp_path: Path,
+) -> None:
+    saturday = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    assessment = build_shadow_assessment(_assessment_at(saturday))
+    body = {
+        "contract": SHADOW_LEDGER_CONTRACT,
+        "sequence": 1,
+        "event_type": "ASSESSMENT_RECORDED",
+        "identity": assessment["assessment_id"],
+        "recorded_at_utc": saturday.isoformat(),
+        "previous_event_sha256": None,
+        "payload_sha256": canonical_sha256(assessment),
+        "payload": assessment,
+        "paper_only": True,
+        "order_authority": "NONE",
+        "live_permission": False,
+    }
+    row = {**body, "event_sha256": canonical_sha256(body)}
+    ledger = tmp_path / "historical-shadow.jsonl"
+    ledger.write_text(
+        json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+    assert validate_shadow_ledger(ledger)["status"] == "VALID"
+
+
 def test_multi_position_shadow_requires_v2_and_scores_each_position(
     tmp_path: Path,
 ) -> None:
@@ -294,9 +401,7 @@ def test_multi_position_shadow_requires_v2_and_scores_each_position(
     )
     assert appended
     assessment_id = assessment_row["payload"]["assessment_id"]
-    with pytest.raises(
-        DojoAutonomousEvidenceError, match="requires outcome V2"
-    ):
+    with pytest.raises(DojoAutonomousEvidenceError, match="requires outcome V2"):
         append_shadow_outcome(
             ledger,
             _outcome(assessment_id),
@@ -321,9 +426,7 @@ def test_multi_position_shadow_rejects_missing_identity_and_bad_totals() -> None
     assessment = build_shadow_assessment(_multi_assessment())
     missing = _multi_outcome(assessment["assessment_id"])
     missing["position_outcomes"].pop()
-    with pytest.raises(
-        DojoAutonomousEvidenceError, match="exactly cover"
-    ):
+    with pytest.raises(DojoAutonomousEvidenceError, match="exactly cover"):
         build_shadow_outcome(
             missing,
             assessment=assessment,
@@ -331,9 +434,7 @@ def test_multi_position_shadow_rejects_missing_identity_and_bad_totals() -> None
         )
     bad_total = _multi_outcome(assessment["assessment_id"])
     bad_total["portfolio_pnl_jpy"] = 181.0
-    with pytest.raises(
-        DojoAutonomousEvidenceError, match="totals do not match"
-    ):
+    with pytest.raises(DojoAutonomousEvidenceError, match="totals do not match"):
         build_shadow_outcome(
             bad_total,
             assessment=assessment,
@@ -354,9 +455,7 @@ def test_multi_position_shadow_rejects_early_or_future_scoring() -> None:
     future["position_outcomes"][0]["observed_through_utc"] = (
         NOW + timedelta(hours=2)
     ).isoformat()
-    with pytest.raises(
-        DojoAutonomousEvidenceError, match="outside the scoring cutoff"
-    ):
+    with pytest.raises(DojoAutonomousEvidenceError, match="outside the scoring cutoff"):
         build_shadow_outcome(
             future,
             assessment=assessment,
@@ -380,9 +479,7 @@ def test_candidate_spec_is_one_change_with_separate_windows() -> None:
 def test_candidate_lifecycle_blocks_competitor_and_weak_pass(
     tmp_path: Path,
 ) -> None:
-    initialize_research_root(
-        tmp_path, recorded_at_utc=NOW, implementation_sha256=SHA
-    )
+    initialize_research_root(tmp_path, recorded_at_utc=NOW, implementation_sha256=SHA)
     event = {**_guard(), "spec": _spec()}
     row, appended = append_candidate_event(
         tmp_path,
@@ -513,9 +610,7 @@ def test_candidate_lifecycle_blocks_competitor_and_weak_pass(
 
 
 def test_tampered_candidate_chain_fails_closed(tmp_path: Path) -> None:
-    initialize_research_root(
-        tmp_path, recorded_at_utc=NOW, implementation_sha256=SHA
-    )
+    initialize_research_root(tmp_path, recorded_at_utc=NOW, implementation_sha256=SHA)
     ledger = tmp_path / "candidate_ledger.jsonl"
     row = json.loads(ledger.read_text().strip())
     row["payload"]["order_authority"] = "WRITE"

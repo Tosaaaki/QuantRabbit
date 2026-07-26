@@ -13,7 +13,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from quant_rabbit.dojo_autonomous_improvement import (
+from quant_rabbit.analysis.market_status import compute_market_status  # noqa: E402
+from quant_rabbit.dojo_autonomous_improvement import (  # noqa: E402
     append_candidate_event,
     append_shadow_assessment,
     append_shadow_outcome,
@@ -30,6 +31,33 @@ def _json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise ValueError("input JSON must be an object")
     return value
+
+
+def _parse_utc(value: object, *, field: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty UTC timestamp")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include timezone information")
+    return parsed.astimezone(timezone.utc)
+
+
+def _assert_assessment_market_open(
+    payload: dict,
+    *,
+    recorded_at_utc: datetime,
+) -> None:
+    """Fail closed instead of creating a new AI assessment while FX is closed."""
+
+    as_of_utc = _parse_utc(payload.get("as_of_utc"), field="as_of_utc")
+    recorded_status = compute_market_status(recorded_at_utc)
+    as_of_status = compute_market_status(as_of_utc)
+    if not recorded_status.is_fx_open or not as_of_status.is_fx_open:
+        reason = recorded_status.closed_reason or as_of_status.closed_reason
+        raise ValueError(
+            "AI_ASSESSMENT_MARKET_CLOSED: "
+            f"new assessment disabled while FX is closed ({reason})"
+        )
 
 
 def main() -> int:
@@ -51,9 +79,12 @@ def main() -> int:
     if args.command == "validate":
         result = validate_research_root(args.root)
     elif args.command == "init":
-        implementation = Path(__file__).read_bytes() + (
-            REPO_ROOT / "src/quant_rabbit/dojo_autonomous_improvement.py"
-        ).read_bytes()
+        implementation = (
+            Path(__file__).read_bytes()
+            + (
+                REPO_ROOT / "src/quant_rabbit/dojo_autonomous_improvement.py"
+            ).read_bytes()
+        )
         row, appended = initialize_research_root(
             args.root,
             recorded_at_utc=now,
@@ -61,9 +92,11 @@ def main() -> int:
         )
         result = {"appended": appended, "event_sha256": row["event_sha256"]}
     elif args.command == "append-assessment":
+        payload = _json(args.input)
+        _assert_assessment_market_open(payload, recorded_at_utc=now)
         row, appended = append_shadow_assessment(
             args.root / "ai_shadow_ledger.jsonl",
-            _json(args.input),
+            payload,
             recorded_at_utc=now,
         )
         result = {"appended": appended, "event_sha256": row["event_sha256"]}
