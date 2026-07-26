@@ -8,7 +8,7 @@ SUPERVISOR_WRAPPER="$REPO_ROOT/scripts/run-dojo-historical-supervisor-launchd.py
 RUN_CONTROL="$REPO_ROOT/config/dojo_g2_parallel_rooms_run_control_v6.json"
 OUTPUT_ROOT="/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r12/supervisor"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-INTERVAL_SECONDS=3600
+INTERVAL_SECONDS=60
 TIMEOUT_SECONDS=180
 
 usage() {
