@@ -1026,7 +1026,7 @@ def replay_paired_inventory_transcript(
         raise DojoPairedInventoryCounterfactualError(
             "transcript file digest differs from the sealed plan"
         )
-    baseline_net = float(baseline_result["end_equity_jpy"]) - float(
+    baseline_full_month_net = float(baseline_result["end_equity_jpy"]) - float(
         baseline_result["start_equity_jpy"]
     )
     cadence_rows = []
@@ -1065,8 +1065,8 @@ def replay_paired_inventory_transcript(
             for value in ai_equity:
                 ai_peak = max(ai_peak, value)
                 ai_dd = max(ai_dd, (ai_peak - value) / max(ai_peak, 1e-9))
-            base_net = base_balances[-1] - base_balances[0]
-            ai_net = (
+            base_block_net = base_balances[-1] - base_balances[0]
+            ai_block_net = (
                 arm.block_end_balance[block_id]
                 - arm.block_start_balance[block_id]
             )
@@ -1074,9 +1074,9 @@ def replay_paired_inventory_transcript(
                 {
                     "block_id": block_id,
                     "status": "MEASURED_EXPERIMENTAL",
-                    "bot_only_net_jpy": base_net,
-                    "ai_managed_net_jpy": ai_net,
-                    "net_delta_jpy": ai_net - base_net,
+                    "bot_only_net_jpy": base_block_net,
+                    "ai_managed_net_jpy": ai_block_net,
+                    "net_delta_jpy": ai_block_net - base_block_net,
                     "bot_only_max_drawdown_fraction": base_dd,
                     "ai_managed_max_drawdown_fraction": ai_dd,
                     "max_drawdown_delta": ai_dd - base_dd,
@@ -1088,7 +1088,9 @@ def replay_paired_inventory_transcript(
                     ),
                 }
             )
-        ai_net = float(result["end_equity_jpy"]) - float(result["start_equity_jpy"])
+        ai_full_month_net = float(result["end_equity_jpy"]) - float(
+            result["start_equity_jpy"]
+        )
         oos_close_pnls = [
             float(row["pnl_jpy"])
             for row in arm.close_events
@@ -1098,10 +1100,13 @@ def replay_paired_inventory_transcript(
             {
                 "cadence_id": cadence,
                 "portfolio_result": result,
-                "bot_only_full_month_net_jpy": baseline_net,
-                "ai_managed_full_month_net_jpy": ai_net,
-                "full_month_net_delta_jpy": ai_net - baseline_net,
+                "bot_only_full_month_net_jpy": baseline_full_month_net,
+                "ai_managed_full_month_net_jpy": ai_full_month_net,
+                "full_month_net_delta_jpy": (
+                    ai_full_month_net - baseline_full_month_net
+                ),
                 "ai_close_metrics": _profit_metrics(oos_close_pnls),
+                "model_authored_policy_evaluation_count": len(arm.decisions),
                 "ai_call_count": len(arm.decisions),
                 "provider_model_call_count": 0,
                 "state_packet_cache_skip_count": arm.skipped_cached_calls,
