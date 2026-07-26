@@ -210,6 +210,7 @@ def build_counterfactual_supervision_plan(
     cost_model_sha256: str,
     execution_model_sha256: str,
     supervisor_policy_sha256: str,
+    oos_access_policy_sha256: str,
     strategy_compatible_resume_signal_ids: Sequence[str],
     regime_ids: Sequence[str],
 ) -> dict[str, Any]:
@@ -277,6 +278,9 @@ def build_counterfactual_supervision_plan(
         "supervisor_policy_sha256": _sha256(
             supervisor_policy_sha256, "supervisor_policy_sha256"
         ),
+        "oos_access_policy_sha256": _sha256(
+            oos_access_policy_sha256, "oos_access_policy_sha256"
+        ),
         "phase_a_arm": BOT_ONLY,
         "phase_b_cadence_ids": list(CADENCE_IDS),
         "baseline_cadence_id": BASELINE_CADENCE_ID,
@@ -308,6 +312,7 @@ def build_counterfactual_supervision_plan(
             "failed_or_missing_cell_can_be_dropped": False,
             "cadence_reselection_after_oos_allowed": False,
             "survivor_only_summary_allowed": False,
+            "sealed_oos_access_policy_required": True,
         },
         "authority": dict(_AUTHORITY),
     }
@@ -326,6 +331,7 @@ def validate_counterfactual_supervision_plan(value: Any) -> dict[str, Any]:
         cost_model_sha256=plan.get("cost_model_sha256"),
         execution_model_sha256=plan.get("execution_model_sha256"),
         supervisor_policy_sha256=plan.get("supervisor_policy_sha256"),
+        oos_access_policy_sha256=plan.get("oos_access_policy_sha256"),
         strategy_compatible_resume_signal_ids=plan.get(
             "strategy_compatible_resume_signal_ids"
         ),

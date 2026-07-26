@@ -47,6 +47,7 @@ def _plan(*, oos_blocks: int = 8) -> dict:
         cost_model_sha256="b" * 64,
         execution_model_sha256="c" * 64,
         supervisor_policy_sha256="d" * 64,
+        oos_access_policy_sha256="9" * 64,
         strategy_compatible_resume_signal_ids=[
             "strategy-regime-compatible-v1"
         ],
@@ -185,6 +186,7 @@ def test_plan_preregisters_requested_cadences_and_adaptive_baseline() -> None:
         "OPEN_POSITION_OR_PENDING_ORDER"
     )
     assert plan["authority"]["order_authority"] == "NONE"
+    assert plan["anti_bias"]["sealed_oos_access_policy_required"] is True
 
 
 def test_missing_cells_and_too_few_oos_blocks_remain_unranked() -> None:
