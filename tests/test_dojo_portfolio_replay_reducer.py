@@ -324,6 +324,85 @@ def test_sparse_session_never_executes_an_unobserved_pair_quote() -> None:
     assert session.export_checkpoint()["exact_carry_state"]["positions"] == []
 
 
+def test_sparse_trigger_waits_for_fresh_jpy_conversion_dependency() -> None:
+    epoch = 1_704_067_200
+    policy = make_policy(pairs=("EUR_USD", "USD_JPY"))
+    session = PortfolioReplaySession(policy=policy, initial_balance_jpy=200_000)
+    watermark = 0
+
+    def step(
+        phase: str,
+        prices: dict[str, tuple[float, float]],
+        *,
+        intent: dict | None = None,
+    ) -> dict:
+        nonlocal watermark
+        watermark += 1
+        quotes = make_quotes(epoch, phase, prices)
+        snapshot = session.prepare_coordinate(
+            coordinate_id=f"sparse-conversion:{phase}",
+            epoch=epoch,
+            phase=phase,
+            intrabar="OHLC",
+            quote_watermark=watermark,
+            quotes=quotes,
+            quote_batch_sha256_value=quote_batch_sha256(
+                epoch=epoch,
+                phase=phase,
+                intrabar="OHLC",
+                quote_watermark=watermark,
+                quotes=quotes,
+            ),
+            fresh_quote_pairs=sorted(prices),
+            unavailable_quote_pairs=sorted(
+                set(policy["expected_quote_pairs"]) - set(prices)
+            ),
+            pair_local_quote_age_seconds={
+                pair: (0 if pair in prices else 60)
+                for pair in policy["expected_quote_pairs"]
+            },
+            quote_policy=SPARSE_QUOTE_POLICY,
+        )
+        session.consume_proposal_batch(
+            make_batch(
+                snapshot,
+                new_by_worker={"worker-a": [intent]} if intent is not None else None,
+            )
+        )
+        return snapshot
+
+    resting = make_intent(
+        intent_id="eur-usd-resting",
+        action="LIMIT",
+        pair="EUR_USD",
+        entry_price=1.09,
+        sl_price=1.08,
+        tp_price=1.12,
+        valid_until_epoch=epoch + 3_600,
+    )
+    step(
+        "O",
+        {"EUR_USD": (1.1, 1.1002), "USD_JPY": (145.0, 145.02)},
+        intent=resting,
+    )
+
+    deferred = step("H", {"EUR_USD": (1.0898, 1.09)})
+    checkpoint = session.export_checkpoint()["exact_carry_state"]
+    assert len(deferred["pending_orders"]) == 1
+    assert len(checkpoint["pending_orders"]) == 1
+    assert checkpoint["positions"] == []
+
+    triggered = step(
+        "L",
+        {"EUR_USD": (1.0898, 1.09), "USD_JPY": (145.1, 145.12)},
+    )
+    checkpoint = session.export_checkpoint()["exact_carry_state"]
+    assert triggered["pending_orders"] == []
+    assert checkpoint["pending_orders"] == []
+    assert len(checkpoint["positions"]) == 1
+    assert checkpoint["metrics"]["orders_triggered"] == 1
+
+
 def test_admission_is_input_order_independent_and_ignores_claimed_edge() -> None:
     epoch = 1_704_067_200
     snapshot = make_snapshot(epoch=epoch)

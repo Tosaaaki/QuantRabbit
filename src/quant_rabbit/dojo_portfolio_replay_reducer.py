@@ -670,6 +670,32 @@ def _stop_risk(
     )
 
 
+def _fresh_conversion_dependency(
+    pair: str,
+    quotes: Mapping[str, Mapping[str, Any]],
+    indexes: Mapping[str, Any],
+) -> str | None:
+    """Return the missing executable JPY conversion quote, if any.
+
+    A resting order may observe its own trigger pair in a sparse batch while
+    the separately sealed JPY conversion route is absent.  Stop risk, margin,
+    and central-pool ranking all require that conversion at the same causal
+    coordinate.  The route itself is a policy invariant and remains fail
+    closed; only a temporarily absent fresh route quote is deferrable.
+    """
+
+    quote_currency = _currencies(pair)[1]
+    if quote_currency == "JPY":
+        return None
+    route = indexes["routes"].get(quote_currency)
+    if route is None:
+        raise DojoPortfolioReplayError(
+            f"missing sealed JPY conversion route for {quote_currency}"
+        )
+    route_pair = str(route["pair"])
+    return None if route_pair in quotes else route_pair
+
+
 def _account_equity(
     state: Mapping[str, Any],
     quotes: Mapping[str, Mapping[str, Any]],
@@ -1441,6 +1467,20 @@ def _triggered_pending_candidates(
             continue
         fill = _pending_fill(order, quotes[order["pair"]], indexes)
         if fill is None:
+            continue
+        missing_conversion_pair = _fresh_conversion_dependency(
+            order["pair"], quotes, indexes
+        )
+        if missing_conversion_pair is not None:
+            _event(
+                state,
+                "ORDER_TRIGGER_DEFER_FRESH_DEPENDENCY",
+                {
+                    "order_id": order_id,
+                    "coordinate_seq": coordinate_seq,
+                    "missing_pair": missing_conversion_pair,
+                },
+            )
             continue
         del state["pending_orders"][order_id]
         candidate = {
