@@ -11,11 +11,11 @@
   "contract": "QR_DOJO_G2_HISTORICAL_RUN_CONTROL_V1",
   "execution": {
     "allowed_command": "scripts/run-dojo-historical-train-control.py step",
-    "archive_root": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260723-r12",
-    "archive_drive_root_id": "1j-eIY6zpKoGiArpNWScTHX-M-CZtUijG",
-    "archive_drive_readback_parent_id": "1AY23ii6fvTXXfQOrIMnSKfNc2GvIq1Ey",
-    "archive_drive_remote_receipts_parent_id": "1Yno2_GJIu0q1rvEScTP12KJiDdqs5YmL",
-    "archive_local_staging_root": "/Users/tossaki/App/QuantRabbit-live/staging/dojo-historical-archives-r12",
+    "archive_root": "/Users/tossaki/Library/CloudStorage/GoogleDrive-www.tosakiweb.net@gmail.com/マイドライブ/QuantRabbit DOJO Archives/completed-runs/g2-parallel-rooms-20260726-r13",
+    "archive_drive_root_id": "1Q4DzdAE083Tt42ORKNPqdrlRIKrYBSvV",
+    "archive_drive_readback_parent_id": "1ZfArEpPzDk5Hs4RJj4LDT328MNHZz57K",
+    "archive_drive_remote_receipts_parent_id": "1XXnGzkxti0sIAY8RTsqhlmtrum6bUr8_",
+    "archive_local_staging_root": "/Users/tossaki/App/QuantRabbit-live/staging/dojo-historical-archives-r13",
     "archive_zstd_executable": "/opt/homebrew/Cellar/zstd/1.5.7_1/bin/zstd",
     "archive_zstd_sha256": "aff8169fb421bb925fb16c44a7e0143fa2c7a941dc45cce76b15062a2ce54917",
     "archive_zstd_size_bytes": 205776,
@@ -35,6 +35,7 @@
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r10",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r11",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r12",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r8",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r9"
     ],
@@ -43,6 +44,7 @@
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260722-r7/.historical-train.lock",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r10/.historical-train.lock",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r11/.historical-train.lock",
+      "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r12/.historical-train.lock",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r8/.historical-train.lock",
       "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r9/.historical-train.lock"
     ],
@@ -65,7 +67,7 @@
     "max_rss_bytes": 8589934592,
     "max_terminal_bytes": 16777216,
     "minimum_free_disk_bytes": 26843545600,
-    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r12",
+    "output_root": "/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260726-r13",
     "source_slice_policy": "AUTHENTICATED_OBSERVED_EPOCH_UNION_NO_IMPUTATION",
     "training_root_may_be_deleted": false
   },
@@ -178,4 +180,3 @@
     "target_multiple_may_backsolve_sizing": false
   }
 }
-

@@ -1,12 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
-LABEL="com.quantrabbit.dojo-historical-supervisor-r12"
+LABEL="com.quantrabbit.dojo-historical-supervisor-r13"
 REPO_ROOT="/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval"
 PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 SUPERVISOR_WRAPPER="$REPO_ROOT/scripts/run-dojo-historical-supervisor-launchd.py"
 RUN_CONTROL="$REPO_ROOT/config/dojo_g2_parallel_rooms_run_control_v6.json"
-OUTPUT_ROOT="/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260723-r12/supervisor"
+OUTPUT_ROOT="/Users/tossaki/App/QuantRabbit-live/logs/dojo-historical/g2-parallel-rooms-20260726-r13/supervisor"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 INTERVAL_SECONDS=60
 TIMEOUT_SECONDS=180
@@ -43,7 +43,7 @@ fi
 if [[ "$mode" == "uninstall" ]]; then
   launchctl bootout "gui/$UID" "$PLIST" >/dev/null 2>&1 || true
   if [[ -f "$PLIST" ]]; then
-    backup_dir="$HOME/.codex/backups/dojo-historical-supervisor-r12-$(date -u +%Y%m%dT%H%M%SZ)"
+    backup_dir="$HOME/.codex/backups/dojo-historical-supervisor-r13-$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$backup_dir"
     mv "$PLIST" "$backup_dir/"
     print "archived=$backup_dir/$LABEL.plist"
@@ -87,7 +87,7 @@ if [[ "$mode" == "check" ]]; then
 fi
 
 if [[ -f "$PLIST" ]]; then
-  backup_dir="$HOME/.codex/backups/dojo-historical-supervisor-r12-$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_dir="$HOME/.codex/backups/dojo-historical-supervisor-r13-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$backup_dir"
   cp -p "$PLIST" "$backup_dir/"
 fi
