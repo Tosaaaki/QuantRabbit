@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.dojo_paired_model_queue import (
+    complete_current_decision,
     current_ready_packet,
     emit_next_ready,
+    halt_for_quota,
     initialize_queue,
+    preflight_model_decision,
     queue_status,
+    resume_quota_halt,
     seal_model_response,
     submit_model_response,
     verify_queue,
@@ -93,6 +97,28 @@ def _show_ready(args: argparse.Namespace) -> int:
     return 0
 
 
+def _preflight(args: argparse.Namespace) -> int:
+    _print(preflight_model_decision(args.queue_dir))
+    return 0
+
+
+def _halt_quota(args: argparse.Namespace) -> int:
+    _print(
+        halt_for_quota(
+            args.queue_dir,
+            reason=args.reason,
+            observed_at_utc=args.observed_at_utc,
+            state=args.state,
+        )
+    )
+    return 0
+
+
+def _resume_quota(args: argparse.Namespace) -> int:
+    _print(resume_quota_halt(args.queue_dir))
+    return 0
+
+
 def _seal_response(args: argparse.Namespace) -> int:
     response = seal_model_response(
         packet=current_ready_packet(args.queue_dir),
@@ -121,26 +147,23 @@ def _verify(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    init = subparsers.add_parser("init")
-    init.add_argument("--source-plan", type=Path, required=True)
-    init.add_argument("--results-dir", type=Path, required=True)
-    init.add_argument("--queue-dir", type=Path, required=True)
-    init.set_defaults(handler=_init)
-    status = subparsers.add_parser("status")
-    status.add_argument("--queue-dir", type=Path, required=True)
-    status.set_defaults(handler=_status)
-    emit = subparsers.add_parser("emit-next")
-    emit.add_argument("--queue-dir", type=Path, required=True)
-    emit.set_defaults(handler=_emit)
-    ready = subparsers.add_parser("show-ready")
-    ready.add_argument("--queue-dir", type=Path, required=True)
-    ready.set_defaults(handler=_show_ready)
-    seal = subparsers.add_parser("seal-response")
-    seal.add_argument("--queue-dir", type=Path, required=True)
-    seal.add_argument(
+def _complete_cell(args: argparse.Namespace) -> int:
+    _print(
+        complete_current_decision(
+            queue_dir=args.queue_dir,
+            response_path=args.response,
+            action=args.action,
+            reason_ids=args.reason_id,
+            provider_model=args.provider_model,
+            provider_execution_id=args.provider_execution_id,
+        )
+    )
+    return 0
+
+
+def _add_decision_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--queue-dir", type=Path, required=True)
+    parser.add_argument(
         "--action",
         choices=tuple(
             sorted(
@@ -160,9 +183,46 @@ def main() -> int:
         ),
         required=True,
     )
-    seal.add_argument("--reason-id", action="append", required=True)
-    seal.add_argument("--provider-model", required=True)
-    seal.add_argument("--provider-execution-id", required=True)
+    parser.add_argument("--reason-id", action="append", required=True)
+    parser.add_argument("--provider-model", required=True)
+    parser.add_argument("--provider-execution-id", required=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    init = subparsers.add_parser("init")
+    init.add_argument("--source-plan", type=Path, required=True)
+    init.add_argument("--results-dir", type=Path, required=True)
+    init.add_argument("--queue-dir", type=Path, required=True)
+    init.set_defaults(handler=_init)
+    status = subparsers.add_parser("status")
+    status.add_argument("--queue-dir", type=Path, required=True)
+    status.set_defaults(handler=_status)
+    emit = subparsers.add_parser("emit-next")
+    emit.add_argument("--queue-dir", type=Path, required=True)
+    emit.set_defaults(handler=_emit)
+    ready = subparsers.add_parser("show-ready")
+    ready.add_argument("--queue-dir", type=Path, required=True)
+    ready.set_defaults(handler=_show_ready)
+    preflight = subparsers.add_parser("preflight")
+    preflight.add_argument("--queue-dir", type=Path, required=True)
+    preflight.set_defaults(handler=_preflight)
+    halt = subparsers.add_parser("halt-quota")
+    halt.add_argument("--queue-dir", type=Path, required=True)
+    halt.add_argument("--reason", required=True)
+    halt.add_argument("--observed-at-utc", required=True)
+    halt.add_argument(
+        "--state",
+        choices=("HALTED_QUOTA", "PAUSE_REQUESTED"),
+        default="HALTED_QUOTA",
+    )
+    halt.set_defaults(handler=_halt_quota)
+    resume = subparsers.add_parser("resume-quota")
+    resume.add_argument("--queue-dir", type=Path, required=True)
+    resume.set_defaults(handler=_resume_quota)
+    seal = subparsers.add_parser("seal-response")
+    _add_decision_arguments(seal)
     seal.add_argument("--output", type=Path, required=True)
     seal.set_defaults(handler=_seal_response)
     submit = subparsers.add_parser("submit-response")
@@ -172,6 +232,10 @@ def main() -> int:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--queue-dir", type=Path, required=True)
     verify.set_defaults(handler=_verify)
+    complete = subparsers.add_parser("complete-cell")
+    _add_decision_arguments(complete)
+    complete.add_argument("--response", type=Path, required=True)
+    complete.set_defaults(handler=_complete_cell)
     args = parser.parse_args()
     return int(args.handler(args))
 

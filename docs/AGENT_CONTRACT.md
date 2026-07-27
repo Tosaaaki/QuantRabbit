@@ -91,6 +91,27 @@ If a sub-doc disagrees with this contract, **this contract wins**. Update the su
 
 ## 2. Operator Model
 
+- **DOJO paired fresh-model quota and economic boundary (2026-07-27).** The
+  r13 paired-model queue remains paper/replay-only, one fresh
+  `gpt-5.6-sol`/medium task per cell, and exactly one causal packet at a time.
+  Combining status/show-ready into one preflight and seal/submit/verify into
+  one completion command may reduce orchestration turns, but must not change
+  packet bytes, action allowlist, causal data, schema/hash/freshness checks,
+  fixed 84-cell order, or `AI_ORDER_AUTHORITY=NONE`. A hash-sealed
+  `HALTED_QUOTA`/`PAUSE_REQUESTED` sentinel is checked before any packet is
+  opened; it preserves accepted state and the same ready packet until an
+  explicit resume. A response sealed before a quota failure remains
+  byte-identical and unaccepted unless its acceptance event already exists.
+  If the platform cannot start the task, local state naturally remains
+  unchanged. Runtime code must never edit Codex Automation TOML/SQLite.
+  Economic application is allowed only after verified packet/response binding
+  at the exact source decision and fixed-denominator replay. The terminal
+  reducer must separate TP gross profit, other exit profit, ordinary loss,
+  forced-margin loss, missed profit, execution/financing, AI cost, extra
+  reduction required for a positive objective, and profitable positions cut
+  by AI. Missing AI cost keeps profitability undetermined; all results remain
+  worn TRAIN research and grant no promotion or live permission.
+
 - **AI supervisor-only authority cutover (2026-07-16; superseding rule).** `qr-trader` is retained only as the compatibility automation id for one `gpt-5.5` / high AI supervisor. Its normal cadence is every six hours, with additional review only for a materially changed regime/cost/performance event. `AI_ORDER_AUTHORITY=NONE` is invariant. The AI may write only a content-addressed `QR_AI_REGIME_SUPERVISION_V1` artifact containing bounded pair-level `GO` / `CAUTION` / `STOP` rows and bounded Guardian tuning reviews tied to the current observation. It may not author or select an order action, cancel or close, choose or change side/method/entry/TP/SL/geometry/vehicle, allocate capital, choose a multiplier or units, grant live permission, call `guardian-action-cycle`, invoke an execution gateway, or mutate broker state. This rule supersedes every later historical compatibility sentence that describes GPT/Codex/AI as a discretionary trader, market-read decision author, capital allocator, `TRADE`/`CLOSE` receipt author, or gateway/action-cycle caller; those artifacts may remain readable for legacy verifier/audit compatibility but are not valid `qr-trader` outputs or execution authority. The deterministic fast bot remains strictly shadow-only until its separate promotion contract exists. Frequent Guardian monitoring and protection remain deterministic and non-LLM. Manual, operator-owned, tagless, or otherwise external positions remain `NO_TOUCH`: AI and the fast bot may observe them but may not close, reduce, add, cancel, or modify their protection.
 
 - **Guardian technical tuning identity v2 (2026-07-14; action-capacity reserve added 2026-07-16).** For `TECHNICAL_STATE_CHANGE`, one durable pending work-order identity represents one configured G8 pair's bot-tuning scope. Action-hint, open-position state, direction, derived technical fingerprint, closed-candle watermark, quote, spread, and artifact clock are observation fields and must never mint parallel pending work orders for the same pair. Each materially changed fingerprint, comparable advanced closed-candle watermark, direction/thesis state, or independently material live-price displacement appends one bounded observation and requires a review bound to that exact latest observation; spread-only and artifact-clock-only changes are idempotent. Revision-4 pending technical rows written with older per-candle identities normalize and merge without losing bounded observations, and an older review must never be presented as review of the merged latest observation. The ordinary bounded queue capacity is 48: enough for the 28 pair scopes plus exact-lane obligations while retaining fail-closed `WORK_ORDER_QUEUE_FULL` backpressure. Eight additional bounded slots are reserved exclusively for P0/P1, execution-facing `TRADE`, `ADD`, `HARVEST`, `REDUCE`, and `CANCEL_PENDING` Guardian events, or events bound to current open exposure; ordinary flat P2 research cannot consume them. This separates tuning backlog from timely action-review persistence without dropping an older pending obligation. Capacity and its reserve never grant live permission, relax a blocker, or authorize a broker write; receipt validation, `RiskEngine`, and `LiveOrderGateway` remain mandatory.

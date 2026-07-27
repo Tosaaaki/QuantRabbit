@@ -14,6 +14,7 @@ from quant_rabbit.dojo_paired_inventory_counterfactual import (
     build_paired_inventory_plan,
     replay_paired_inventory_transcript,
 )
+from quant_rabbit.dojo_paired_model_queue import accepted_response_bundle
 from quant_rabbit.dojo_portfolio_replay_reducer import canonical_portfolio_sha256
 
 
@@ -136,6 +137,23 @@ def run_coordinate(args: argparse.Namespace) -> int:
         if args.coordinate_id
         else sorted(portfolio_results)
     )
+    overrides_by_coordinate: dict[str, dict[str, dict[str, Any]]] = {}
+    if args.queue_dir is not None:
+        for row in accepted_response_bundle(
+            args.queue_dir,
+            require_complete=not args.allow_partial_queue,
+        ):
+            overrides_by_coordinate.setdefault(row["coordinate_id"], {})[
+                row["source_decision_id"]
+            ] = {
+                "action": row["action"],
+                "reason_ids": row["reason_ids"],
+                "state_packet_sha256": row["state_packet_sha256"],
+                "decision_packet_sha256": row["decision_packet_sha256"],
+                "response_sha256": row["response_sha256"],
+                "provider_model": row["provider_model"],
+                "provider_execution_id": row["provider_execution_id"],
+            }
     for coordinate_id in coordinate_ids:
         artifact = artifacts[coordinate_id]
         transcript = args.evidence_dir / artifact["transcript_filename"]
@@ -144,6 +162,7 @@ def run_coordinate(args: argparse.Namespace) -> int:
             plan=plan,
             baseline_result=portfolio_results[coordinate_id],
             cost_scenario=runtimes[coordinate_id]["cost_scenario"],
+            model_action_overrides=overrides_by_coordinate.get(coordinate_id),
         )
         output = args.output_dir / f"{coordinate_id}.paired-inventory.json"
         _write_exclusive(output, result)
@@ -166,6 +185,12 @@ def main() -> int:
     run.add_argument("--evidence-dir", type=Path, required=True)
     run.add_argument("--output-dir", type=Path, required=True)
     run.add_argument("--coordinate-id")
+    run.add_argument("--queue-dir", type=Path)
+    run.add_argument(
+        "--allow-partial-queue",
+        action="store_true",
+        help="Diagnostic pilot only; terminal economic scoring still requires 84/84.",
+    )
     run.set_defaults(handler=run_coordinate)
     args = parser.parse_args()
     return int(args.handler(args))

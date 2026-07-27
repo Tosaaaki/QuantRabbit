@@ -753,17 +753,63 @@ def _profit_metrics(values: Sequence[float]) -> dict[str, Any]:
     }
 
 
+def _economic_close_decomposition(
+    events: Sequence[Mapping[str, Any]], *, oos_start_epoch: int
+) -> dict[str, Any]:
+    rows = [row for row in events if int(row["epoch"]) >= oos_start_epoch]
+    tp_profit = sum(
+        max(0.0, float(row["pnl_jpy"]))
+        for row in rows
+        if row["reason"] == "TAKE_PROFIT"
+    )
+    other_profit = sum(
+        max(0.0, float(row["pnl_jpy"]))
+        for row in rows
+        if row["reason"] != "TAKE_PROFIT"
+    )
+    forced_loss = -sum(
+        min(0.0, float(row["pnl_jpy"]))
+        for row in rows
+        if row["reason"] == "MARGIN_CLOSEOUT"
+    )
+    normal_loss = -sum(
+        min(0.0, float(row["pnl_jpy"]))
+        for row in rows
+        if row["reason"] != "MARGIN_CLOSEOUT"
+    )
+    winning_ai_cuts = sum(
+        row["reason"] == "AI_CAUSAL_INVENTORY_RISK_CONTROL"
+        and float(row["pnl_jpy"]) > 0.0
+        for row in rows
+    )
+    return {
+        "scope": "OOS_CLOSE_EVENTS_ONLY_BEFORE_SEPARATE_COST_FIELDS",
+        "tp_gross_profit_jpy": tp_profit,
+        "other_exit_gross_profit_jpy": other_profit,
+        "normal_loss_jpy": normal_loss,
+        "forced_margin_loss_jpy": forced_loss,
+        "winning_ai_cut_count": winning_ai_cuts,
+        "close_event_count": len(rows),
+        "close_pnl_identity_jpy": (
+            tp_profit + other_profit - normal_loss - forced_loss
+        ),
+    }
+
+
 def replay_paired_inventory_transcript(
     *,
     transcript_path: Path,
     plan: Mapping[str, Any],
     baseline_result: Mapping[str, Any],
     cost_scenario: str,
+    model_action_overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run all seven AI cadence arms from one immutable transcript read."""
 
     if plan.get("contract") != PLAN_CONTRACT:
         raise DojoPairedInventoryCounterfactualError("plan contract is invalid")
+    overrides = dict(model_action_overrides or {})
+    applied_override_ids: set[str] = set()
     blocks = list(plan["oos_blocks"])
     calibration = plan["calibration_window"]
     expected_file_sha = plan["transcript_sha256_by_coordinate"]
@@ -921,14 +967,45 @@ def replay_paired_inventory_transcript(
                             arm.skipped_cached_calls += 1
                             due = False
                         if due:
-                            action, reasons = _decide(
-                                arm, packet, values, thresholds
+                            decision_id = (
+                                f"{cadence}:{header['coordinate_id']}:{epoch}:"
+                                f"{len(arm.decisions) + 1}"
                             )
+                            provider_model_called = False
+                            override = overrides.get(decision_id)
+                            if override is None:
+                                action, reasons = _decide(
+                                    arm, packet, values, thresholds
+                                )
+                            else:
+                                if (
+                                    set(override)
+                                    != {
+                                        "action",
+                                        "reason_ids",
+                                        "state_packet_sha256",
+                                        "decision_packet_sha256",
+                                        "response_sha256",
+                                        "provider_model",
+                                        "provider_execution_id",
+                                    }
+                                    or override.get("action") not in ACTION_IDS
+                                    or override.get("state_packet_sha256")
+                                    != packet_sha
+                                    or not isinstance(
+                                        override.get("reason_ids"), list
+                                    )
+                                    or not override["reason_ids"]
+                                ):
+                                    raise DojoPairedInventoryCounterfactualError(
+                                        "model action override boundary is invalid"
+                                    )
+                                action = str(override["action"])
+                                reasons = list(override["reason_ids"])
+                                provider_model_called = True
+                                applied_override_ids.add(decision_id)
                             decision = {
-                                "decision_id": (
-                                    f"{cadence}:{header['coordinate_id']}:{epoch}:"
-                                    f"{len(arm.decisions) + 1}"
-                                ),
+                                "decision_id": decision_id,
                                 "decision_epoch": epoch,
                                 "input_available_through_epoch": epoch,
                                 "packet_sha256": packet_sha,
@@ -940,7 +1017,27 @@ def replay_paired_inventory_transcript(
                                 "pre_action_equity_jpy": packet["equity_jpy"],
                                 "pre_action_balance_jpy": packet["balance_jpy"],
                                 "post_outcome": None,
-                                "provider_model_called": False,
+                                "provider_model_called": provider_model_called,
+                                "decision_packet_sha256": (
+                                    None
+                                    if override is None
+                                    else override["decision_packet_sha256"]
+                                ),
+                                "response_sha256": (
+                                    None
+                                    if override is None
+                                    else override["response_sha256"]
+                                ),
+                                "provider_model": (
+                                    None
+                                    if override is None
+                                    else override["provider_model"]
+                                ),
+                                "provider_execution_id": (
+                                    None
+                                    if override is None
+                                    else override["provider_execution_id"]
+                                ),
                                 "future_information_used": False,
                             }
                             if arm.decisions and arm.decisions[-1]["post_outcome"] is None:
@@ -1020,6 +1117,10 @@ def replay_paired_inventory_transcript(
         raise DojoPairedInventoryCounterfactualError(
             "transcript is incomplete or has no OOS boundary"
         )
+    if applied_override_ids != set(overrides):
+        raise DojoPairedInventoryCounterfactualError(
+            "not every accepted model override matched its sealed decision"
+        )
     actual_file_sha = file_digest.hexdigest()
     expected = expected_file_sha.get(header["coordinate_id"])
     if expected != actual_file_sha:
@@ -1096,6 +1197,27 @@ def replay_paired_inventory_transcript(
             for row in arm.close_events
             if int(row["epoch"]) >= int(calibration["end_epoch"])
         ]
+        economic_decomposition = _economic_close_decomposition(
+            arm.close_events,
+            oos_start_epoch=int(calibration["end_epoch"]),
+        )
+        economic_decomposition.update(
+            {
+                "execution_cost_jpy_full_run": result[
+                    "transaction_cost_jpy"
+                ],
+                "financing_cost_jpy_full_run": result[
+                    "financing_cost_jpy"
+                ],
+                "missed_profit_vs_bot_jpy_full_run": max(
+                    0.0, baseline_full_month_net - ai_full_month_net
+                ),
+                "additional_reduction_for_positive_net_jpy_before_ai_cost": max(
+                    0.0, -ai_full_month_net
+                ),
+                "ai_execution_cost_jpy": None,
+            }
+        )
         cadence_rows.append(
             {
                 "cadence_id": cadence,
@@ -1108,15 +1230,20 @@ def replay_paired_inventory_transcript(
                 "ai_close_metrics": _profit_metrics(oos_close_pnls),
                 "model_authored_policy_evaluation_count": len(arm.decisions),
                 "ai_call_count": len(arm.decisions),
-                "provider_model_call_count": 0,
+                "provider_model_call_count": sum(
+                    bool(row["provider_model_called"]) for row in arm.decisions
+                ),
                 "state_packet_cache_skip_count": arm.skipped_cached_calls,
                 "intervention_count": sum(
                     row["action"] != "HOLD" for row in arm.decisions
                 ),
                 "intervention_audit_log": arm.decisions,
                 "close_reason_counts": dict(sorted(arm.close_reason_counts.items())),
+                "economic_decomposition": economic_decomposition,
                 "oos_block_rows": block_rows,
-                "phase_b_actual_model_checkpoint_decisions_measured": False,
+                "phase_b_actual_model_checkpoint_decisions_measured": any(
+                    bool(row["provider_model_called"]) for row in arm.decisions
+                ),
             }
         )
     body = {
@@ -1130,13 +1257,23 @@ def replay_paired_inventory_transcript(
         "source_policy_sha256": header["policy_sha256"],
         "source_initial_balance_jpy": header["initial_balance_jpy"],
         "source_quote_coverage_proved": plan["source_quote_coverage_proved"],
+        "economic_application_status": (
+            "APPLIED_ACCEPTED_MODEL_RESPONSES"
+            if overrides
+            else "NOT_APPLIED_DETERMINISTIC_POLICY_ONLY"
+        ),
+        "applied_model_response_count": len(applied_override_ids),
         "calibrated_thresholds": thresholds,
         "cadence_rows": cadence_rows,
         "classification": "EXPERIMENTAL_UNRANKED",
         "blockers": [
             "SOURCE_QUOTE_COVERAGE_NOT_PROVED",
             "WORN_TRAIN_RESEARCHER_PRIOR_AGGREGATE_OUTCOME_EXPOSURE",
-            "ACTUAL_MODEL_CHECKPOINT_CALLS_NOT_EXECUTED",
+            *(
+                []
+                if overrides
+                else ["ACTUAL_MODEL_CHECKPOINT_CALLS_NOT_EXECUTED"]
+            ),
             "BOT_ONLY_TRADE_LEVEL_PROFIT_FACTOR_NOT_IN_IMMUTABLE_EVIDENCE",
         ],
         "authority": dict(AUTHORITY),

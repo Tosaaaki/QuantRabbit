@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
@@ -35,10 +36,14 @@ DECISION_PACKET_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_DECISION_PACKET_V1"
 MODEL_RESPONSE_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_RESPONSE_V1"
 QUEUE_EVENT_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_QUEUE_EVENT_V1"
 QUEUE_STATUS_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_QUEUE_STATUS_V1"
+PREFLIGHT_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_PREFLIGHT_V1"
+QUOTA_HALT_CONTRACT: Final = "QR_DOJO_PAIRED_MODEL_QUOTA_HALT_V1"
 SCHEMA_VERSION: Final = 1
 ZERO_SHA256: Final = "0" * 64
 MAX_JSON_BYTES: Final = 2 * 1024 * 1024
 EXPECTED_CELL_COUNT: Final = 84
+HALT_SENTINEL_FILENAME: Final = "runtime-quota-halt.json"
+HALT_STATES: Final = frozenset({"HALTED_QUOTA", "PAUSE_REQUESTED"})
 
 
 class DojoPairedModelQueueError(ValueError):
@@ -104,6 +109,76 @@ def _same_or_write(path: Path, value: Mapping[str, Any]) -> None:
             raise DojoPairedModelQueueError(f"immutable artifact conflicts: {path}")
         return
     _write_exclusive(path, value)
+
+
+def _aware_utc(value: str, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise DojoPairedModelQueueError(f"{label} must be an aware UTC timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DojoPairedModelQueueError(
+            f"{label} must be an aware UTC timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise DojoPairedModelQueueError(f"{label} must be an aware UTC timestamp")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _halt_path(queue_dir: Path) -> Path:
+    return queue_dir / HALT_SENTINEL_FILENAME
+
+
+def _verify_halt_sentinel(value: Mapping[str, Any]) -> dict[str, Any]:
+    sentinel = dict(value)
+    expected_keys = {
+        "contract",
+        "schema_version",
+        "state",
+        "reason",
+        "observed_at_utc",
+        "last_accepted_model_decision_count",
+        "current_ready_packet_sha256",
+        "accepted_state_mutated",
+        "resume_policy",
+        "authority",
+        "sentinel_sha256",
+    }
+    unsigned = {
+        key: item for key, item in sentinel.items() if key != "sentinel_sha256"
+    }
+    reason = sentinel.get("reason")
+    ready_sha = sentinel.get("current_ready_packet_sha256")
+    if (
+        set(sentinel) != expected_keys
+        or sentinel.get("contract") != QUOTA_HALT_CONTRACT
+        or sentinel.get("schema_version") != SCHEMA_VERSION
+        or sentinel.get("state") not in HALT_STATES
+        or not isinstance(reason, str)
+        or not reason
+        or len(reason) > 512
+        or not isinstance(
+            sentinel.get("last_accepted_model_decision_count"), int
+        )
+        or sentinel.get("last_accepted_model_decision_count", -1) < 0
+        or sentinel.get("accepted_state_mutated") is not False
+        or sentinel.get("resume_policy")
+        != "EXPLICIT_RESUME_COMMAND_ONLY_SAME_READY_PACKET"
+        or sentinel.get("sentinel_sha256") != canonical_sha256(unsigned)
+    ):
+        raise DojoPairedModelQueueError("quota halt sentinel is invalid")
+    _aware_utc(str(sentinel.get("observed_at_utc")), "observed_at_utc")
+    if ready_sha is not None:
+        _sha256_text(ready_sha, "halt ready packet SHA-256")
+    _validate_authority(sentinel.get("authority"))
+    return sentinel
+
+
+def _halt_sentinel_unlocked(queue_dir: Path) -> dict[str, Any] | None:
+    path = _halt_path(queue_dir)
+    if not path.exists():
+        return None
+    return _verify_halt_sentinel(_read_json(path))
 
 
 def _lock(queue_dir: Path) -> tuple[int, Path]:
@@ -566,15 +641,147 @@ def _derived_status_unlocked(queue_dir: Path) -> dict[str, Any]:
     return {**body, "status_sha256": canonical_sha256(body)}
 
 
+def _status_with_halt_unlocked(queue_dir: Path) -> dict[str, Any]:
+    status = _derived_status_unlocked(queue_dir)
+    sentinel = _halt_sentinel_unlocked(queue_dir)
+    if sentinel is None:
+        return status
+    body = {
+        key: item for key, item in status.items() if key != "status_sha256"
+    }
+    body.update(
+        {
+            "state": sentinel["state"],
+            "runtime_halt": sentinel,
+            "ready_packet_withheld": True,
+        }
+    )
+    return {**body, "status_sha256": canonical_sha256(body)}
+
+
 def queue_status(queue_dir: Path) -> dict[str, Any]:
     descriptor, _ = _lock(queue_dir)
     try:
+        return _status_with_halt_unlocked(queue_dir)
+    finally:
+        _unlock(descriptor)
+
+
+def halt_for_quota(
+    queue_dir: Path,
+    *,
+    reason: str,
+    observed_at_utc: str,
+    state: str = "HALTED_QUOTA",
+) -> dict[str, Any]:
+    """Atomically persist the first quota pause without changing queue events."""
+
+    descriptor, _ = _lock(queue_dir)
+    try:
+        existing = _halt_sentinel_unlocked(queue_dir)
+        if existing is not None:
+            return existing
+        if state not in HALT_STATES:
+            raise DojoPairedModelQueueError("quota halt state is invalid")
+        if not isinstance(reason, str) or not reason or len(reason) > 512:
+            raise DojoPairedModelQueueError("quota halt reason is invalid")
+        status = _derived_status_unlocked(queue_dir)
+        body = {
+            "contract": QUOTA_HALT_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "state": state,
+            "reason": reason,
+            "observed_at_utc": _aware_utc(observed_at_utc, "observed_at_utc"),
+            "last_accepted_model_decision_count": status[
+                "accepted_model_decision_count"
+            ],
+            "current_ready_packet_sha256": status[
+                "current_ready_packet_sha256"
+            ],
+            "accepted_state_mutated": False,
+            "resume_policy": "EXPLICIT_RESUME_COMMAND_ONLY_SAME_READY_PACKET",
+            "authority": dict(AUTHORITY),
+        }
+        sentinel = {**body, "sentinel_sha256": canonical_sha256(body)}
+        _write_exclusive(_halt_path(queue_dir), sentinel)
+        return sentinel
+    finally:
+        _unlock(descriptor)
+
+
+def resume_quota_halt(queue_dir: Path) -> dict[str, Any]:
+    """Remove only a valid halt sentinel and prove the ready packet is unchanged."""
+
+    descriptor, _ = _lock(queue_dir)
+    try:
+        sentinel = _halt_sentinel_unlocked(queue_dir)
+        if sentinel is None:
+            return _derived_status_unlocked(queue_dir)
+        status = _derived_status_unlocked(queue_dir)
+        if (
+            status["accepted_model_decision_count"]
+            != sentinel["last_accepted_model_decision_count"]
+            or status["current_ready_packet_sha256"]
+            != sentinel["current_ready_packet_sha256"]
+        ):
+            raise DojoPairedModelQueueError(
+                "queue state changed while quota halt was active"
+            )
+        _halt_path(queue_dir).unlink()
         return _derived_status_unlocked(queue_dir)
     finally:
         _unlock(descriptor)
 
 
+def preflight_model_decision(queue_dir: Path) -> dict[str, Any]:
+    """Return zero work on halt, otherwise expose at most the current packet."""
+
+    descriptor, _ = _lock(queue_dir)
+    try:
+        sentinel = _halt_sentinel_unlocked(queue_dir)
+        if sentinel is not None:
+            body = {
+                "contract": PREFLIGHT_CONTRACT,
+                "schema_version": SCHEMA_VERSION,
+                "state": sentinel["state"],
+                "zero_work": True,
+                "notification": "DONT_NOTIFY",
+                "halt_sentinel_sha256": sentinel["sentinel_sha256"],
+                "accepted_model_decision_count": sentinel[
+                    "last_accepted_model_decision_count"
+                ],
+                "decision_packet": None,
+                "authority": dict(AUTHORITY),
+            }
+            return {**body, "preflight_sha256": canonical_sha256(body)}
+        status = _derived_status_unlocked(queue_dir)
+        packet = None
+        if status["state"] == "WAITING_FOR_MODEL":
+            packet_sha = status["current_ready_packet_sha256"]
+            packet = verify_decision_packet(
+                _read_json(queue_dir / "ready" / f"{packet_sha}.json")
+            )
+        body = {
+            "contract": PREFLIGHT_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "state": status["state"],
+            "zero_work": packet is None,
+            "notification": "DONT_NOTIFY" if packet is None else None,
+            "halt_sentinel_sha256": None,
+            "accepted_model_decision_count": status[
+                "accepted_model_decision_count"
+            ],
+            "decision_packet": packet,
+            "authority": dict(AUTHORITY),
+        }
+        return {**body, "preflight_sha256": canonical_sha256(body)}
+    finally:
+        _unlock(descriptor)
+
+
 def _publish_ready_unlocked(queue_dir: Path) -> dict[str, Any]:
+    if _halt_sentinel_unlocked(queue_dir) is not None:
+        return _status_with_halt_unlocked(queue_dir)
     plan = _verify_queue_plan(_read_json(queue_dir / "queue-plan.json"))
     status = _derived_status_unlocked(queue_dir)
     if status["state"] in {"WAITING_FOR_MODEL", "COMPLETE"}:
@@ -641,6 +848,10 @@ def initialize_queue(
 def current_ready_packet(queue_dir: Path) -> dict[str, Any]:
     descriptor, _ = _lock(queue_dir)
     try:
+        if _halt_sentinel_unlocked(queue_dir) is not None:
+            raise DojoPairedModelQueueError(
+                "quota halt is active; ready packet is withheld"
+            )
         status = _derived_status_unlocked(queue_dir)
         packet_sha = status["current_ready_packet_sha256"]
         if not packet_sha:
@@ -785,7 +996,11 @@ def submit_model_response(
                     raise DojoPairedModelQueueError(
                         "duplicate response conflicts with accepted bytes"
                     )
-                return status
+                return _status_with_halt_unlocked(queue_dir)
+        if _halt_sentinel_unlocked(queue_dir) is not None:
+            raise DojoPairedModelQueueError(
+                "quota halt is active; unaccepted response remains unsubmitted"
+            )
         packet_sha = status["current_ready_packet_sha256"]
         if not packet_sha:
             raise DojoPairedModelQueueError("no matching model packet is ready")
@@ -818,6 +1033,97 @@ def submit_model_response(
         _unlock(descriptor)
 
 
+def complete_current_decision(
+    *,
+    queue_dir: Path,
+    response_path: Path,
+    action: str,
+    reason_ids: Sequence[str],
+    provider_model: str,
+    provider_execution_id: str,
+) -> dict[str, Any]:
+    """Seal/reuse, submit, and verify one response without changing its bytes."""
+
+    packet = current_ready_packet(queue_dir)
+    response_bytes_reused = response_path.exists()
+    if response_bytes_reused:
+        response = verify_model_response(_read_json(response_path), packet)
+    else:
+        response = seal_model_response(
+            packet=packet,
+            action=action,
+            reason_ids=reason_ids,
+            provider_model=provider_model,
+            provider_execution_id=provider_execution_id,
+        )
+        _write_exclusive(response_path, response)
+    submitted = submit_model_response(
+        queue_dir=queue_dir,
+        response_value=response,
+    )
+    verified = verify_queue(queue_dir)
+    if submitted != verified:
+        raise DojoPairedModelQueueError(
+            "post-submit queue verification differs from submitted state"
+        )
+    return {
+        "contract": "QR_DOJO_PAIRED_MODEL_CELL_COMPLETION_V1",
+        "schema_version": SCHEMA_VERSION,
+        "decision_packet_sha256": packet["decision_packet_sha256"],
+        "action": response["action"],
+        "response_sha256": response["response_sha256"],
+        "provider_model": response["provider_model"],
+        "provider_execution_id": response["provider_execution_id"],
+        "resulting_status": verified,
+        "response_bytes_reused": response_bytes_reused,
+        "authority": dict(AUTHORITY),
+    }
+
+
+def accepted_response_bundle(
+    queue_dir: Path, *, require_complete: bool = True
+) -> list[dict[str, Any]]:
+    """Return verified packet/response pairs in the immutable queue order."""
+
+    descriptor, _ = _lock(queue_dir)
+    try:
+        plan = _verify_queue_plan(_read_json(queue_dir / "queue-plan.json"))
+        status = _derived_status_unlocked(queue_dir)
+        if require_complete and status["state"] != "COMPLETE":
+            raise DojoPairedModelQueueError(
+                "economic application requires the complete 84-cell queue"
+            )
+        rows: list[dict[str, Any]] = []
+        for cell in plan["cells"][: status["accepted_model_decision_count"]]:
+            packet = verify_decision_packet(
+                _read_json(queue_dir / "packets" / cell["packet_filename"])
+            )
+            response_path = (
+                queue_dir
+                / "responses"
+                / f"{packet['decision_packet_sha256']}.json"
+            )
+            response = verify_model_response(_read_json(response_path), packet)
+            rows.append(
+                {
+                    "cell_ordinal": cell["cell_ordinal"],
+                    "coordinate_id": cell["coordinate_id"],
+                    "cadence_id": cell["cadence_id"],
+                    "source_decision_id": packet["source_decision_id"],
+                    "state_packet_sha256": packet["state_packet_sha256"],
+                    "decision_packet_sha256": packet["decision_packet_sha256"],
+                    "response_sha256": response["response_sha256"],
+                    "action": response["action"],
+                    "reason_ids": response["reason_ids"],
+                    "provider_model": response["provider_model"],
+                    "provider_execution_id": response["provider_execution_id"],
+                }
+            )
+        return rows
+    finally:
+        _unlock(descriptor)
+
+
 def verify_queue(queue_dir: Path) -> dict[str, Any]:
     descriptor, _ = _lock(queue_dir)
     try:
@@ -828,7 +1134,7 @@ def verify_queue(queue_dir: Path) -> dict[str, Any]:
             )
             if packet["decision_packet_sha256"] != cell["decision_packet_sha256"]:
                 raise DojoPairedModelQueueError("packet inventory changed")
-        status = _derived_status_unlocked(queue_dir)
+        status = _status_with_halt_unlocked(queue_dir)
         if status["current_ready_packet_sha256"]:
             packet_sha = status["current_ready_packet_sha256"]
             verify_decision_packet(
@@ -850,17 +1156,24 @@ def verify_queue(queue_dir: Path) -> dict[str, Any]:
 
 
 __all__ = [
+    "PREFLIGHT_CONTRACT",
+    "QUOTA_HALT_CONTRACT",
     "DECISION_PACKET_CONTRACT",
     "DojoPairedModelQueueError",
     "MODEL_RESPONSE_CONTRACT",
     "QUEUE_PLAN_CONTRACT",
+    "accepted_response_bundle",
     "build_queue_plan",
     "canonical_json_bytes",
     "canonical_sha256",
+    "complete_current_decision",
     "current_ready_packet",
     "emit_next_ready",
+    "halt_for_quota",
     "initialize_queue",
+    "preflight_model_decision",
     "queue_status",
+    "resume_quota_halt",
     "seal_model_response",
     "submit_model_response",
     "verify_decision_packet",

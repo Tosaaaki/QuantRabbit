@@ -12,8 +12,11 @@ from quant_rabbit.dojo_paired_model_queue import (
     DojoPairedModelQueueError,
     canonical_sha256,
     current_ready_packet,
+    halt_for_quota,
     initialize_queue,
+    preflight_model_decision,
     queue_status,
+    resume_quota_halt,
     seal_model_response,
     submit_model_response,
     verify_model_response,
@@ -228,3 +231,124 @@ def test_model_cannot_choose_order_or_live_authority(tmp_path: Path) -> None:
             provider_model="codex-test-model",
             provider_execution_id="test-execution-1",
         )
+
+
+def test_quota_halt_is_hashed_and_preflight_is_repeat_noop(tmp_path: Path) -> None:
+    source_plan, results = _fixtures()
+    initial = initialize_queue(
+        queue_dir=tmp_path,
+        source_plan=source_plan,
+        result_values=results,
+    )
+    ready_sha = initial["current_ready_packet_sha256"]
+
+    sentinel = halt_for_quota(
+        tmp_path,
+        reason="RATE_LIMIT_429",
+        observed_at_utc="2026-07-27T10:00:00Z",
+    )
+    repeated = halt_for_quota(
+        tmp_path,
+        reason="DIFFERENT_LATER_REASON",
+        observed_at_utc="2026-07-27T10:01:00Z",
+    )
+    first = preflight_model_decision(tmp_path)
+    second = preflight_model_decision(tmp_path)
+
+    assert repeated == sentinel
+    assert sentinel["state"] == "HALTED_QUOTA"
+    assert sentinel["last_accepted_model_decision_count"] == 0
+    assert sentinel["current_ready_packet_sha256"] == ready_sha
+    assert sentinel["accepted_state_mutated"] is False
+    assert first == second
+    assert first["zero_work"] is True
+    assert first["notification"] == "DONT_NOTIFY"
+    assert first["decision_packet"] is None
+    assert queue_status(tmp_path)["state"] == "HALTED_QUOTA"
+    with pytest.raises(DojoPairedModelQueueError, match="withheld"):
+        current_ready_packet(tmp_path)
+
+
+def test_explicit_resume_keeps_same_ready_packet(tmp_path: Path) -> None:
+    source_plan, results = _fixtures()
+    initial = initialize_queue(
+        queue_dir=tmp_path,
+        source_plan=source_plan,
+        result_values=results,
+    )
+    halt_for_quota(
+        tmp_path,
+        reason="USAGE_HARD_LIMIT",
+        observed_at_utc="2026-07-27T10:00:00Z",
+    )
+
+    resumed = resume_quota_halt(tmp_path)
+    preflight = preflight_model_decision(tmp_path)
+
+    assert resumed["state"] == "WAITING_FOR_MODEL"
+    assert resumed["accepted_model_decision_count"] == 0
+    assert resumed["current_ready_packet_sha256"] == initial[
+        "current_ready_packet_sha256"
+    ]
+    assert preflight["decision_packet"]["decision_packet_sha256"] == initial[
+        "current_ready_packet_sha256"
+    ]
+
+
+def test_quota_halt_after_seal_leaves_response_unaccepted(tmp_path: Path) -> None:
+    source_plan, results = _fixtures()
+    initialize_queue(
+        queue_dir=tmp_path,
+        source_plan=source_plan,
+        result_values=results,
+    )
+    packet = current_ready_packet(tmp_path)
+    response = seal_model_response(
+        packet=packet,
+        action="HOLD",
+        reason_ids=["NO_MATERIAL_RISK_CHANGE"],
+        provider_model="codex-test-model",
+        provider_execution_id="test-execution-1",
+    )
+    halt_for_quota(
+        tmp_path,
+        reason="MID_RUN_429",
+        observed_at_utc="2026-07-27T10:00:00Z",
+    )
+
+    with pytest.raises(DojoPairedModelQueueError, match="unsubmitted"):
+        submit_model_response(queue_dir=tmp_path, response_value=response)
+    assert queue_status(tmp_path)["accepted_model_decision_count"] == 0
+
+    resume_quota_halt(tmp_path)
+    accepted = submit_model_response(queue_dir=tmp_path, response_value=response)
+    assert accepted["accepted_model_decision_count"] == 1
+
+
+def test_quota_halt_after_submit_preserves_accepted_bytes(tmp_path: Path) -> None:
+    source_plan, results = _fixtures()
+    initialize_queue(
+        queue_dir=tmp_path,
+        source_plan=source_plan,
+        result_values=results,
+    )
+    response = seal_model_response(
+        packet=current_ready_packet(tmp_path),
+        action="HOLD",
+        reason_ids=["NO_MATERIAL_RISK_CHANGE"],
+        provider_model="codex-test-model",
+        provider_execution_id="test-execution-1",
+    )
+    accepted = submit_model_response(queue_dir=tmp_path, response_value=response)
+    halt_for_quota(
+        tmp_path,
+        reason="VERIFY_BOUNDARY_429",
+        observed_at_utc="2026-07-27T10:00:00Z",
+    )
+
+    verified = verify_queue(tmp_path)
+
+    assert accepted["accepted_model_decision_count"] == 1
+    assert verified["accepted_model_decision_count"] == 1
+    assert verified["state"] == "HALTED_QUOTA"
+    assert len(list((tmp_path / "responses").glob("*.json"))) == 1
