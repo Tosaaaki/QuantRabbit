@@ -86,3 +86,41 @@ banding informed `compile-rooms`, but the full draft was not adopted because
 it could skip closed-market inventory, overwrite a pending review with a new
 state, omitted the required 12-field story, and did not bind responses to a
 fresh Codex execution identity and causal flags.
+
+## Separate paper-shadow candidate reconciliation
+
+A later four-file candidate in
+`/Users/tossaki/App/QuantRabbit-worktrees/paper-ai-codex-automation` was
+reviewed read-only. Its temporary real-room proof contained:
+
+- four rooms, two positions, and two orders;
+- a 10,323-byte canonical packet;
+- one `BLOCK_LONG` shadow record followed by an idempotent `DUPLICATE`;
+- `paper_only=true`, `live_permission=false`, and `order_authority=NONE`.
+
+That record is valid evidence for the candidate's local validator, but it is
+not counted as a formal fresh-model checkpoint because the response schema
+does not bind a fresh Codex execution identity or causal flags. The candidate
+also skips closed-market inventory unconditionally and advances its review
+clock when a packet is published rather than when a response is accepted.
+Adopting it wholesale would create a second source of truth.
+
+The useful bounded room-ledger input was instead integrated into the owner
+implementation. `compile-rooms` now takes at most four event candidates per
+room, publishes only the latest 12 across rooms, and rejects any event later
+than the source cutoff. A real-room probe produced:
+
+- ready packet
+  `9081e7e45a30bed12d825371a1d4932b5d025afd782bbed49a665c5ae73a0f51`;
+- 12 bounded recent events;
+- four rooms, two positions, and two orders;
+- `NORMAL_60M`;
+- zero accepted fresh-model responses.
+
+Focused tests passed 23/23. The full repository suite passed 6,759 tests with
+one skipped test and two pre-existing collection warnings.
+
+The legacy `com.quantrabbit.dojo-paper-ai-shadow-hourly` service was disabled
+and booted out by the separate migration task. This owner task verified the
+disabled flag and absence of a loaded service read-only; it did not mutate
+launchd. The plist remains available for forensic rollback.

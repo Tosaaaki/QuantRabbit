@@ -211,6 +211,21 @@ def _write_active_room(
         ("state.json", state),
     ):
         (room / name).write_text(json.dumps(value), encoding="utf-8")
+    ledger_event = {
+        "event": "FILL_LIMIT",
+        "ts_utc": (now - timedelta(minutes=30)).isoformat(),
+        "sha": "d" * 64,
+        "payload": {
+            "trade_id": "T0001",
+            "order_id": "O0001",
+            "side": "LONG",
+            "pl_jpy": None,
+        },
+    }
+    (room / "ledger.jsonl").write_text(
+        json.dumps(ledger_event, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _accept_first(root: Path) -> tuple[dict, dict]:
@@ -377,6 +392,16 @@ def test_local_room_compiler_uses_no_provider_and_detects_high_risk(
     assert packet["snapshot"]["market_features"]["USD_JPY"]["source"] == (
         "LOCAL_PAPER_ROOM_STATE"
     )
+    assert packet["recent_events"] == [
+        {
+            "available_through_utc": (now - timedelta(minutes=30)).isoformat(),
+            "event_id": f"room-1:{'d' * 64}",
+            "event_type": "FILL_LIMIT",
+            "summary": (
+                "room=room-1;trade=T0001;order=O0001;" "side=LONG;realized_pl_jpy=None"
+            ),
+        }
+    ]
 
 
 def test_local_room_compiler_rejects_stale_active_room(tmp_path: Path) -> None:
@@ -385,6 +410,22 @@ def test_local_room_compiler_rejects_stale_active_room(tmp_path: Path) -> None:
     _write_active_room(rooms_root, now=now, state_age_seconds=901)
 
     with pytest.raises(DojoFreshModelHandoffError, match="stale"):
+        build_paper_source_packet_from_rooms(
+            rooms_root=rooms_root,
+            now_utc=now,
+        )
+
+
+def test_local_room_compiler_rejects_future_ledger_event(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 27, 2, 15, tzinfo=timezone.utc)
+    rooms_root = tmp_path / "rooms"
+    _write_active_room(rooms_root, now=now)
+    ledger_path = rooms_root / "experiment-1" / "room-1" / "ledger.jsonl"
+    event = json.loads(ledger_path.read_text(encoding="utf-8"))
+    event["ts_utc"] = (now + timedelta(seconds=1)).isoformat()
+    ledger_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    with pytest.raises(DojoFreshModelHandoffError, match="future event"):
         build_paper_source_packet_from_rooms(
             rooms_root=rooms_root,
             now_utc=now,

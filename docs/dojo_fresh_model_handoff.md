@@ -67,11 +67,12 @@ Immediate hard risk protection remains local deterministic Python and is never
 delegated to the model.
 
 `compile-rooms` is the preferred paper compiler. It reads the active rooms'
-local `session_contract.json`, `broker_snapshot.json`, and `state.json`
-directly. It does not load an OpenAI/OANDA environment file, instantiate a
-broker client, or make a network request. It rejects stale room/quote state,
-invalid paper authority, crossed quotes, and malformed inventory before a
-ready packet can exist.
+local `session_contract.json`, `broker_snapshot.json`, `state.json`, and a
+bounded tail of `ledger.jsonl` directly. It does not load an OpenAI/OANDA
+environment file, instantiate a broker client, or make a network request. It
+rejects stale room/quote state, future-dated ledger events, invalid paper
+authority, crossed quotes, and malformed inventory before a ready packet can
+exist.
 
 ## CLI
 
@@ -119,3 +120,33 @@ When `automation_update` is available:
 
 Rollback is to pause the new Automation through `automation_update`. The local
 handoff and story artifacts are append-only evidence and need not be deleted.
+
+## Automation activation handoff
+
+Update the existing `qr-dojo-episode-s5-forward-monitor` only. Do not create a
+second enabled executor.
+
+- project ID: `bff6d350-b03a-4bfb-8b48-1a27fda99c9b`
+- cwd: `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval`
+- owner branch: `codex/dojo-dual-eval`
+- paper handoff root:
+  `/Users/tossaki/.codex/state/quantrabbit/dojo-paper-fresh-model-handoff-v1`
+- paper rooms root:
+  `/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1`
+- paired queue:
+  `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/dojo-r13-paired-model-queue-20260727`
+
+Use two fresh invocations per hour while the paired queue remains incomplete:
+minute 00 is the paper review lane and minute 30 is the paired replay lane.
+This keeps every decision in a separate fresh task and preserves an hourly
+paper review without creating a second Automation. The proposed RRULE is
+`FREQ=HOURLY;BYMINUTE=0,30;BYSECOND=0`. When all 84 paired cells are sealed,
+reduce the schedule to minute 00 only through `automation_update` and repeat
+the inventory sync.
+
+The task must inspect status before compiling. A waiting packet is consumed as
+is; it must not be overwritten by a newer room state. A skip receipt ends the
+invocation without a model decision. Each accepted response is followed by
+the local `verify` command. High-risk 15-minute and event-driven model wakes
+are not claimed because the product has no verified conditional wake surface;
+hard risk remains local deterministic Python.

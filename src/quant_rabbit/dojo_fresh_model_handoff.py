@@ -42,6 +42,8 @@ MAX_JSON_BYTES: Final = 2 * 1024 * 1024
 MAX_PACKET_BYTES: Final = 256 * 1024
 MAX_STORY_ITEMS: Final = 8
 MAX_RECENT_EVENTS: Final = 12
+MAX_ROOM_EVENT_CANDIDATES: Final = 4
+MAX_LEDGER_TAIL_BYTES: Final = 256 * 1024
 NORMAL_REVIEW_SECONDS: Final = 60 * 60
 HIGH_RISK_REVIEW_SECONDS: Final = 15 * 60
 ROOM_FRESHNESS_SECONDS: Final = 15 * 60
@@ -149,6 +151,45 @@ def _read_json(path: Path, *, maximum_bytes: int = MAX_JSON_BYTES) -> dict[str, 
     if not isinstance(value, dict):
         raise DojoFreshModelHandoffError(f"JSON root must be an object: {path}")
     return value
+
+
+def _read_jsonl_tail(path: Path, *, limit: int) -> list[dict[str, Any]]:
+    if limit <= 0:
+        raise DojoFreshModelHandoffError("JSONL tail limit must be positive")
+    if path.is_symlink():
+        raise DojoFreshModelHandoffError("paper room ledger must not be a symlink")
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            offset = max(0, size - MAX_LEDGER_TAIL_BYTES)
+            handle.seek(offset)
+            raw = handle.read(MAX_LEDGER_TAIL_BYTES)
+    except FileNotFoundError:
+        return []
+    if offset:
+        newline = raw.find(b"\n")
+        raw = raw[newline + 1 :] if newline >= 0 else b""
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise DojoFreshModelHandoffError("paper room ledger is not UTF-8") from exc
+    records = []
+    for line in lines[-limit:]:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise DojoFreshModelHandoffError(
+                "paper room ledger tail is invalid JSONL"
+            ) from exc
+        if not isinstance(value, dict):
+            raise DojoFreshModelHandoffError(
+                "paper room ledger record must be an object"
+            )
+        records.append(value)
+    return records
 
 
 def _write_exclusive(path: Path, value: Mapping[str, Any]) -> None:
@@ -604,6 +645,57 @@ def _room_order_for_source(
     }
 
 
+def _room_recent_events_for_source(
+    *,
+    ledger_path: Path,
+    room_id: str,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    events = []
+    for record in _read_jsonl_tail(
+        ledger_path,
+        limit=MAX_ROOM_EVENT_CANDIDATES,
+    ):
+        event_type = _bounded_text(
+            str(record.get("event") or ""),
+            "room event type",
+            maximum=80,
+        )
+        if not event_type:
+            raise DojoFreshModelHandoffError("paper room event type is missing")
+        event_time = _parse_utc(record.get("ts_utc"), "room event timestamp")
+        if event_time > now_utc:
+            raise DojoFreshModelHandoffError(
+                "paper room ledger contains a future event"
+            )
+        event_sha = str(record.get("sha") or "")
+        _sha256_text(event_sha, "room event SHA-256")
+        payload = record.get("payload")
+        payload_map = payload if isinstance(payload, Mapping) else {}
+        summary = ";".join(
+            (
+                f"room={room_id}",
+                f"trade={str(payload_map.get('trade_id') or '-')[:48]}",
+                f"order={str(payload_map.get('order_id') or '-')[:48]}",
+                f"side={str(payload_map.get('side') or '-')[:16]}",
+                f"realized_pl_jpy={str(payload_map.get('pl_jpy'))[:32]}",
+            )
+        )
+        events.append(
+            {
+                "event_id": f"{room_id}:{event_sha}",
+                "event_type": event_type,
+                "summary": _bounded_text(
+                    summary,
+                    "room event summary",
+                    maximum=240,
+                ),
+                "available_through_utc": event_time.isoformat(),
+            }
+        )
+    return events
+
+
 def build_paper_source_packet_from_rooms(
     *,
     rooms_root: Path,
@@ -631,6 +723,7 @@ def build_paper_source_packet_from_rooms(
     rooms: list[dict[str, Any]] = []
     feature_candidates: dict[str, list[dict[str, Any]]] = {}
     risk_signals: set[str] = set()
+    recent_event_candidates: list[dict[str, str]] = []
     for room_dir, contract in active:
         room_id = str(contract.get("room_id") or "")
         if not room_id or room_dir.name != room_id:
@@ -680,6 +773,13 @@ def build_paper_source_packet_from_rooms(
             positions.append(position)
             risk_signals.update(signals)
         orders = [_room_order_for_source(raw, room_id=room_id) for raw in raw_orders]
+        recent_event_candidates.extend(
+            _room_recent_events_for_source(
+                ledger_path=room_dir / "ledger.jsonl",
+                room_id=room_id,
+                now_utc=now,
+            )
+        )
         configured_pairs = [
             str(item) for item in config.get("pairs") or contract.get("pairs") or []
         ]
@@ -739,6 +839,13 @@ def build_paper_source_packet_from_rooms(
         "market_status": market_status,
         "market_features": market_features,
         "rooms": sorted(rooms, key=lambda item: item["room_id"]),
+        "recent_events": sorted(
+            recent_event_candidates,
+            key=lambda item: (
+                item["available_through_utc"],
+                item["event_id"],
+            ),
+        )[-MAX_RECENT_EVENTS:],
         "local_compiler": {
             "network_access_used": False,
             "model_credentials_used": False,
@@ -831,7 +938,7 @@ def _normalize_source_snapshot(
     source: Mapping[str, Any],
     *,
     risk_signals: Sequence[str],
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, list[dict[str, Any]], datetime]:
     safety = source.get("safety")
     rooms = source.get("rooms")
     market_status = source.get("market_status")
@@ -855,6 +962,14 @@ def _normalize_source_snapshot(
     unsigned = {key: item for key, item in source.items() if key != "packet_sha256"}
     if source_packet_sha != canonical_sha256(unsigned):
         raise DojoFreshModelHandoffError("source packet content seal is invalid")
+    source_cutoff = _parse_utc(
+        source.get("generated_at_utc"),
+        "source packet generated timestamp",
+    )
+    source_recent_events = _validate_recent_events(
+        source.get("recent_events") or [],
+        cutoff_utc=source_cutoff,
+    )
     normalized_rooms = []
     for value in rooms:
         if not isinstance(value, Mapping):
@@ -943,13 +1058,18 @@ def _normalize_source_snapshot(
         "terminal_outcome_visible": False,
         "append_wall_clock_visible": False,
     }
-    return snapshot, source_packet_sha
+    return snapshot, source_packet_sha, source_recent_events, source_cutoff
 
 
-def _validate_recent_events(value: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _validate_recent_events(
+    value: Sequence[Mapping[str, Any]],
+    *,
+    cutoff_utc: datetime | None = None,
+) -> list[dict[str, Any]]:
     if len(value) > MAX_RECENT_EVENTS:
         raise DojoFreshModelHandoffError("recent event window is too large")
     events = []
+    event_ids: set[str] = set()
     expected = {"event_id", "event_type", "summary", "available_through_utc"}
     for item in value:
         if not isinstance(item, Mapping) or set(item) != expected:
@@ -957,6 +1077,17 @@ def _validate_recent_events(value: Sequence[Mapping[str, Any]]) -> list[dict[str
         event = dict(item)
         for field in expected:
             _bounded_text(event[field], f"recent_event.{field}", maximum=240)
+        if not event["event_id"] or event["event_id"] in event_ids:
+            raise DojoFreshModelHandoffError("recent event identity is invalid")
+        event_ids.add(event["event_id"])
+        available_through = _parse_utc(
+            event["available_through_utc"],
+            "recent event available-through timestamp",
+        )
+        if cutoff_utc is not None and available_through > cutoff_utc:
+            raise DojoFreshModelHandoffError(
+                "recent event is later than the causal cutoff"
+            )
         forbidden = json.dumps(event, ensure_ascii=False).lower()
         if any(
             word in forbidden
@@ -1126,11 +1257,19 @@ def compile_snapshot(
         plan = _verify_plan(_read_json(root / "handoff-plan.json"))
         events, _ = _verify_events(root, plan)
         status = _status_unlocked(root)
-        snapshot, source_packet_sha = _normalize_source_snapshot(
+        (
+            snapshot,
+            source_packet_sha,
+            source_recent_events,
+            source_cutoff,
+        ) = _normalize_source_snapshot(
             source_packet,
             risk_signals=risk_signals,
         )
-        bounded_events = _validate_recent_events(recent_events)
+        bounded_events = _validate_recent_events(
+            [*source_recent_events, *recent_events],
+            cutoff_utc=source_cutoff,
+        )
         majors = sorted(set(major_event_ids))
         if any(event not in MAJOR_EVENT_IDS for event in majors):
             raise DojoFreshModelHandoffError("unknown major event id")
