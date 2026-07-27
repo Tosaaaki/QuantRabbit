@@ -28,7 +28,6 @@ from quant_rabbit.dojo_paired_model_queue import (
     canonical_sha256,
 )
 
-
 HANDOFF_PLAN_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_HANDOFF_PLAN_V1"
 STORY_CONTRACT: Final = "QR_DOJO_BOUNDED_ROLLING_STORY_V1"
 DECISION_PACKET_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_DECISION_PACKET_V1"
@@ -36,6 +35,11 @@ MODEL_RESPONSE_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_RESPONSE_V1"
 EVENT_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_HANDOFF_EVENT_V1"
 STATUS_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_HANDOFF_STATUS_V1"
 SKIP_RECEIPT_CONTRACT: Final = "QR_DOJO_FRESH_MODEL_SKIP_RECEIPT_V1"
+PREFLIGHT_CONTRACT: Final = "QR_DOJO_PAPER_FRESH_MODEL_PREFLIGHT_V1"
+COMPLETION_CONTRACT: Final = "QR_DOJO_PAPER_FRESH_MODEL_COMPLETION_V1"
+QUOTA_HALT_CONTRACT: Final = "QR_DOJO_PAPER_FRESH_MODEL_QUOTA_HALT_V1"
+HALT_SENTINEL_FILENAME: Final = "runtime-quota-halt.json"
+HALT_STATES: Final = frozenset({"HALTED_QUOTA", "PAUSE_REQUESTED"})
 SCHEMA_VERSION: Final = 1
 ZERO_SHA256: Final = "0" * 64
 MAX_JSON_BYTES: Final = 2 * 1024 * 1024
@@ -233,6 +237,60 @@ def _unlock(descriptor: int) -> None:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
+
+
+def _halt_path(root: Path) -> Path:
+    return root / HALT_SENTINEL_FILENAME
+
+
+def _verify_halt_sentinel(value: Mapping[str, Any]) -> dict[str, Any]:
+    sentinel = dict(value)
+    expected = {
+        "contract",
+        "schema_version",
+        "state",
+        "reason",
+        "observed_at_utc",
+        "last_accepted_fresh_model_decision_count",
+        "current_ready_packet_sha256",
+        "accepted_state_mutated",
+        "resume_policy",
+        "authority",
+        "sentinel_sha256",
+    }
+    unsigned = {
+        key: item for key, item in sentinel.items() if key != "sentinel_sha256"
+    }
+    reason = sentinel.get("reason")
+    if (
+        set(sentinel) != expected
+        or sentinel.get("contract") != QUOTA_HALT_CONTRACT
+        or sentinel.get("schema_version") != SCHEMA_VERSION
+        or sentinel.get("state") not in HALT_STATES
+        or not isinstance(reason, str)
+        or not reason
+        or len(reason) > 512
+        or not isinstance(
+            sentinel.get("last_accepted_fresh_model_decision_count"), int
+        )
+        or sentinel.get("last_accepted_fresh_model_decision_count", -1) < 0
+        or sentinel.get("accepted_state_mutated") is not False
+        or sentinel.get("resume_policy")
+        != "EXPLICIT_RESUME_COMMAND_ONLY_SAME_READY_PACKET"
+        or sentinel.get("authority") != dict(AUTHORITY)
+        or sentinel.get("sentinel_sha256") != canonical_sha256(unsigned)
+    ):
+        raise DojoFreshModelHandoffError("quota halt sentinel is invalid")
+    _parse_utc(sentinel.get("observed_at_utc"), "quota halt time")
+    ready = sentinel.get("current_ready_packet_sha256")
+    if ready is not None:
+        _sha256_text(ready, "quota halt ready packet SHA-256")
+    return sentinel
+
+
+def _halt_sentinel_unlocked(root: Path) -> dict[str, Any] | None:
+    path = _halt_path(root)
+    return None if not path.exists() else _verify_halt_sentinel(_read_json(path))
 
 
 def initial_story_content() -> dict[str, Any]:
@@ -521,9 +579,92 @@ def _status_unlocked(root: Path) -> dict[str, Any]:
     return {**body, "status_sha256": canonical_sha256(body)}
 
 
+def _status_with_halt_unlocked(root: Path) -> dict[str, Any]:
+    status = _status_unlocked(root)
+    sentinel = _halt_sentinel_unlocked(root)
+    if sentinel is None:
+        return status
+    body = {key: item for key, item in status.items() if key != "status_sha256"}
+    body.update(
+        {
+            "state": sentinel["state"],
+            "runtime_halt": sentinel,
+            "ready_packet_withheld": True,
+        }
+    )
+    return {**body, "status_sha256": canonical_sha256(body)}
+
+
 def handoff_status(root: Path) -> dict[str, Any]:
     descriptor = _lock(root)
     try:
+        return _status_with_halt_unlocked(root)
+    finally:
+        _unlock(descriptor)
+
+
+def halt_for_quota(
+    root: Path,
+    *,
+    reason: str,
+    observed_at_utc: str,
+    state: str = "HALTED_QUOTA",
+) -> dict[str, Any]:
+    """Atomically stop new PAPER decisions without mutating accepted state."""
+
+    descriptor = _lock(root)
+    try:
+        existing = _halt_sentinel_unlocked(root)
+        if existing is not None:
+            return existing
+        if state not in HALT_STATES:
+            raise DojoFreshModelHandoffError("quota halt state is invalid")
+        if not isinstance(reason, str) or not reason or len(reason) > 512:
+            raise DojoFreshModelHandoffError("quota halt reason is invalid")
+        observed = _parse_utc(observed_at_utc, "quota halt time")
+        status = _status_unlocked(root)
+        body = {
+            "contract": QUOTA_HALT_CONTRACT,
+            "schema_version": SCHEMA_VERSION,
+            "state": state,
+            "reason": reason,
+            "observed_at_utc": observed.isoformat(),
+            "last_accepted_fresh_model_decision_count": status[
+                "accepted_fresh_model_decision_count"
+            ],
+            "current_ready_packet_sha256": status[
+                "current_ready_packet_sha256"
+            ],
+            "accepted_state_mutated": False,
+            "resume_policy": "EXPLICIT_RESUME_COMMAND_ONLY_SAME_READY_PACKET",
+            "authority": dict(AUTHORITY),
+        }
+        sentinel = {**body, "sentinel_sha256": canonical_sha256(body)}
+        _write_exclusive(_halt_path(root), sentinel)
+        return sentinel
+    finally:
+        _unlock(descriptor)
+
+
+def resume_quota_halt(root: Path) -> dict[str, Any]:
+    """Remove only a valid sentinel after proving the ready state is unchanged."""
+
+    descriptor = _lock(root)
+    try:
+        sentinel = _halt_sentinel_unlocked(root)
+        if sentinel is None:
+            return _status_unlocked(root)
+        status = _status_unlocked(root)
+        if (
+            status["accepted_fresh_model_decision_count"]
+            != sentinel["last_accepted_fresh_model_decision_count"]
+            or status["current_ready_packet_sha256"]
+            != sentinel["current_ready_packet_sha256"]
+        ):
+            raise DojoFreshModelHandoffError(
+                "handoff state changed while quota halt was active"
+            )
+        _halt_path(root).unlink()
         return _status_unlocked(root)
     finally:
         _unlock(descriptor)
@@ -1254,6 +1395,10 @@ def compile_snapshot(
 
     descriptor = _lock(root)
     try:
+        if _halt_sentinel_unlocked(root) is not None:
+            raise DojoFreshModelHandoffError(
+                "quota halt is active; no PAPER packet may be opened"
+            )
         plan = _verify_plan(_read_json(root / "handoff-plan.json"))
         events, _ = _verify_events(root, plan)
         status = _status_unlocked(root)
@@ -1348,6 +1493,10 @@ def compile_snapshot(
 def current_ready_packet(root: Path) -> dict[str, Any]:
     descriptor = _lock(root)
     try:
+        if _halt_sentinel_unlocked(root) is not None:
+            raise DojoFreshModelHandoffError(
+                "quota halt is active; ready packet is withheld"
+            )
         status = _status_unlocked(root)
         packet_sha = status["current_ready_packet_sha256"]
         if packet_sha is None:
@@ -1502,6 +1651,10 @@ def submit_model_response(
                         "duplicate response conflicts with accepted bytes"
                     )
                 return status
+        if _halt_sentinel_unlocked(root) is not None:
+            raise DojoFreshModelHandoffError(
+                "quota halt is active; unaccepted response remains unsubmitted"
+            )
         packet_sha = status["current_ready_packet_sha256"]
         if packet_sha is None:
             raise DojoFreshModelHandoffError("no matching fresh-task packet is ready")
@@ -1547,6 +1700,143 @@ def submit_model_response(
         _unlock(descriptor)
 
 
+def preflight_paper_decision(
+    *,
+    root: Path,
+    rooms_root: Path,
+    now_utc: datetime,
+    recent_events: Sequence[Mapping[str, Any]] = (),
+    risk_signals: Sequence[str] = (),
+    major_event_ids: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Check quota first, then expose at most one causal PAPER decision packet."""
+
+    descriptor = _lock(root)
+    try:
+        sentinel = _halt_sentinel_unlocked(root)
+        if sentinel is not None:
+            body = {
+                "contract": PREFLIGHT_CONTRACT,
+                "schema_version": SCHEMA_VERSION,
+                "state": sentinel["state"],
+                "zero_work": True,
+                "notification": "DONT_NOTIFY",
+                "halt_sentinel_sha256": sentinel["sentinel_sha256"],
+                "accepted_fresh_model_decision_count": sentinel[
+                    "last_accepted_fresh_model_decision_count"
+                ],
+                "decision_packet": None,
+                "inventory_report": None,
+                "authority": dict(AUTHORITY),
+            }
+            return {**body, "preflight_sha256": canonical_sha256(body)}
+        status = _status_unlocked(root)
+    finally:
+        _unlock(descriptor)
+
+    from quant_rabbit.dojo_paper_inventory_report import (
+        build_paper_inventory_report,
+    )
+
+    report = build_paper_inventory_report(
+        runtime_root=root,
+        rooms_root=rooms_root,
+        now_utc=now_utc,
+    )
+    if status["state"] != "WAITING_FOR_FRESH_TASK":
+        source_packet, detected = build_paper_source_packet_from_rooms(
+            rooms_root=rooms_root,
+            now_utc=now_utc,
+        )
+        compile_snapshot(
+            root=root,
+            source_packet=source_packet,
+            recent_events=recent_events,
+            risk_signals=sorted(set(detected) | set(risk_signals)),
+            major_event_ids=major_event_ids,
+        )
+    status = handoff_status(root)
+    packet = (
+        current_ready_packet(root)
+        if status["state"] == "WAITING_FOR_FRESH_TASK"
+        else None
+    )
+    body = {
+        "contract": PREFLIGHT_CONTRACT,
+        "schema_version": SCHEMA_VERSION,
+        "state": status["state"],
+        "zero_work": packet is None,
+        "notification": None,
+        "halt_sentinel_sha256": None,
+        "accepted_fresh_model_decision_count": status[
+            "accepted_fresh_model_decision_count"
+        ],
+        "decision_packet": packet,
+        "inventory_report": report,
+        "authority": dict(AUTHORITY),
+    }
+    return {**body, "preflight_sha256": canonical_sha256(body)}
+
+
+def complete_current_decision(
+    *,
+    root: Path,
+    rooms_root: Path,
+    response_path: Path,
+    action: str,
+    reason_ids: Sequence[str],
+    next_story_content: Mapping[str, Any],
+    provider_model: str,
+    provider_execution_id: str,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    """Seal/reuse, submit, verify, and report one PAPER shadow decision."""
+
+    packet = current_ready_packet(root)
+    response_bytes_reused = response_path.exists()
+    if response_bytes_reused:
+        response = verify_model_response(_read_json(response_path), packet)
+    else:
+        response = seal_model_response(
+            packet=packet,
+            action=action,
+            reason_ids=reason_ids,
+            next_story_content=next_story_content,
+            provider_model=provider_model,
+            provider_execution_id=provider_execution_id,
+        )
+        _write_exclusive(response_path, response)
+    submitted = submit_model_response(root=root, response_value=response)
+    verified = verify_handoff(root)
+    if submitted != verified:
+        raise DojoFreshModelHandoffError(
+            "post-submit handoff verification differs from submitted state"
+        )
+    from quant_rabbit.dojo_paper_inventory_report import (
+        build_paper_inventory_report,
+    )
+
+    report = build_paper_inventory_report(
+        runtime_root=root,
+        rooms_root=rooms_root,
+        now_utc=now_utc,
+    )
+    body = {
+        "contract": COMPLETION_CONTRACT,
+        "schema_version": SCHEMA_VERSION,
+        "decision_packet_sha256": packet["decision_packet_sha256"],
+        "action": response["action"],
+        "response_sha256": response["response_sha256"],
+        "provider_model": response["provider_model"],
+        "provider_execution_id": response["provider_execution_id"],
+        "resulting_status": verified,
+        "inventory_report": report,
+        "response_bytes_reused": response_bytes_reused,
+        "authority": dict(AUTHORITY),
+    }
+    return {**body, "completion_sha256": canonical_sha256(body)}
+
+
 def verify_handoff(root: Path) -> dict[str, Any]:
     descriptor = _lock(root)
     try:
@@ -1571,7 +1861,7 @@ def verify_handoff(root: Path) -> dict[str, Any]:
             packet = _read_json(root / "packets" / f"{packet_sha}.json")
             verify_model_response(response, packet)
         _latest_story(root, events)
-        return _status_unlocked(root)
+        return _status_with_halt_unlocked(root)
     finally:
         _unlock(descriptor)
 
@@ -1583,10 +1873,14 @@ __all__ = [
     "STORY_CONTRACT",
     "build_paper_source_packet_from_rooms",
     "compile_snapshot",
+    "complete_current_decision",
     "current_ready_packet",
+    "halt_for_quota",
     "handoff_status",
     "initial_story_content",
     "initialize_handoff",
+    "preflight_paper_decision",
+    "resume_quota_halt",
     "seal_model_response",
     "submit_model_response",
     "validate_story_content",

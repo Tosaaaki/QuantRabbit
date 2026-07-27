@@ -88,6 +88,14 @@ PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py compile-rooms \
   --root <handoff-root> \
   --rooms-root <paper-rooms-root>
 
+PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py preflight \
+  --root <handoff-root> \
+  --rooms-root <paper-rooms-root>
+
+PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py report \
+  --root <handoff-root> \
+  --rooms-root <paper-rooms-root>
+
 PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py show-ready \
   --root <handoff-root>
 
@@ -104,6 +112,12 @@ PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py \
   submit-response --root <handoff-root> --response <response.json>
 
 PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py verify \
+  --root <handoff-root>
+
+PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py halt-quota \
+  --root <handoff-root> --reason <quota-or-model-start-failure>
+
+PYTHONPATH=src:. python3 scripts/run-dojo-fresh-model-handoff.py resume-quota \
   --root <handoff-root>
 ```
 
@@ -123,30 +137,32 @@ handoff and story artifacts are append-only evidence and need not be deleted.
 
 ## Automation activation handoff
 
-Update the existing `qr-dojo-episode-s5-forward-monitor` only. Do not create a
-second enabled executor.
+PAPER and PAIRED use separate Automations. The PAIRED evaluator must not be
+repurposed, resumed, paused, or rescheduled by PAPER work. Create or update one
+dedicated PAPER executor only; do not create a duplicate PAPER executor.
 
-- project ID: `bff6d350-b03a-4bfb-8b48-1a27fda99c9b`
 - cwd: `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval`
 - owner branch: `codex/dojo-dual-eval`
 - paper handoff root:
   `/Users/tossaki/.codex/state/quantrabbit/dojo-paper-fresh-model-handoff-v1`
 - paper rooms root:
   `/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1`
-- paired queue:
-  `/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/dojo-r13-paired-model-queue-20260727`
+- PAPER cadence: once hourly in one fresh Codex task.
+- model: `gpt-5.6-sol`, reasoning `medium`.
+- authority: PAPER/replay only, live/broker/order mutation false, `NONE`.
 
-Use two fresh invocations per hour while the paired queue remains incomplete:
-minute 00 is the paper review lane and minute 30 is the paired replay lane.
-This keeps every decision in a separate fresh task and preserves an hourly
-paper review without creating a second Automation. The proposed RRULE is
-`FREQ=HOURLY;BYMINUTE=0,30;BYSECOND=0`. When all 84 paired cells are sealed,
-reduce the schedule to minute 00 only through `automation_update` and repeat
-the inventory sync.
+The task runs `preflight` first. A quota sentinel returns zero-work
+`DONT_NOTIFY` before room reads. A waiting packet is consumed as is and never
+overwritten. Each accepted response is followed by `verify`. The task prints
+the fixed `PAPER AI inventory supervisor` card and four-room table before and
+after a decision. Missing economics remain `未計測`; the shadow action is never
+applied.
 
-The task must inspect status before compiling. A waiting packet is consumed as
-is; it must not be overwritten by a newer room state. A skip receipt ends the
-invocation without a model decision. Each accepted response is followed by
-the local `verify` command. High-risk 15-minute and event-driven model wakes
-are not claimed because the product has no verified conditional wake surface;
-hard risk remains local deterministic Python.
+After completion, the task uses only
+`/Users/tossaki/.claude/scheduled-tasks/_shared/post_slack.sh` with route `qr`.
+It creates one PAPER parent once, then appends one reply per hour to that
+parent using operation id `qr-paper-hourly:<data-at-or-packet-hash>`. The
+helper must re-read the current Notion Slack policy, verify Irori Bot identity,
+channel, parent/thread, body, and permalink, and fail closed without blind
+retry. Slack failure does not roll back accepted PAPER state. If the platform
+cannot start the task, neither a decision nor a Slack reply can occur.
