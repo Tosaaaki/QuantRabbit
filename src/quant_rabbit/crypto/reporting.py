@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
@@ -259,17 +259,27 @@ class PaperShadowReportingWriter:
         now: datetime,
         period: str,
     ) -> dict[str, Any]:
-        period_key = (
-            now.strftime("%Y-%m-%dT%H:00:00Z")
-            if period == "hour"
-            else now.strftime("%Y-%m-%d")
-        )
+        utc_now = now.astimezone(timezone.utc)
+        if period == "hour":
+            period_end = utc_now.replace(
+                minute=0, second=0, microsecond=0
+            )
+            period_start = period_end - timedelta(hours=1)
+            period_key = period_start.strftime("%Y-%m-%dT%H:00:00Z")
+        else:
+            period_end = utc_now.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            period_start = period_end - timedelta(days=1)
+            period_key = period_start.strftime("%Y-%m-%d")
         selected = [
             row
             for row in trades
-            if str(row["closed_at_utc"]).startswith(
-                period_key[:13] if period == "hour" else period_key
+            if period_start
+            <= datetime.fromisoformat(str(row["closed_at_utc"])).astimezone(
+                timezone.utc
             )
+            < period_end
         ]
         reasons = Counter(str(row["exit_reason"]) for row in selected)
         service_states = self._service_states()
@@ -280,6 +290,8 @@ class PaperShadowReportingWriter:
             "operation_id": operation_id,
             "period": period,
             "period_key": period_key,
+            "period_start_utc": period_start.isoformat(),
+            "period_end_utc": period_end.isoformat(),
             "generated_at_utc": now.isoformat(),
             "completed_trades": len(selected),
             "spot_trades": sum(

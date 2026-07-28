@@ -61,8 +61,8 @@ The reporter is a separate launchd process. It never runs in the trading
 process and never posts one Slack message per trade.
 
 - Sheets trade ledger: one completed trade per row
-- Sheets summary ledger: hourly and daily aggregates
-- Slack: hourly summary and daily summary only
+- Sheets summary ledger: completed-hour and completed-day aggregates
+- Slack: one completed-hour summary and one completed-day summary only
 - Append/readback uses operation IDs for retry and duplicate prevention
 
 When a Sheets or Slack connector is unavailable, delivery remains pending in

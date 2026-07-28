@@ -186,6 +186,9 @@ def test_reporting_writer_retries_and_deduplicates_targets(
         .read_text(encoding="utf-8")
         .splitlines()
     ) == 2
+    assert {
+        row["period_key"] for row in sheets.summaries.values()
+    } == {"2026-07-27T23:00:00Z", "2026-07-27"}
 
 
 def test_reporting_writer_readback_prevents_restart_duplicate(
