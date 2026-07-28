@@ -120,3 +120,23 @@ def test_improvement_loop_ranks_zero_fill_causes_and_is_idempotent(
     ]
     assert len(hourly) == 1
     assert '"evaluation_count":2' in hourly[0]
+
+
+def test_improvement_loop_preserves_named_strategy_baseline(
+    tmp_path: Path,
+) -> None:
+    for mode in ("spot", "margin"):
+        _epoch(
+            CryptoLedger(tmp_path / mode / "ledger.db"),
+            mode.upper(),
+            f"{mode}-variant-run",
+        )
+    result = CryptoImprovementEvaluator(
+        tmp_path,
+        baseline_strategy="ORDER_BOOK_FADE",
+    ).run_once(datetime(2026, 7, 28, 1, 30, tzinfo=timezone.utc))
+
+    for evaluation in result["evaluations"]:
+        assert evaluation["baseline"]["strategy"] == "ORDER_BOOK_FADE"
+    for experiment in result["experiments"]:
+        assert experiment["baseline"]["strategy"] == "ORDER_BOOK_FADE"

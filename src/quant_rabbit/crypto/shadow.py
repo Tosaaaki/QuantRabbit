@@ -16,6 +16,7 @@ from .ledger import CryptoLedger
 from .outbox import AsyncTradeOutbox
 from .paper import PaperEngine
 from .report import atomic_write_json, atomic_write_text
+from .strategies import strategy_router
 from .stream import BitbankStreamError
 
 
@@ -23,6 +24,8 @@ from .stream import BitbankStreamError
 class PaperShadowServiceConfig:
     mode: str
     runtime_dir: Path
+    strategy: str = "FAST_MICROSTRUCTURE"
+    strategy_config: Path | None = None
     initial_cash_jpy: Decimal = Decimal("10000")
     max_leverage: Decimal = Decimal("2")
     epoch_sec: float = 60.0
@@ -103,10 +106,24 @@ class PaperShadowService:
 
         try:
             while not self._stop_requested:
+                fast_config = FastPaperConfig.from_env()
+                router = (
+                    None
+                    if self.config.strategy == "FAST_MICROSTRUCTURE"
+                    else strategy_router(
+                        self.config.strategy,
+                        config_path=self.config.strategy_config,
+                        warmup_events=fast_config.warmup_events,
+                        book_levels=fast_config.book_levels,
+                        max_data_age_ms=fast_config.max_data_age_ms,
+                    )
+                )
                 runner = FastPaperRunner(
                     ledger,
                     paper,
-                    config=FastPaperConfig.from_env(),
+                    config=fast_config,
+                    router=router,
+                    strategy_name=self.config.strategy,
                 )
                 try:
                     result = asyncio.run(

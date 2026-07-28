@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .ledger import CryptoLedger
 
@@ -132,8 +132,14 @@ def _contribution(
 class CryptoImprovementEvaluator:
     """Evidence-first RCA and one-category Paper experiment planner."""
 
-    def __init__(self, runtime_root: Path) -> None:
+    def __init__(
+        self,
+        runtime_root: Path,
+        *,
+        baseline_strategy: str = "FAST_MICROSTRUCTURE",
+    ) -> None:
         self.runtime_root = runtime_root
+        self.baseline_strategy = baseline_strategy
         self.output_root = runtime_root / "improvement"
         self.evaluations_path = self.output_root / "evaluations.jsonl"
         self.experiments_path = self.output_root / "experiments.jsonl"
@@ -332,7 +338,7 @@ class CryptoImprovementEvaluator:
                 mode,
                 start.isoformat(),
                 end.isoformat(),
-                "baseline",
+                self.baseline_strategy,
                 EVALUATION_MODEL_VERSION,
             ),
             "evaluation_model_version": EVALUATION_MODEL_VERSION,
@@ -424,7 +430,7 @@ class CryptoImprovementEvaluator:
             },
             "prediction_quality": prediction,
             "baseline": {
-                "strategy": "FAST_MICROSTRUCTURE",
+                "strategy": self.baseline_strategy,
                 "preserved": True,
             },
             "causality": {
@@ -726,7 +732,7 @@ class CryptoImprovementEvaluator:
             "discovery_evaluation_id": evaluation["operation_id"],
             "root_cause": cause,
             "baseline": {
-                "strategy": "FAST_MICROSTRUCTURE",
+                "strategy": evaluation["baseline"]["strategy"],
                 "preserved": True,
                 "ledger_immutable": True,
             },

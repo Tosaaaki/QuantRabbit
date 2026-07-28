@@ -17,7 +17,7 @@ from .bitbank import (
     BitbankPrivateReadOnlyClient,
     BitbankPublicClient,
 )
-from .config import CryptoSafetyContract, ScannerConfig
+from .config import CryptoSafetyContract
 from .fast import FastPaperConfig, FastPaperRunner, fast_report_markdown
 from .improvement import CryptoImprovementEvaluator
 from .ledger import CryptoLedger
@@ -30,6 +30,7 @@ from .shadow import (
     PaperShadowServiceConfig,
 )
 from .scanner import CryptoMarketScanner
+from .strategies import load_strategy_profiles, strategy_router
 from .stream import BitbankPublicStream, BitbankStreamError
 
 
@@ -405,10 +406,28 @@ def run_fast_paper(args: argparse.Namespace) -> int:
             else Decimal("1")
         ),
     )
+    fast_config = FastPaperConfig.from_env()
+    router = (
+        None
+        if args.strategy == "FAST_MICROSTRUCTURE"
+        else strategy_router(
+            args.strategy,
+            config_path=(
+                Path(args.strategy_config)
+                if args.strategy_config
+                else None
+            ),
+            warmup_events=fast_config.warmup_events,
+            book_levels=fast_config.book_levels,
+            max_data_age_ms=fast_config.max_data_age_ms,
+        )
+    )
     runner = FastPaperRunner(
         ledger,
         paper,
-        config=FastPaperConfig.from_env(),
+        config=fast_config,
+        router=router,
+        strategy_name=args.strategy,
     )
     try:
         result = asyncio.run(
@@ -447,6 +466,7 @@ def run_fast_paper(args: argparse.Namespace) -> int:
             {
                 "schema": result["schema"],
                 "mode": result["mode"],
+                "strategy": result["strategy"],
                 "run_id": result["run_id"],
                 "pairs": result["pairs"],
                 "safety": result["safety"],
@@ -479,6 +499,12 @@ def run_shadow_service(args: argparse.Namespace) -> int:
         PaperShadowServiceConfig(
             mode=args.mode,
             runtime_dir=runtime_dir,
+            strategy=args.strategy,
+            strategy_config=(
+                Path(args.strategy_config)
+                if args.strategy_config
+                else None
+            ),
             initial_cash_jpy=Decimal(str(args.initial_cash_jpy)),
             max_leverage=Decimal(str(args.max_leverage)),
             epoch_sec=args.epoch_sec,
@@ -546,6 +572,32 @@ def run_shadow_evaluate(args: argparse.Namespace) -> int:
         Path(args.runtime_root)
     ).run_once(trailing_minutes=args.trailing_minutes)
     _json_print(result)
+    return 0
+
+
+def run_strategy_lab_evaluate(args: argparse.Namespace) -> int:
+    CryptoSafetyContract.from_env().assert_safe()
+    runtime_root = Path(args.runtime_root)
+    results: list[dict[str, Any]] = []
+    for name in load_strategy_profiles(
+        Path(args.strategy_config) if args.strategy_config else None
+    ):
+        slug = name.lower().replace("_", "-")
+        results.append(
+            CryptoImprovementEvaluator(
+                runtime_root / slug,
+                baseline_strategy=name,
+            ).run_once(trailing_minutes=args.trailing_minutes)
+        )
+    payload = {
+        "schema": "QR_CRYPTO_STRATEGY_LAB_EVALUATION_RUN_V1",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "strategies": results,
+        "authority": "NONE",
+        "live_mutation": False,
+    }
+    atomic_write_json(runtime_root / "evaluation_state.json", payload)
+    _json_print(payload)
     return 0
 
 
@@ -691,6 +743,12 @@ def build_parser() -> argparse.ArgumentParser:
     fast.add_argument("--data-dir")
     fast.add_argument("--report")
     fast.add_argument("--summary-only", action="store_true")
+    fast.add_argument(
+        "--strategy",
+        default="FAST_MICROSTRUCTURE",
+        help="Paper strategy name; configured siblings remain authority NONE.",
+    )
+    fast.add_argument("--strategy-config")
     fast.set_defaults(func=run_fast_paper)
 
     shadow = subparsers.add_parser(
@@ -710,6 +768,12 @@ def build_parser() -> argparse.ArgumentParser:
     shadow.add_argument("--max-events", type=int, default=10_000_000)
     shadow.add_argument("--progress-interval-sec", type=float, default=5.0)
     shadow.add_argument("--retry-delay-sec", type=float, default=5.0)
+    shadow.add_argument(
+        "--strategy",
+        default="FAST_MICROSTRUCTURE",
+        help="Paper strategy name; use a distinct runtime root per strategy.",
+    )
+    shadow.add_argument("--strategy-config")
     shadow.set_defaults(func=run_shadow_service)
 
     reporting = subparsers.add_parser(
@@ -746,6 +810,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluation.add_argument("--trailing-minutes", type=int, default=60)
     evaluation.set_defaults(func=run_shadow_evaluate)
+
+    lab_evaluation = subparsers.add_parser(
+        "strategy-lab-evaluate",
+        help="Persist local profitability RCA for every Paper strategy lane.",
+    )
+    lab_evaluation.add_argument(
+        "--runtime-root",
+        default="data/crypto/strategy-lab",
+    )
+    lab_evaluation.add_argument("--strategy-config")
+    lab_evaluation.add_argument("--trailing-minutes", type=int)
+    lab_evaluation.set_defaults(func=run_strategy_lab_evaluate)
 
     private = subparsers.add_parser(
         "private-check", help="Authenticate and GET assets only."

@@ -489,6 +489,8 @@ class FastPaperRunner:
         *,
         stream: BitbankPublicStream | None = None,
         config: FastPaperConfig | None = None,
+        router: Any | None = None,
+        strategy_name: str = "FAST_MICROSTRUCTURE",
     ) -> None:
         self.safety = CryptoSafetyContract.from_env()
         self.safety.assert_safe()
@@ -496,7 +498,8 @@ class FastPaperRunner:
         self.paper = paper
         self.stream = stream or BitbankPublicStream()
         self.config = config or FastPaperConfig.from_env()
-        self.router = FastMicrostructureRouter(self.config)
+        self.router = router or FastMicrostructureRouter(self.config)
+        self.strategy_name = strategy_name
 
     async def run(
         self,
@@ -563,6 +566,7 @@ class FastPaperRunner:
             payload = {
                 "schema": "QR_CRYPTO_PAPER_SHADOW_STATE_V1",
                 "status": status,
+                "strategy": self.strategy_name,
                 "run_id": run_id,
                 "started_at_utc": started_at_utc,
                 "heartbeat_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -739,7 +743,7 @@ class FastPaperRunner:
         timed_out = False
         try:
             await asyncio.wait_for(_consume(), timeout=duration_sec)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             timed_out = True
         elapsed_sec = max(
             0.000001, (time.monotonic_ns() - started_ns) / 1_000_000_000
@@ -762,6 +766,7 @@ class FastPaperRunner:
         )
         result = {
             "schema": "QR_CRYPTO_FAST_PAPER_CANARY_V1",
+            "strategy": self.strategy_name,
             "mode": (
                 "PUBLIC_STREAM_EVENT_DRIVEN_MARGIN_PAPER"
                 if self.paper.allow_short
@@ -907,7 +912,7 @@ class FastPaperRunner:
                 "amount": str(abs(amount)),
                 "order_style": "PAPER_TAKER",
                 "regime": "MODELED_LOSSCUT",
-                "strategy": "FAST_MICROSTRUCTURE",
+                "strategy": self.strategy_name,
                 "signal_reason": "MODELED_LOSSCUT",
                 "run_id": run_id,
                 "event_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1018,12 +1023,23 @@ class FastPaperRunner:
             "position_effect": "OPEN" if opening else "CLOSE",
             "position_side": position_side,
             "amount": str(amount),
-            "order_style": (
-                "PAPER_MAKER_LIMIT" if opening else "PAPER_TAKER"
+            "order_style": str(
+                decision.get(
+                    (
+                        "entry_order_style"
+                        if opening
+                        else "exit_order_style"
+                    ),
+                    "PAPER_MAKER_LIMIT" if opening else "PAPER_TAKER",
+                )
             ),
             "limit_price": str(price),
-            "regime": "FAST_MICROSTRUCTURE",
-            "strategy": "FAST_MICROSTRUCTURE",
+            "regime": str(
+                decision.get("market_regime", self.strategy_name)
+            ),
+            "strategy": str(
+                decision.get("strategy", self.strategy_name)
+            ),
             "signal_reason": decision["reason"],
             "run_id": run_id,
             "event_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1051,6 +1067,7 @@ def fast_report_markdown(result: dict[str, Any]) -> str:
             "",
             f"- Mode: `{result['mode']}`",
             f"- Run ID: `{result['run_id']}`",
+            f"- Strategy: `{result.get('strategy', 'FAST_MICROSTRUCTURE')}`",
             f"- Initial cash JPY: `{metrics['initial_cash_jpy']}`",
             f"- Pairs: `{', '.join(result['pairs'])}`",
             f"- Guardian: `{result['guardian']['state']}`",

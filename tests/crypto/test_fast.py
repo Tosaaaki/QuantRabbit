@@ -241,6 +241,38 @@ class FakeStream:
             yield message
 
 
+class HangingStream:
+    async def messages(
+        self, rooms: Iterable[str], *, max_messages: int | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
+        del rooms, max_messages
+        await asyncio.sleep(60)
+        if False:
+            yield {}
+
+
+def test_fast_runner_treats_asyncio_timeout_as_bounded_completion(
+    tmp_path: Path,
+) -> None:
+    ledger = CryptoLedger(tmp_path / "timeout.db")
+    runner = FastPaperRunner(
+        ledger,
+        PaperEngine(ledger),
+        stream=HangingStream(),  # type: ignore[arg-type]
+    )
+    result = asyncio.run(
+        runner.run(
+            ["btc_jpy"],
+            {"btc_jpy": (Decimal("0"), Decimal("0"))},
+            duration_sec=0.001,
+            max_events=1,
+        )
+    )
+    assert result["runtime"]["timed_out"] is True
+    assert result["runtime"]["events_processed"] == 0
+    assert result["guardian"]["state"] == "HALT"
+
+
 def test_fast_runner_executes_event_driven_paper_round(
     tmp_path: Path,
 ) -> None:
