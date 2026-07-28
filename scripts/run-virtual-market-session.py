@@ -979,11 +979,104 @@ def _process_inbox(
     return handled
 
 
+def _seed_bot_from_read_only_oanda(
+    client,
+    bot,
+    pairs: list[str],
+    *,
+    count: int,
+    now_utc: datetime,
+) -> dict:
+    """Seed completed M1 indicators from OANDA market data without broker writes."""
+
+    if count < 1441 or count > 5000:
+        raise VirtualBrokerError("OANDA M1 seed count must be within 1441..5000")
+    pair_receipts: list[dict] = []
+    for pair in pairs:
+        payload = client.get_json(
+            f"/v3/instruments/{pair}/candles",
+            {"price": "BA", "granularity": "M1", "count": str(count)},
+        )
+        raw_candles = payload.get("candles")
+        if not isinstance(raw_candles, list):
+            raise VirtualBrokerError(f"OANDA M1 seed is missing candles: {pair}")
+        normalized: list[dict] = []
+        seen_epochs: set[int] = set()
+        for raw in raw_candles:
+            if not isinstance(raw, dict) or raw.get("complete") is not True:
+                continue
+            try:
+                stamp = _parse_utc_bound(str(raw["time"]))
+                epoch = int(stamp.timestamp())
+                bid = raw["bid"]
+                ask = raw["ask"]
+                bar = {
+                    "epoch": epoch,
+                    "bid_o": _finite_number("seed bid open", bid["o"]),
+                    "bid_h": _finite_number("seed bid high", bid["h"]),
+                    "bid_l": _finite_number("seed bid low", bid["l"]),
+                    "bid_c": _finite_number("seed bid close", bid["c"]),
+                    "ask_o": _finite_number("seed ask open", ask["o"]),
+                    "ask_h": _finite_number("seed ask high", ask["h"]),
+                    "ask_l": _finite_number("seed ask low", ask["l"]),
+                    "ask_c": _finite_number("seed ask close", ask["c"]),
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                raise VirtualBrokerError(f"invalid OANDA M1 seed candle: {pair}") from exc
+            if epoch in seen_epochs:
+                raise VirtualBrokerError(f"duplicate OANDA M1 seed epoch: {pair}")
+            if stamp >= now_utc:
+                raise VirtualBrokerError(f"future OANDA M1 seed candle: {pair}")
+            seen_epochs.add(epoch)
+            normalized.append(bar)
+        normalized.sort(key=lambda row: row["epoch"])
+        if len(normalized) < 1441:
+            raise VirtualBrokerError(f"insufficient complete OANDA M1 seed: {pair}")
+        if any(
+            left["epoch"] >= right["epoch"]
+            for left, right in zip(normalized, normalized[1:])
+        ):
+            raise VirtualBrokerError(f"non-monotonic OANDA M1 seed: {pair}")
+        latest_age_seconds = now_utc.timestamp() - normalized[-1]["epoch"]
+        if latest_age_seconds < 0 or latest_age_seconds > 180:
+            raise VirtualBrokerError(f"stale OANDA M1 seed: {pair}")
+        for bar in normalized:
+            bot.seed_bar(pair, bar)
+        pair_receipts.append(
+            {
+                "pair": pair,
+                "bar_count": len(normalized),
+                "first_epoch": normalized[0]["epoch"],
+                "last_epoch": normalized[-1]["epoch"],
+                "bars_sha256": _canonical_sha256(normalized),
+            }
+        )
+    body = {
+        "contract": "QR_DOJO_READ_ONLY_OANDA_M1_SEED_V1",
+        "source": "OANDA_INSTRUMENT_CANDLES_GET_ONLY",
+        "requested_count": count,
+        "pairs": pair_receipts,
+        "broker_mutation_allowed": False,
+        "live_permission": False,
+        "order_authority": "NONE",
+    }
+    return {**body, "seed_sha256": _canonical_sha256(body)}
+
+
 def run_live(args, broker: VirtualBroker, session_dir: Path, bot=None) -> None:
     from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
     client = OandaReadOnlyClient()
     pairs = _normalized_pairs(args.pairs)
+    if bot is not None and args.seed_oanda_m1_count:
+        seed_receipt = _seed_bot_from_read_only_oanda(
+            client,
+            bot,
+            pairs,
+            count=args.seed_oanda_m1_count,
+            now_utc=datetime.now(UTC),
+        )
+        broker._log("BOT_SEEDED_READ_ONLY_OANDA", seed_receipt)
     exposure_pairs = {position.pair for position in broker.positions.values()} | {
         order.pair for order in broker.orders.values()
     }
@@ -1582,6 +1675,15 @@ def main() -> int:
         "--minutes", type=float, default=480.0, help="live mode duration"
     )
     parser.add_argument(
+        "--seed-oanda-m1-count",
+        type=int,
+        default=0,
+        help=(
+            "live custom bot only: seed 1441..5000 complete M1 candles through "
+            "the OANDA read-only instrument endpoint"
+        ),
+    )
+    parser.add_argument(
         "--corpus-root",
         default=(
             "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026"
@@ -1672,6 +1774,12 @@ def main() -> int:
         help="replay custom bot: cancel its owned orders and close its owned trades",
     )
     args = parser.parse_args()
+    if args.seed_oanda_m1_count and args.feed != "live":
+        parser.error("--seed-oanda-m1-count is live-only")
+    if args.seed_oanda_m1_count and not 1441 <= args.seed_oanda_m1_count <= 5000:
+        parser.error("--seed-oanda-m1-count must be within 1441..5000")
+    if args.seed_oanda_m1_count and not args.bot_module:
+        parser.error("--seed-oanda-m1-count requires --bot-module")
 
     session_dir = args.session_dir
     (session_dir / "inbox" / "processed").mkdir(parents=True, exist_ok=True)

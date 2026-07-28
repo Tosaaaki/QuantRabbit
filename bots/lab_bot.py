@@ -19,6 +19,8 @@ Config via env var DOJO_BOT_CONFIG (JSON):
   weekend_sl_gap float  (weekend_gap_recovery) stop in original gap widths
   weekend_wait_bars int  completed Sunday M1 bars required before entry
   weekend_spread_fraction float maximum spread / remaining gap
+  entry_direction_policy "BOTH_SIDES" | "FOLLOW_24H_TREND"
+                         (range_fade_limit only; completed M1 state)
   exit_policy   "FIXED" | "BREAKEVEN" | "ATR_TRAILING"
   be_trigger_atr float  profit required before breakeven activation
   be_offset_pips float  profit locked by the breakeven stop
@@ -121,6 +123,21 @@ class _PairState:
 class Bot:
     def __init__(self, broker: VirtualBroker, cfg: dict | None = None):
         cfg = dict(cfg or json.loads(os.environ["DOJO_BOT_CONFIG"]))
+        self.entry_direction_policy = str(
+            cfg.pop("entry_direction_policy", "BOTH_SIDES")
+        ).upper()
+        if self.entry_direction_policy not in {
+            "BOTH_SIDES",
+            "FOLLOW_24H_TREND",
+        }:
+            raise ValueError("unsupported entry_direction_policy")
+        if (
+            self.entry_direction_policy != "BOTH_SIDES"
+            and cfg.get("signal") != "range_fade_limit"
+        ):
+            raise ValueError(
+                "entry_direction_policy is implemented only for range_fade_limit"
+            )
         if set(cfg) & set(AUTHORITY_INVARIANTS):
             owner_override = cfg.pop("strategy_owner_id", None)
             cfg = validate_bot_config(cfg)
@@ -333,6 +350,13 @@ class Bot:
         if path <= 0:
             return None
         return abs(st.closes[-1] - st.closes[-361]) / path
+
+    def seed_bar(self, pair: str, bar: dict) -> None:
+        """Warm completed-bar indicators without creating orders or positions."""
+
+        st = self.state.get(pair)
+        if st is not None:
+            self._update(st, bar)
 
     @staticmethod
     def _mid(bar: dict, field: str) -> float:
@@ -1189,6 +1213,14 @@ class Bot:
             if units <= 0:
                 return
             for side, price in (("LONG", mid_c - dist), ("SHORT", mid_c + dist)):
+                if (
+                    self.entry_direction_policy == "FOLLOW_24H_TREND"
+                    and side != trend
+                ):
+                    # The gate uses only the completed-M1 24h trend available
+                    # when this resting order is authored. It never inspects a
+                    # later fill, exit, or terminal result.
+                    continue
                 try:
                     oid = self.broker.limit_order(
                         pair,
