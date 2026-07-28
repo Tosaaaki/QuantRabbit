@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "contract": "QR_DOJO_R13_ACCEPTED_8_INTERIM_V1",
+  "generated_at_utc": "2026-07-28T07:43:51Z",
+  "authority": {
+    "live_permission": false,
+    "broker_mutation_allowed": false,
+    "order_authority": "NONE",
+    "automation_mutation_allowed": false,
+    "new_model_decision_allowed": false
+  },
+  "queue": {
+    "path": "/Users/tossaki/.codex/state/quantrabbit/dojo-r13-paired-model-queue-v1",
+    "accepted_cell_count": 8,
+    "planned_cell_count": 84,
+    "next_cell_ordinal": 9,
+    "next_cell_decided": false,
+    "automation_id": "qr-dojo-fresh-model-executor-v1",
+    "automation_state": "PAUSED",
+    "economic_application_status": "NOT_YET_APPLIED_PIPELINE_PROOF_ONLY",
+    "provider_attestation_tier": "SELF_ATTESTED_UNVERIFIED_DIAGNOSTIC"
+  },
+  "coverage": {
+    "accepted_coordinates": 2,
+    "planned_coordinates": 12,
+    "accepted_cells": 8,
+    "planned_cells": 84,
+    "coordinate_fraction": 0.1666666667,
+    "cell_fraction": 0.0952380952,
+    "coordinate_1_cadence_coverage": "7/7",
+    "coordinate_2_cadence_coverage": "1/7",
+    "remaining_coordinates_untouched": 10
+  },
+  "accepted_actions": {
+    "PAUSE_NEW_ENTRIES": 7,
+    "HOLD": 1
+  },
+  "economic_evidence_tier": "ACTION_MATCHED_DETERMINISTIC_PROXY_NOT_ACCEPTED_AI_APPLICATION",
+  "economic_rows": [
+    {
+      "accepted_cell_ordinals": [1, 2, 3, 4, 5, 6, 7],
+      "coordinate_id": "2b92ea31df415c7172c125ec86d0434a8ca25edf649500e60205f75caa1553e3",
+      "family_id": "mean_revert_24h",
+      "cost_scenario": "BASE",
+      "accepted_action": "PAUSE_NEW_ENTRIES",
+      "cadences": [
+        "ADAPTIVE_60M_15M_EVENT",
+        "EVENT_DRIVEN",
+        "FIXED_120M",
+        "FIXED_15M",
+        "FIXED_30M",
+        "FIXED_5M",
+        "FIXED_60M"
+      ],
+      "action_matches_existing_deterministic_checkpoint": true,
+      "bot_only_net_after_cost_jpy": -28245.65389263013,
+      "action_matched_proxy_net_after_cost_jpy": -14541.150332910242,
+      "directional_net_lift_jpy": 13704.503559719888,
+      "bot_only_transaction_cost_jpy": 31042.335291536536,
+      "action_matched_proxy_transaction_cost_jpy": 8895.30682937323,
+      "bot_only_trade_count": 414,
+      "action_matched_proxy_trade_count": 114,
+      "bot_only_expectancy_jpy_per_trade": -68.22621713195683,
+      "action_matched_proxy_expectancy_jpy_per_trade": -127.55395028868634,
+      "bot_only_profit_factor": null,
+      "action_matched_proxy_profit_factor": null,
+      "bot_only_max_drawdown_fraction": 0.14819181486198388,
+      "action_matched_proxy_max_drawdown_fraction": 0.0727057516645512,
+      "bot_only_peak_margin_usage_fraction": 0.08066863376143056,
+      "action_matched_proxy_peak_margin_usage_fraction": 0.080589219665864,
+      "bot_only_margin_closeouts": 0,
+      "action_matched_proxy_margin_closeouts": 0,
+      "bot_only_ruin_events": 0,
+      "action_matched_proxy_ruin_events": 0,
+      "prevented_loss_proxy_jpy": 13704.503559719888,
+      "sacrificed_upside_proxy_jpy": 0.0,
+      "tp_profit_retained_jpy": null,
+      "normal_loss_jpy": null,
+      "forced_loss_jpy": 0.0,
+      "gross_profit_jpy": null,
+      "gross_loss_jpy": null
+    },
+    {
+      "accepted_cell_ordinals": [8],
+      "coordinate_id": "4b7f383fe796b9ac27a51695a4cac2fa47a985001c3f9af3133ea144d4faecab",
+      "family_id": "round_number_fade",
+      "cost_scenario": "STRESS",
+      "accepted_action": "HOLD",
+      "cadences": ["ADAPTIVE_60M_15M_EVENT"],
+      "action_matches_existing_deterministic_checkpoint": true,
+      "bot_only_net_after_cost_jpy": 4783.720100101433,
+      "action_matched_proxy_net_after_cost_jpy": 4102.725728571066,
+      "directional_net_lift_jpy": -680.9943715303671,
+      "bot_only_transaction_cost_jpy": 3879.0771527984916,
+      "action_matched_proxy_transaction_cost_jpy": 3910.5629276933737,
+      "bot_only_trade_count": 27,
+      "action_matched_proxy_trade_count": 78,
+      "bot_only_expectancy_jpy_per_trade": 177.17481852227527,
+      "action_matched_proxy_expectancy_jpy_per_trade": 46.799766923407006,
+      "bot_only_profit_factor": null,
+      "action_matched_proxy_profit_factor": 2.755705079537768,
+      "bot_only_max_drawdown_fraction": 0.010869007082389718,
+      "action_matched_proxy_max_drawdown_fraction": 0.010124501671984039,
+      "bot_only_peak_margin_usage_fraction": 0.08058572755150852,
+      "action_matched_proxy_peak_margin_usage_fraction": 0.08080024904979773,
+      "bot_only_margin_closeouts": 0,
+      "action_matched_proxy_margin_closeouts": 0,
+      "bot_only_ruin_events": 0,
+      "action_matched_proxy_ruin_events": 0,
+      "prevented_loss_proxy_jpy": 0.0,
+      "sacrificed_upside_proxy_jpy": 680.9943715303671,
+      "tp_profit_retained_jpy": null,
+      "normal_loss_jpy": null,
+      "forced_loss_jpy": 0.0,
+      "gross_profit_jpy": 5141.891417559659,
+      "gross_loss_jpy": 1865.9077329211661
+    }
+  ],
+  "aggregation_policy": {
+    "sum_across_cells_allowed": false,
+    "reason": "Seven accepted cells reuse one economic coordinate; summing would count the same portfolio seven times. Cost scenario, family, coordinate, and action are also fully confounded in the observed subset."
+  },
+  "unmeasured": [
+    "accepted provider-response economic application",
+    "provider-signed execution receipt",
+    "Bot-only trade-level profit factor",
+    "normal-loss decomposition",
+    "TP retained profit and giveback",
+    "accepted-AI gross profit and gross loss for mean_revert_24h",
+    "the remaining 76 cells and 10 coordinates",
+    "independent BASE/STRESS comparison within either accepted family"
+  ],
+  "conclusion": {
+    "adoption": "NO_ADOPTION_FROM_8_CELL_INTERIM",
+    "what_is_supported": [
+      "The seven PAUSE responses agree with the existing causal deterministic checkpoint action for a losing BASE mean_revert_24h coordinate.",
+      "The existing action-matched proxy improves net after cost and drawdown for that coordinate, largely by suppressing trades and transaction cost.",
+      "The HOLD response agrees with the existing checkpoint action for a profitable STRESS round_number_fade coordinate; its action-matched proxy sacrifices net upside while slightly reducing drawdown."
+    ],
+    "what_is_not_supported": [
+      "That the accepted AI responses caused the proxy economics.",
+      "That AI inventory management is profitable across strategies, cost scenarios, cadences, or regimes.",
+      "That PAUSE improves expectancy per executed trade; the proxy expectancy per trade is more negative.",
+      "Any live or Paper promotion decision."
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "contract": "QR_PAPER_CHAMPION_CHALLENGER_POLICY_V1",
+  "authority": {
+    "live_permission": false,
+    "broker_mutation_allowed": false,
+    "order_authority": "NONE",
+    "auto_live_promotion": false
+  },
+  "schedule": {
+    "supervisor_cron": "5 * * * *",
+    "gap_detector": "SAME_HOURLY_RUN",
+    "strategy_lab_minimum_cooldown_hours": 24
+  },
+  "candidate_budget": {
+    "max_active_challengers": 2,
+    "max_virtual_capital_jpy_per_challenger": 50000,
+    "max_duration_days": 14,
+    "max_drawdown_fraction": 0.05,
+    "minimum_settlements": 30,
+    "maximum_fresh_candidates_per_24h": 1
+  },
+  "admission": {
+    "requires_new_data_hash": true,
+    "requires_unique_candidate_hash": true,
+    "requires_causal_shared_feed": true,
+    "requires_isolated_virtual_account": true,
+    "requires_isolated_inventory": true,
+    "requires_isolated_orders": true,
+    "requires_isolated_ledger": true,
+    "requires_isolated_risk_budget": true,
+    "future_data_allowed": false
+  },
+  "continuation_gate": {
+    "profit_factor_after_cost_gt": 1.0,
+    "expectancy_after_cost_gt_jpy": 0.0,
+    "max_drawdown_must_not_worsen": true,
+    "minimum_distinct_regimes": 2,
+    "minimum_settlements": 30,
+    "base_stress_same_direction_required": true
+  },
+  "rollback": {
+    "retain_champion": true,
+    "challenger_kill_switch": true,
+    "immediate_disable_without_ledger_deletion": true
+  },
+  "dojo_dependency": "NONE"
+}
