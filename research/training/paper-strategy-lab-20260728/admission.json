@@ -1,0 +1,13 @@
+{
+  "authority": {
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE"
+  },
+  "candidate_hash": "44322c7db119a4b4411cee59ca1f2eb64cd92f1e84bb89ecca1b88fdc3c8e332",
+  "contract": "QR_PAPER_CANDIDATE_ADMISSION_V1",
+  "evidence_data_hash": "2327df2b0c447cb279422ad504bde09bcbffae31aedbf24788a7f9b122bdd92d",
+  "idempotency_hash": "039fd79e58b79bc73f15d1343da1d174a521e019d056dbcff8c5e4bbbe1e6d14",
+  "observed_at_utc": "2026-07-28T09:15:00Z",
+  "status": "ADMIT_PAPER_SHADOW"
+}

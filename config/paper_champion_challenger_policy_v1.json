@@ -12,6 +12,12 @@
     "gap_detector": "SAME_HOURLY_RUN",
     "strategy_lab_minimum_cooldown_hours": 24
   },
+  "strategy_lab": {
+    "generation_mode": "REVIEWED_DECLARATIVE_TEMPLATES_ONLY",
+    "minimum_cause_settlements": 10,
+    "minimum_absolute_loss_jpy": 500,
+    "unrestricted_code_generation_allowed": false
+  },
   "candidate_budget": {
     "max_active_challengers": 2,
     "max_virtual_capital_jpy_per_challenger": 50000,

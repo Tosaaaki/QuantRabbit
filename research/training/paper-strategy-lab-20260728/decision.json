@@ -1,0 +1,55 @@
+{
+  "authority": {
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE"
+  },
+  "candidate": {
+    "authority": {
+      "broker_mutation_allowed": false,
+      "live_permission": false,
+      "order_authority": "NONE"
+    },
+    "bot_config": {
+      "atr_floor_pips": 1.0,
+      "ceiling_min": 480,
+      "exit_policy": "FIXED",
+      "external_broker_mutation_allowed": false,
+      "global_max_concurrent": 1,
+      "live_permission": false,
+      "max_concurrent_per_pair": 1,
+      "order_authority": "NONE",
+      "pairs": [
+        "USD_JPY"
+      ],
+      "per_pos_lev": 1.0,
+      "pull_atr": 0.6,
+      "signal": "pullback_limit",
+      "sl_pips": null,
+      "tp_atr": null,
+      "tp_pips": 6.0
+    },
+    "candidate_hash": "44322c7db119a4b4411cee59ca1f2eb64cd92f1e84bb89ecca1b88fdc3c8e332",
+    "duration_days": 14,
+    "future_data_allowed": false,
+    "inventory_id": "paper-inventory-f0f68f270b2290d2",
+    "ledger_id": "paper-ledger-f0f68f270b2290d2",
+    "max_drawdown_fraction": 0.05,
+    "order_book_id": "paper-orders-f0f68f270b2290d2",
+    "risk_budget_id": "paper-risk-f0f68f270b2290d2",
+    "shared_feed_contract_sha256": "e809fc4135349fae5fddf3ef68a213fffb658605f43ab9b0ac482e07df875607",
+    "source_cause_id": "COUNTERTREND_SHORT_CONCENTRATION",
+    "strategy_principle": "ENTER_PULLBACK_ONLY_WITH_COMPLETED_24H_TREND",
+    "strategy_template_id": "pullback-limit-follow-24h-v1",
+    "virtual_account_id": "paper-account-f0f68f270b2290d2",
+    "virtual_capital_jpy": 50000
+  },
+  "contract": "QR_PAPER_STRATEGY_LAB_DECISION_V1",
+  "decision_sha256": "262115d2bbb3cb70b3dcc4b5fbbb42cfa74ffdc9e2da9cd19eae8d372ece551b",
+  "evidence_data_hash": "2327df2b0c447cb279422ad504bde09bcbffae31aedbf24788a7f9b122bdd92d",
+  "observed_at_utc": "2026-07-28T09:15:00Z",
+  "reason_ids": [
+    "REVIEWED_SIBLING_MATCHES_LEAD_CAUSE"
+  ],
+  "status": "CANDIDATE_PROPOSED"
+}

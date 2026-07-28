@@ -13,6 +13,8 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from quant_rabbit.dojo_bot_catalog import validate_bot_config
+
 
 class PaperExperimentPolicyError(ValueError):
     """Raised when an experiment violates a safety or isolation invariant."""
@@ -97,6 +99,131 @@ def candidate_hash(candidate: Mapping[str, Any]) -> str:
     return canonical_sha256(body)
 
 
+def generate_strategy_candidate(
+    *,
+    policy: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    registry: Mapping[str, Any],
+    observed_at_utc: str,
+) -> dict[str, Any]:
+    """Select one reviewed sibling strategy from completed Paper evidence.
+
+    This is intentionally a bounded template selector, not an unrestricted
+    code generator.  The returned configuration cannot place external orders;
+    a separate shared-feed Paper runner must activate it.
+    """
+
+    validate_policy(policy)
+    observed_at = _parse_utc(observed_at_utc)
+    if evidence.get("completed_observations_only") is not True:
+        raise PaperExperimentPolicyError("evidence must be completed observations")
+    if evidence.get("future_or_terminal_data_in_decision") is not False:
+        raise PaperExperimentPolicyError("future/outcome data must be excluded")
+    evidence_hash = evidence.get("data_hash")
+    if not _is_sha256(evidence_hash):
+        raise PaperExperimentPolicyError("evidence data_hash must be sha256")
+    if evidence_hash in set(registry.get("reviewed_data_hashes", [])):
+        status = "NO_NEW_EVIDENCE"
+        reason_ids = ["DUPLICATE_DATA_HASH"]
+        candidate = None
+    else:
+        causes = evidence.get("ranked_causes")
+        if not isinstance(causes, list) or not causes:
+            raise PaperExperimentPolicyError("ranked causes are required")
+        lead = causes[0]
+        if not isinstance(lead, Mapping):
+            raise PaperExperimentPolicyError("lead cause must be an object")
+        settlements = int(_finite_float(lead.get("settlements"), default=0))
+        loss_jpy = _finite_float(lead.get("net_contribution_jpy"), default=0)
+        confidence = str(lead.get("confidence", "")).upper()
+        minimum = int(policy["strategy_lab"]["minimum_cause_settlements"])
+        minimum_loss = float(policy["strategy_lab"]["minimum_absolute_loss_jpy"])
+        if (
+            settlements < minimum
+            or loss_jpy >= -minimum_loss
+            or confidence not in {"HIGH", "VERY_HIGH"}
+        ):
+            status = "INSUFFICIENT_EVIDENCE"
+            reason_ids = ["CAUSE_SAMPLE_OR_IMPACT_BELOW_GATE"]
+            candidate = None
+        elif lead.get("cause_id") != "COUNTERTREND_SHORT_CONCENTRATION":
+            status = "NO_REVIEWED_SIBLING_TEMPLATE"
+            reason_ids = ["UNSUPPORTED_CAUSE"]
+            candidate = None
+        else:
+            experiment_key = canonical_sha256(
+                {
+                    "evidence_data_hash": evidence_hash,
+                    "observed_at_utc": observed_at.isoformat(),
+                    "template": "pullback_limit",
+                }
+            )[:16]
+            config = validate_bot_config(
+                {
+                    "signal": "pullback_limit",
+                    "pairs": list(evidence.get("pairs") or ["USD_JPY"]),
+                    "tp_pips": 6.0,
+                    "sl_pips": None,
+                    "ceiling_min": 480,
+                    "max_concurrent_per_pair": 1,
+                    "global_max_concurrent": 1,
+                    "per_pos_lev": 1.0,
+                    "atr_floor_pips": 1.0,
+                    "pull_atr": 0.6,
+                    "external_broker_mutation_allowed": False,
+                    "live_permission": False,
+                    "order_authority": "NONE",
+                }
+            )
+            candidate = {
+                "strategy_template_id": "pullback-limit-follow-24h-v1",
+                "strategy_principle": "ENTER_PULLBACK_ONLY_WITH_COMPLETED_24H_TREND",
+                "source_cause_id": lead["cause_id"],
+                "bot_config": config,
+                "virtual_capital_jpy": 50_000,
+                "max_drawdown_fraction": 0.05,
+                "duration_days": 14,
+                "shared_feed_contract_sha256": canonical_sha256(
+                    {
+                        "contract": "QR_SHARED_CAUSAL_PAPER_FEED_V1",
+                        "pairs": config["pairs"],
+                        "future_data_allowed": False,
+                        "single_quote_batch_fanned_out": True,
+                    }
+                ),
+                "virtual_account_id": f"paper-account-{experiment_key}",
+                "inventory_id": f"paper-inventory-{experiment_key}",
+                "order_book_id": f"paper-orders-{experiment_key}",
+                "ledger_id": f"paper-ledger-{experiment_key}",
+                "risk_budget_id": f"paper-risk-{experiment_key}",
+                "future_data_allowed": False,
+                "authority": {
+                    "live_permission": False,
+                    "broker_mutation_allowed": False,
+                    "order_authority": "NONE",
+                },
+            }
+            candidate["candidate_hash"] = candidate_hash(candidate)
+            status = "CANDIDATE_PROPOSED"
+            reason_ids = ["REVIEWED_SIBLING_MATCHES_LEAD_CAUSE"]
+
+    result = {
+        "contract": "QR_PAPER_STRATEGY_LAB_DECISION_V1",
+        "status": status,
+        "reason_ids": reason_ids,
+        "evidence_data_hash": evidence_hash,
+        "observed_at_utc": observed_at.isoformat().replace("+00:00", "Z"),
+        "candidate": candidate,
+        "authority": {
+            "live_permission": False,
+            "broker_mutation_allowed": False,
+            "order_authority": "NONE",
+        },
+    }
+    result["decision_sha256"] = canonical_sha256(result)
+    return result
+
+
 def assess_candidate_admission(
     *,
     policy: Mapping[str, Any],
@@ -122,8 +249,8 @@ def assess_candidate_admission(
         raise PaperExperimentPolicyError("candidate authority is not Paper-only")
     if candidate.get("future_data_allowed") is not False:
         raise PaperExperimentPolicyError("future data must be explicitly forbidden")
-    if not _is_sha256(candidate.get("shared_feed_event_chain_sha256")):
-        raise PaperExperimentPolicyError("shared causal feed hash is required")
+    if not _is_sha256(candidate.get("shared_feed_contract_sha256")):
+        raise PaperExperimentPolicyError("shared causal feed contract hash is required")
 
     capital = float(candidate.get("virtual_capital_jpy", 0))
     if not 0 < capital <= float(budget["max_virtual_capital_jpy_per_challenger"]):

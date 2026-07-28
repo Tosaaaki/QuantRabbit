@@ -1,0 +1,36 @@
+{
+  "contract": "QR_PAPER_STRATEGY_GAP_EVIDENCE_V1",
+  "data_hash": "2327df2b0c447cb279422ad504bde09bcbffae31aedbf24788a7f9b122bdd92d",
+  "data_hash_basis": "SHA256_BYTES:research/training/paper-profitability-rca-20260728/report.md",
+  "completed_observations_only": true,
+  "future_or_terminal_data_in_decision": false,
+  "pairs": [
+    "USD_JPY"
+  ],
+  "ranked_causes": [
+    {
+      "cause_id": "COUNTERTREND_SHORT_CONCENTRATION",
+      "settlements": 49,
+      "net_contribution_jpy": -852.88,
+      "confidence": "HIGH",
+      "note": "BASE/STRESS aggregate; cost arms overlap and are not independent samples"
+    },
+    {
+      "cause_id": "ROUND_NUMBER_STRATEGY_STARVATION",
+      "settlements": 2,
+      "net_contribution_jpy": 281.18,
+      "confidence": "HIGH"
+    },
+    {
+      "cause_id": "EXECUTION_HOLDING_COST_SENSITIVITY",
+      "settlements": 49,
+      "net_contribution_jpy": -195.37,
+      "confidence": "MEDIUM"
+    }
+  ],
+  "authority": {
+    "live_permission": false,
+    "broker_mutation_allowed": false,
+    "order_authority": "NONE"
+  }
+}

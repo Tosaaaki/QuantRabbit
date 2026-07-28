@@ -11,6 +11,7 @@ from quant_rabbit.paper_champion_challenger import (
     assess_candidate_admission,
     assess_continuation,
     candidate_hash,
+    generate_strategy_candidate,
 )
 
 
@@ -28,7 +29,7 @@ def _candidate() -> dict:
         "virtual_capital_jpy": 50_000,
         "max_drawdown_fraction": 0.05,
         "duration_days": 14,
-        "shared_feed_event_chain_sha256": "a" * 64,
+        "shared_feed_contract_sha256": "a" * 64,
         "virtual_account_id": "account-1",
         "inventory_id": "inventory-1",
         "order_book_id": "orders-1",
@@ -174,3 +175,62 @@ def test_candidate_hash_ignores_only_its_seal_field() -> None:
     sealed = candidate_hash(candidate)
     candidate["candidate_hash"] = sealed
     assert candidate_hash(candidate) == sealed
+
+
+def test_strategy_lab_generates_reviewed_pullback_sibling_from_new_loss_evidence() -> None:
+    result = generate_strategy_candidate(
+        policy=_policy(),
+        evidence={
+            "data_hash": "c" * 64,
+            "completed_observations_only": True,
+            "future_or_terminal_data_in_decision": False,
+            "pairs": ["USD_JPY"],
+            "ranked_causes": [
+                {
+                    "cause_id": "COUNTERTREND_SHORT_CONCENTRATION",
+                    "settlements": 49,
+                    "net_contribution_jpy": -852.88,
+                    "confidence": "HIGH",
+                }
+            ],
+        },
+        registry={"reviewed_data_hashes": []},
+        observed_at_utc="2026-07-28T08:00:00Z",
+    )
+    assert result["status"] == "CANDIDATE_PROPOSED"
+    candidate = result["candidate"]
+    assert candidate["bot_config"]["signal"] == "pullback_limit"
+    assert candidate["bot_config"]["global_max_concurrent"] == 1
+    assert candidate["authority"]["order_authority"] == "NONE"
+    assert candidate_hash(candidate) == candidate["candidate_hash"]
+
+
+def test_strategy_lab_rejects_duplicate_or_weak_evidence() -> None:
+    evidence = {
+        "data_hash": "c" * 64,
+        "completed_observations_only": True,
+        "future_or_terminal_data_in_decision": False,
+        "ranked_causes": [
+            {
+                "cause_id": "COUNTERTREND_SHORT_CONCENTRATION",
+                "settlements": 3,
+                "net_contribution_jpy": -20,
+                "confidence": "HIGH",
+            }
+        ],
+    }
+    duplicate = generate_strategy_candidate(
+        policy=_policy(),
+        evidence=evidence,
+        registry={"reviewed_data_hashes": ["c" * 64]},
+        observed_at_utc="2026-07-28T08:00:00Z",
+    )
+    assert duplicate["status"] == "NO_NEW_EVIDENCE"
+
+    weak = generate_strategy_candidate(
+        policy=_policy(),
+        evidence=evidence,
+        registry={"reviewed_data_hashes": []},
+        observed_at_utc="2026-07-28T08:00:00Z",
+    )
+    assert weak["status"] == "INSUFFICIENT_EVIDENCE"
