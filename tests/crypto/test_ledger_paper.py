@@ -99,3 +99,149 @@ def test_paper_rejects_any_live_authority(tmp_path: Path) -> None:
             maker_fee_rate=Decimal("0"),
             taker_fee_rate=Decimal("0"),
         )
+
+
+def test_paper_sell_closes_virtual_position_without_shorting(
+    tmp_path: Path,
+) -> None:
+    ledger = CryptoLedger(tmp_path / "paper.db")
+    engine = PaperEngine(
+        ledger,
+        initial_cash_jpy=Decimal("1000"),
+        maker_fill_fraction=Decimal("1"),
+    )
+    depth = {"bids": [["100", "100"]], "asks": [["101", "100"]]}
+    buy = engine.process_intent(
+        {
+            "intent_id": "buy",
+            "pair": "btc_jpy",
+            "side": "BUY",
+            "amount": "1",
+            "order_style": "PAPER_TAKER",
+            "regime": "FAST",
+            "authority": "NONE",
+            "live_permission": False,
+        },
+        depth=depth,
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    assert buy["filled_amount"] == "1"
+    sell = engine.process_intent(
+        {
+            "intent_id": "sell",
+            "pair": "btc_jpy",
+            "side": "SELL",
+            "amount": "2",
+            "order_style": "PAPER_TAKER",
+            "regime": "FAST",
+            "authority": "NONE",
+            "live_permission": False,
+        },
+        depth={"bids": [["102", "100"]], "asks": [["103", "100"]]},
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    assert sell["filled_amount"] == "1"
+    assert engine.state.positions["btc_jpy"] == 0
+    assert engine.state.round_trips == 1
+    assert engine.state.realized_pnl_by_pair["btc_jpy"] == Decimal("1")
+    assert engine.mark_to_market({"btc_jpy": Decimal("102")})[
+        "profit_factor"
+    ] is None
+
+
+def test_margin_paper_opens_and_closes_short_with_interest(
+    tmp_path: Path,
+) -> None:
+    ledger = CryptoLedger(tmp_path / "margin.db")
+    engine = PaperEngine(
+        ledger,
+        initial_cash_jpy=Decimal("1000"),
+        maker_fill_fraction=Decimal("1"),
+        allow_short=True,
+        max_leverage=Decimal("2"),
+    )
+    opened = engine.process_intent(
+        {
+            "intent_id": "short-open",
+            "pair": "btc_jpy",
+            "side": "SELL",
+            "position_effect": "OPEN",
+            "amount": "10",
+            "order_style": "PAPER_TAKER",
+            "regime": "FAST_SHORT",
+            "authority": "NONE",
+            "live_permission": False,
+        },
+        depth={"bids": [["100", "100"]], "asks": [["101", "100"]]},
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    assert opened["filled_amount"] == "10"
+    assert engine.state.positions["btc_jpy"] == Decimal("-10")
+    interest = engine.accrue_interest(
+        {"btc_jpy": (Decimal("0.0004"), Decimal("0.0004"))},
+        elapsed_sec=86400,
+        cause_id="day-1",
+    )
+    assert interest == Decimal("0.4")
+    closed = engine.process_intent(
+        {
+            "intent_id": "short-close",
+            "pair": "btc_jpy",
+            "side": "BUY",
+            "position_effect": "CLOSE",
+            "amount": "10",
+            "order_style": "PAPER_TAKER",
+            "regime": "FAST_SHORT",
+            "authority": "NONE",
+            "live_permission": False,
+        },
+        depth={"bids": [["89", "100"]], "asks": [["90", "100"]]},
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    assert closed["filled_amount"] == "10"
+    assert engine.state.positions["btc_jpy"] == 0
+    metrics = engine.mark_to_market(
+        {"btc_jpy": Decimal("89")},
+        {"btc_jpy": Decimal("90")},
+    )
+    assert Decimal(metrics["net_pnl_jpy"]) == Decimal("99.6")
+    assert metrics["round_trip_count"] == 1
+    assert metrics["short_position_count"] == 0
+
+
+def test_margin_paper_caps_opening_at_two_x_and_models_losscut(
+    tmp_path: Path,
+) -> None:
+    engine = PaperEngine(
+        CryptoLedger(tmp_path / "margin.db"),
+        initial_cash_jpy=Decimal("1000"),
+        allow_short=True,
+        max_leverage=Decimal("2"),
+    )
+    fill = engine.process_intent(
+        {
+            "intent_id": "leveraged-short",
+            "pair": "btc_jpy",
+            "side": "SELL",
+            "position_effect": "OPEN",
+            "amount": "100",
+            "order_style": "PAPER_TAKER",
+            "regime": "FAST_SHORT",
+            "authority": "NONE",
+            "live_permission": False,
+        },
+        depth={"bids": [["100", "100"]], "asks": [["101", "100"]]},
+        maker_fee_rate=Decimal("0"),
+        taker_fee_rate=Decimal("0"),
+    )
+    assert fill["filled_amount"] == "20"
+    snapshot = engine.margin_snapshot(
+        {"btc_jpy": Decimal("119")},
+        {"btc_jpy": Decimal("120")},
+    )
+    assert snapshot["margin_ratio"] == Decimal("0.25")
+    assert snapshot["status"] == "MODELED_LOSSCUT"

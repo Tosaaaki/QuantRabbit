@@ -9,7 +9,7 @@ This runtime is structurally paper-only:
 - `WITHDRAWAL_ENABLED=false`
 - `CRYPTO_ORDER_AUTHORITY=NONE`
 - Public Scanner and Public Stream require no credentials.
-- The Private REST adapter exposes only `GET /v1/user/assets`.
+- The Private REST adapter exposes only asset and margin-state `GET` methods.
 - There is no order, cancellation, settlement, withdrawal, or API-permission
   mutation method.
 
@@ -44,6 +44,40 @@ PYTHONPATH=src python3 -m quant_rabbit.crypto.cli stream-canary btc_jpy \
   --messages 1 \
   --timeout-sec 15
 ```
+
+## Fast Spot and Margin Paper
+
+Both event-driven bots default to an independent 10,000 JPY virtual balance.
+They subscribe to ticker, transactions, whole depth, and depth diffs, then
+evaluate the deterministic router on every accepted update.
+
+Run Spot Paper:
+
+```bash
+PYTHONPATH=src python3 -m quant_rabbit.crypto.cli fast-paper \
+  --duration-sec 30
+```
+
+Run Margin Paper in a second process:
+
+```bash
+PYTHONPATH=src python3 -m quant_rabbit.crypto.cli fast-paper \
+  --margin-paper \
+  --max-leverage 2 \
+  --duration-sec 30
+```
+
+The defaults use separate append-only ledgers and reports:
+
+- Spot: `data/crypto/fast-spot/`
+- Margin: `data/crypto/fast-margin/`
+- Spot report: `docs/crypto_bitbank_fast_spot_paper_report.md`
+- Margin report: `docs/crypto_bitbank_fast_margin_paper_report.md`
+
+Margin Paper supports modeled long and short positions. It applies the current
+public pair interest settings, a 50% modeled margin-call threshold, and a 25%
+modeled loss-cut threshold on every market update. Any forced close is a
+virtual taker fill in the Paper ledger only.
 
 Local runtime artifacts live under ignored `data/crypto/`:
 
@@ -90,6 +124,20 @@ The check reports only authentication status and the asset record count. It
 does not print credentials, asset balances, or secret-bearing request headers.
 If either Keychain item is absent, the Private path fails closed while public
 Scanner / Shadow / Paper remains available.
+
+After a read-only key is stored, inspect margin availability without exposing
+credentials or making a mutation:
+
+```bash
+scripts/bitbank-keychain.sh run-readonly -- \
+  env \
+    NO_EXECUTE=true \
+    CRYPTO_LIVE_READY=false \
+    WITHDRAWAL_ENABLED=false \
+    CRYPTO_ORDER_AUTHORITY=NONE \
+    PYTHONPATH=src \
+    python3 -m quant_rabbit.crypto.cli margin-status
+```
 
 ## Credential registry (no secret values)
 

@@ -79,7 +79,7 @@ def test_public_client_fails_after_network_errors() -> None:
     assert client.stats.retries == 1
 
 
-def test_private_adapter_is_get_assets_only() -> None:
+def test_private_adapter_is_get_only_without_mutation_surface() -> None:
     captured: dict[str, Any] = {}
 
     def opener(request: Any, timeout: float) -> Response:
@@ -99,6 +99,8 @@ def test_private_adapter_is_get_assets_only() -> None:
     assert captured["method"] == "GET"
     assert captured["url"].endswith("/v1/user/assets")
     assert "Access-signature" in captured["headers"]
+    assert hasattr(client, "fetch_margin_status")
+    assert hasattr(client, "fetch_margin_positions")
     for forbidden in (
         "place_order",
         "cancel_order",
@@ -107,3 +109,32 @@ def test_private_adapter_is_get_assets_only() -> None:
         "request",
     ):
         assert not hasattr(client, forbidden)
+
+
+def test_private_margin_status_is_get_only() -> None:
+    captured: dict[str, Any] = {}
+
+    def opener(request: Any, timeout: float) -> Response:
+        captured["method"] = request.get_method()
+        captured["url"] = request.full_url
+        return Response(
+            {
+                "success": 1,
+                "data": {
+                    "status": "NORMAL",
+                    "buy_credit": "1000",
+                    "sell_credit": "900",
+                },
+            }
+        )
+
+    status = BitbankPrivateReadOnlyClient(
+        "key",
+        "secret",
+        base_url="https://example.invalid",
+        opener=opener,
+        clock_ms=lambda: 123456789,
+    ).fetch_margin_status()
+    assert status["status"] == "NORMAL"
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/v1/user/margin/status")

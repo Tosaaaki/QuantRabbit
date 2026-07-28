@@ -18,6 +18,7 @@ from .bitbank import (
     BitbankPublicClient,
 )
 from .config import CryptoSafetyContract, ScannerConfig
+from .fast import FastPaperConfig, FastPaperRunner, fast_report_markdown
 from .ledger import CryptoLedger
 from .paper import PaperEngine
 from .report import atomic_write_json, atomic_write_text, scan_markdown
@@ -255,6 +256,206 @@ def run_stream_canary(args: argparse.Namespace) -> int:
     return 0 if messages else 2
 
 
+def _select_fast_pairs(
+    client: BitbankPublicClient,
+    requested: list[str],
+    pair_limit: int,
+    *,
+    margin_paper: bool,
+) -> tuple[
+    list[str],
+    dict[str, tuple[Decimal, Decimal]],
+    dict[str, tuple[Decimal, Decimal]],
+]:
+    settings = {
+        str(row.get("name", "")).lower(): row
+        for row in client.fetch_pair_settings()
+    }
+    tickers = {
+        str(row.get("pair", "")).lower(): row
+        for row in client.fetch_tickers_jpy()
+    }
+    eligible = [
+        pair
+        for pair, spec in settings.items()
+        if str(spec.get("quote_asset", "")).lower() == "jpy"
+        and bool(spec.get("is_enabled"))
+        and not bool(spec.get("stop_order"))
+        and not bool(spec.get("stop_order_and_cancel"))
+        and (
+            not margin_paper
+            or (
+                spec.get("margin_current_individual_ratio") is not None
+                and not bool(spec.get("stop_margin_long_order"))
+                and not bool(spec.get("stop_margin_short_order"))
+            )
+        )
+    ]
+    ranked = sorted(
+        eligible,
+        key=lambda pair: Decimal(str(tickers.get(pair, {}).get("last", "0")))
+        * Decimal(str(tickers.get(pair, {}).get("vol", "0"))),
+        reverse=True,
+    )
+    selected = (
+        [pair.lower() for pair in requested]
+        if requested
+        else ranked[:pair_limit]
+    )
+    if not selected:
+        raise ValueError("no enabled JPY pair is available for fast Paper")
+    unknown = [pair for pair in selected if pair not in eligible]
+    if unknown:
+        raise ValueError("requested fast Paper pair is unavailable")
+    if margin_paper:
+        fees = {
+            pair: (
+                max(
+                    Decimal(
+                        str(
+                            settings[pair].get(
+                                "margin_open_maker_fee_rate_quote", "0"
+                            )
+                        )
+                    ),
+                    Decimal(
+                        str(
+                            settings[pair].get(
+                                "margin_close_maker_fee_rate_quote", "0"
+                            )
+                        )
+                    ),
+                ),
+                max(
+                    Decimal(
+                        str(
+                            settings[pair].get(
+                                "margin_open_taker_fee_rate_quote", "0"
+                            )
+                        )
+                    ),
+                    Decimal(
+                        str(
+                            settings[pair].get(
+                                "margin_close_taker_fee_rate_quote", "0"
+                            )
+                        )
+                    ),
+                ),
+            )
+            for pair in selected
+        }
+    else:
+        fees = {
+            pair: (
+                Decimal(
+                    str(settings[pair].get("maker_fee_rate_quote", "0"))
+                ),
+                Decimal(
+                    str(settings[pair].get("taker_fee_rate_quote", "0"))
+                ),
+            )
+            for pair in selected
+        }
+    interest = {
+        pair: (
+            Decimal(str(settings[pair].get("margin_long_interest") or "0")),
+            Decimal(str(settings[pair].get("margin_short_interest") or "0")),
+        )
+        for pair in selected
+    }
+    return selected, fees, interest
+
+
+def run_fast_paper(args: argparse.Namespace) -> int:
+    safety = CryptoSafetyContract.from_env()
+    safety.assert_safe()
+    if args.duration_sec <= 0 or args.max_events <= 0:
+        raise ValueError("duration and max-events must be positive")
+    client = BitbankPublicClient()
+    pairs, pair_fees, daily_interest_rates = _select_fast_pairs(
+        client,
+        list(args.pairs),
+        args.pair_limit,
+        margin_paper=args.margin_paper,
+    )
+    data_dir = Path(
+        args.data_dir
+        or (
+            "data/crypto/fast-margin"
+            if args.margin_paper
+            else "data/crypto/fast-spot"
+        )
+    )
+    ledger = CryptoLedger(data_dir / "ledger.db")
+    paper = PaperEngine(
+        ledger,
+        initial_cash_jpy=Decimal(str(args.initial_cash_jpy)),
+        allow_short=args.margin_paper,
+        max_leverage=(
+            Decimal(str(args.max_leverage))
+            if args.margin_paper
+            else Decimal("1")
+        ),
+    )
+    runner = FastPaperRunner(
+        ledger,
+        paper,
+        config=FastPaperConfig.from_env(),
+    )
+    try:
+        result = asyncio.run(
+            runner.run(
+                pairs,
+                pair_fees,
+                duration_sec=args.duration_sec,
+                max_events=args.max_events,
+                daily_interest_rates=(
+                    daily_interest_rates if args.margin_paper else {}
+                ),
+            )
+        )
+    except (BitbankStreamError, OSError) as exc:
+        _json_print(
+            {
+                "ok": False,
+                "mode": "PUBLIC_STREAM_EVENT_DRIVEN_PAPER",
+                "error": type(exc).__name__,
+                "safety": safety.as_dict(),
+            }
+        )
+        return 2
+    atomic_write_json(data_dir / "fast_paper_canary.json", result)
+    report = Path(
+        args.report
+        or (
+            "docs/crypto_bitbank_fast_margin_paper_report.md"
+            if args.margin_paper
+            else "docs/crypto_bitbank_fast_spot_paper_report.md"
+        )
+    )
+    atomic_write_text(report, fast_report_markdown(result))
+    if args.summary_only:
+        _json_print(
+            {
+                "schema": result["schema"],
+                "mode": result["mode"],
+                "run_id": result["run_id"],
+                "pairs": result["pairs"],
+                "safety": result["safety"],
+                "guardian": result["guardian"],
+                "runtime": result["runtime"],
+                "latency": result["latency"],
+                "decisions": result["decisions"],
+                "metrics": result["metrics"],
+                "ledger_integrity": result["ledger_integrity"],
+            }
+        )
+    else:
+        _json_print(result)
+    return 0 if result["runtime"]["events_processed"] > 0 else 2
+
+
 def run_private_check(_: argparse.Namespace) -> int:
     CryptoSafetyContract.from_env().assert_safe()
     api_key = os.environ.get("QR_BITBANK_API_KEY", "")
@@ -294,6 +495,56 @@ def run_private_check(_: argparse.Namespace) -> int:
     return 0
 
 
+def run_margin_status(_: argparse.Namespace) -> int:
+    CryptoSafetyContract.from_env().assert_safe()
+    api_key = os.environ.get("QR_BITBANK_API_KEY", "")
+    api_secret = os.environ.get("QR_BITBANK_API_SECRET", "")
+    if not api_key or not api_secret:
+        _json_print(
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "KEYCHAIN_CREDENTIALS_NOT_PRESENT",
+                "operation": "GET_MARGIN_STATUS_ONLY",
+            }
+        )
+        return 3
+    try:
+        status = BitbankPrivateReadOnlyClient(
+            api_key, api_secret
+        ).fetch_margin_status()
+    except BitbankAPIError as exc:
+        _json_print(
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": type(exc).__name__,
+                "operation": "GET_MARGIN_STATUS_ONLY",
+            }
+        )
+        return 3
+    _json_print(
+        {
+            "ok": True,
+            "blocked": False,
+            "operation": "GET_MARGIN_STATUS_ONLY",
+            "account_status": status.get("status"),
+            "total_margin_balance": status.get("total_margin_balance"),
+            "margin_balance_percentage": status.get(
+                "total_margin_balance_percentage"
+            ),
+            "margin_call_percentage": status.get("margin_call_percentage"),
+            "losscut_percentage": status.get("losscut_percentage"),
+            "buy_credit": status.get("buy_credit"),
+            "sell_credit": status.get("sell_credit"),
+            "available_balances": status.get("available_balances", []),
+            "secret_values_reported": False,
+            "mutation_attempted": False,
+        }
+    )
+    return 0
+
+
 def run_ledger_verify(args: argparse.Namespace) -> int:
     _json_print(CryptoLedger(Path(args.ledger)).verify())
     return 0
@@ -316,7 +567,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     canary.add_argument("--cycles", type=int, default=1)
     canary.add_argument("--interval-sec", type=float, default=2.0)
-    canary.add_argument("--initial-cash-jpy", default="100000")
+    canary.add_argument("--initial-cash-jpy", default="10000")
     canary.add_argument("--stream-pair", default="btc_jpy")
     canary.add_argument("--stream-timeout-sec", type=float, default=15.0)
     canary.add_argument("--data-dir", default="data/crypto")
@@ -333,10 +584,32 @@ def build_parser() -> argparse.ArgumentParser:
     stream.add_argument("--timeout-sec", type=float, default=15.0)
     stream.set_defaults(func=run_stream_canary)
 
+    fast = subparsers.add_parser(
+        "fast-paper",
+        help="Run bounded event-driven Public Stream Paper trading.",
+    )
+    fast.add_argument("pairs", nargs="*")
+    fast.add_argument("--pair-limit", type=int, default=2)
+    fast.add_argument("--duration-sec", type=float, default=30.0)
+    fast.add_argument("--max-events", type=int, default=20_000)
+    fast.add_argument("--initial-cash-jpy", default="10000")
+    fast.add_argument("--margin-paper", action="store_true")
+    fast.add_argument("--max-leverage", default="2")
+    fast.add_argument("--data-dir")
+    fast.add_argument("--report")
+    fast.add_argument("--summary-only", action="store_true")
+    fast.set_defaults(func=run_fast_paper)
+
     private = subparsers.add_parser(
         "private-check", help="Authenticate and GET assets only."
     )
     private.set_defaults(func=run_private_check)
+
+    margin = subparsers.add_parser(
+        "margin-status",
+        help="Authenticate and GET margin availability only.",
+    )
+    margin.set_defaults(func=run_margin_status)
 
     ledger = subparsers.add_parser(
         "ledger-verify", help="Verify the append-only hash chain."

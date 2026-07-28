@@ -152,9 +152,11 @@ class BitbankPublicClient:
 
 
 class BitbankPrivateReadOnlyClient:
-    """Private client whose only reachable exchange operation is GET assets."""
+    """Private GET-only client with no order, cancel, or withdrawal surface."""
 
     _ASSETS_PATH = "/v1/user/assets"
+    _MARGIN_STATUS_PATH = "/v1/user/margin/status"
+    _MARGIN_POSITIONS_PATH = "/v1/user/margin/positions"
 
     def __init__(
         self,
@@ -179,7 +181,16 @@ class BitbankPrivateReadOnlyClient:
         self._clock_ms = clock_ms
 
     def fetch_assets(self) -> list[dict[str, Any]]:
-        path = self._ASSETS_PATH
+        payload = self._get_private(self._ASSETS_PATH)
+        return list(payload.get("assets", []))
+
+    def fetch_margin_status(self) -> dict[str, Any]:
+        return dict(self._get_private(self._MARGIN_STATUS_PATH))
+
+    def fetch_margin_positions(self) -> dict[str, Any]:
+        return dict(self._get_private(self._MARGIN_POSITIONS_PATH))
+
+    def _get_private(self, path: str) -> dict[str, Any]:
         request_time = str(self._clock_ms())
         window = str(self._time_window_ms)
         signature = hmac.new(
@@ -210,7 +221,7 @@ class BitbankPrivateReadOnlyClient:
             raise BitbankAPIError(
                 f"bitbank private error code={payload.get('data', {}).get('code')}"
             )
-        return list(payload.get("data", {}).get("assets", []))
+        return dict(payload.get("data", {}))
 
 
 def utc_from_ms(timestamp_ms: int | float | str) -> datetime:
