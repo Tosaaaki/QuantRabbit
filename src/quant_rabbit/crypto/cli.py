@@ -30,6 +30,7 @@ from .shadow import (
     PaperShadowServiceConfig,
 )
 from .scanner import CryptoMarketScanner
+from .strategy_audit import StrategyLabAudit
 from .strategies import load_strategy_profiles, strategy_router
 from .stream import BitbankPublicStream, BitbankStreamError
 
@@ -579,20 +580,49 @@ def run_strategy_lab_evaluate(args: argparse.Namespace) -> int:
     CryptoSafetyContract.from_env().assert_safe()
     runtime_root = Path(args.runtime_root)
     results: list[dict[str, Any]] = []
+    reporting: list[dict[str, Any]] = []
     for name in load_strategy_profiles(
         Path(args.strategy_config) if args.strategy_config else None
     ):
         slug = name.lower().replace("_", "-")
+        strategy_root = runtime_root / slug
         results.append(
             CryptoImprovementEvaluator(
-                runtime_root / slug,
+                strategy_root,
                 baseline_strategy=name,
             ).run_once(trailing_minutes=args.trailing_minutes)
         )
+        reporting.append(
+            {
+                "strategy": name,
+                **PaperShadowReportingWriter(
+                    strategy_root,
+                    slack_blocker="NOTION_ROUTE_GATE_UNVERIFIED",
+                ).run_once(),
+            }
+        )
+    audit = StrategyLabAudit(
+        runtime_root,
+        baseline_root=Path(args.baseline_root),
+        strategy_config=(
+            Path(args.strategy_config) if args.strategy_config else None
+        ),
+    ).run_once()
     payload = {
         "schema": "QR_CRYPTO_STRATEGY_LAB_EVALUATION_RUN_V1",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "strategies": results,
+        "audit": audit,
+        "reporting": reporting,
+        "current_report_delivery": {
+            "operation_id": audit["operation_id"],
+            "durable_record": str(
+                runtime_root / "audit" / "audits.jsonl"
+            ),
+            "sheets_status": "BLOCKED_NO_CONNECTOR",
+            "slack_status": "BLOCKED_NOTION_ROUTE_GATE_UNVERIFIED",
+            "blind_retry_allowed": False,
+        },
         "authority": "NONE",
         "live_mutation": False,
     }
@@ -820,6 +850,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="data/crypto/strategy-lab",
     )
     lab_evaluation.add_argument("--strategy-config")
+    lab_evaluation.add_argument(
+        "--baseline-root",
+        default="data/crypto/paper-shadow",
+    )
     lab_evaluation.add_argument("--trailing-minutes", type=int)
     lab_evaluation.set_defaults(func=run_strategy_lab_evaluate)
 

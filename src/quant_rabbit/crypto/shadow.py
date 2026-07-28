@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import json
 import os
 import signal
 import time
@@ -72,6 +73,23 @@ class PaperShadowService:
                 f"{self.config.mode} Paper Shadow is already running"
             ) from exc
         started_at = datetime.now(timezone.utc).isoformat()
+        previous_state_path = runtime / "state.json"
+        service_events_before_start = 0
+        if previous_state_path.exists():
+            try:
+                previous_state = json.loads(
+                    previous_state_path.read_text(encoding="utf-8")
+                )
+                service_events_before_start = int(
+                    previous_state.get(
+                        "service_events_processed_total",
+                        previous_state.get("events_processed", 0),
+                    )
+                    or 0
+                )
+            except (OSError, ValueError, TypeError):
+                service_events_before_start = 0
+        completed_epoch_events = 0
         ledger = CryptoLedger(runtime / "ledger.db")
         outbox = AsyncTradeOutbox(runtime / "trade_outbox.jsonl", ledger)
         paper = PaperEngine(
@@ -88,8 +106,15 @@ class PaperShadowService:
         previous_handlers = self._install_signal_handlers()
 
         def progress(payload: dict[str, Any]) -> None:
+            epoch_events = int(payload.get("events_processed", 0) or 0)
             state = {
                 **payload,
+                "epoch_events_processed": epoch_events,
+                "service_events_processed_total": (
+                    service_events_before_start
+                    + completed_epoch_events
+                    + epoch_events
+                ),
                 "service_pid": os.getpid(),
                 "service_started_at_utc": started_at,
                 "runtime_dir": str(runtime),
@@ -142,6 +167,9 @@ class PaperShadowService:
                                 self.config.progress_interval_sec
                             ),
                         )
+                    )
+                    completed_epoch_events += int(
+                        result["runtime"]["events_processed"]
                     )
                     atomic_write_json(runtime / "latest_epoch.json", result)
                     atomic_write_text(

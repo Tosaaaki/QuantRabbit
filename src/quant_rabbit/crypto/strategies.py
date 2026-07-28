@@ -16,6 +16,8 @@ DEFAULT_STRATEGY_CONFIG = Path("config/crypto_strategy_lab_v1.json")
 class StrategyProfile:
     name: str
     family: str
+    variant_of: str | None
+    changed_category: str | None
     entry_order_style: str
     exit_order_style: str
     min_signal_bps: Decimal
@@ -43,6 +45,14 @@ class StrategyProfile:
         profile = cls(
             name=name,
             family=str(raw["family"]),
+            variant_of=(
+                str(raw["variant_of"]) if raw.get("variant_of") else None
+            ),
+            changed_category=(
+                str(raw["changed_category"])
+                if raw.get("changed_category")
+                else None
+            ),
             entry_order_style=str(raw["entry_order_style"]),
             exit_order_style=str(raw["exit_order_style"]),
             min_signal_bps=_d(raw["min_signal_bps"]),

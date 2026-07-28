@@ -68,12 +68,22 @@ def test_all_strategy_profiles_are_externalized_and_safe() -> None:
         "BREAKOUT_CONFIRMATION",
         "TREND_PULLBACK_MAKER",
         "ORDER_BOOK_FADE",
+        "ORDER_BOOK_FADE_COOLDOWN_5S",
     }
     assert all(
         profile.entry_order_style.startswith("PAPER_")
         and profile.exit_order_style.startswith("PAPER_")
         for profile in profiles.values()
     )
+    baseline = profiles["ORDER_BOOK_FADE"]
+    variant = profiles["ORDER_BOOK_FADE_COOLDOWN_5S"]
+    ignored = {"name", "variant_of", "changed_category", "cooldown_ms"}
+    for field in baseline.__dataclass_fields__:
+        if field not in ignored:
+            assert getattr(variant, field) == getattr(baseline, field)
+    assert variant.variant_of == baseline.name
+    assert variant.changed_category == "cooldown_ms"
+    assert variant.cooldown_ms == 5000
 
 
 @pytest.mark.parametrize(

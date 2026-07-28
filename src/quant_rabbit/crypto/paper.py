@@ -45,6 +45,7 @@ class PaperState:
     unfilled_orders: int = 0
     maker_fills: int = 0
     taker_fills: int = 0
+    turnover_jpy: Decimal = Decimal("0")
     discipline_violations: int = 0
     peak_equity_jpy: Decimal = Decimal("0")
     max_drawdown_jpy: Decimal = Decimal("0")
@@ -85,6 +86,7 @@ class PaperState:
             "unfilled_orders": self.unfilled_orders,
             "maker_fills": self.maker_fills,
             "taker_fills": self.taker_fills,
+            "turnover_jpy": _s(self.turnover_jpy),
             "discipline_violations": self.discipline_violations,
             "peak_equity_jpy": _s(self.peak_equity_jpy),
             "max_drawdown_jpy": _s(self.max_drawdown_jpy),
@@ -135,6 +137,7 @@ class PaperState:
             unfilled_orders=int(raw["unfilled_orders"]),
             maker_fills=int(raw.get("maker_fills", 0)),
             taker_fills=int(raw.get("taker_fills", 0)),
+            turnover_jpy=_d(raw.get("turnover_jpy", "0")),
             discipline_violations=int(raw["discipline_violations"]),
             peak_equity_jpy=_d(raw["peak_equity_jpy"]),
             max_drawdown_jpy=_d(raw["max_drawdown_jpy"]),
@@ -171,6 +174,15 @@ class PaperEngine:
                 cash_jpy=initial_cash_jpy,
                 peak_equity_jpy=initial_cash_jpy,
             )
+        )
+        self.state.turnover_jpy = sum(
+            (
+                _d(row["payload"].get("filled_amount", "0"))
+                * _d(row["payload"].get("average_price", "0"))
+                for row in ledger.events("PAPER_FILL")
+                if row["payload"].get("status") != "UNFILLED"
+            ),
+            Decimal("0"),
         )
         self.maker_fill_fraction = maker_fill_fraction
         self.allow_short = allow_short
@@ -383,6 +395,7 @@ class PaperEngine:
         self.state.spread_cost_jpy += spread_cost
         self.state.slippage_cost_jpy += slippage_cost
         self.state.fills += 1
+        self.state.turnover_jpy += notional
         if order_style == "PAPER_TAKER":
             self.state.taker_fills += 1
         else:
@@ -875,8 +888,14 @@ class PaperEngine:
             "net_pnl_jpy": _s(net_pnl),
             "max_drawdown_jpy": _s(self.state.max_drawdown_jpy),
             "profit_factor": profit_factor,
+            "fill_count": self.state.fills,
+            "completed_trade_count": self.state.round_trips,
             "trade_count": self.state.fills,
+            "trade_count_semantics": (
+                "DEPRECATED_FILL_EVENTS_USE_COMPLETED_TRADE_COUNT"
+            ),
             "round_trip_count": self.state.round_trips,
+            "turnover_jpy": _s(self.state.turnover_jpy),
             "gross_exposure_jpy": _s(snapshot["gross_exposure"]),
             "effective_leverage": (
                 _s(snapshot["effective_leverage"])
@@ -906,6 +925,11 @@ class PaperEngine:
             "spread_cost_jpy": _s(self.state.spread_cost_jpy),
             "slippage_cost_jpy": _s(self.state.slippage_cost_jpy),
             "partial_fill_count": self.state.partial_fills,
+            "partial_fill_ratio": (
+                self.state.partial_fills / self.state.fills
+                if self.state.fills
+                else None
+            ),
             "unfilled_order_count": self.state.unfilled_orders,
             "maker_fill_count": self.state.maker_fills,
             "taker_fill_count": self.state.taker_fills,

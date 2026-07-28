@@ -78,6 +78,11 @@ def test_paper_partial_fill_restart_and_duplicate_are_deterministic(
     assert restarted.state.as_dict() == before
     metrics = restarted.mark_to_market({"btc_jpy": Decimal("102")})
     assert metrics["trade_count"] == 1
+    assert metrics["fill_count"] == 1
+    assert metrics["completed_trade_count"] == 0
+    assert metrics["turnover_jpy"] == "25.00"
+    assert metrics["trade_count_semantics"].startswith("DEPRECATED_")
+    assert metrics["partial_fill_ratio"] == 1.0
     assert metrics["maker_fill_count"] == 1
     assert "TREND_UP" in metrics["by_regime_pnl_jpy"]
 

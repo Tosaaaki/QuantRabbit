@@ -21,6 +21,7 @@ STRATEGIES=(
   "BREAKOUT_CONFIRMATION"
   "TREND_PULLBACK_MAKER"
   "ORDER_BOOK_FADE"
+  "ORDER_BOOK_FADE_COOLDOWN_5S"
 )
 
 slug_for() {
@@ -222,7 +223,7 @@ case "$ACTION" in
     mv -f "$temporary" "$evaluator_plist"
     launchctl bootout "$DOMAIN/$EVALUATOR_LABEL" 2>/dev/null || true
     bootstrap_agent "$evaluator_plist"
-    echo "[crypto-strategy-lab] started 4 strategies x Spot/Margin"
+    echo "[crypto-strategy-lab] started ${#STRATEGIES[@]} strategies x Spot/Margin"
     ;;
   *)
     echo "usage: $0 [install|start|stop|status|uninstall|--check]" >&2
