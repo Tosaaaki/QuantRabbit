@@ -7,8 +7,9 @@ import os
 import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Callable
 
 from .config import CryptoSafetyContract
 from .ledger import CryptoLedger
@@ -499,6 +500,10 @@ class FastPaperRunner:
         daily_interest_rates: (
             dict[str, tuple[Decimal, Decimal]] | None
         ) = None,
+        progress_callback: (
+            Callable[[dict[str, Any]], object] | None
+        ) = None,
+        progress_interval_sec: float = 5.0,
     ) -> dict[str, Any]:
         normalized = [pair.lower() for pair in pairs]
         states = {
@@ -516,6 +521,7 @@ class FastPaperRunner:
             )
         ]
         started_ns = time.monotonic_ns()
+        started_at_utc = datetime.now(timezone.utc).isoformat()
         run_id = hashlib.sha256(
             f"{time.time_ns()}|{','.join(normalized)}".encode()
         ).hexdigest()[:20]
@@ -527,6 +533,57 @@ class FastPaperRunner:
         fills: list[dict[str, Any]] = []
         margin_call_recorded = False
         processed = 0
+        next_progress_ns = started_ns
+        progress_write_failures = 0
+
+        def _emit_progress(status: str) -> None:
+            nonlocal next_progress_ns, progress_write_failures
+            if progress_callback is None:
+                return
+            now_ns = time.monotonic_ns()
+            bids_now, asks_now = self._quotes(states)
+            books_ready_now = sum(
+                state.book.ready for state in states.values()
+            )
+            payload = {
+                "schema": "QR_CRYPTO_PAPER_SHADOW_STATE_V1",
+                "status": status,
+                "run_id": run_id,
+                "started_at_utc": started_at_utc,
+                "heartbeat_at_utc": datetime.now(timezone.utc).isoformat(),
+                "mode": (
+                    "MARGIN" if self.paper.allow_short else "SPOT"
+                ),
+                "pairs": normalized,
+                "events_processed": processed,
+                "actions": dict(actions),
+                "reasons": dict(reasons),
+                "fills": len(fills),
+                "books_ready": books_ready_now,
+                "guardian": {
+                    "state": (
+                        "GREEN"
+                        if books_ready_now == len(states) and processed > 0
+                        else "RESTRICT"
+                    ),
+                    "kill_switch": False,
+                    "deterministic": True,
+                },
+                "metrics": self.paper.mark_to_market(
+                    bids_now, asks_now
+                ),
+                "safety": self.safety.as_dict(),
+                "progress_write_failures": progress_write_failures,
+            }
+            try:
+                progress_callback(payload)
+            except Exception:
+                progress_write_failures += 1
+            next_progress_ns = now_ns + int(
+                max(0.1, progress_interval_sec) * 1_000_000_000
+            )
+
+        _emit_progress("STARTING")
 
         async def _consume() -> None:
             nonlocal processed, margin_call_recorded
@@ -631,6 +688,8 @@ class FastPaperRunner:
                                 event_number=processed,
                             )
                         )
+                if time.monotonic_ns() >= next_progress_ns:
+                    _emit_progress("RUNNING")
 
         timed_out = False
         try:
@@ -704,6 +763,7 @@ class FastPaperRunner:
             "metrics": metrics,
             "ledger_integrity": self.ledger.verify(),
         }
+        _emit_progress("EPOCH_COMPLETE")
         return result
 
     def _quotes(
@@ -756,6 +816,11 @@ class FastPaperRunner:
                 "amount": str(abs(amount)),
                 "order_style": "PAPER_TAKER",
                 "regime": "MODELED_LOSSCUT",
+                "strategy": "FAST_MICROSTRUCTURE",
+                "signal_reason": "MODELED_LOSSCUT",
+                "run_id": run_id,
+                "event_at_utc": datetime.now(timezone.utc).isoformat(),
+                "guardian": "MODELED_LOSSCUT",
                 "authority": "NONE",
                 "live_permission": False,
             }
@@ -861,7 +926,11 @@ class FastPaperRunner:
             ),
             "limit_price": str(price),
             "regime": "FAST_MICROSTRUCTURE",
+            "strategy": "FAST_MICROSTRUCTURE",
             "signal_reason": decision["reason"],
+            "run_id": run_id,
+            "event_at_utc": datetime.now(timezone.utc).isoformat(),
+            "guardian": "GREEN",
             "authority": "NONE",
             "live_permission": False,
         }

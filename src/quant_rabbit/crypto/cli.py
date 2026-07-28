@@ -22,6 +22,12 @@ from .fast import FastPaperConfig, FastPaperRunner, fast_report_markdown
 from .ledger import CryptoLedger
 from .paper import PaperEngine
 from .report import atomic_write_json, atomic_write_text, scan_markdown
+from .reporting import PaperShadowReportingWriter
+from .shadow import (
+    PaperShadowAlreadyRunning,
+    PaperShadowService,
+    PaperShadowServiceConfig,
+)
 from .scanner import CryptoMarketScanner
 from .stream import BitbankPublicStream, BitbankStreamError
 
@@ -456,6 +462,56 @@ def run_fast_paper(args: argparse.Namespace) -> int:
     return 0 if result["runtime"]["events_processed"] > 0 else 2
 
 
+def run_shadow_service(args: argparse.Namespace) -> int:
+    safety = CryptoSafetyContract.from_env()
+    safety.assert_safe()
+    margin_paper = args.mode == "margin"
+    client = BitbankPublicClient()
+    pairs, pair_fees, daily_interest_rates = _select_fast_pairs(
+        client,
+        list(args.pairs),
+        args.pair_limit,
+        margin_paper=margin_paper,
+    )
+    runtime_dir = Path(args.runtime_root) / args.mode
+    service = PaperShadowService(
+        PaperShadowServiceConfig(
+            mode=args.mode,
+            runtime_dir=runtime_dir,
+            initial_cash_jpy=Decimal(str(args.initial_cash_jpy)),
+            max_leverage=Decimal(str(args.max_leverage)),
+            epoch_sec=args.epoch_sec,
+            max_events=args.max_events,
+            progress_interval_sec=args.progress_interval_sec,
+            retry_delay_sec=args.retry_delay_sec,
+        ),
+        pairs=pairs,
+        pair_fees=pair_fees,
+        daily_interest_rates=daily_interest_rates,
+    )
+    try:
+        return service.run()
+    except PaperShadowAlreadyRunning:
+        _json_print(
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "PAPER_SHADOW_ALREADY_RUNNING",
+                "mode": args.mode,
+            }
+        )
+        return 4
+
+
+def run_shadow_report(args: argparse.Namespace) -> int:
+    CryptoSafetyContract.from_env().assert_safe()
+    result = PaperShadowReportingWriter(
+        Path(args.runtime_root)
+    ).run_once()
+    _json_print(result)
+    return 0
+
+
 def run_private_check(_: argparse.Namespace) -> int:
     CryptoSafetyContract.from_env().assert_safe()
     api_key = os.environ.get("QR_BITBANK_API_KEY", "")
@@ -599,6 +655,35 @@ def build_parser() -> argparse.ArgumentParser:
     fast.add_argument("--report")
     fast.add_argument("--summary-only", action="store_true")
     fast.set_defaults(func=run_fast_paper)
+
+    shadow = subparsers.add_parser(
+        "shadow-service",
+        help="Run one continuous Public Stream Paper Shadow service.",
+    )
+    shadow.add_argument("--mode", choices=("spot", "margin"), required=True)
+    shadow.add_argument("pairs", nargs="*")
+    shadow.add_argument("--pair-limit", type=int, default=2)
+    shadow.add_argument(
+        "--runtime-root",
+        default="data/crypto/paper-shadow",
+    )
+    shadow.add_argument("--initial-cash-jpy", default="10000")
+    shadow.add_argument("--max-leverage", default="2")
+    shadow.add_argument("--epoch-sec", type=float, default=60.0)
+    shadow.add_argument("--max-events", type=int, default=10_000_000)
+    shadow.add_argument("--progress-interval-sec", type=float, default=5.0)
+    shadow.add_argument("--retry-delay-sec", type=float, default=5.0)
+    shadow.set_defaults(func=run_shadow_service)
+
+    reporting = subparsers.add_parser(
+        "shadow-report",
+        help="Drain Paper trade outboxes into isolated reporting targets.",
+    )
+    reporting.add_argument(
+        "--runtime-root",
+        default="data/crypto/paper-shadow",
+    )
+    reporting.set_defaults(func=run_shadow_report)
 
     private = subparsers.add_parser(
         "private-check", help="Authenticate and GET assets only."

@@ -168,6 +168,15 @@ class CryptoLedger:
             ).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
+    def metadata_for_dedupe(self, dedupe_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT sequence, event_id, event_hash, prev_hash, "
+                "created_at_utc FROM crypto_events WHERE dedupe_key=?",
+                (dedupe_key,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def verify(self) -> dict[str, Any]:
         previous = GENESIS_HASH
         count = 0

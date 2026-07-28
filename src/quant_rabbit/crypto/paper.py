@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 
 from .config import CryptoSafetyContract
 from .ledger import CryptoLedger
@@ -24,12 +25,16 @@ class PaperState:
     positions: dict[str, Decimal] = field(default_factory=dict)
     average_costs: dict[str, Decimal] = field(default_factory=dict)
     position_regimes: dict[str, str] = field(default_factory=dict)
+    open_trade_contexts: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     realized_pnl_by_pair: dict[str, Decimal] = field(default_factory=dict)
     realized_pnl_by_regime: dict[str, Decimal] = field(default_factory=dict)
     gross_profit_jpy: Decimal = Decimal("0")
     gross_loss_jpy: Decimal = Decimal("0")
     round_trips: int = 0
     interest_cost_jpy: Decimal = Decimal("0")
+    interest_cost_by_pair: dict[str, Decimal] = field(default_factory=dict)
     margin_calls: int = 0
     forced_liquidations: int = 0
     fees_jpy: Decimal = Decimal("0")
@@ -53,6 +58,7 @@ class PaperState:
                 key: _s(value) for key, value in self.average_costs.items()
             },
             "position_regimes": dict(self.position_regimes),
+            "open_trade_contexts": dict(self.open_trade_contexts),
             "realized_pnl_by_pair": {
                 key: _s(value)
                 for key, value in self.realized_pnl_by_pair.items()
@@ -65,6 +71,10 @@ class PaperState:
             "gross_loss_jpy": _s(self.gross_loss_jpy),
             "round_trips": self.round_trips,
             "interest_cost_jpy": _s(self.interest_cost_jpy),
+            "interest_cost_by_pair": {
+                key: _s(value)
+                for key, value in self.interest_cost_by_pair.items()
+            },
             "margin_calls": self.margin_calls,
             "forced_liquidations": self.forced_liquidations,
             "fees_jpy": _s(self.fees_jpy),
@@ -93,6 +103,10 @@ class PaperState:
                 key: str(value)
                 for key, value in raw.get("position_regimes", {}).items()
             },
+            open_trade_contexts={
+                key: dict(value)
+                for key, value in raw.get("open_trade_contexts", {}).items()
+            },
             realized_pnl_by_pair={
                 key: _d(value)
                 for key, value in raw.get("realized_pnl_by_pair", {}).items()
@@ -105,6 +119,12 @@ class PaperState:
             gross_loss_jpy=_d(raw.get("gross_loss_jpy", "0")),
             round_trips=int(raw.get("round_trips", 0)),
             interest_cost_jpy=_d(raw.get("interest_cost_jpy", "0")),
+            interest_cost_by_pair={
+                key: _d(value)
+                for key, value in raw.get(
+                    "interest_cost_by_pair", {}
+                ).items()
+            },
             margin_calls=int(raw.get("margin_calls", 0)),
             forced_liquidations=int(raw.get("forced_liquidations", 0)),
             fees_jpy=_d(raw["fees_jpy"]),
@@ -138,6 +158,7 @@ class PaperEngine:
         max_leverage: Decimal = Decimal("1"),
         margin_call_ratio: Decimal = Decimal("0.50"),
         maintenance_margin_ratio: Decimal = Decimal("0.25"),
+        trade_sink: Callable[[dict[str, Any]], object] | None = None,
     ) -> None:
         CryptoSafetyContract.from_env().assert_safe()
         self.ledger = ledger
@@ -156,6 +177,7 @@ class PaperEngine:
         self.max_leverage = max_leverage
         self.margin_call_ratio = margin_call_ratio
         self.maintenance_margin_ratio = maintenance_margin_ratio
+        self.trade_sink = trade_sink
         if self.max_leverage < 1 or self.max_leverage > 2:
             raise ValueError("Paper leverage must stay within 1x..2x")
         if not (
@@ -309,6 +331,10 @@ class PaperEngine:
             fee = notional * fee_rate
             cash_delta = notional + fee
         previous_cost = self.state.average_costs.get(pair, Decimal("0"))
+        open_context = dict(
+            self.state.open_trade_contexts.get(pair, {})
+        )
+        realized: Decimal | None = None
         if position_effect == "OPEN" and position_side == "LONG":
             new_amount = previous_amount + fill_amount
             average_cost = (
@@ -365,6 +391,40 @@ class PaperEngine:
         status = "FILLED" if remaining == 0 else "PARTIALLY_FILLED"
         if remaining > 0:
             self.state.partial_fills += 1
+        event_at_utc = str(
+            intent.get("event_at_utc")
+            or datetime.now(timezone.utc).isoformat()
+        )
+        if position_effect == "OPEN":
+            self._record_open_context(
+                pair=pair,
+                intent=intent,
+                position_side=position_side,
+                event_at_utc=event_at_utc,
+                fill_amount=fill_amount,
+                fill_price=fill_price,
+                notional=notional,
+                fee=fee,
+                spread_cost=spread_cost,
+                adverse_cost=slippage_cost,
+            )
+        elif realized is not None:
+            open_context = self._record_close_context(
+                pair=pair,
+                context=open_context,
+                event_at_utc=event_at_utc,
+                fill_amount=fill_amount,
+                fill_price=fill_price,
+                realized=realized,
+                fee=fee,
+                spread_cost=spread_cost,
+                adverse_cost=slippage_cost,
+                exit_reason=str(
+                    intent.get(
+                        "signal_reason", intent.get("regime", "UNKNOWN")
+                    )
+                ),
+            )
         result = {
             **order_payload,
             "status": status,
@@ -383,7 +443,261 @@ class PaperEngine:
             dedupe_key=f"paper-fill:{intent_id}",
         )
         self._persist_state(intent_id)
+        if (
+            position_effect == "CLOSE"
+            and new_amount == 0
+            and realized is not None
+        ):
+            closed_trade = self._closed_trade_payload(
+                pair=pair,
+                intent=intent,
+                context=open_context,
+                position_side=position_side,
+                event_at_utc=event_at_utc,
+                fill_amount=fill_amount,
+                fill_price=fill_price,
+                realized=realized,
+                close_fee=fee,
+                close_spread=spread_cost,
+                close_adverse=slippage_cost,
+            )
+            trade_id = str(closed_trade["trade_id"])
+            dedupe_key = f"paper-trade-closed:{trade_id}"
+            self.ledger.append(
+                "PAPER_TRADE_CLOSED",
+                trade_id,
+                closed_trade,
+                dedupe_key=dedupe_key,
+            )
+            metadata = self.ledger.metadata_for_dedupe(dedupe_key) or {}
+            outbox_payload = {**closed_trade}
+            outbox_payload.update(
+                {
+                    "ledger_sequence": metadata.get("sequence"),
+                    "ledger_event_hash": metadata.get("event_hash"),
+                    "ledger_prev_hash": metadata.get("prev_hash"),
+                }
+            )
+            self.state.open_trade_contexts.pop(pair, None)
+            self._persist_state(f"closed-trade:{trade_id}")
+            if self.trade_sink is not None:
+                try:
+                    self.trade_sink(outbox_payload)
+                except Exception:
+                    pass
         return result
+
+    def _record_close_context(
+        self,
+        *,
+        pair: str,
+        context: dict[str, Any],
+        event_at_utc: str,
+        fill_amount: Decimal,
+        fill_price: Decimal,
+        realized: Decimal,
+        fee: Decimal,
+        spread_cost: Decimal,
+        adverse_cost: Decimal,
+        exit_reason: str,
+    ) -> dict[str, Any]:
+        updated = dict(context)
+        updated["closed_quantity"] = _s(
+            _d(updated.get("closed_quantity", "0")) + fill_amount
+        )
+        updated["close_notional_jpy"] = _s(
+            _d(updated.get("close_notional_jpy", "0"))
+            + fill_amount * fill_price
+        )
+        updated["close_fees_jpy"] = _s(
+            _d(updated.get("close_fees_jpy", "0")) + fee
+        )
+        updated["close_spread_cost_jpy"] = _s(
+            _d(updated.get("close_spread_cost_jpy", "0"))
+            + spread_cost
+        )
+        updated["close_adverse_cost_jpy"] = _s(
+            _d(updated.get("close_adverse_cost_jpy", "0"))
+            + adverse_cost
+        )
+        updated["realized_pnl_jpy"] = _s(
+            _d(updated.get("realized_pnl_jpy", "0")) + realized
+        )
+        updated["last_closed_at_utc"] = event_at_utc
+        updated["last_exit_reason"] = exit_reason
+        self.state.open_trade_contexts[pair] = updated
+        return updated
+
+    def _record_open_context(
+        self,
+        *,
+        pair: str,
+        intent: dict[str, Any],
+        position_side: str,
+        event_at_utc: str,
+        fill_amount: Decimal,
+        fill_price: Decimal,
+        notional: Decimal,
+        fee: Decimal,
+        spread_cost: Decimal,
+        adverse_cost: Decimal,
+    ) -> None:
+        existing = self.state.open_trade_contexts.get(pair)
+        if existing:
+            quantity = _d(existing["quantity"]) + fill_amount
+            total_notional = _d(existing["entry_notional_jpy"]) + notional
+            existing.update(
+                {
+                    "quantity": _s(quantity),
+                    "entry_notional_jpy": _s(total_notional),
+                    "entry_price": _s(total_notional / quantity),
+                    "open_fees_jpy": _s(
+                        _d(existing["open_fees_jpy"]) + fee
+                    ),
+                    "open_spread_cost_jpy": _s(
+                        _d(existing["open_spread_cost_jpy"]) + spread_cost
+                    ),
+                    "open_adverse_cost_jpy": _s(
+                        _d(existing["open_adverse_cost_jpy"])
+                        + adverse_cost
+                    ),
+                }
+            )
+            return
+        raw_trade_id = (
+            f"{intent.get('run_id', 'unknown')}|{intent['intent_id']}|"
+            f"{pair}|{position_side}"
+        )
+        self.state.open_trade_contexts[pair] = {
+            "trade_id": hashlib.sha256(raw_trade_id.encode()).hexdigest()[:24],
+            "run_id": str(intent.get("run_id", "unknown")),
+            "opened_at_utc": event_at_utc,
+            "entry_price": _s(fill_price),
+            "quantity": _s(fill_amount),
+            "entry_notional_jpy": _s(notional),
+            "open_fees_jpy": _s(fee),
+            "open_spread_cost_jpy": _s(spread_cost),
+            "open_adverse_cost_jpy": _s(adverse_cost),
+            "interest_at_open_jpy": _s(
+                self.state.interest_cost_by_pair.get(pair, Decimal("0"))
+            ),
+            "strategy": str(intent.get("strategy", "FAST_MICROSTRUCTURE")),
+            "regime": str(intent.get("regime", "UNKNOWN")),
+            "signal_reason": str(intent.get("signal_reason", "UNKNOWN")),
+        }
+
+    def _closed_trade_payload(
+        self,
+        *,
+        pair: str,
+        intent: dict[str, Any],
+        context: dict[str, Any],
+        position_side: str,
+        event_at_utc: str,
+        fill_amount: Decimal,
+        fill_price: Decimal,
+        realized: Decimal,
+        close_fee: Decimal,
+        close_spread: Decimal,
+        close_adverse: Decimal,
+    ) -> dict[str, Any]:
+        opened = str(context.get("opened_at_utc", event_at_utc))
+        try:
+            holding_ms = max(
+                0,
+                int(
+                    (
+                        datetime.fromisoformat(event_at_utc)
+                        - datetime.fromisoformat(opened)
+                    ).total_seconds()
+                    * 1000
+                ),
+            )
+        except ValueError:
+            holding_ms = 0
+        entry_price = _d(context.get("entry_price", "0"))
+        closed_quantity = _d(
+            context.get("closed_quantity", fill_amount)
+        )
+        close_notional = _d(
+            context.get(
+                "close_notional_jpy", _s(fill_price * fill_amount)
+            )
+        )
+        weighted_exit_price = (
+            close_notional / closed_quantity
+            if closed_quantity > 0
+            else fill_price
+        )
+        gross_pnl = (
+            (weighted_exit_price - entry_price) * closed_quantity
+            if position_side == "LONG"
+            else (entry_price - weighted_exit_price) * closed_quantity
+        )
+        fees = _d(context.get("open_fees_jpy", "0")) + _d(
+            context.get("close_fees_jpy", close_fee)
+        )
+        spread = (
+            _d(context.get("open_spread_cost_jpy", "0"))
+            + _d(context.get("close_spread_cost_jpy", close_spread))
+        )
+        adverse = (
+            _d(context.get("open_adverse_cost_jpy", "0"))
+            + _d(context.get("close_adverse_cost_jpy", close_adverse))
+        )
+        interest = self.state.interest_cost_by_pair.get(
+            pair, Decimal("0")
+        ) - _d(context.get("interest_at_open_jpy", "0"))
+        return {
+            "trade_id": str(
+                context.get(
+                    "trade_id",
+                    hashlib.sha256(
+                        f"{intent['intent_id']}|{pair}".encode()
+                    ).hexdigest()[:24],
+                )
+            ),
+            "run_id": str(
+                context.get("run_id", intent.get("run_id", "unknown"))
+            ),
+            "paper_mode": "MARGIN" if self.allow_short else "SPOT",
+            "pair": pair,
+            "side": position_side,
+            "opened_at_utc": opened,
+            "closed_at_utc": event_at_utc,
+            "entry_price": _s(entry_price),
+            "exit_price": _s(weighted_exit_price),
+            "quantity": _s(closed_quantity),
+            "entry_notional_jpy": str(
+                context.get(
+                    "entry_notional_jpy", _s(entry_price * fill_amount)
+                )
+            ),
+            "gross_pnl_jpy": _s(gross_pnl),
+            "fees_jpy": _s(fees),
+            "spread_cost_jpy": _s(spread),
+            "adverse_cost_jpy": _s(adverse),
+            "funding_interest_jpy": _s(interest),
+            "net_pnl_jpy": _s(
+                _d(context.get("realized_pnl_jpy", realized)) - interest
+            ),
+            "holding_ms": holding_ms,
+            "exit_reason": str(
+                context.get(
+                    "last_exit_reason",
+                    intent.get(
+                        "signal_reason", intent.get("regime", "UNKNOWN")
+                    ),
+                )
+            ),
+            "strategy": str(
+                context.get("strategy", "FAST_MICROSTRUCTURE")
+            ),
+            "regime": str(context.get("regime", "UNKNOWN")),
+            "guardian": str(intent.get("guardian", "GREEN")),
+            "authority": "NONE",
+            "live_permission": False,
+        }
 
     def _opening_notional_capacity(self) -> Decimal:
         equity_at_cost = self.state.cash_jpy
@@ -465,6 +779,13 @@ class PaperEngine:
             rate = long_rate if amount > 0 else short_rate
             average = self.state.average_costs.get(pair, Decimal("0"))
             cost += abs(amount) * average * rate * seconds / Decimal("86400")
+            pair_cost = (
+                abs(amount) * average * rate * seconds / Decimal("86400")
+            )
+            self.state.interest_cost_by_pair[pair] = (
+                self.state.interest_cost_by_pair.get(pair, Decimal("0"))
+                + pair_cost
+            )
         if cost > 0:
             self.state.cash_jpy -= cost
             self.state.interest_cost_jpy += cost
@@ -570,6 +891,9 @@ class PaperEngine:
             "margin_status": snapshot["status"],
             "short_position_count": sum(
                 amount < 0 for amount in self.state.positions.values()
+            ),
+            "open_position_count": sum(
+                amount != 0 for amount in self.state.positions.values()
             ),
             "by_pair_pnl_jpy": {
                 pair: _s(pnl) for pair, pnl in by_pair.items()
