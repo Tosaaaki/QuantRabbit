@@ -311,6 +311,12 @@ def test_fast_runner_executes_event_driven_paper_round(
     assert result["metrics"]["trade_count"] == 2
     assert result["safety"]["broker_mutation_allowed"] is False
     assert result["ledger_integrity"]["valid"] is True
+    epoch = ledger.latest_payload("FAST_EPOCH_SUMMARY")
+    assert epoch is not None
+    assert epoch["run_id"] == result["run_id"]
+    assert epoch["decision_diagnostics"]["no_future_data"] is True
+    decisions = list(ledger.events("FAST_DECISION"))
+    assert decisions[0]["payload"]["run_id"] == result["run_id"]
 
 
 def test_margin_runner_checks_loss_cut_on_market_update_without_trade(

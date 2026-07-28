@@ -356,8 +356,16 @@ class FastMicrostructureRouter:
             Decimal("0"), abs(momentum_bps)
         ) + order_flow_edge_bps
         net_edge_bps = gross_edge_bps - expected_cost_bps
+        market_regime = (
+            "RANGE_LIQUID"
+            if abs(momentum_bps) < self.config.min_momentum_bps
+            else "TREND_UP"
+            if momentum_bps > 0
+            else "TREND_DOWN"
+        )
         common = {
             "pair": state.pair,
+            "market_regime": market_regime,
             "momentum_bps": str(momentum_bps),
             "spread_bps": str(spread_bps),
             "imbalance": str(imbalance),
@@ -530,7 +538,14 @@ class FastPaperRunner:
         reasons: Counter[str] = Counter()
         actions: Counter[str] = Counter()
         room_counts: Counter[str] = Counter()
+        market_regimes: Counter[str] = Counter()
+        shadow_sibling_candidates: Counter[str] = Counter()
         fills: list[dict[str, Any]] = []
+        gross_edges_bps: list[float] = []
+        expected_costs_bps: list[float] = []
+        net_edges_bps: list[float] = []
+        near_threshold_waits = 0
+        prediction_fingerprints: Counter[str] = Counter()
         margin_call_recorded = False
         processed = 0
         next_progress_ns = started_ns
@@ -586,7 +601,7 @@ class FastPaperRunner:
         _emit_progress("STARTING")
 
         async def _consume() -> None:
-            nonlocal processed, margin_call_recorded
+            nonlocal processed, margin_call_recorded, near_threshold_waits
             async for message in self.stream.messages(
                 rooms, max_messages=max_events
             ):
@@ -633,6 +648,36 @@ class FastPaperRunner:
                 reason = str(decision["reason"])
                 actions[action] += 1
                 reasons[reason] += 1
+                regime = str(decision.get("market_regime", "DATA_UNREADY"))
+                market_regimes[regime] += 1
+                if "gross_edge_bps" in decision:
+                    gross_edges_bps.append(float(decision["gross_edge_bps"]))
+                    expected_costs_bps.append(
+                        float(decision["expected_cost_bps"])
+                    )
+                    net_edges_bps.append(float(decision["net_edge_bps"]))
+                    if (
+                        action == "WAIT"
+                        and float(decision["net_edge_bps"])
+                        > float(self.config.safety_buffer_bps) - 0.5
+                    ):
+                        near_threshold_waits += 1
+                if action == "ENTER":
+                    fingerprint = "|".join(
+                        [
+                            pair,
+                            str(decision.get("book_sequence")),
+                            str(decision.get("position_side")),
+                        ]
+                    )
+                    prediction_fingerprints[fingerprint] += 1
+                if action == "WAIT" and regime == "RANGE_LIQUID":
+                    shadow_sibling_candidates["RANGE_MAKER_REVERSION"] += 1
+                elif action == "WAIT" and regime in {
+                    "TREND_UP",
+                    "TREND_DOWN",
+                }:
+                    shadow_sibling_candidates["BREAKOUT_CONFIRMATION"] += 1
                 should_record = (
                     action != "WAIT"
                     or processed % self.config.telemetry_every_events == 0
@@ -759,10 +804,56 @@ class FastPaperRunner:
                 "actions": dict(actions),
                 "reasons": dict(reasons),
             },
+            "decision_diagnostics": {
+                "market_regimes": dict(market_regimes),
+                "gross_edge_bps_p50": _percentile(
+                    gross_edges_bps, 0.50
+                ),
+                "expected_cost_bps_p50": _percentile(
+                    expected_costs_bps, 0.50
+                ),
+                "net_edge_bps_p50": _percentile(net_edges_bps, 0.50),
+                "net_edge_bps_max": max(net_edges_bps, default=None),
+                "near_threshold_waits": near_threshold_waits,
+                "prediction_candidate_count": sum(
+                    prediction_fingerprints.values()
+                ),
+                "prediction_duplicate_count": sum(
+                    count - 1
+                    for count in prediction_fingerprints.values()
+                    if count > 1
+                ),
+                "shadow_sibling_candidates": dict(
+                    shadow_sibling_candidates
+                ),
+                "no_future_data": True,
+            },
             "fills": fills,
             "metrics": metrics,
-            "ledger_integrity": self.ledger.verify(),
         }
+        completed_at_utc = datetime.now(timezone.utc).isoformat()
+        epoch_payload = {
+            "run_id": run_id,
+            "started_at_utc": started_at_utc,
+            "completed_at_utc": completed_at_utc,
+            "mode": result["mode"],
+            "pairs": normalized,
+            "runtime": result["runtime"],
+            "latency": result["latency"],
+            "decisions": result["decisions"],
+            "decision_diagnostics": result["decision_diagnostics"],
+            "guardian": result["guardian"],
+            "metrics": result["metrics"],
+            "safety": result["safety"],
+        }
+        self.ledger.append(
+            "FAST_EPOCH_SUMMARY",
+            run_id,
+            epoch_payload,
+            dedupe_key=f"fast-epoch-summary:{run_id}",
+        )
+        result["completed_at_utc"] = completed_at_utc
+        result["ledger_integrity"] = self.ledger.verify()
         _emit_progress("EPOCH_COMPLETE")
         return result
 
@@ -879,10 +970,16 @@ class FastPaperRunner:
         event_number: int,
         run_id: str,
     ) -> None:
+        payload = {
+            **decision,
+            "run_id": run_id,
+            "event_number": event_number,
+            "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
         self.ledger.append(
             "FAST_DECISION",
             pair,
-            decision,
+            payload,
             dedupe_key=f"fast-decision:{run_id}:{pair}:{event_number}",
         )
 

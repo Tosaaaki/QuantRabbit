@@ -19,10 +19,11 @@ from .bitbank import (
 )
 from .config import CryptoSafetyContract, ScannerConfig
 from .fast import FastPaperConfig, FastPaperRunner, fast_report_markdown
+from .improvement import CryptoImprovementEvaluator
 from .ledger import CryptoLedger
 from .paper import PaperEngine
 from .report import atomic_write_json, atomic_write_text, scan_markdown
-from .reporting import PaperShadowReportingWriter
+from .reporting import IroriSlackSummarySink, PaperShadowReportingWriter
 from .shadow import (
     PaperShadowAlreadyRunning,
     PaperShadowService,
@@ -505,9 +506,45 @@ def run_shadow_service(args: argparse.Namespace) -> int:
 
 def run_shadow_report(args: argparse.Namespace) -> int:
     CryptoSafetyContract.from_env().assert_safe()
+    runtime_root = Path(args.runtime_root)
+    improvement = CryptoImprovementEvaluator(runtime_root).run_once()
+    slack = None
+    slack_blocker = "NOTION_ROUTE_GATE_UNVERIFIED"
+    if args.notion_route_gate_verified:
+        if args.irori_route_ref and args.irori_parent_ts:
+            try:
+                slack = IroriSlackSummarySink(
+                    helper_path=Path(args.irori_helper),
+                    route_ref=args.irori_route_ref,
+                    parent_ts=args.irori_parent_ts,
+                )
+                slack_blocker = ""
+            except ValueError:
+                slack_blocker = "IRORI_HELPER_CONFIG_INVALID"
+        else:
+            slack_blocker = "IRORI_ROUTE_CONFIG_MISSING"
     result = PaperShadowReportingWriter(
-        Path(args.runtime_root)
+        runtime_root,
+        slack=slack,
+        slack_blocker=slack_blocker,
     ).run_once()
+    result["continuous_improvement"] = {
+        "evaluation_added": improvement["evaluation_added"],
+        "experiment_added": improvement["experiment_added"],
+        "evaluations_path": improvement["evaluations_path"],
+        "experiments_path": improvement["experiments_path"],
+        "live_mutation": False,
+    }
+    atomic_write_json(runtime_root / "reporting_state.json", result)
+    _json_print(result)
+    return 0
+
+
+def run_shadow_evaluate(args: argparse.Namespace) -> int:
+    CryptoSafetyContract.from_env().assert_safe()
+    result = CryptoImprovementEvaluator(
+        Path(args.runtime_root)
+    ).run_once(trailing_minutes=args.trailing_minutes)
     _json_print(result)
     return 0
 
@@ -683,7 +720,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--runtime-root",
         default="data/crypto/paper-shadow",
     )
+    reporting.add_argument(
+        "--notion-route-gate-verified",
+        action="store_true",
+        help="Caller directly fetched and verified the current Notion route gate.",
+    )
+    reporting.add_argument("--irori-route-ref")
+    reporting.add_argument("--irori-parent-ts")
+    reporting.add_argument(
+        "--irori-helper",
+        default=(
+            "/Users/tossaki/.claude/scheduled-tasks/"
+            "_shared/post_slack.sh"
+        ),
+    )
     reporting.set_defaults(func=run_shadow_report)
+
+    evaluation = subparsers.add_parser(
+        "shadow-evaluate",
+        help="Persist a crypto Paper profitability and cost RCA window.",
+    )
+    evaluation.add_argument(
+        "--runtime-root",
+        default="data/crypto/paper-shadow",
+    )
+    evaluation.add_argument("--trailing-minutes", type=int, default=60)
+    evaluation.set_defaults(func=run_shadow_evaluate)
 
     private = subparsers.add_parser(
         "private-check", help="Authenticate and GET assets only."

@@ -68,6 +68,36 @@ process and never posts one Slack message per trade.
 When a Sheets or Slack connector is unavailable, delivery remains pending in
 the local outbox. The trading services continue without waiting for it.
 
+Slack delivery is fail-closed unless the caller directly completes the current
+Notion route gate and supplies the active Irori route reference plus canonical
+parent `thread_ts`. The reporter then calls only the verified Irori helper. The
+helper reuses the stable operation ID and requires API readback of the approved
+workspace/Bot identity, existing parent/reply structure, exact detail, and
+permalink. Failed hour/day summaries remain in the durable outbox and are
+retried in later reporter runs; no per-trade Slack call exists.
+
+## Continuous improvement loop
+
+Every reporter run first writes a completed-hour profitability and execution
+cost evaluation to `improvement/evaluations.jsonl`, then writes one proposed
+experiment per Spot/Margin lane to `improvement/experiments.jsonl`. Records are
+append-only and use stable operation IDs.
+
+Each evaluation separates availability/freshness, after-cost PF/expectancy/net
+PnL/DD, pair/side/strategy/regime/JST-hour contribution, fees/spread/adverse/
+interest/latency, WAIT and missed-opportunity reasons, Guardian/risk events,
+and entry-candidate duplication/resolution. Root causes are ranked by impact
+times evidence confidence. A zero-fill window separately considers data
+insufficiency, edge below cost, excessive-threshold candidates, and
+market/strategy coverage mismatch.
+
+The baseline remains unchanged. Only one category is proposed per shadow
+experiment, and regime sibling candidates are observation-only until they
+have an isolated Paper ledger. Comparison uses the next unseen real-market
+window with no future data. Adoption requires after-cost PF greater than one,
+positive expectancy, non-worse drawdown, and reproduction in at least three
+unseen windows. Live promotion remains forbidden.
+
 ## Decision-latency load check
 
 On 2026-07-28, three 50,000-decision trials were compared while the background

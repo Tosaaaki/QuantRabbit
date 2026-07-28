@@ -3,13 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
+import subprocess
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
+from .improvement import improvements_for_period
 from .outbox import TRADE_COLUMNS
 from .report import atomic_write_json
 
@@ -32,6 +35,114 @@ class SlackSink(Protocol):
     ) -> str: ...
 
     def readback(self, operation_id: str, permalink: str) -> bool: ...
+
+
+class IroriSlackSummarySink:
+    """Call the verified Irori helper for an existing canonical thread."""
+
+    def __init__(
+        self,
+        *,
+        helper_path: Path,
+        route_ref: str,
+        parent_ts: str,
+    ) -> None:
+        if not helper_path.exists():
+            raise ValueError("Irori Slack helper is unavailable")
+        if not route_ref.strip():
+            raise ValueError("Irori Slack route reference is required")
+        if not re.fullmatch(r"[0-9]{3,}\.[0-9]{6}", parent_ts):
+            raise ValueError("canonical Slack parent_ts is invalid")
+        self.helper_path = helper_path
+        self.route_ref = route_ref
+        self.parent_ts = parent_ts
+        self._receipts: dict[str, dict[str, Any]] = {}
+
+    def post_summary(
+        self, operation_id: str, row: dict[str, Any]
+    ) -> str:
+        period = str(row["period"]).upper()
+        period_key = str(row["period_key"])
+        title = f"QuantRabbit Crypto Paper Shadow {period} {period_key}"
+        detail = json.dumps(
+            {
+                "operation_id": operation_id,
+                "report": row,
+                "safety": {
+                    "authority": "NONE",
+                    "live_mutation": False,
+                    "per_trade_slack_posts": False,
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "IRORI_REPORT_OPERATION_ID": operation_id,
+                "IRORI_REPORT_PARENT_TS": self.parent_ts,
+                "IRORI_REPORT_JSON_OUTPUT": "1",
+            }
+        )
+        completed = subprocess.run(
+            [
+                "bash",
+                str(self.helper_path),
+                self.route_ref,
+                "-",
+                title,
+            ],
+            input=detail,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+            env=environment,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("IRORI_VERIFIED_HELPER_FAILED")
+        try:
+            receipt = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("IRORI_HELPER_RECEIPT_INVALID") from exc
+        if not self._verified_receipt(operation_id, receipt):
+            raise RuntimeError("IRORI_HELPER_READBACK_INCOMPLETE")
+        self._receipts[operation_id] = receipt
+        return str(receipt["permalink"])
+
+    def readback(self, operation_id: str, permalink: str) -> bool:
+        receipt = self._receipts.get(operation_id)
+        return bool(
+            receipt
+            and self._verified_receipt(operation_id, receipt)
+            and receipt.get("permalink") == permalink
+        )
+
+    def _verified_receipt(
+        self, operation_id: str, receipt: dict[str, Any]
+    ) -> bool:
+        channel = str(receipt.get("channel") or "")
+        parent_ts = str(receipt.get("parent_ts") or "")
+        permalink = str(receipt.get("permalink") or "")
+        expected_prefix = (
+            f"https://irori-hub.slack.com/archives/{channel}/p"
+            f"{parent_ts.replace('.', '')}"
+        )
+        return bool(
+            receipt.get("ok") is True
+            and receipt.get("verified") is True
+            and receipt.get("reply_only") is True
+            and receipt.get("operation_id") == operation_id
+            and parent_ts == self.parent_ts
+            and receipt.get("reply_ts")
+            and receipt.get("identity_team_id")
+            and receipt.get("identity_user_id")
+            and channel
+            and receipt.get("channel_name")
+            and permalink.startswith(expected_prefix)
+        )
 
 
 class DeliveryStore:
@@ -123,10 +234,12 @@ class PaperShadowReportingWriter:
         *,
         sheets: SheetsSink | None = None,
         slack: SlackSink | None = None,
+        slack_blocker: str = "NO_CONNECTOR",
     ) -> None:
         self.runtime_root = runtime_root
         self.sheets = sheets
         self.slack = slack
+        self.slack_blocker = slack_blocker
         self.store = DeliveryStore(runtime_root / "reporting-deliveries.db")
 
     def run_once(
@@ -156,18 +269,20 @@ class PaperShadowReportingWriter:
             self.store.mark(operation_id, "sheets_trade")
             sheets_delivered += 1
 
-        summaries = [
+        current_summaries = [
             self._summary(trades, now, "hour"),
             self._summary(trades, now, "day"),
         ]
         summary_path = self.runtime_root / "summary_outbox.jsonl"
         local_summary_added = 0
-        sheets_summary_pending = 0
-        slack_pending = 0
-        for summary in summaries:
+        for summary in current_summaries:
             local_summary_added += int(
                 _append_jsonl_once(summary_path, summary)
             )
+        summaries = _load_jsonl(summary_path)
+        sheets_summary_pending = 0
+        slack_pending = 0
+        for summary in summaries:
             operation_id = str(summary["operation_id"])
             if not self.store.delivered(operation_id, "sheets_summary"):
                 if self.sheets is None:
@@ -218,7 +333,9 @@ class PaperShadowReportingWriter:
                 "CONNECTED" if self.sheets is not None else "BLOCKED_NO_CONNECTOR"
             ),
             "slack_status": (
-                "CONNECTED" if self.slack is not None else "BLOCKED_NO_CONNECTOR"
+                "CONNECTED"
+                if self.slack is not None
+                else f"BLOCKED_{self.slack_blocker}"
             ),
             "trade_sheet": "SEPARATE_TRADE_LEDGER",
             "summary_sheet": "SEPARATE_SUMMARY_LEDGER",
@@ -283,6 +400,14 @@ class PaperShadowReportingWriter:
         ]
         reasons = Counter(str(row["exit_reason"]) for row in selected)
         service_states = self._service_states()
+        improvement_rows = improvements_for_period(
+            self.runtime_root, period_start, period_end
+        )
+        root_causes = Counter(
+            str(cause["code"])
+            for evaluation in improvement_rows
+            for cause in evaluation.get("root_causes_top3", [])
+        )
         operation_id = hashlib.sha256(
             f"crypto-paper-summary|{period}|{period_key}".encode()
         ).hexdigest()
@@ -353,6 +478,19 @@ class PaperShadowReportingWriter:
             ),
             "exit_reasons": dict(reasons),
             "service_states": service_states,
+            "continuous_improvement": {
+                "evaluation_count": len(improvement_rows),
+                "root_cause_counts": dict(root_causes),
+                "adoption_eligible_count": sum(
+                    bool(
+                        row.get("adoption_gate", {}).get(
+                            "eligible_now"
+                        )
+                    )
+                    for row in improvement_rows
+                ),
+                "live_promotion_allowed": False,
+            },
             "per_trade_slack_posts": False,
         }
 
