@@ -172,11 +172,17 @@ def test_report_renders_fixed_card_and_leaves_unproved_economics_unmeasured(
 
     assert report["room_count"] == 4
     assert report["authority"] == "NONE"
+    assert report["runtime_health_status"] == "HEALTHY"
+    assert report["profitability_status"] == "PROFITABLE"
+    assert report["inventory_observation"]["open_position_count"] == 1
+    assert report["inventory_observation"]["resting_order_count"] == 3
+    assert report["inventory_observation"]["counter_trend_resting_order_count"] is None
     assert report["rooms"][0]["long_units"] == 1000.0
     assert report["rooms"][0]["unrealized_pl_jpy"] == pytest.approx(50.0)
     assert report["totals"]["tp_gross_jpy"] is None
     assert report["totals"]["economic_result_status"] == "UNDETERMINED"
     assert rendered.startswith("PAPER AI inventory supervisor\n")
+    assert "稼働評価: HEALTHY | 収益評価: PROFITABLE" in rendered
     assert "| room / strategy |" in rendered
     assert "未計測" in rendered
     assert "shadow only, authority NONE" in rendered

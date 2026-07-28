@@ -193,6 +193,22 @@ def _room_report(
         or not isinstance(orders, list)
     ):
         raise DojoFreshModelHandoffError("paper report room state is invalid")
+    counter_trend_orders = 0
+    counter_trend_orders_measured = True
+    for raw in orders:
+        if not isinstance(raw, Mapping):
+            raise DojoFreshModelHandoffError("paper report order is invalid")
+        side = str(raw.get("side") or "")
+        entry_context = raw.get("entry_context")
+        if side not in {"LONG", "SHORT"} or not isinstance(entry_context, Mapping):
+            counter_trend_orders_measured = False
+            continue
+        trend = str(entry_context.get("trend_24h") or "")
+        if trend not in {"LONG", "SHORT", "FLAT", "UNKNOWN"}:
+            counter_trend_orders_measured = False
+            continue
+        if trend in {"LONG", "SHORT"} and side != trend:
+            counter_trend_orders += 1
     ledger = _read_verified_ledger(
         room_dir / "ledger.jsonl",
         str(snapshot.get("ledger_sha") or ""),
@@ -328,6 +344,11 @@ def _room_report(
         "room_id": room_id,
         "strategy": ",".join(str(item) for item in strategy_tags) or "未計測",
         "bot_state": bot_state,
+        "position_count": len(positions),
+        "resting_order_count": len(orders),
+        "counter_trend_resting_order_count": (
+            counter_trend_orders if counter_trend_orders_measured else None
+        ),
         "long_units": long_units,
         "short_units": short_units,
         "net_units": long_units - short_units,
@@ -417,6 +438,17 @@ def build_paper_inventory_report(
         if all(value is not None for value in economic_components)
         else None
     )
+    total_net_pl = _sum_or_none([total_unrealized, total_realized])
+    runtime_health_status = (
+        "HEALTHY"
+        if status["state"] in {"IDLE_NO_READY_PACKET", "WAITING_FOR_FRESH_TASK"}
+        else "HALTED_OR_DEGRADED"
+    )
+    profitability_status = (
+        "UNDETERMINED"
+        if total_net_pl is None
+        else ("PROFITABLE" if total_net_pl > 0 else "LOSS_OR_FLAT")
+    )
     body = {
         "contract": REPORT_CONTRACT,
         "schema_version": 1,
@@ -427,11 +459,22 @@ def build_paper_inventory_report(
         "accepted_count": status["accepted_fresh_model_decision_count"],
         "room_count": len(rooms),
         "authority": "NONE",
+        "runtime_health_status": runtime_health_status,
+        "profitability_status": profitability_status,
+        "inventory_observation": {
+            "open_position_count": sum(room["position_count"] for room in rooms),
+            "resting_order_count": sum(
+                room["resting_order_count"] for room in rooms
+            ),
+            "counter_trend_resting_order_count": _sum_or_none(
+                [room["counter_trend_resting_order_count"] for room in rooms]
+            ),
+        },
         "rooms": sorted(rooms, key=lambda room: room["room_id"]),
         "totals": {
             "balance_jpy": _sum_or_none([room["balance_jpy"] for room in rooms]),
             "nav_jpy": _sum_or_none([room["equity_jpy"] for room in rooms]),
-            "net_pl_jpy": _sum_or_none([total_unrealized, total_realized]),
+            "net_pl_jpy": total_net_pl,
             "unrealized_pl_jpy": total_unrealized,
             "realized_pl_jpy": total_realized,
             "tp_gross_jpy": total_tp,
@@ -504,6 +547,14 @@ def render_paper_inventory_report(report: Mapping[str, Any]) -> str:
             f"runtime state: {report['runtime_state']} | accepted count: "
             f"{report['accepted_count']} | room count: {report['room_count']} "
             "| authority NONE"
+        ),
+        (
+            f"稼働評価: {report['runtime_health_status']} | 収益評価: "
+            f"{report['profitability_status']} | positions "
+            f"{report['inventory_observation']['open_position_count']} | resting "
+            f"orders {report['inventory_observation']['resting_order_count']} | "
+            "counter-trend resting "
+            f"{_fmt(report['inventory_observation']['counter_trend_resting_order_count'], digits=0)}"
         ),
         "",
         (

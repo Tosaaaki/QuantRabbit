@@ -1,0 +1,75 @@
+{
+  "contract": "QR_DOJO_DIRECTION_ALIGNMENT_PILOT_PLAN_V1",
+  "schema_version": 1,
+  "study_id": "dojo-paper-direction-alignment-pilot-20260728-v1",
+  "sealed_at_utc": "2026-07-28T05:35:55Z",
+  "sealed_before_outcome_read": true,
+  "classification": "LINEAGE_UNSEEN_DIAGNOSTIC_NOT_OOS_PROOF",
+  "prior_researcher_aggregate_outcome_exposure": true,
+  "global_untouched_oos_available": false,
+  "hypothesis_source": {
+    "experiment_id": "episode-s5-usdjpy-level-fades-paper-20260723-v1",
+    "observation": "Counter-trend SHORT fills while trend_24h=LONG are the largest measured loss slice.",
+    "observed_net_jpy": -1259.14,
+    "trade_count": 11
+  },
+  "authority": {
+    "broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true,
+    "automatic_deployment_allowed": false
+  },
+  "future_quote_allowed": false,
+  "terminal_result_allowed_in_decision": false,
+  "intervention_event": "FILL_LIMIT",
+  "rule": "SKIP_ENTRY_WHEN_SIDE_OPPOSES_TREND_24H",
+  "decision_information_policy": "FILL_ENTRY_CONTEXT_ONLY",
+  "existing_positions_policy": "NEVER_CLOSE_OR_MODIFY",
+  "accepted_decision_policy": "NEVER_READ_OR_REDECIDE_ACCEPTED_CELL",
+  "application_policy": "SHADOW_EVIDENCE_ONLY_NO_PAPER_MUTATION",
+  "implementation": {
+    "path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/src/quant_rabbit/dojo_direction_alignment_pilot.py",
+    "sha256": "57be351f0187f71d533b804ba4371ed83afc9bab5cb80651986935a0eddf0b45"
+  },
+  "adoption_thresholds": {
+    "net_delta_jpy_min": 0.0,
+    "winner_profit_retention_ratio_min": 0.75,
+    "base_and_stress_same_positive_direction_required": true,
+    "drawdown_non_worsening_required": true,
+    "ruin_non_worsening_required": true,
+    "margin_proxy_non_worsening_required": true,
+    "no_winner_early_cut_required": true
+  },
+  "rooms": [
+    {
+      "room_dir": "/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1/episode-s5-entry-context-smoke-20260722-v3/smoke-v3-01-w-fade-base",
+      "family": "RANGE_FADE_LIMIT",
+      "cost_mode": "BASE",
+      "session_contract_file_sha256": "12db0e69e10e891a62c8191403adf82b9b93bdced271de8feffc0b4d7c7b8265",
+      "ledger_file_sha256": "b22ca8764cc0906a0403e5bac436aa5d247fc481043e5c0401eb343ed793bad0"
+    },
+    {
+      "room_dir": "/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1/episode-s5-entry-context-smoke-20260722-v3/smoke-v3-02-w-fade-stress",
+      "family": "RANGE_FADE_LIMIT",
+      "cost_mode": "STRESS",
+      "session_contract_file_sha256": "b930a9e0151a3591e313ea9c961cf72063066b482af8403cdf1b2f6ebf75c012",
+      "ledger_file_sha256": "b1960b17cf62210f90e5ae1c53df93c7e58d4f899ac20613e1243d72ced031c5"
+    },
+    {
+      "room_dir": "/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1/episode-s5-entry-context-smoke-20260722-v3/smoke-v3-03-w-spike-base",
+      "family": "SPIKE_FADE",
+      "cost_mode": "BASE",
+      "session_contract_file_sha256": "13a23f0c86af824a5fec7845e4b979ec155f62075285782ee357c6aac6d46a19",
+      "ledger_file_sha256": "fc44a7b6cf08e3f7935b1ef87789f94396fed369c58a34d83c7cee3cf133c2f5"
+    },
+    {
+      "room_dir": "/Users/tossaki/App/QuantRabbit-worktrees/episode-s5-outcome/research/data/dojo_paper_rooms_v1/episode-s5-entry-context-smoke-20260722-v3/smoke-v3-04-w-spike-stress",
+      "family": "SPIKE_FADE",
+      "cost_mode": "STRESS",
+      "session_contract_file_sha256": "ce574b861c9a681e409e5e328a1086ee1da772cd12fedc27cb6232f52c4de04d",
+      "ledger_file_sha256": "86e3b9e719f86e019fd1f3e49cfcbc54924a188852e09fe304c4cf23ba459f37"
+    }
+  ],
+  "plan_sha256": "d66473a1871e67dae06970d6aec94b762dd1dc55af0647b67fd5e7da4ad844d6"
+}
