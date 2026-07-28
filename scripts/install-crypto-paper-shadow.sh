@@ -5,7 +5,13 @@ set -euo pipefail
 
 ACTION="${1:-install}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="${QR_CRYPTO_SHADOW_PYTHON:-$(command -v python3)}"
+if [[ -n "${QR_CRYPTO_SHADOW_PYTHON:-}" ]]; then
+  PYTHON="$QR_CRYPTO_SHADOW_PYTHON"
+elif [[ -x /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 ]]; then
+  PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+else
+  PYTHON="$(python3 -c 'import sys; print(sys.executable)')"
+fi
 RUNTIME_ROOT="$ROOT/data/crypto/paper-shadow"
 LOG_ROOT="$ROOT/logs/crypto-paper-shadow"
 DOMAIN="gui/$(id -u)"
@@ -78,6 +84,19 @@ plist_for() {
   echo "$HOME/Library/LaunchAgents/$1.plist"
 }
 
+bootstrap_agent() {
+  local plist="$1"
+  local attempt
+  for attempt in {1..20}; do
+    if launchctl bootstrap "$DOMAIN" "$plist" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "[crypto-paper-shadow] bootstrap failed plist=$plist" >&2
+  return 1
+}
+
 case "$ACTION" in
   --check|check)
     for index in 0 1 2; do
@@ -117,7 +136,7 @@ case "$ACTION" in
       chmod 600 "$temporary"
       mv -f "$temporary" "$plist"
       launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
-      launchctl bootstrap "$DOMAIN" "$plist"
+      bootstrap_agent "$plist"
     done
     echo "[crypto-paper-shadow] started Spot, Margin, reporter"
     ;;
