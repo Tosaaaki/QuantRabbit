@@ -12,6 +12,8 @@ from typing import Any, Iterable
 
 from .ledger import CryptoLedger
 
+EVALUATION_MODEL_VERSION = "rca-v2"
+
 
 def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
@@ -331,7 +333,9 @@ class CryptoImprovementEvaluator:
                 start.isoformat(),
                 end.isoformat(),
                 "baseline",
+                EVALUATION_MODEL_VERSION,
             ),
+            "evaluation_model_version": EVALUATION_MODEL_VERSION,
             "mode": mode.upper(),
             "window_kind": window_kind,
             "window_start_utc": start.isoformat(),
@@ -711,6 +715,7 @@ class CryptoImprovementEvaluator:
             evaluation["window_start_utc"],
             cause["code"],
             selected,
+            evaluation["operation_id"],
         )
         return {
             "schema": "QR_CRYPTO_SHADOW_EXPERIMENT_V1",
@@ -756,9 +761,17 @@ def improvements_for_period(
     runtime_root: Path, period_start: datetime, period_end: datetime
 ) -> list[dict[str, Any]]:
     path = runtime_root / "improvement" / "evaluations.jsonl"
-    return [
-        row
-        for row in _load_jsonl(path)
-        if _utc(str(row["window_start_utc"])) >= period_start
-        and _utc(str(row["window_end_utc"])) <= period_end
-    ]
+    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in _load_jsonl(path):
+        if (
+            _utc(str(row["window_start_utc"])) < period_start
+            or _utc(str(row["window_end_utc"])) > period_end
+        ):
+            continue
+        key = (
+            str(row["mode"]),
+            str(row["window_start_utc"]),
+            str(row["window_end_utc"]),
+        )
+        latest[key] = row
+    return list(latest.values())

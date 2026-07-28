@@ -98,6 +98,7 @@ def test_improvement_loop_ranks_zero_fill_causes_and_is_idempotent(
             row["code"] for row in evaluation["root_causes_top3"]
         } >= {"NO_ACTIONABLE_PREDICTION_CANDIDATES"}
         assert evaluation["causality"]["future_data_used"] is False
+        assert evaluation["evaluation_model_version"] == "rca-v2"
         assert evaluation["adoption_gate"]["eligible_now"] is False
     for experiment in first["experiments"]:
         assert experiment["baseline"]["preserved"] is True
