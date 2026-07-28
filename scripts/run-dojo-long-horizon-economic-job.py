@@ -17,6 +17,8 @@ from quant_rabbit.dojo_builtin_strategy_runtime import (
 )
 from quant_rabbit.dojo_long_horizon_economic_runner import (
     BUILTIN_NO_INTENT_RUNTIME_BINDING_SHA256,
+    ECONOMIC_TRANSCRIPT_V1_JSONL,
+    ECONOMIC_TRANSCRIPT_V3_COMPACT,
     DojoLongHorizonEconomicRunnerError,
     build_sparse_month_source_slice_receipt,
     build_month_source_slice_receipt,
@@ -138,6 +140,16 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--economic-evidence-root", type=Path, required=True)
     run.add_argument("--worker-catalog", type=Path, required=True)
     run.add_argument("--coordinate-runtimes", type=Path, required=True)
+    run.add_argument(
+        "--economic-transcript-format",
+        choices=[ECONOMIC_TRANSCRIPT_V1_JSONL, ECONOMIC_TRANSCRIPT_V3_COMPACT],
+        default=ECONOMIC_TRANSCRIPT_V1_JSONL,
+        help=(
+            "V1_JSONL is the official full evidence path; "
+            "V3_COMPACT_SEGMENTS is the bounded replay-research path used for "
+            "time-boxed diagnostics and remains ineligible for live promotion."
+        ),
+    )
     mode = run.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--builtin-no-intent-only",
@@ -260,6 +272,7 @@ def main() -> int:
                 worker_runtime_seal=runtime_seal,
                 worker_runtime_repo_root=runtime_repo_root,
                 carry_states_by_slot=carry,
+                economic_transcript_format=args.economic_transcript_format,
             )
         _write_exclusive(args.output, result)
         print(
@@ -276,7 +289,7 @@ def main() -> int:
             )
         )
         return 0
-    except (DojoLongHorizonEconomicRunnerError, OSError) as exc:
+    except (DojoLongHorizonEconomicRunnerError, OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

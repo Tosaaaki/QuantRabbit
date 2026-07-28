@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "contract": "QR_DOJO_V2_FAST_PREFLIGHT_RESULT_V1",
+  "generated_at_utc": "2026-07-28T13:01:40Z",
+  "authority": {
+    "live_permission": false,
+    "broker_mutation_allowed": false,
+    "order_authority": "NONE",
+    "automation_mutation_allowed": false,
+    "new_model_decision_allowed": false
+  },
+  "legacy_month_measurement": {
+    "generation": "g2-parallel-rooms-20260726-r13",
+    "job_sha256": "81cec5d3b8f5fa371058aa2e42d213e239a163892295cfc234b85ef4c7e9be68",
+    "month": "2025-01",
+    "granularity": "M5",
+    "intrabar_path": "OHLC",
+    "coordinate_count": 12,
+    "source_row_count": 6336,
+    "quote_batch_count": 25344,
+    "runtime_seconds_approx": 27971,
+    "runtime_hours_approx": 7.7697,
+    "economic_transcript_payload_bytes": 3556930982,
+    "job_status": "COMPLETE"
+  },
+  "preflight": {
+    "requested_transcript_format": "V3_COMPACT_SEGMENTS",
+    "exit_code": 2,
+    "result_artifact_written": false,
+    "economic_evidence_written": false,
+    "model_call_count": 0,
+    "ai_packet_count": 0,
+    "error": "tuned runtime seal differs from its generation/config/source denominator",
+    "sparse_compact_contract_supported": false
+  },
+  "decision": {
+    "status": "NO_GO_CURRENT_GENERATION_REQUIRES_NEW_SPARSE_SAFE_SHARED_TRANSCRIPT",
+    "four_hour_budget_met_by_current_generation": false,
+    "yearly_replay_started": false,
+    "reason": [
+      "One old-format M5 month already exceeded the full four-hour pilot budget.",
+      "The current r13 source is sparse and the compact transcript contract cannot preserve sparse availability.",
+      "The immutable r13 runtime seal does not match current code/config/source bytes and therefore cannot be reused."
+    ],
+    "resume_old_paired_automation": false,
+    "decide_cell_9": false
+  },
+  "next_generation_requirements": {
+    "source_quote_storage": "ONE_SHARED_SPARSE_SOURCE_CHAIN",
+    "account_evidence": "PER_ACCOUNT_DECISION_AND_ECONOMIC_DELTA_ONLY",
+    "future_data_allowed": false,
+    "month_benchmark_required": true,
+    "full_year_projected_runtime_limit_seconds": 14400,
+    "model_review_budget_max_packets": 160,
+    "holdout_required": true
+  }
+}

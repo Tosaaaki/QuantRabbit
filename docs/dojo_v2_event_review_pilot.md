@@ -162,3 +162,35 @@ the original evidence and idempotency chain.
 Paper champion/challenger is a separate operational research loop. It neither
 waits for nor consumes a DOJO v2 result, and no DOJO result grants it live
 authority.
+
+## 2026-07-28 execution preflight decision
+
+The one-time pilot did not start a new yearly replay. Its mandatory preflight
+returned **NO-GO before model calls or economic output**:
+
+- the existing 2025-01 M5 Bot-only job took approximately 7h46m for 12
+  coordinates and wrote 3,556,930,982 transcript bytes; one old-format month
+  already exceeds the entire four-hour v2 budget;
+- the existing r13 source is an availability-preserving sparse source slice.
+  The current compact transcript contract cannot represent that sparse
+  availability and therefore rejects it instead of silently carrying quotes
+  forward;
+- the r13 tuned runtime seal no longer matches the current
+  generation/config/source denominator. Reusing it with current code fails
+  closed before opening the source or writing a result.
+
+The long-horizon job CLI now exposes the already implemented
+`V3_COMPACT_SEGMENTS` research format explicitly. `V1_JSONL` remains the
+default and official evidence path. The compact option remains diagnostic,
+grants no live permission, and cannot be used with the current sparse r13
+source. Runtime/config/source signature mismatch is returned as a bounded
+exit-code-2 error instead of an uncaught traceback.
+
+Consequently the current pilot decision is
+`NO_GO_CURRENT_GENERATION_REQUIRES_NEW_SPARSE_SAFE_SHARED_TRANSCRIPT`.
+No AI packet was generated, model-call count is zero, cell 9 remains
+undecided, and neither DOJO Automation was resumed or modified. A future
+attempt requires a new sealed generation whose compact transcript stores the
+sparse source once and binds per-account decisions/economics without
+duplicating quote bytes. That work must be benchmarked on one month and project
+under four hours for the full year before a yearly replay is authorized.
