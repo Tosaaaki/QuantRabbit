@@ -594,6 +594,26 @@ class CryptoImprovementEvaluator:
                     ],
                 },
             )
+        if (
+            trades == 0
+            and events > 0
+            and int(prediction["candidate_count"]) == 0
+        ):
+            add(
+                "NO_ACTIONABLE_PREDICTION_CANDIDATES",
+                "prediction_quality",
+                100.0,
+                0.55,
+                {
+                    "events": events,
+                    "prediction_candidate_count": 0,
+                    "resolution_rate": None,
+                    "distinction": (
+                        "No entry prediction existed; this is not an "
+                        "unresolved or duplicated prediction."
+                    ),
+                },
+            )
         pf = performance["profit_factor_after_cost"]
         if trades and (pf is None or Decimal(pf) <= 1):
             add(
