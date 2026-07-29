@@ -175,15 +175,16 @@ class PaperEngine:
                 peak_equity_jpy=initial_cash_jpy,
             )
         )
-        self.state.turnover_jpy = sum(
-            (
-                _d(row["payload"].get("filled_amount", "0"))
-                * _d(row["payload"].get("average_price", "0"))
-                for row in ledger.events("PAPER_FILL")
-                if row["payload"].get("status") != "UNFILLED"
-            ),
-            Decimal("0"),
-        )
+        if not restored or "turnover_jpy" not in restored:
+            self.state.turnover_jpy = sum(
+                (
+                    _d(row["payload"].get("filled_amount", "0"))
+                    * _d(row["payload"].get("average_price", "0"))
+                    for row in ledger.events("PAPER_FILL")
+                    if row["payload"].get("status") != "UNFILLED"
+                ),
+                Decimal("0"),
+            )
         self.maker_fill_fraction = maker_fill_fraction
         self.allow_short = allow_short
         self.max_leverage = max_leverage

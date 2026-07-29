@@ -120,7 +120,11 @@ def test_paper_partial_fill_restart_and_duplicate_are_deterministic(
     )
     assert first["status"] == "PARTIALLY_FILLED"
     assert first["filled_amount"] == "0.25"
-    restarted = PaperEngine(CryptoLedger(tmp_path / "paper.db"))
+    reopened = CryptoLedger(tmp_path / "paper.db")
+    reopened.events = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("persisted turnover must not rescan the ledger")
+    )
+    restarted = PaperEngine(reopened)
     before = restarted.state.as_dict()
     duplicate = restarted.process_intent(
         intent,
