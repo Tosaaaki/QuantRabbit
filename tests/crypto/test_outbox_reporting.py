@@ -367,3 +367,25 @@ def test_shadow_service_rejects_duplicate_mode_process(
         service.run()
     fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     lock.close()
+
+
+def test_shadow_restart_verifies_only_suffix_from_last_epoch(
+    tmp_path: Path,
+) -> None:
+    ledger = CryptoLedger(tmp_path / "ledger.db")
+    ledger.append("TEST", "one", {"n": 1}, dedupe_key="one")
+    checkpoint = ledger.verify()
+    latest_epoch = tmp_path / "latest_epoch.json"
+    latest_epoch.write_text(
+        json.dumps({"ledger_integrity": checkpoint}),
+        encoding="utf-8",
+    )
+    ledger.append("TEST", "two", {"n": 2}, dedupe_key="two")
+    reopened = CryptoLedger(tmp_path / "ledger.db", verify_on_open=False)
+    result = PaperShadowService._verify_ledger_for_restart(
+        reopened,
+        latest_epoch,
+    )
+    assert result["valid"] is True
+    assert result["event_count"] == 2
+    assert result["head_hash"] == ledger.verify()["head_hash"]

@@ -91,7 +91,11 @@ class PaperShadowService:
             except (OSError, ValueError, TypeError):
                 service_events_before_start = 0
         completed_epoch_events = 0
-        ledger = CryptoLedger(runtime / "ledger.db")
+        ledger = CryptoLedger(runtime / "ledger.db", verify_on_open=False)
+        ledger_integrity_checkpoint = self._verify_ledger_for_restart(
+            ledger,
+            runtime / "latest_epoch.json",
+        )
         outbox = AsyncTradeOutbox(runtime / "trade_outbox.jsonl", ledger)
         paper = PaperEngine(
             ledger,
@@ -173,6 +177,9 @@ class PaperShadowService:
                     config=fast_config,
                     router=router,
                     strategy_name=self.config.strategy,
+                    ledger_integrity_checkpoint=(
+                        ledger_integrity_checkpoint
+                    ),
                 )
                 try:
                     result = asyncio.run(
@@ -196,6 +203,9 @@ class PaperShadowService:
                         result["runtime"]["events_processed"]
                     )
                     atomic_write_json(runtime / "latest_epoch.json", result)
+                    ledger_integrity_checkpoint = result[
+                        "ledger_integrity"
+                    ]
                     atomic_write_text(
                         runtime / "latest_report.md",
                         fast_report_markdown(result),
@@ -239,6 +249,35 @@ class PaperShadowService:
         deadline = time.monotonic() + self.config.retry_delay_sec
         while not self._stop_requested and time.monotonic() < deadline:
             time.sleep(0.1)
+
+    @staticmethod
+    def _verify_ledger_for_restart(
+        ledger: CryptoLedger,
+        latest_epoch_path: Path,
+    ) -> dict[str, Any]:
+        try:
+            latest_epoch = json.loads(
+                latest_epoch_path.read_text(encoding="utf-8")
+            )
+            checkpoint = latest_epoch["ledger_integrity"]
+            if (
+                checkpoint.get("valid") is not True
+                or int(checkpoint["event_count"]) < 0
+                or not str(checkpoint["head_hash"])
+            ):
+                raise ValueError("invalid ledger checkpoint")
+            return ledger.verify_incremental(
+                event_count=int(checkpoint["event_count"]),
+                head_hash=str(checkpoint["head_hash"]),
+            )
+        except (
+            OSError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            return ledger.verify()
 
     def _install_signal_handlers(self) -> dict[int, Any]:
         previous: dict[int, Any] = {}

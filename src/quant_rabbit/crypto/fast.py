@@ -534,6 +534,7 @@ class FastPaperRunner:
         config: FastPaperConfig | None = None,
         router: Any | None = None,
         strategy_name: str = "FAST_MICROSTRUCTURE",
+        ledger_integrity_checkpoint: dict[str, Any] | None = None,
     ) -> None:
         self.safety = CryptoSafetyContract.from_env()
         self.safety.assert_safe()
@@ -543,6 +544,7 @@ class FastPaperRunner:
         self.config = config or FastPaperConfig.from_env()
         self.router = router or FastMicrostructureRouter(self.config)
         self.strategy_name = strategy_name
+        self.ledger_integrity_checkpoint = ledger_integrity_checkpoint
 
     async def run(
         self,
@@ -974,7 +976,17 @@ class FastPaperRunner:
             dedupe_key=f"fast-epoch-summary:{run_id}",
         )
         result["completed_at_utc"] = completed_at_utc
-        result["ledger_integrity"] = self.ledger.verify()
+        if self.ledger_integrity_checkpoint is None:
+            result["ledger_integrity"] = self.ledger.verify()
+        else:
+            result["ledger_integrity"] = self.ledger.verify_incremental(
+                event_count=int(
+                    self.ledger_integrity_checkpoint["event_count"]
+                ),
+                head_hash=str(
+                    self.ledger_integrity_checkpoint["head_hash"]
+                ),
+            )
         _emit_progress("EPOCH_COMPLETE")
         return result
 
