@@ -1,0 +1,65 @@
+{
+  "summary": {
+    "trades": 5,
+    "total_pnl_pips": -7.2,
+    "total_pnl_jpy": -720.0,
+    "win_rate": 0.2
+  },
+  "trades": [
+    {
+      "direction": "short",
+      "entry_time": "2026-01-27T12:48:53.757536+00:00",
+      "exit_time": "2026-01-27T12:49:04.926321+00:00",
+      "entry_price": 153.316,
+      "exit_price": 153.367,
+      "tp_price": 153.2611,
+      "sl_price": 153.33676,
+      "pnl_pips": -5.1,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-27T13:00:19.716194+00:00",
+      "exit_time": "2026-01-27T13:01:04.930251+00:00",
+      "entry_price": 153.308,
+      "exit_price": 153.248,
+      "tp_price": 153.2558,
+      "sl_price": 153.33028,
+      "pnl_pips": 6.0,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-27T13:06:39.723737+00:00",
+      "exit_time": "2026-01-27T13:06:44.490487+00:00",
+      "entry_price": 153.266,
+      "exit_price": 153.246,
+      "tp_price": 153.32135,
+      "sl_price": 153.24266,
+      "pnl_pips": -2.0,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-27T15:45:09.603355+00:00",
+      "exit_time": "2026-01-27T15:45:24.611055+00:00",
+      "entry_price": 153.276,
+      "exit_price": 153.29,
+      "tp_price": 153.24045,
+      "sl_price": 153.29182,
+      "pnl_pips": -1.4,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-27T22:48:13.401748+00:00",
+      "exit_time": "2026-01-27T22:48:19.181279+00:00",
+      "entry_price": 152.394,
+      "exit_price": 152.347,
+      "tp_price": 152.4435,
+      "sl_price": 152.3462,
+      "pnl_pips": -4.7,
+      "reason": "sl"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "strategy_id": "M1Scalper",
+  "fit_rule": {
+    "method": "hour_direction_positive_in_every_train_window",
+    "selected_utc_hour_direction": [
+      {
+        "hour_utc": 23,
+        "direction": "long"
+      }
+    ],
+    "min_trades_per_train_window": 10,
+    "round_trip_cost_pips": 1.1,
+    "holdout_used_for_fit": false,
+    "inventory_rule": {
+      "max_concurrent": null,
+      "cooldown_minutes": null
+    },
+    "inventory_objective": null
+  },
+  "train": {
+    "system/20260125": {
+      "trades": 51,
+      "net_pnl_jpy": 235.8,
+      "profit_factor": 1.0714,
+      "expectancy_jpy": 4.62,
+      "max_drawdown_jpy": 1558.8,
+      "profit_giveback_rate": 0.7932
+    },
+    "system/20260126": {
+      "trades": 24,
+      "net_pnl_jpy": 30.0,
+      "profit_factor": 1.0781,
+      "expectancy_jpy": 1.25,
+      "max_drawdown_jpy": 230.0,
+      "profit_giveback_rate": 0.8846
+    }
+  },
+  "evaluation": {
+    "system/20260127": {
+      "trades": 41,
+      "net_pnl_jpy": 160.5,
+      "profit_factor": 1.1061,
+      "expectancy_jpy": 3.91,
+      "max_drawdown_jpy": 1491.0,
+      "profit_giveback_rate": 0.8997
+    },
+    "system/20260123_dedup": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    }
+  }
+}

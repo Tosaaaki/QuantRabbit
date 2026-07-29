@@ -1,0 +1,22 @@
+{
+  "vwap_magnet_s5": {
+    "base": {
+      "trades": 1,
+      "total_pnl_pips": -8.159,
+      "total_pnl_jpy": -407.97,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "profit_factor_jpy": 0.0
+    }
+  },
+  "stop_run_reversal": {
+    "base": {
+      "trades": 0,
+      "total_pnl_pips": 0,
+      "total_pnl_jpy": 0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "profit_factor_jpy": Infinity
+    }
+  }
+}

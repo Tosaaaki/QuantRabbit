@@ -1,0 +1,123 @@
+{
+  "generated_at": "2026-07-29T13:25:00+09:00",
+  "authority": {
+    "live_permission": false,
+    "external_broker_mutation_allowed": false,
+    "order_authority": "NONE"
+  },
+  "conditions": {
+    "pair": "USD_JPY",
+    "round_trip_cost_pips": 1.1,
+    "train_windows": [
+      "2026-01-23",
+      "2026-01-26"
+    ],
+    "holdout_window": "2026-01-27",
+    "short_stress_capture": "2026-01-25",
+    "holdout_used_for_fit": false
+  },
+  "strategies": [
+    {
+      "strategy_id": "M1Scalper",
+      "bot_holdout": {
+        "net_pnl_jpy": -14205.5,
+        "profit_factor": 0.632,
+        "expectancy_jpy": -16.95,
+        "max_drawdown_jpy": 16091.5,
+        "trades": 838
+      },
+      "ai_inventory_holdout": {
+        "net_pnl_jpy": 51.0,
+        "profit_factor": 1.2589,
+        "expectancy_jpy": 8.5,
+        "max_drawdown_jpy": 197.0,
+        "profit_giveback_rate": 0.7944,
+        "trades": 6
+      },
+      "ai_management_delta_jpy": 14256.5,
+      "ai_policy": {
+        "entry_direction": "long",
+        "entry_hour_utc": 23,
+        "max_concurrent": 1,
+        "cooldown_minutes": 3,
+        "lot_increase_allowed": false
+      },
+      "ai_cost_jpy": 0.0,
+      "ai_cost_status": "deterministic local policy; no external AI API calls",
+      "decision": "positive_provisional_paper_only"
+    },
+    {
+      "strategy_id": "impulse_break_s5",
+      "train_net_pnl_jpy": -6090.0,
+      "train_profit_factor": 0.5499,
+      "train_trades": 74,
+      "holdout_net_pnl_jpy": -7460.0,
+      "holdout_profit_factor": 0.3025,
+      "holdout_expectancy_jpy": -177.62,
+      "holdout_max_drawdown_jpy": 8490.0,
+      "holdout_trades": 42,
+      "decision": "reject"
+    },
+    {
+      "strategy_id": "impulse_retest_s5",
+      "train_net_pnl_jpy": -2045.0,
+      "train_profit_factor": 0.1771,
+      "train_trades": 6,
+      "holdout_net_pnl_jpy": -1270.0,
+      "holdout_profit_factor": 0.2784,
+      "holdout_expectancy_jpy": -254.0,
+      "holdout_max_drawdown_jpy": 1270.0,
+      "holdout_trades": 5,
+      "decision": "reject"
+    },
+    {
+      "strategy_id": "impulse_momentum_s5",
+      "train_net_pnl_jpy": -41810.0,
+      "train_profit_factor": 0.237,
+      "train_trades": 236,
+      "holdout_net_pnl_jpy": -27260.0,
+      "holdout_profit_factor": 0.1757,
+      "holdout_expectancy_jpy": -216.35,
+      "holdout_max_drawdown_jpy": 27360.0,
+      "holdout_trades": 126,
+      "decision": "reject"
+    },
+    {
+      "strategy_id": "pullback_s5",
+      "train_net_pnl_jpy": -1243.2,
+      "train_profit_factor": 0.6011,
+      "train_trades": 34,
+      "holdout_net_pnl_jpy": -1054.2,
+      "holdout_profit_factor": 0.5173,
+      "holdout_expectancy_jpy": -55.48,
+      "holdout_max_drawdown_jpy": 1054.2,
+      "holdout_trades": 19,
+      "decision": "reject"
+    },
+    {
+      "strategy_id": "vwap_magnet_s5",
+      "train_net_pnl_jpy": 217.5,
+      "train_profit_factor": 1.2644,
+      "train_trades": 8,
+      "holdout_net_pnl_jpy": -95.0,
+      "holdout_profit_factor": 0.8288,
+      "holdout_expectancy_jpy": -13.57,
+      "holdout_max_drawdown_jpy": 475.0,
+      "holdout_trades": 7,
+      "decision": "reject_insufficient_and_cost_sensitive"
+    },
+    {
+      "strategy_id": "stop_run_reversal",
+      "train_trades": 0,
+      "holdout_trades": 0,
+      "decision": "insufficient_no_trades"
+    }
+  ],
+  "fresh_ai": {
+    "judgment_count": 2,
+    "external_ai_api_calls": 0,
+    "ai_cost_jpy": 0.0,
+    "estimated_shadow_delta_jpy": 33.0,
+    "included_in_holdout_economics": false
+  }
+}

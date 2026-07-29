@@ -1,0 +1,7 @@
+2026-07-29 12:38:03,006 - WARNING - [RR_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,010 - WARNING - [EXIT_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,010 - WARNING - [STRAT_CONF] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,010 - WARNING - [FOCUS_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,011 - WARNING - [VOL_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,012 - WARNING - [STAGE_PLAN_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'
+2026-07-29 12:38:03,012 - WARNING - [PARTIAL_ADVISOR] init failed: AsyncClient.__init__() got an unexpected keyword argument 'proxies'

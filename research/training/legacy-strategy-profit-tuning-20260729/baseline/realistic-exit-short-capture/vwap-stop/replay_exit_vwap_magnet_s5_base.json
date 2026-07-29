@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "trades": 1,
+    "total_pnl_pips": -8.159,
+    "total_pnl_jpy": -407.97,
+    "win_rate": 0.0,
+    "profit_factor": 0.0,
+    "profit_factor_jpy": 0.0
+  },
+  "trades": [
+    {
+      "trade_id": "sim-1",
+      "pocket": "scalp",
+      "strategy_tag": "vwap_magnet_s5",
+      "entry_time": "2026-01-25T22:57:04.978681+00:00",
+      "exit_time": "2026-01-25T22:57:08.640052+00:00",
+      "entry_price": 154.49261528824132,
+      "exit_price": 154.57420937520445,
+      "pnl_pips": -8.159,
+      "pnl_jpy": -407.97,
+      "reason": "hard_stop",
+      "source": "vwap_magnet_s5",
+      "units": -5000,
+      "exit_slip_pips": 1.1209375204472338,
+      "exit_latency_ms": 180.0
+    }
+  ]
+}

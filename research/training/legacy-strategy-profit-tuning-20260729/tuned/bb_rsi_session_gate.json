@@ -1,0 +1,51 @@
+{
+  "strategy_id": "BB_RSI",
+  "fit_rule": {
+    "method": "hour_direction_positive_in_every_train_window",
+    "selected_utc_hour_direction": [],
+    "min_trades_per_train_window": 10,
+    "round_trip_cost_pips": 1.1,
+    "holdout_used_for_fit": false,
+    "inventory_rule": {
+      "max_concurrent": null,
+      "cooldown_minutes": null
+    },
+    "inventory_objective": null
+  },
+  "train": {
+    "system/20260125": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    },
+    "system/20260126": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    }
+  },
+  "evaluation": {
+    "system/20260127": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    },
+    "system/20260123_dedup": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    }
+  }
+}

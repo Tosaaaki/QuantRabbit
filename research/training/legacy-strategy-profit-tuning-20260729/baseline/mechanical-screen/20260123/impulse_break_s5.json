@@ -1,0 +1,373 @@
+{
+  "summary": {
+    "trades": 33,
+    "total_pnl_pips": 16.3,
+    "total_pnl_jpy": 1630.0,
+    "win_rate": 0.5152
+  },
+  "trades": [
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T03:08:19.690843+00:00",
+      "exit_time": "2026-01-23T03:08:24.608991+00:00",
+      "entry_price": 158.713,
+      "exit_price": 158.74,
+      "tp_price": 158.72813,
+      "sl_price": 158.734,
+      "pnl_pips": 2.7,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T06:39:44.995967+00:00",
+      "exit_time": "2026-01-23T06:39:49.992150+00:00",
+      "entry_price": 158.674,
+      "exit_price": 158.698,
+      "tp_price": 158.69067,
+      "sl_price": 158.692,
+      "pnl_pips": 2.4,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T07:44:19.898384+00:00",
+      "exit_time": "2026-01-23T07:44:24.927268+00:00",
+      "entry_price": 157.514,
+      "exit_price": 157.4705,
+      "tp_price": 157.484,
+      "sl_price": 157.4765,
+      "pnl_pips": 4.35,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T07:51:39.406734+00:00",
+      "exit_time": "2026-01-23T07:52:49.840758+00:00",
+      "entry_price": 158.208,
+      "exit_price": 158.169,
+      "tp_price": 158.238,
+      "sl_price": 158.209,
+      "pnl_pips": -3.9,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T07:56:39.864239+00:00",
+      "exit_time": "2026-01-23T07:56:54.277535+00:00",
+      "entry_price": 158.338,
+      "exit_price": 158.358,
+      "tp_price": 158.368,
+      "sl_price": 158.352,
+      "pnl_pips": 2.0,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T08:21:29.988597+00:00",
+      "exit_time": "2026-01-23T08:21:44.799902+00:00",
+      "entry_price": 158.321,
+      "exit_price": 158.26,
+      "tp_price": 158.30587,
+      "sl_price": 158.266,
+      "pnl_pips": 6.1,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T08:32:29.667434+00:00",
+      "exit_time": "2026-01-23T08:33:14.896697+00:00",
+      "entry_price": 158.425,
+      "exit_price": 158.446,
+      "tp_price": 158.44193,
+      "sl_price": 158.438,
+      "pnl_pips": 2.1,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T08:49:34.834395+00:00",
+      "exit_time": "2026-01-23T08:50:04.637909+00:00",
+      "entry_price": 158.174,
+      "exit_price": 158.208,
+      "tp_price": 158.1586,
+      "sl_price": 158.192,
+      "pnl_pips": -3.4,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T09:06:24.510441+00:00",
+      "exit_time": "2026-01-23T09:06:34.632841+00:00",
+      "entry_price": 157.962,
+      "exit_price": 157.882,
+      "tp_price": 157.94653,
+      "sl_price": 157.888,
+      "pnl_pips": 8.0,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T09:12:59.904834+00:00",
+      "exit_time": "2026-01-23T09:13:03.876182+00:00",
+      "entry_price": 158.042,
+      "exit_price": 158.0,
+      "tp_price": 158.05947,
+      "sl_price": 158.024,
+      "pnl_pips": -4.2,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T16:20:44.554880+00:00",
+      "exit_time": "2026-01-23T16:20:49.868835+00:00",
+      "entry_price": 158.002,
+      "exit_price": 158.03,
+      "tp_price": 157.9772,
+      "sl_price": 158.02,
+      "pnl_pips": -2.8,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T16:28:39.755564+00:00",
+      "exit_time": "2026-01-23T16:28:44.804312+00:00",
+      "entry_price": 157.838,
+      "exit_price": 157.859,
+      "tp_price": 157.81087,
+      "sl_price": 157.856,
+      "pnl_pips": -2.1,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T16:35:09.976696+00:00",
+      "exit_time": "2026-01-23T16:35:19.971398+00:00",
+      "entry_price": 157.59,
+      "exit_price": 157.598,
+      "tp_price": 157.57113,
+      "sl_price": 157.576,
+      "pnl_pips": -0.8,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T16:41:09.841801+00:00",
+      "exit_time": "2026-01-23T16:41:19.869260+00:00",
+      "entry_price": 157.635,
+      "exit_price": 157.62,
+      "tp_price": 157.65127,
+      "sl_price": 157.617,
+      "pnl_pips": -1.5,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:12:34.877976+00:00",
+      "exit_time": "2026-01-23T17:12:39.795358+00:00",
+      "entry_price": 157.215,
+      "exit_price": 157.158,
+      "tp_price": 157.1896,
+      "sl_price": 157.164,
+      "pnl_pips": 5.7,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:18:24.782235+00:00",
+      "exit_time": "2026-01-23T17:18:39.819698+00:00",
+      "entry_price": 156.9,
+      "exit_price": 156.853,
+      "tp_price": 156.87223,
+      "sl_price": 156.859,
+      "pnl_pips": 4.7,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:25:44.692140+00:00",
+      "exit_time": "2026-01-23T17:26:09.607130+00:00",
+      "entry_price": 156.698,
+      "exit_price": 156.66,
+      "tp_price": 156.67,
+      "sl_price": 156.666,
+      "pnl_pips": 3.8,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:30:28.897090+00:00",
+      "exit_time": "2026-01-23T17:30:34.956538+00:00",
+      "entry_price": 156.513,
+      "exit_price": 156.465,
+      "tp_price": 156.49387,
+      "sl_price": 156.471,
+      "pnl_pips": 4.8,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:40:19.836468+00:00",
+      "exit_time": "2026-01-23T17:40:39.996031+00:00",
+      "entry_price": 156.564,
+      "exit_price": 156.5075,
+      "tp_price": 156.53747,
+      "sl_price": 156.5135,
+      "pnl_pips": 5.65,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T17:47:19.489336+00:00",
+      "exit_time": "2026-01-23T17:47:24.934362+00:00",
+      "entry_price": 156.674,
+      "exit_price": 156.59,
+      "tp_price": 156.69683,
+      "sl_price": 156.656,
+      "pnl_pips": -8.4,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T17:54:22.733188+00:00",
+      "exit_time": "2026-01-23T17:54:34.646101+00:00",
+      "entry_price": 156.412,
+      "exit_price": 156.376,
+      "tp_price": 156.39693,
+      "sl_price": 156.382,
+      "pnl_pips": 3.6,
+      "reason": "tp"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T18:00:39.877339+00:00",
+      "exit_time": "2026-01-23T18:00:44.862993+00:00",
+      "entry_price": 156.519,
+      "exit_price": 156.486,
+      "tp_price": 156.549,
+      "sl_price": 156.49841,
+      "pnl_pips": -3.3,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T18:10:14.821271+00:00",
+      "exit_time": "2026-01-23T18:10:24.942926+00:00",
+      "entry_price": 156.506,
+      "exit_price": 156.48,
+      "tp_price": 156.5242,
+      "sl_price": 156.488,
+      "pnl_pips": -2.6,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T18:15:22.014481+00:00",
+      "exit_time": "2026-01-23T18:15:29.522285+00:00",
+      "entry_price": 156.637,
+      "exit_price": 156.608,
+      "tp_price": 156.65207,
+      "sl_price": 156.619,
+      "pnl_pips": -2.9,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T18:21:59.530369+00:00",
+      "exit_time": "2026-01-23T18:22:04.972361+00:00",
+      "entry_price": 156.312,
+      "exit_price": 156.342,
+      "tp_price": 156.29323,
+      "sl_price": 156.33,
+      "pnl_pips": -3.0,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T18:27:44.859525+00:00",
+      "exit_time": "2026-01-23T18:28:04.750559+00:00",
+      "entry_price": 156.096,
+      "exit_price": 156.094,
+      "tp_price": 156.07703,
+      "sl_price": 156.095,
+      "pnl_pips": 0.2,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T18:32:29.947950+00:00",
+      "exit_time": "2026-01-23T18:32:39.423783+00:00",
+      "entry_price": 156.175,
+      "exit_price": 156.212,
+      "tp_price": 156.19373,
+      "sl_price": 156.206,
+      "pnl_pips": 3.7,
+      "reason": "tp"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T18:38:09.881027+00:00",
+      "exit_time": "2026-01-23T18:38:34.957312+00:00",
+      "entry_price": 156.122,
+      "exit_price": 156.148,
+      "tp_price": 156.1051,
+      "sl_price": 156.14,
+      "pnl_pips": -2.6,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T19:01:54.458258+00:00",
+      "exit_time": "2026-01-23T19:02:09.868108+00:00",
+      "entry_price": 156.074,
+      "exit_price": 156.07,
+      "tp_price": 156.055,
+      "sl_price": 156.058,
+      "pnl_pips": 0.4,
+      "reason": "sl"
+    },
+    {
+      "direction": "short",
+      "entry_time": "2026-01-23T19:14:49.694978+00:00",
+      "exit_time": "2026-01-23T19:14:54.981734+00:00",
+      "entry_price": 155.906,
+      "exit_price": 155.925,
+      "tp_price": 155.89133,
+      "sl_price": 155.924,
+      "pnl_pips": -1.9,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T19:22:59.745109+00:00",
+      "exit_time": "2026-01-23T19:23:14.041158+00:00",
+      "entry_price": 156.123,
+      "exit_price": 156.107,
+      "tp_price": 156.1416,
+      "sl_price": 156.105,
+      "pnl_pips": -1.6,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T19:59:04.885991+00:00",
+      "exit_time": "2026-01-23T19:59:14.885691+00:00",
+      "entry_price": 155.894,
+      "exit_price": 155.876,
+      "tp_price": 155.9114,
+      "sl_price": 155.876,
+      "pnl_pips": -1.8,
+      "reason": "sl"
+    },
+    {
+      "direction": "long",
+      "entry_time": "2026-01-23T20:03:54.221380+00:00",
+      "exit_time": "2026-01-23T20:04:24.864824+00:00",
+      "entry_price": 155.923,
+      "exit_price": 155.952,
+      "tp_price": 155.93793,
+      "sl_price": 155.946,
+      "pnl_pips": 2.9,
+      "reason": "tp"
+    }
+  ]
+}

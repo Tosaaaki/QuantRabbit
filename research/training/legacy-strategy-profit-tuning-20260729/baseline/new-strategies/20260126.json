@@ -1,0 +1,26 @@
+{
+  "ticks": 150727,
+  "candles": 1432,
+  "signals": 19,
+  "max_hold": 30,
+  "summary": {
+    "LiquiditySweep": {
+      "n": 10,
+      "win_rate": 0.4,
+      "avg_pips": -0.12,
+      "pf": 0.857
+    },
+    "MicroTrendRetest": {
+      "n": 1,
+      "win_rate": 0.0,
+      "avg_pips": -2.5,
+      "pf": 0.0
+    },
+    "MicroCompressionRevert": {
+      "n": 8,
+      "win_rate": 0.375,
+      "avg_pips": -0.187,
+      "pf": 0.833
+    }
+  }
+}

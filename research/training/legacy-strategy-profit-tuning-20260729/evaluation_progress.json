@@ -1,0 +1,55 @@
+{
+  "normalized_inventory_families": 82,
+  "inventory_families_mechanically_evaluated_or_attempted": 27,
+  "inventory_families_not_yet_evaluated": 55,
+  "additional_runner_family_not_in_original_inventory": [
+    "liquidity_sweep"
+  ],
+  "evaluated_or_attempted": [
+    "trend_ma",
+    "pulse_break",
+    "m1_scalper",
+    "range_fader",
+    "trend_breakout",
+    "session_open",
+    "pullback_continuation",
+    "failed_break_reverse",
+    "donchian55",
+    "bb_rsi",
+    "momentum_pulse",
+    "vol_compression_break",
+    "bb_rsi_fast",
+    "micro_vwap_revert",
+    "range_break",
+    "pullback_ema",
+    "level_reactor",
+    "vwap_bound_revert",
+    "trend_momentum",
+    "compression_revert",
+    "trend_retest",
+    "impulse_break_s5",
+    "impulse_retest_s5",
+    "impulse_momentum_s5",
+    "pullback_s5",
+    "vwap_magnet_s5",
+    "stop_run_reversal"
+  ],
+  "provisional_positive": [
+    {
+      "strategy_id": "m1_scalper",
+      "variant": "utc23_long_max1_cooldown3m",
+      "holdout_net_pnl_jpy": 51.0,
+      "holdout_profit_factor": 1.2589,
+      "holdout_trades": 6,
+      "status": "paper_only_more_samples_required"
+    },
+    {
+      "strategy_id": "session_open",
+      "variant": "base",
+      "holdout_net_pnl_jpy": 461.44,
+      "holdout_trades": 1,
+      "status": "insufficient_single_trade"
+    }
+  ],
+  "confirmed_for_economic_adoption": 0
+}

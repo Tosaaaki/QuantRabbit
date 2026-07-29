@@ -1,0 +1,76 @@
+{
+  "summary": {
+    "trades": 4,
+    "total_pnl_pips": 4.465,
+    "total_pnl_jpy": 187.55,
+    "win_rate": 0.75,
+    "profit_factor": 2.9421,
+    "profit_factor_jpy": 2.9425
+  },
+  "trades": [
+    {
+      "trade_id": "sim-1",
+      "pocket": "scalp",
+      "strategy_tag": "pullback_s5",
+      "entry_time": "2026-01-25T23:01:19.688410+00:00",
+      "exit_time": "2026-01-25T23:01:44.736063+00:00",
+      "entry_price": 154.62599255089586,
+      "exit_price": 154.65540744910413,
+      "pnl_pips": 2.941,
+      "pnl_jpy": 123.54,
+      "reason": "tp_hit",
+      "source": "pullback_s5",
+      "units": 4200,
+      "exit_slip_pips": 0.4592550895851174,
+      "exit_latency_ms": 0.0
+    },
+    {
+      "trade_id": "sim-2",
+      "pocket": "scalp",
+      "strategy_tag": "pullback_s5",
+      "entry_time": "2026-01-25T23:08:04.567599+00:00",
+      "exit_time": "2026-01-25T23:16:33.963271+00:00",
+      "entry_price": 154.6553228869265,
+      "exit_price": 154.66630559431806,
+      "pnl_pips": 1.098,
+      "pnl_jpy": 46.13,
+      "reason": "tp_hit",
+      "source": "pullback_s5",
+      "units": 4200,
+      "exit_slip_pips": 1.9694405681945435,
+      "exit_latency_ms": 0.0
+    },
+    {
+      "trade_id": "sim-3",
+      "pocket": "scalp",
+      "strategy_tag": "pullback_s5",
+      "entry_time": "2026-01-25T23:43:04.056908+00:00",
+      "exit_time": "2026-01-25T23:43:41.432161+00:00",
+      "entry_price": 154.95590486107182,
+      "exit_price": 154.9286588644275,
+      "pnl_pips": 2.725,
+      "pnl_jpy": 114.43,
+      "reason": "structure_break",
+      "source": "pullback_s5",
+      "units": -4200,
+      "exit_slip_pips": 0.665886442748103,
+      "exit_latency_ms": 180.0
+    },
+    {
+      "trade_id": "sim-4",
+      "pocket": "scalp",
+      "strategy_tag": "pullback_s5",
+      "entry_time": "2026-01-25T23:53:59.617627+00:00",
+      "exit_time": "2026-01-25T23:55:43.161429+00:00",
+      "entry_price": 155.1479655256318,
+      "exit_price": 155.1709533978821,
+      "pnl_pips": -2.299,
+      "pnl_jpy": -96.55,
+      "reason": "candle_hammer",
+      "source": "pullback_s5",
+      "units": -4200,
+      "exit_slip_pips": 1.2953397882123312,
+      "exit_latency_ms": 180.0
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "strategy_id": "impulse_break_s5",
+  "fit_rule": {
+    "method": "hour_direction_positive_in_every_train_window",
+    "selected_utc_hour_direction": [],
+    "min_trades_per_train_window": 3,
+    "round_trip_cost_pips": 1.1,
+    "holdout_used_for_fit": false,
+    "inventory_rule": {
+      "max_concurrent": null,
+      "cooldown_minutes": null
+    },
+    "inventory_objective": "maximize worst train-window net, then total train net"
+  },
+  "train": {
+    "20260123/impulse_break_s5": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    },
+    "20260126/impulse_break_s5": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    }
+  },
+  "evaluation": {
+    "20260127/impulse_break_s5": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    },
+    "20260125/impulse_break_s5": {
+      "trades": 0,
+      "net_pnl_jpy": 0,
+      "profit_factor": null,
+      "expectancy_jpy": null,
+      "max_drawdown_jpy": 0.0,
+      "profit_giveback_rate": null
+    }
+  }
+}

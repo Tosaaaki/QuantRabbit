@@ -1,0 +1,42 @@
+{
+  "impulse_break_s5": {
+    "base": {
+      "trades": 10,
+      "total_pnl_pips": 11.576,
+      "total_pnl_jpy": 1157.39,
+      "win_rate": 0.9,
+      "profit_factor": 134.0575,
+      "profit_factor_jpy": 133.8806
+    }
+  },
+  "impulse_retest_s5": {
+    "base": {
+      "trades": 0,
+      "total_pnl_pips": 0,
+      "total_pnl_jpy": 0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "profit_factor_jpy": Infinity
+    }
+  },
+  "impulse_momentum_s5": {
+    "base": {
+      "trades": 15,
+      "total_pnl_pips": 11.378,
+      "total_pnl_jpy": 1137.92,
+      "win_rate": 0.8,
+      "profit_factor": 9.0867,
+      "profit_factor_jpy": 9.0899
+    }
+  },
+  "pullback_s5": {
+    "base": {
+      "trades": 4,
+      "total_pnl_pips": 4.465,
+      "total_pnl_jpy": 187.55,
+      "win_rate": 0.75,
+      "profit_factor": 2.9421,
+      "profit_factor_jpy": 2.9425
+    }
+  }
+}

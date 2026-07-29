@@ -1,0 +1,56 @@
+{
+  "contract": "QR_DOJO_WORST_LOSS_FRESH_AI_REVIEW_V1",
+  "generated_at": "2026-07-29T13:12:00+09:00",
+  "authority": {
+    "live_permission": false,
+    "external_broker_mutation_allowed": false,
+    "order_authority": "NONE",
+    "economic_application_allowed": false
+  },
+  "strategy_id": "M1Scalper",
+  "policy_under_review": {
+    "hour_utc": 23,
+    "direction": "long",
+    "max_concurrent": 1,
+    "cooldown_minutes": 3
+  },
+  "selection": "two worst completed losses in the untouched 20260127 evaluation window",
+  "checkpoint_seconds_after_entry": 60,
+  "reviews": [
+    {
+      "trade_id": 850,
+      "entry_time": "2026-01-27T23:30:58.923830+00:00",
+      "entry_price": 152.558,
+      "checkpoint_bid": 152.508,
+      "checkpoint_move_pips": -5.0,
+      "checkpoint_mfe_pips": -0.2,
+      "checkpoint_mae_pips": -5.2,
+      "fresh_ai_shadow_action": "EXIT_ALL",
+      "reason": "No favorable excursion and immediate 5-pip adverse move; the long thesis had not established.",
+      "estimated_costed_pnl_jpy": -61.0,
+      "observed_costed_pnl_jpy": -94.0,
+      "estimated_shadow_delta_jpy": 33.0
+    },
+    {
+      "trade_id": 858,
+      "entry_time": "2026-01-27T23:39:57.602234+00:00",
+      "entry_price": 152.494,
+      "checkpoint_bid": 152.484,
+      "checkpoint_move_pips": -1.0,
+      "checkpoint_mfe_pips": -0.2,
+      "checkpoint_mae_pips": -1.0,
+      "fresh_ai_shadow_action": "HOLD_WITHOUT_SIZE_INCREASE",
+      "reason": "The adverse move was still small at the fixed checkpoint; evidence was insufficient for an early exit.",
+      "observed_costed_pnl_jpy": -92.0,
+      "estimated_shadow_delta_jpy": 0.0
+    }
+  ],
+  "aggregate": {
+    "fresh_ai_judgments": 2,
+    "external_ai_api_calls": 0,
+    "ai_platform_cost_jpy": 0.0,
+    "estimated_shadow_delta_jpy": 33.0,
+    "included_in_reported_holdout_economics": false
+  },
+  "caveat": "The windows were selected after outcomes were known. These decisions remain shadow observations until the rule is frozen and tested on a new window."
+}
