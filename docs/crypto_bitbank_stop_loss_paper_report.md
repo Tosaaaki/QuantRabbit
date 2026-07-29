@@ -41,6 +41,21 @@ No arm may place, cancel, or close a real bitbank order.  Authority remains
 The first opportunity-loss metric is explicitly a same-window aggregate, not
 a trade-paired counterfactual.  It cannot be used as exact causal proof.
 
+## Initial Forward Readback
+
+The first three completed trades were all stop-loss exits and all lost money:
+
+- fixed Spot: -0.7607 JPY
+- fixed Margin: -0.0033 JPY
+- volatility Margin: -0.0041 JPY
+- combined: -0.7681 JPY
+
+The time-stop lanes had no completed trade at this readback.  Three trades are
+far below the adoption sample, but the initial result is not an improvement
+and no arm is adopted.  Open-position mark-to-market values recorded while a
+new stream epoch has no ready book are excluded from this conclusion; only
+append-only `PAPER_TRADE_CLOSED` outbox rows count as completed evidence.
+
 ## Root-Cause Priority
 
 1. `ORDER_BOOK_FADE` entry edge and direction are the dominant loss
