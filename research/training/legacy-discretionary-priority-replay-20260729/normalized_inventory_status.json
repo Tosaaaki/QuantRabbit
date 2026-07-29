@@ -1,0 +1,4215 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-29T13:27:53.022015+00:00",
+  "authority": "NONE",
+  "live_permission": false,
+  "broker_order_mutation": false,
+  "counts": {
+    "normalized_families": 82,
+    "evaluated_or_attempted": 37,
+    "not_yet_evaluated": 45,
+    "unevaluated_implementation_recoverable": 13,
+    "unevaluated_evidence_only": 32,
+    "thin_wrapper_relationships": 19,
+    "vm_instances": 4,
+    "direct_vm_family_links": 3,
+    "systemd_units": 218
+  },
+  "partitions": {
+    "evaluated_or_attempted_before_this_run": [
+      "bb_rsi",
+      "bb_rsi_fast",
+      "compression_revert",
+      "donchian55",
+      "failed_break_reverse",
+      "impulse_break_s5",
+      "impulse_momentum_s5",
+      "impulse_retest_s5",
+      "level_reactor",
+      "m1_scalper",
+      "micro_vwap_revert",
+      "momentum_pulse",
+      "pullback_continuation",
+      "pullback_ema",
+      "pullback_s5",
+      "pulse_break",
+      "range_break",
+      "range_fader",
+      "session_open",
+      "stop_run_reversal",
+      "trend_breakout",
+      "trend_ma",
+      "trend_momentum",
+      "trend_retest",
+      "vol_compression_break",
+      "vwap_bound_revert",
+      "vwap_magnet_s5"
+    ],
+    "evaluated_or_attempted_priority_run": [
+      "momentum_burst",
+      "scalp_macd_rsi_div",
+      "scalp_macd_rsi_div_b",
+      "scalp_ping_5s",
+      "scalp_ping_5s_b",
+      "scalp_ping_5s_c",
+      "scalp_ping_5s_d",
+      "scalp_ping_5s_flow",
+      "scalp_wick_reversal_blend",
+      "scalp_wick_reversal_pro"
+    ],
+    "unevaluated_implementation_recoverable": [
+      "h1_momentum",
+      "impulse_retrace",
+      "micro_adaptive_revert",
+      "momentum_stack",
+      "range_revert_lite",
+      "scalp_drought_revert",
+      "scalp_extrema_reversal",
+      "scalp_false_break_fade",
+      "scalp_level_reject",
+      "scalp_precision_lowvol",
+      "scalp_tick_imbalance",
+      "scalp_vwap_revert",
+      "trend_reclaim"
+    ],
+    "unevaluated_evidence_only": [
+      "basic",
+      "fast_scalp",
+      "london_momentum",
+      "ma_rsi_macd",
+      "macro_core",
+      "macro_tech_fusion",
+      "manual_spike",
+      "manual_swing",
+      "micro_core",
+      "micro_multistrat",
+      "micro_pullback_fib",
+      "micro_range_revert_lite",
+      "mirror_spike",
+      "mirror_spike_s5",
+      "mirror_spike_tight",
+      "mm_lite",
+      "mtf_breakout",
+      "onepip_maker_s1",
+      "pullback_runner_s5",
+      "pullback_scalp",
+      "range_bounce",
+      "range_compression_break",
+      "scalp_core",
+      "scalp_multistrat",
+      "scalp_precision",
+      "scalp_reversal_nwave",
+      "spike_reversal",
+      "squeeze_break_s5",
+      "tech_fusion",
+      "trend_pullback",
+      "vol_spike_rider",
+      "vol_squeeze"
+    ]
+  },
+  "wrapper_relationships": {
+    "scalp_ping_5s_b": "scalp_ping_5s",
+    "scalp_ping_5s_c": "scalp_ping_5s",
+    "scalp_ping_5s_d": "scalp_ping_5s",
+    "scalp_ping_5s_flow": "scalp_ping_5s",
+    "scalp_macd_rsi_div_b": "scalp_macd_rsi_div",
+    "compression_revert": "micro_runtime",
+    "level_reactor": "micro_runtime",
+    "momentum_burst": "micro_runtime",
+    "momentum_pulse": "micro_runtime",
+    "momentum_stack": "micro_runtime",
+    "pullback_ema": "micro_runtime",
+    "range_break": "micro_runtime",
+    "trend_momentum": "micro_runtime",
+    "trend_retest": "micro_runtime",
+    "micro_vwap_revert": "micro_runtime",
+    "vwap_bound_revert": "micro_runtime",
+    "scalp_drought_revert": "scalp_precision",
+    "scalp_precision_lowvol": "scalp_precision",
+    "scalp_vwap_revert": "scalp_precision"
+  },
+  "vm_instances": [
+    "fx-trader-rescue",
+    "fx-trader-vm",
+    "qr-ssh-rescue",
+    "quantrabbit"
+  ],
+  "instance_worker_links": {
+    "fx-trader-vm": [
+      "basic",
+      "failed_break_reverse",
+      "scalp_false_break_fade"
+    ]
+  },
+  "families": [
+    {
+      "strategy_id": "basic",
+      "duplicate_family": "basic",
+      "aliases": [
+        "basic"
+      ],
+      "implementation_paths": [
+        "strategies/scalp/basic.py"
+      ],
+      "implementation_commits": [
+        "474eec1c8e07a639044e00f605fec7f413a31255"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "bb_rsi",
+      "duplicate_family": "bb_rsi",
+      "aliases": [
+        "bb_rsi",
+        "micro_bbrsi"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/mean_reversion/bb_rsi.py",
+        "strategies/mean_reversion/bb_rsi.py",
+        "workers/micro_bbrsi/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "bb_rsi_fast",
+      "duplicate_family": "bb_rsi_fast",
+      "aliases": [
+        "bb_rsi_fast"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/bb_rsi_fast.py",
+        "strategies/micro_lowvol/bb_rsi_fast.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "_reentry_block_sec"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "compression_revert",
+      "duplicate_family": "compression_revert",
+      "aliases": [
+        "compression_revert",
+        "micro_compressionrevert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/compression_revert.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_compressionrevert/worker.py",
+        "strategies/micro_lowvol/compression_revert.py",
+        "workers/micro_compressionrevert/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-compressionrevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-compressionrevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-compressionrevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-compressionrevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-compressionrevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-compressionrevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-compressionrevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-compressionrevert.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "donchian55",
+      "duplicate_family": "donchian55",
+      "aliases": [
+        "donchian55",
+        "macro_donchian55"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/breakout/donchian55.py",
+        "strategies/breakout/donchian55.py",
+        "workers/macro_donchian55/worker.py"
+      ],
+      "implementation_commits": [
+        "929f4d4ffeefc595bd00c96f045c13ebd6786247",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "failed_break_reverse",
+      "duplicate_family": "failed_break_reverse",
+      "aliases": [
+        "scalp_failed_break_reverse"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_failed_break_reverse/worker.py",
+        "workers/scalp_failed_break_reverse/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-failed-break-reverse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-failed-break-reverse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-failed-break-reverse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-failed-break-reverse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-failed-break-reverse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-failed-break-reverse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-failed-break-reverse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-failed-break-reverse.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_bb_entry_allowed",
+        "_detect_usdjpy_setup_mode",
+        "_entry_candle_guard",
+        "_signal_mode"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 165,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "fast_scalp",
+      "duplicate_family": "fast_scalp",
+      "aliases": [
+        "fast_scalp"
+      ],
+      "implementation_paths": [
+        "workers/fast_scalp/worker.py"
+      ],
+      "implementation_commits": [
+        "b3246aeed2a462db40c44313cd8266d48e117c6a"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "h1_momentum",
+      "duplicate_family": "h1_momentum",
+      "aliases": [
+        "h1_momentum",
+        "macro_h1momentum",
+        "trend_h1"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/trend/h1_momentum.py",
+        "strategies/trend/h1_momentum.py",
+        "workers/macro_h1momentum/worker.py",
+        "workers/trend_h1/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "impulse_break_s5",
+      "duplicate_family": "impulse_break_s5",
+      "aliases": [
+        "impulse_break_s5"
+      ],
+      "implementation_paths": [
+        "workers/impulse_break_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "impulse_momentum_s5",
+      "duplicate_family": "impulse_momentum_s5",
+      "aliases": [
+        "impulse_momentum_s5"
+      ],
+      "implementation_paths": [
+        "workers/impulse_momentum_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "impulse_retest_s5",
+      "duplicate_family": "impulse_retest_s5",
+      "aliases": [
+        "impulse_retest_s5"
+      ],
+      "implementation_paths": [
+        "workers/impulse_retest_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "impulse_retrace",
+      "duplicate_family": "impulse_retrace",
+      "aliases": [
+        "impulse_retrace",
+        "scalp_impulseretrace"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/scalping/impulse_retrace.py",
+        "strategies/scalping/impulse_retrace.py",
+        "workers/scalp_impulseretrace/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "_build_signal"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "level_reactor",
+      "duplicate_family": "level_reactor",
+      "aliases": [
+        "level_reactor",
+        "micro_levelreactor"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/level_reactor.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_levelreactor/worker.py",
+        "strategies/micro/level_reactor.py",
+        "workers/micro_levelreactor/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-levelreactor-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-levelreactor.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-levelreactor-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-levelreactor.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-levelreactor-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-levelreactor.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-levelreactor-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-levelreactor.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "london_momentum",
+      "duplicate_family": "london_momentum",
+      "aliases": [
+        "london_momentum"
+      ],
+      "implementation_paths": [
+        "workers/london_momentum/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "m1_scalper",
+      "duplicate_family": "m1_scalper",
+      "aliases": [
+        "m1_scalper",
+        "scalp_m1scalper"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/scalping/m1_scalper.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_m1scalper/worker.py",
+        "strategies/scalping/m1_scalper.py",
+        "workers/scalp_m1scalper/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5",
+        "unknown"
+      ],
+      "entry": [
+        "_apply_signal_setup_context",
+        "_bb_entry_allowed",
+        "_breakout_retest_signal",
+        "_detect_usdjpy_setup_mode",
+        "_entry_candle_guard",
+        "_scale_signal",
+        "_signal_mode",
+        "_signal_setup_payload",
+        "_vshape_rebound_signal"
+      ],
+      "exit": [
+        "implementation-defined",
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_20251001_20251022_full.json",
+          "window": "20251001_20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 323.4,
+          "profit_factor": 1.0811,
+          "max_drawdown_pips": 163.7,
+          "trades": 1560,
+          "win_rate": 0.4756
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251022.json",
+          "window": "20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 20.0,
+          "profit_factor": 3.0,
+          "max_drawdown_pips": 5.0,
+          "trades": 8,
+          "win_rate": 0.75
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251022_v2.json",
+          "window": "20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 20.0,
+          "profit_factor": 3.0,
+          "max_drawdown_pips": 5.0,
+          "trades": 8,
+          "win_rate": 0.75
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251023.json",
+          "window": "20251023",
+          "timeframe": "M1",
+          "net_pnl_pips": -7.2,
+          "profit_factor": 0.8759,
+          "max_drawdown_pips": 24.4,
+          "trades": 22,
+          "win_rate": 0.4091
+        }
+      ],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "evaluated",
+      "priority_score": 0,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "ma_rsi_macd",
+      "duplicate_family": "ma_rsi_macd",
+      "aliases": [
+        "ma_rsi_macd"
+      ],
+      "implementation_paths": [
+        "strategies/trend/ma_rsi_macd.py"
+      ],
+      "implementation_commits": [
+        "5978cafff5ca66c6b2dddef5b6dd92c3fa063a24"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "macro_core",
+      "duplicate_family": "macro_core",
+      "aliases": [
+        "macro_core"
+      ],
+      "implementation_paths": [
+        "workers/macro_core/worker.py"
+      ],
+      "implementation_commits": [
+        "8e4b664c98718d2b7569f36ba3a42eb782be4634"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "macro_tech_fusion",
+      "duplicate_family": "macro_tech_fusion",
+      "aliases": [
+        "macro_tech_fusion"
+      ],
+      "implementation_paths": [
+        "workers/macro_tech_fusion/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "manual_spike",
+      "duplicate_family": "manual_spike",
+      "aliases": [
+        "manual_spike"
+      ],
+      "implementation_paths": [
+        "workers/manual_spike/worker.py"
+      ],
+      "implementation_commits": [
+        "3734c0fb269ac5ac0768979ad78e1ddce13130ab"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "manual_swing",
+      "duplicate_family": "manual_swing",
+      "aliases": [
+        "manual_swing"
+      ],
+      "implementation_paths": [
+        "workers/manual_swing/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_adaptive_revert",
+      "duplicate_family": "micro_adaptive_revert",
+      "aliases": [
+        "micro_adaptive_revert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/micro_adaptive_revert.py",
+        "strategies/micro_lowvol/micro_adaptive_revert.py",
+        "workers/micro_adaptive_revert/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_core",
+      "duplicate_family": "micro_core",
+      "aliases": [
+        "micro_core"
+      ],
+      "implementation_paths": [
+        "workers/micro_core/worker.py"
+      ],
+      "implementation_commits": [
+        "8e4b664c98718d2b7569f36ba3a42eb782be4634"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_multistrat",
+      "duplicate_family": "micro_multistrat",
+      "aliases": [
+        "micro_multistrat"
+      ],
+      "implementation_paths": [
+        "workers/micro_multistrat/worker.py"
+      ],
+      "implementation_commits": [
+        "67d4b2ec8b1df93c084e051591a4917120839aec"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_pullback_fib",
+      "duplicate_family": "micro_pullback_fib",
+      "aliases": [
+        "micro_pullback_fib"
+      ],
+      "implementation_paths": [
+        "workers/micro_pullback_fib/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_range_revert_lite",
+      "duplicate_family": "micro_range_revert_lite",
+      "aliases": [
+        "micro_range_revert_lite"
+      ],
+      "implementation_paths": [
+        "workers/micro_range_revert_lite/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "micro_vwap_revert",
+      "duplicate_family": "micro_vwap_revert",
+      "aliases": [
+        "micro_vwap_revert",
+        "micro_vwaprevert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/micro_vwap_revert.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_vwaprevert/worker.py",
+        "strategies/micro_lowvol/micro_vwap_revert.py",
+        "workers/micro_vwaprevert/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-vwaprevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-vwaprevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-vwaprevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-vwaprevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-vwaprevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-vwaprevert.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-vwaprevert-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-vwaprevert.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "mirror_spike",
+      "duplicate_family": "mirror_spike",
+      "aliases": [
+        "mirror_spike"
+      ],
+      "implementation_paths": [
+        "workers/mirror_spike/worker.py"
+      ],
+      "implementation_commits": [
+        "8e436e0d31f603c8cd3da0f36ee19f83c88fa5eb"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "mirror_spike_s5",
+      "duplicate_family": "mirror_spike_s5",
+      "aliases": [
+        "mirror_spike_s5"
+      ],
+      "implementation_paths": [
+        "workers/mirror_spike_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "8e436e0d31f603c8cd3da0f36ee19f83c88fa5eb"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "mirror_spike_tight",
+      "duplicate_family": "mirror_spike_tight",
+      "aliases": [
+        "mirror_spike_tight"
+      ],
+      "implementation_paths": [
+        "workers/mirror_spike_tight/worker.py"
+      ],
+      "implementation_commits": [
+        "8e436e0d31f603c8cd3da0f36ee19f83c88fa5eb"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "mm_lite",
+      "duplicate_family": "mm_lite",
+      "aliases": [
+        "mm_lite"
+      ],
+      "implementation_paths": [
+        "workers/mm_lite/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "momentum_burst",
+      "duplicate_family": "momentum_burst",
+      "aliases": [
+        "micro_momentumburst",
+        "momentum_burst"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/momentum_burst.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_momentumburst/worker.py",
+        "strategies/micro/momentum_burst.py",
+        "workers/micro_momentumburst/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumburst-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumburst.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumburst-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumburst.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumburst-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumburst.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumburst-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumburst.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M5",
+        "unknown"
+      ],
+      "entry": [
+        "_build_signal",
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 367,
+        "best_arm": {
+          "policy": "volatility_trail",
+          "ai_inventory": false,
+          "entry_cohort_size": 367,
+          "trades": 367,
+          "net_jpy": -1923.88183534,
+          "profit_factor": 0.760485,
+          "expectancy_jpy": -5.24218484,
+          "max_drawdown_jpy": 2326.55371559,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "volatility_trail",
+          "ai_inventory": false,
+          "entry_cohort_size": 367,
+          "trades": 367,
+          "net_jpy": -1923.88183534,
+          "profit_factor": 0.760485,
+          "expectancy_jpy": -5.24218484,
+          "max_drawdown_jpy": 2326.55371559,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "momentum_pulse",
+      "duplicate_family": "momentum_pulse",
+      "aliases": [
+        "micro_momentumpulse",
+        "momentum_pulse"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/momentum_pulse.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_momentumpulse/worker.py",
+        "strategies/micro_lowvol/momentum_pulse.py",
+        "workers/micro_momentumpulse/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumpulse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumpulse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumpulse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumpulse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumpulse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumpulse.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumpulse-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumpulse.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "momentum_stack",
+      "duplicate_family": "momentum_stack",
+      "aliases": [
+        "micro_momentumstack",
+        "momentum_stack"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/momentum_stack.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_momentumstack/worker.py",
+        "strategies/micro/momentum_stack.py",
+        "workers/micro_momentumstack/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumstack-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-momentumstack.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumstack-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-momentumstack.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumstack-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-momentumstack.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumstack-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-momentumstack.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "mtf_breakout",
+      "duplicate_family": "mtf_breakout",
+      "aliases": [
+        "mtf_breakout"
+      ],
+      "implementation_paths": [
+        "workers/mtf_breakout/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "onepip_maker_s1",
+      "duplicate_family": "onepip_maker_s1",
+      "aliases": [
+        "onepip_maker_s1"
+      ],
+      "implementation_paths": [
+        "workers/onepip_maker_s1/worker.py"
+      ],
+      "implementation_commits": [
+        "33cb781a9e8ef40ff84f72b702165511de9c31d6"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "pullback_continuation",
+      "duplicate_family": "pullback_continuation",
+      "aliases": [
+        "scalp_pullback_continuation"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_pullback_continuation/worker.py",
+        "workers/scalp_pullback_continuation/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-pullback-continuation-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-pullback-continuation.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-pullback-continuation-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-pullback-continuation.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-pullback-continuation-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-pullback-continuation.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-pullback-continuation-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-pullback-continuation.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_bb_entry_allowed",
+        "_detect_usdjpy_setup_mode",
+        "_entry_candle_guard",
+        "_signal_mode"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 165,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "pullback_ema",
+      "duplicate_family": "pullback_ema",
+      "aliases": [
+        "micro_pullbackema",
+        "pullback_ema"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/pullback_ema.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_pullbackema/worker.py",
+        "strategies/micro/pullback_ema.py",
+        "workers/micro_pullbackema/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-pullbackema-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-pullbackema.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-pullbackema-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-pullbackema.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-pullbackema-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-pullbackema.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-pullbackema-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-pullbackema.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "pullback_runner_s5",
+      "duplicate_family": "pullback_runner_s5",
+      "aliases": [
+        "pullback_runner_s5"
+      ],
+      "implementation_paths": [
+        "workers/pullback_runner_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "pullback_s5",
+      "duplicate_family": "pullback_s5",
+      "aliases": [
+        "pullback_s5"
+      ],
+      "implementation_paths": [
+        "workers/pullback_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "pullback_scalp",
+      "duplicate_family": "pullback_scalp",
+      "aliases": [
+        "pullback_scalp"
+      ],
+      "implementation_paths": [
+        "workers/pullback_scalp/worker.py"
+      ],
+      "implementation_commits": [
+        "8e436e0d31f603c8cd3da0f36ee19f83c88fa5eb"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "pulse_break",
+      "duplicate_family": "pulse_break",
+      "aliases": [
+        "pulse_break",
+        "scalp_pulsebreak",
+        "scalp_squeeze_pulse_break"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/scalping/pulse_break.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_squeeze_pulse_break/worker.py",
+        "strategies/scalping/pulse_break.py",
+        "workers/scalp_pulsebreak/worker.py",
+        "workers/scalp_squeeze_pulse_break/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-squeeze-pulse-break-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-squeeze-pulse-break.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-squeeze-pulse-break-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-squeeze-pulse-break.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-squeeze-pulse-break-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-squeeze-pulse-break.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-squeeze-pulse-break-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-squeeze-pulse-break.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5",
+        "unknown"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_entry_drought_ok",
+        "_entry_guard_ok",
+        "_fetch_last_entry_time",
+        "_macd_signal_pips",
+        "_signal_compression_retest",
+        "_signal_direction",
+        "_signal_divergence_revert",
+        "_signal_drought_revert",
+        "_signal_ema_slope_pull",
+        "_signal_false_break_fade",
+        "_signal_htf_pullback",
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined",
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_20251001_20251022_full.json",
+          "window": "20251001_20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 25.4,
+          "profit_factor": 1.5248,
+          "max_drawdown_pips": 16.6,
+          "trades": 26,
+          "win_rate": 0.5385
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251022.json",
+          "window": "20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": -5.1,
+          "profit_factor": 0.733,
+          "max_drawdown_pips": 12.1,
+          "trades": 7,
+          "win_rate": 0.2857
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251022_v2.json",
+          "window": "20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 7.5,
+          "profit_factor": Infinity,
+          "max_drawdown_pips": 0.0,
+          "trades": 1,
+          "win_rate": 1.0
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251023.json",
+          "window": "20251023",
+          "timeframe": "M1",
+          "net_pnl_pips": 7.21,
+          "profit_factor": Infinity,
+          "max_drawdown_pips": 0.0,
+          "trades": 1,
+          "win_rate": 1.0
+        }
+      ],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "evaluated",
+      "priority_score": 0,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "range_bounce",
+      "duplicate_family": "range_bounce",
+      "aliases": [
+        "range_bounce"
+      ],
+      "implementation_paths": [
+        "strategies/range/range_bounce.py"
+      ],
+      "implementation_commits": [
+        "474eec1c8e07a639044e00f605fec7f413a31255"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "range_break",
+      "duplicate_family": "range_break",
+      "aliases": [
+        "micro_rangebreak",
+        "range_break"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/range_break.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_rangebreak/worker.py",
+        "strategies/micro/range_break.py",
+        "workers/micro_rangebreak/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-rangebreak-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-rangebreak.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-rangebreak-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-rangebreak.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-rangebreak-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-rangebreak.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-rangebreak-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-rangebreak.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "range_compression_break",
+      "duplicate_family": "range_compression_break",
+      "aliases": [
+        "range_compression_break"
+      ],
+      "implementation_paths": [
+        "workers/range_compression_break/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "range_fader",
+      "duplicate_family": "range_fader",
+      "aliases": [
+        "range_fader",
+        "scalp_rangefader"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/scalping/range_fader.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_rangefader/worker.py",
+        "strategies/scalping/range_fader.py",
+        "workers/scalp_rangefader/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-rangefader-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-rangefader.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-rangefader-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-rangefader.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-rangefader-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-rangefader.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-rangefader-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-rangefader.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5",
+        "unknown"
+      ],
+      "entry": [
+        "_apply_signal_flow_context",
+        "_bb_entry_allowed",
+        "_build_mr_entry_thesis",
+        "_entry_candle_guard",
+        "_entry_cooldown_active",
+        "_entry_cooldown_key",
+        "_entry_cooldown_sec",
+        "_fade_setup_quality",
+        "_setup_size_mult",
+        "_thin_fade_setup"
+      ],
+      "exit": [
+        "implementation-defined",
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_20251001_20251022_full.json",
+          "window": "20251001_20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 1.35,
+          "profit_factor": 1.15,
+          "max_drawdown_pips": 9.0,
+          "trades": 6,
+          "win_rate": 0.5
+        },
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_M1_20251023.json",
+          "window": "20251023",
+          "timeframe": "M1",
+          "net_pnl_pips": -3.61,
+          "profit_factor": 0.4858,
+          "max_drawdown_pips": 4.02,
+          "trades": 3,
+          "win_rate": 0.3333
+        }
+      ],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "evaluated",
+      "priority_score": 0,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "range_revert_lite",
+      "duplicate_family": "range_revert_lite",
+      "aliases": [
+        "range_revert_lite"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/range_revert_lite.py",
+        "strategies/micro_lowvol/range_revert_lite.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_core",
+      "duplicate_family": "scalp_core",
+      "aliases": [
+        "scalp_core"
+      ],
+      "implementation_paths": [
+        "workers/scalp_core/worker.py"
+      ],
+      "implementation_commits": [
+        "8e4b664c98718d2b7569f36ba3a42eb782be4634"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_drought_revert",
+      "duplicate_family": "scalp_drought_revert",
+      "aliases": [
+        "scalp_drought_revert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_drought_revert/worker.py",
+        "workers/scalp_drought_revert/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": "scalp_precision"
+    },
+    {
+      "strategy_id": "scalp_extrema_reversal",
+      "duplicate_family": "scalp_extrema_reversal",
+      "aliases": [
+        "scalp_extrema_reversal"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_extrema_reversal/worker.py",
+        "workers/scalp_extrema_reversal/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-extrema-reversal-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-extrema-reversal.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-extrema-reversal-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-extrema-reversal.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-extrema-reversal-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-extrema-reversal.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-extrema-reversal-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-extrema-reversal.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_recent_setup_pressure",
+        "_signal_extrema_reversal"
+      ],
+      "exit": [
+        "stop_loss",
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_false_break_fade",
+      "duplicate_family": "scalp_false_break_fade",
+      "aliases": [
+        "scalp_false_break_fade"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_false_break_fade/worker.py",
+        "workers/scalp_false_break_fade/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-false-break-fade-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-false-break-fade.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-false-break-fade-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-false-break-fade.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-false-break-fade-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-false-break-fade.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-false-break-fade-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-false-break-fade.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H4",
+        "M1"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_signal_false_break_fade"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_level_reject",
+      "duplicate_family": "scalp_level_reject",
+      "aliases": [
+        "scalp_level_reject"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_level_reject/worker.py",
+        "workers/scalp_level_reject/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-level-reject-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-level-reject.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-level-reject-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-level-reject.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-level-reject-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-level-reject.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-level-reject-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-level-reject.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H4",
+        "M1"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_signal_level_reject"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_macd_rsi_div",
+      "duplicate_family": "scalp_macd_rsi_div",
+      "aliases": [
+        "scalp_macd_rsi_div"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_macd_rsi_div/worker.py",
+        "workers/scalp_macd_rsi_div/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_signal_side"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 1,
+        "best_arm": {
+          "policy": "no_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 1,
+          "trades": 1,
+          "net_jpy": 30.99819681,
+          "profit_factor": null,
+          "expectancy_jpy": 30.99819681,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 1,
+          "trades": 1,
+          "net_jpy": 30.99819681,
+          "profit_factor": null,
+          "expectancy_jpy": 30.99819681,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_macd_rsi_div_b",
+      "duplicate_family": "scalp_macd_rsi_div_b",
+      "aliases": [
+        "scalp_macd_rsi_div_b"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_macd_rsi_div_b/worker.py",
+        "workers/scalp_macd_rsi_div_b/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-macd-rsi-div-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-macd-rsi-div-b.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 5,
+        "best_arm": {
+          "policy": "no_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 5,
+          "trades": 5,
+          "net_jpy": 142.96788145,
+          "profit_factor": null,
+          "expectancy_jpy": 28.59357629,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 5,
+          "trades": 5,
+          "net_jpy": 142.96788145,
+          "profit_factor": null,
+          "expectancy_jpy": 28.59357629,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "証拠不足",
+      "wrapper_target": "scalp_macd_rsi_div"
+    },
+    {
+      "strategy_id": "scalp_multistrat",
+      "duplicate_family": "scalp_multistrat",
+      "aliases": [
+        "scalp_multistrat"
+      ],
+      "implementation_paths": [
+        "workers/scalp_multistrat/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_ping_5s",
+      "duplicate_family": "scalp_ping_5s",
+      "aliases": [
+        "scalp_ping_5s"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_ping_5s/worker.py",
+        "workers/scalp_ping_5s/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-flow.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_adjust_entry_probability_alignment",
+        "_allow_signal_when_max_active",
+        "_build_tick_signal",
+        "_candidate_signal_windows",
+        "_coerce_entry_probability",
+        "_enforce_new_entry_time_stop",
+        "_entry_blocked_hour_jst",
+        "_entry_outside_allow_hour_jst",
+        "_entry_probability_band_units_multiplier",
+        "_infer_signal_side_from_reason",
+        "_is_signal_mode_blocked",
+        "_load_entry_probability_band_metrics"
+      ],
+      "exit": [
+        "stop_loss",
+        "take_profit",
+        "timeout"
+      ],
+      "cost_model": [
+        "latency",
+        "slippage",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 1716,
+        "best_arm": {
+          "policy": "time_stop",
+          "ai_inventory": false,
+          "entry_cohort_size": 1716,
+          "trades": 1716,
+          "net_jpy": -15432.31589692,
+          "profit_factor": 0.426367,
+          "expectancy_jpy": -8.99319108,
+          "max_drawdown_jpy": 15489.31041289,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "time_stop",
+          "ai_inventory": false,
+          "entry_cohort_size": 1716,
+          "trades": 1716,
+          "net_jpy": -15432.31589692,
+          "profit_factor": 0.426367,
+          "expectancy_jpy": -8.99319108,
+          "max_drawdown_jpy": 15489.31041289,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_ping_5s_b",
+      "duplicate_family": "scalp_ping_5s_b",
+      "aliases": [
+        "scalp_ping_5s_b"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_ping_5s_b/worker.py",
+        "workers/scalp_ping_5s_b/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-b.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-b-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-b.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 26686,
+        "best_arm": {
+          "policy": "no_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 26686,
+          "trades": 26686,
+          "net_jpy": 79128.29520173,
+          "profit_factor": 1.308378,
+          "expectancy_jpy": 2.96516133,
+          "max_drawdown_jpy": 131473.5107988,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        },
+        "best_protected_arm": {
+          "policy": "time_stop",
+          "ai_inventory": false,
+          "entry_cohort_size": 26686,
+          "trades": 26686,
+          "net_jpy": -205309.75537509,
+          "profit_factor": 0.544773,
+          "expectancy_jpy": -7.69353801,
+          "max_drawdown_jpy": 205910.54050492,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": "scalp_ping_5s"
+    },
+    {
+      "strategy_id": "scalp_ping_5s_c",
+      "duplicate_family": "scalp_ping_5s_c",
+      "aliases": [
+        "scalp_ping_5s_c"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_ping_5s_c/worker.py",
+        "workers/scalp_ping_5s_c/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-c.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-c-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-c.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 82641,
+        "best_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 82641,
+          "trades": 82641,
+          "net_jpy": -744190.64480864,
+          "profit_factor": 0.39592,
+          "expectancy_jpy": -9.00510213,
+          "max_drawdown_jpy": 744231.64459911,
+          "ai_decisions": 164460,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 82641,
+          "trades": 82641,
+          "net_jpy": -744190.64480864,
+          "profit_factor": 0.39592,
+          "expectancy_jpy": -9.00510213,
+          "max_drawdown_jpy": 744231.64459911,
+          "ai_decisions": 164460,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": "scalp_ping_5s"
+    },
+    {
+      "strategy_id": "scalp_ping_5s_d",
+      "duplicate_family": "scalp_ping_5s_d",
+      "aliases": [
+        "scalp_ping_5s_d"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_ping_5s_d/worker.py",
+        "workers/scalp_ping_5s_d/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-d.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-d-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-d.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 63272,
+        "best_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 63272,
+          "trades": 63272,
+          "net_jpy": -579263.14240088,
+          "profit_factor": 0.283603,
+          "expectancy_jpy": -9.15512616,
+          "max_drawdown_jpy": 579346.13779364,
+          "ai_decisions": 56544,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 63272,
+          "trades": 63272,
+          "net_jpy": -579263.14240088,
+          "profit_factor": 0.283603,
+          "expectancy_jpy": -9.15512616,
+          "max_drawdown_jpy": 579346.13779364,
+          "ai_decisions": 56544,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": "scalp_ping_5s"
+    },
+    {
+      "strategy_id": "scalp_ping_5s_flow",
+      "duplicate_family": "scalp_ping_5s_flow",
+      "aliases": [
+        "scalp_ping_5s_flow"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_ping_5s_flow/worker.py",
+        "workers/scalp_ping_5s_flow/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-ping-5s-flow.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-flow-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-ping-5s-flow.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 68719,
+        "best_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 68719,
+          "trades": 68719,
+          "net_jpy": -631634.81172251,
+          "profit_factor": 0.280557,
+          "expectancy_jpy": -9.19156,
+          "max_drawdown_jpy": 631710.80715618,
+          "ai_decisions": 64291,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 68719,
+          "trades": 68719,
+          "net_jpy": -631634.81172251,
+          "profit_factor": 0.280557,
+          "expectancy_jpy": -9.19156,
+          "max_drawdown_jpy": 631710.80715618,
+          "ai_decisions": 64291,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "不採用",
+      "wrapper_target": "scalp_ping_5s"
+    },
+    {
+      "strategy_id": "scalp_precision",
+      "duplicate_family": "scalp_precision",
+      "aliases": [
+        "scalp_precision"
+      ],
+      "implementation_paths": [
+        "workers/scalp_precision/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_precision_lowvol",
+      "duplicate_family": "scalp_precision_lowvol",
+      "aliases": [
+        "scalp_precision_lowvol"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_precision_lowvol/worker.py",
+        "workers/scalp_precision_lowvol/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": "scalp_precision"
+    },
+    {
+      "strategy_id": "scalp_reversal_nwave",
+      "duplicate_family": "scalp_reversal_nwave",
+      "aliases": [
+        "scalp_reversal_nwave"
+      ],
+      "implementation_paths": [
+        "workers/scalp_reversal_nwave/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_tick_imbalance",
+      "duplicate_family": "scalp_tick_imbalance",
+      "aliases": [
+        "scalp_tick_imbalance"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_tick_imbalance/worker.py",
+        "workers/scalp_tick_imbalance/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-tick-imbalance-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-tick-imbalance.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-tick-imbalance-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-tick-imbalance.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-tick-imbalance-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-tick-imbalance.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-tick-imbalance-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-tick-imbalance.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_entry_drought_ok",
+        "_entry_guard_ok",
+        "_fetch_last_entry_time",
+        "_macd_signal_pips",
+        "_signal_compression_retest",
+        "_signal_direction",
+        "_signal_divergence_revert",
+        "_signal_drought_revert",
+        "_signal_ema_slope_pull",
+        "_signal_false_break_fade",
+        "_signal_htf_pullback"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_vwap_revert",
+      "duplicate_family": "scalp_vwap_revert",
+      "aliases": [
+        "scalp_vwap_revert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_vwap_revert/worker.py",
+        "workers/scalp_vwap_revert/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": "scalp_precision"
+    },
+    {
+      "strategy_id": "scalp_wick_reversal_blend",
+      "duplicate_family": "scalp_wick_reversal_blend",
+      "aliases": [
+        "scalp_wick_reversal_blend"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_wick_reversal_blend/worker.py",
+        "workers/scalp_wick_reversal_blend/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-wick-reversal-blend-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-wick-reversal-blend.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-wick-reversal-blend-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-wick-reversal-blend.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-wick-reversal-blend-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-wick-reversal-blend.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-wick-reversal-blend-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-wick-reversal-blend.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_dispatch_strategy_signal",
+        "_drought_revert_setup_pressure",
+        "_entry_drought_ok",
+        "_entry_guard_ok",
+        "_fetch_last_entry_time",
+        "_macd_signal_pips",
+        "_precision_lowvol_setup_pressure",
+        "_signal_compression_retest",
+        "_signal_direction",
+        "_signal_divergence_revert",
+        "_signal_drought_revert"
+      ],
+      "exit": [
+        "stop_loss",
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 1,
+        "best_arm": {
+          "policy": "no_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 1,
+          "trades": 1,
+          "net_jpy": 42.98212676,
+          "profit_factor": null,
+          "expectancy_jpy": 42.98212676,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": true
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": true,
+          "entry_cohort_size": 1,
+          "trades": 1,
+          "net_jpy": -3.00072439,
+          "profit_factor": 0.0,
+          "expectancy_jpy": -3.00072439,
+          "max_drawdown_jpy": 3.00072439,
+          "ai_decisions": 4,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "scalp_wick_reversal_pro",
+      "duplicate_family": "scalp_wick_reversal_pro",
+      "aliases": [
+        "scalp_wick_reversal_pro"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_wick_reversal_pro/worker.py",
+        "workers/scalp_wick_reversal_pro/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-wick-reversal-pro-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-wick-reversal-pro.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-wick-reversal-pro-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-wick-reversal-pro.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-wick-reversal-pro-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-wick-reversal-pro.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-wick-reversal-pro-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-wick-reversal-pro.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_build_entry_thesis",
+        "_entry_drought_ok",
+        "_entry_guard_ok",
+        "_fetch_last_entry_time",
+        "_macd_signal_pips",
+        "_signal_compression_retest",
+        "_signal_direction",
+        "_signal_divergence_revert",
+        "_signal_drought_revert",
+        "_signal_ema_slope_pull",
+        "_signal_false_break_fade",
+        "_signal_htf_pullback"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "priority_replay": {
+        "entry_cohort_size": 0,
+        "best_arm": {
+          "policy": "no_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 0,
+          "trades": 0,
+          "net_jpy": 0.0,
+          "profit_factor": null,
+          "expectancy_jpy": null,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        },
+        "best_protected_arm": {
+          "policy": "fixed_sl",
+          "ai_inventory": false,
+          "entry_cohort_size": 0,
+          "trades": 0,
+          "net_jpy": 0.0,
+          "profit_factor": null,
+          "expectancy_jpy": null,
+          "max_drawdown_jpy": 0.0,
+          "ai_decisions": 0,
+          "ai_cost_jpy": 0.0,
+          "profitable": false
+        }
+      },
+      "current_evaluation_status": "evaluated_or_attempted_priority_run",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "session_open",
+      "duplicate_family": "session_open",
+      "aliases": [
+        "session_open"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/session_open/worker.py",
+        "workers/session_open/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-session-open-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-session-open.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-session-open-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-session-open.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-session-open-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-session-open.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-session-open-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-session-open.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_bb_entry_allowed"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 165,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "spike_reversal",
+      "duplicate_family": "spike_reversal",
+      "aliases": [
+        "spike_reversal"
+      ],
+      "implementation_paths": [
+        "strategies/news/spike_reversal.py"
+      ],
+      "implementation_commits": [
+        "62319447dd58292669088944de24a9ab2ae9e560"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "squeeze_break_s5",
+      "duplicate_family": "squeeze_break_s5",
+      "aliases": [
+        "squeeze_break_s5"
+      ],
+      "implementation_paths": [
+        "workers/squeeze_break_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "8e436e0d31f603c8cd3da0f36ee19f83c88fa5eb"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "stop_run_reversal",
+      "duplicate_family": "stop_run_reversal",
+      "aliases": [
+        "stop_run_reversal"
+      ],
+      "implementation_paths": [
+        "workers/stop_run_reversal/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "tech_fusion",
+      "duplicate_family": "tech_fusion",
+      "aliases": [
+        "tech_fusion"
+      ],
+      "implementation_paths": [
+        "workers/tech_fusion/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "trend_breakout",
+      "duplicate_family": "trend_breakout",
+      "aliases": [
+        "scalp_trend_breakout"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/scalp_trend_breakout/worker.py",
+        "workers/scalp_trend_breakout/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-trend-breakout-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-scalp-trend-breakout.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-trend-breakout-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-scalp-trend-breakout.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-trend-breakout-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-scalp-trend-breakout.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-trend-breakout-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-scalp-trend-breakout.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "D1",
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "_bb_entry_allowed",
+        "_detect_usdjpy_setup_mode",
+        "_entry_candle_guard",
+        "_signal_mode"
+      ],
+      "exit": [
+        "timeout"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 165,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "trend_ma",
+      "duplicate_family": "trend_ma",
+      "aliases": [
+        "ma_cross",
+        "macro_trendma"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/trend/ma_cross.py",
+        "strategies/trend/ma_cross.py",
+        "workers/macro_trendma/worker.py"
+      ],
+      "implementation_commits": [
+        "b3246aeed2a462db40c44313cd8266d48e117c6a",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "M1",
+        "M5"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "spread"
+      ],
+      "past_results": [
+        {
+          "ledger": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_20251001_20251022_full.json",
+          "window": "20251001_20251022",
+          "timeframe": "M1",
+          "net_pnl_pips": 495.25,
+          "profit_factor": 1.4896,
+          "max_drawdown_pips": 173.03,
+          "trades": 82,
+          "win_rate": 0.4634
+        }
+      ],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "evaluated",
+      "priority_score": 0,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "trend_momentum",
+      "duplicate_family": "trend_momentum",
+      "aliases": [
+        "micro_trendmomentum",
+        "trend_momentum"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/trend_momentum.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_trendmomentum/worker.py",
+        "strategies/micro/trend_momentum.py",
+        "workers/micro_trendmomentum/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-trendmomentum-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-trendmomentum.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-trendmomentum-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-trendmomentum.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-trendmomentum-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-trendmomentum.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-trendmomentum-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-trendmomentum.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "trend_pullback",
+      "duplicate_family": "trend_pullback",
+      "aliases": [
+        "trend_pullback"
+      ],
+      "implementation_paths": [
+        "strategies/micro/trend_pullback.py"
+      ],
+      "implementation_commits": [
+        "474eec1c8e07a639044e00f605fec7f413a31255"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "trend_reclaim",
+      "duplicate_family": "trend_reclaim",
+      "aliases": [
+        "scalp_trend_reclaim",
+        "trend_reclaim_long"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/scalping/trend_reclaim_long.py",
+        "strategies/scalping/trend_reclaim_long.py",
+        "workers/scalp_trend_reclaim/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c",
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "M1"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "unevaluated_implementation_recoverable",
+      "current_decision": "未評価",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "trend_retest",
+      "duplicate_family": "trend_retest",
+      "aliases": [
+        "micro_trendretest",
+        "trend_retest"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/trend_retest.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_trendretest/worker.py",
+        "strategies/micro/trend_retest.py",
+        "workers/micro_trendretest/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-trendretest-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-trendretest.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-trendretest-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-trendretest.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-trendretest-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-trendretest.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-trendretest-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-trendretest.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "H1",
+        "H4",
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file",
+        "spread"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "vol_compression_break",
+      "duplicate_family": "vol_compression_break",
+      "aliases": [
+        "vol_compression_break"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro_lowvol/vol_compression_break.py",
+        "strategies/micro_lowvol/vol_compression_break.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 110,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "vol_spike_rider",
+      "duplicate_family": "vol_spike_rider",
+      "aliases": [
+        "vol_spike_rider"
+      ],
+      "implementation_paths": [
+        "workers/vol_spike_rider/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "vol_squeeze",
+      "duplicate_family": "vol_squeeze",
+      "aliases": [
+        "vol_squeeze"
+      ],
+      "implementation_paths": [
+        "workers/vol_squeeze/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "evidence_only",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 100,
+      "current_evaluation_status": "unevaluated_evidence_only",
+      "current_decision": "証拠不足",
+      "wrapper_target": null
+    },
+    {
+      "strategy_id": "vwap_bound_revert",
+      "duplicate_family": "vwap_bound_revert",
+      "aliases": [
+        "micro_vwapbound",
+        "vwap_bound_revert"
+      ],
+      "implementation_paths": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/strategies/micro/vwap_bound_revert.py",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/workers/micro_vwapbound/worker.py",
+        "strategies/micro/vwap_bound_revert.py",
+        "workers/micro_vwapbound/worker.py"
+      ],
+      "implementation_commits": [
+        "e66d500ad9b1b9a37a1f927693293fc06d349260",
+        "ec8e9b5306184b5d0ba6d4c4caa354fcc7b18cb2"
+      ],
+      "runtime_evidence": [
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-vwapbound-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/adoring-maxwell-1a958c/archive/systemd/quant-micro-vwapbound.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-vwapbound-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/competent-northcutt/archive/systemd/quant-micro-vwapbound.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-vwapbound-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/.claude/worktrees/quizzical-pascal/archive/systemd/quant-micro-vwapbound.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-vwapbound-exit.service",
+        "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/systemd/quant-micro-vwapbound.service"
+      ],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "implementation_recoverable",
+      "replay_compatible": false,
+      "evaluation_status": "unevaluated",
+      "priority_score": 140,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": "micro_runtime"
+    },
+    {
+      "strategy_id": "vwap_magnet_s5",
+      "duplicate_family": "vwap_magnet_s5",
+      "aliases": [
+        "vwap_magnet_s5"
+      ],
+      "implementation_paths": [
+        "workers/vwap_magnet_s5/worker.py"
+      ],
+      "implementation_commits": [
+        "3f7ddb52102b1ea24ed1517b8a7acd8049079d7c"
+      ],
+      "runtime_evidence": [],
+      "pair": [
+        "USD_JPY"
+      ],
+      "timeframe": [
+        "unknown"
+      ],
+      "entry": [
+        "implementation-defined"
+      ],
+      "exit": [
+        "implementation-defined"
+      ],
+      "cost_model": [
+        "not_explicit_in_strategy_file"
+      ],
+      "past_results": [],
+      "reproducibility": "offline_replay_ready",
+      "replay_compatible": true,
+      "evaluation_status": "unevaluated",
+      "priority_score": 125,
+      "current_evaluation_status": "evaluated_or_attempted_before_this_run",
+      "current_decision": "see_prior_results",
+      "wrapper_target": null
+    }
+  ],
+  "sources": {
+    "inventory": "research/training/legacy-strategy-full-inventory-20260729/inventory.json",
+    "priority_replay": "research/training/legacy-discretionary-priority-replay-20260729/priority_replay.json",
+    "vm_evidence": "research/training/legacy-strategy-full-inventory-20260729/vm_evidence.json"
+  }
+}
