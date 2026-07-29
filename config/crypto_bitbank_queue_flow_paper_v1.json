@@ -1,0 +1,26 @@
+{
+  "schema": "QR_CRYPTO_STRATEGY_LAB_CONFIG_V1",
+  "strategies": {
+    "QUEUE_FLOW_MICROPRICE_MAKER": {
+      "family": "QUEUE_FLOW_MICROPRICE_MAKER",
+      "entry_order_style": "PAPER_MAKER_LIMIT",
+      "exit_order_style": "PAPER_MAKER_LIMIT",
+      "forced_exit_order_style": "PAPER_MAKER_LIMIT",
+      "min_signal_bps": "0.00",
+      "max_signal_bps": "1000",
+      "min_imbalance": "0.08",
+      "min_trade_flow_imbalance": "0.05",
+      "min_microprice_edge_bps": "0.001",
+      "max_spread_bps": "8",
+      "gross_edge_multiplier": "1.00",
+      "imbalance_edge_scale_bps": "0.15",
+      "spread_cost_multiplier": "0.25",
+      "adverse_selection_bps": "0.03",
+      "safety_buffer_bps": "0.01",
+      "take_profit_bps": "2.5",
+      "stop_loss_bps": "2.0",
+      "max_hold_ms": 8000,
+      "cooldown_ms": 1000
+    }
+  }
+}

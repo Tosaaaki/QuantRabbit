@@ -13,6 +13,9 @@ from quant_rabbit.crypto.strategies import (
 
 
 CONFIG = Path("config/crypto_strategy_lab_v1.json")
+QUEUE_FLOW_CONFIG = Path(
+    "config/crypto_bitbank_queue_flow_paper_v1.json"
+)
 
 
 def _state(
@@ -174,7 +177,7 @@ def test_variant_fails_closed_on_future_stream_data() -> None:
         maker_fee_rate=Decimal("0"),
         taker_fee_rate=Decimal("0"),
         allow_short=True,
-        now_ns=1,
+        now_ns=2_000_000_000,
         wall_time_ms=-1,
     )
     assert decision["action"] == "WAIT"
@@ -250,3 +253,54 @@ def test_maker_exit_variant_keeps_stop_loss_taker() -> None:
     assert decision["action"] == "EXIT"
     assert decision["reason"] == "STOP_LOSS"
     assert decision["exit_order_style"] == "PAPER_TAKER"
+
+
+def test_queue_flow_candidate_requires_three_way_current_data_alignment() -> None:
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    state.observe_transactions(
+        [{"side": "buy", "price": "100.001", "amount": "10"}]
+    )
+    decision = strategy_router(
+        "QUEUE_FLOW_MICROPRICE_MAKER",
+        config_path=QUEUE_FLOW_CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    ).decide(
+        state,
+        position=Decimal("0"),
+        average_cost=Decimal("0"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.0012"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "ENTER"
+    assert decision["position_side"] == "LONG"
+    assert decision["entry_order_style"] == "PAPER_MAKER_LIMIT"
+    assert decision["authority"] == "NONE"
+    assert decision["no_future_data"] is True
+
+
+def test_queue_flow_candidate_blocks_opposing_trade_flow() -> None:
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    state.observe_transactions(
+        [{"side": "sell", "price": "100", "amount": "10"}]
+    )
+    decision = strategy_router(
+        "QUEUE_FLOW_MICROPRICE_MAKER",
+        config_path=QUEUE_FLOW_CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    ).decide(
+        state,
+        position=Decimal("0"),
+        average_cost=Decimal("0"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.0012"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "WAIT"
+    assert decision["reason"] == "TRADE_FLOW_NOT_ALIGNED"

@@ -73,6 +73,27 @@ def test_order_book_accepts_monotonic_nonconsecutive_sequence() -> None:
     assert book.bids[Decimal("100")] == Decimal("2")
 
 
+def test_book_microprice_and_signed_trade_flow_use_current_public_data() -> None:
+    state = FastMarketState("btc_jpy", 8)
+    assert state.book.apply_whole(
+        {
+            "bids": [["100", "10"]],
+            "asks": [["101", "1"]],
+            "timestamp": 1_000,
+            "sequenceId": "10",
+        }
+    )
+    features = state.book.features(1)
+    assert features["microprice"] > features["mid"]
+    state.observe_transactions(
+        [
+            {"side": "buy", "price": "101", "amount": "2"},
+            {"side": "sell", "price": "100", "amount": "1"},
+        ]
+    )
+    assert state.trade_flow_imbalance() > 0
+
+
 def _ready_state() -> FastMarketState:
     state = FastMarketState("btc_jpy", 8)
     assert state.book.apply_whole(
@@ -251,6 +272,18 @@ class HangingStream:
             yield {}
 
 
+def _circuit_message(timestamp: int) -> dict[str, Any]:
+    return {
+        "room_name": "circuit_break_info_btc_jpy",
+        "message": {
+            "data": {
+                "mode": "NONE",
+                "timestamp": timestamp,
+            }
+        },
+    }
+
+
 def test_fast_runner_treats_asyncio_timeout_as_bounded_completion(
     tmp_path: Path,
 ) -> None:
@@ -273,11 +306,84 @@ def test_fast_runner_treats_asyncio_timeout_as_bounded_completion(
     assert result["guardian"]["state"] == "HALT"
 
 
+def test_runner_uses_observed_venue_clock_within_skew_limit(
+    tmp_path: Path,
+) -> None:
+    timestamp = int(time.time() * 1000) + 4_000
+    messages = [
+        _circuit_message(timestamp),
+        {
+            "room_name": "depth_whole_btc_jpy",
+            "message": {
+                "data": {
+                    "bids": [["100", "10"]],
+                    "asks": [["101", "10"]],
+                    "timestamp": timestamp,
+                    "sequenceId": "1",
+                }
+            },
+        }
+    ]
+    ledger = CryptoLedger(tmp_path / "clock.db")
+    runner = FastPaperRunner(
+        ledger,
+        PaperEngine(ledger),
+        stream=FakeStream(messages),  # type: ignore[arg-type]
+        config=FastPaperConfig(
+            warmup_events=1,
+            telemetry_every_events=1,
+            max_exchange_clock_skew_ms=10_000,
+        ),
+    )
+    result = asyncio.run(
+        runner.run(
+            ["btc_jpy"],
+            {"btc_jpy": (Decimal("0"), Decimal("0"))},
+            duration_sec=1,
+            max_events=2,
+        )
+    )
+    assert "FUTURE_STREAM_DATA" not in result["decisions"]["reasons"]
+    assert (
+        result["latency"]["decision_clock"]
+        == "MAX_OBSERVED_EXCHANGE_TIMESTAMP"
+    )
+    assert 3_000 <= result["latency"]["exchange_clock_offset_ms_p50"] <= 5_000
+
+
+def test_runner_halts_during_bitbank_resumption_mode(
+    tmp_path: Path,
+) -> None:
+    timestamp = int(time.time() * 1000)
+    message = _circuit_message(timestamp)
+    message["message"]["data"]["mode"] = "RESUMPTION"
+    ledger = CryptoLedger(tmp_path / "circuit.db")
+    runner = FastPaperRunner(
+        ledger,
+        PaperEngine(ledger),
+        stream=FakeStream([message]),  # type: ignore[arg-type]
+    )
+    result = asyncio.run(
+        runner.run(
+            ["btc_jpy"],
+            {"btc_jpy": (Decimal("0"), Decimal("0"))},
+            duration_sec=1,
+            max_events=1,
+        )
+    )
+    assert result["guardian"]["state"] == "HALT"
+    assert result["guardian"]["kill_switch"] is True
+    assert "CIRCUIT_MODE_RESUMPTION" in result["guardian"]["issues"]
+    assert result["decisions"]["reasons"]["CIRCUIT_MODE_RESUMPTION"] == 1
+    assert result["metrics"]["fill_count"] == 0
+
+
 def test_fast_runner_executes_event_driven_paper_round(
     tmp_path: Path,
 ) -> None:
     timestamp = int(time.time() * 1000)
     messages = [
+        _circuit_message(timestamp),
         {
             "room_name": "depth_whole_btc_jpy",
             "message": {
@@ -334,10 +440,10 @@ def test_fast_runner_executes_event_driven_paper_round(
             ["btc_jpy"],
             {"btc_jpy": (Decimal("-0.0002"), Decimal("0"))},
             duration_sec=1,
-            max_events=3,
+            max_events=4,
         )
     )
-    assert result["runtime"]["events_processed"] == 3
+    assert result["runtime"]["events_processed"] == 4
     assert result["decisions"]["actions"]["ENTER"] == 1
     assert result["decisions"]["actions"]["EXIT"] == 1
     assert result["metrics"]["trade_count"] == 2
@@ -378,6 +484,7 @@ def test_margin_runner_checks_loss_cut_on_market_update_without_trade(
     )
     timestamp = int(time.time() * 1000)
     messages = [
+        _circuit_message(timestamp),
         {
             "room_name": "depth_whole_btc_jpy",
             "message": {
@@ -404,10 +511,10 @@ def test_margin_runner_checks_loss_cut_on_market_update_without_trade(
             ["btc_jpy"],
             {"btc_jpy": (Decimal("0"), Decimal("0"))},
             duration_sec=1,
-            max_events=1,
+            max_events=2,
         )
     )
-    assert result["decisions"]["actions"]["WAIT"] == 1
+    assert result["decisions"]["actions"]["WAIT"] == 2
     assert result["metrics"]["forced_liquidation_count"] == 1
     assert result["metrics"]["short_position_count"] == 0
     assert result["metrics"]["initial_cash_jpy"] == "10000"

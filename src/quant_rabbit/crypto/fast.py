@@ -55,6 +55,7 @@ class FastPaperConfig:
     take_profit_bps: Decimal = Decimal("4")
     stop_loss_bps: Decimal = Decimal("3")
     telemetry_every_events: int = 250
+    max_exchange_clock_skew_ms: int = 10_000
 
     @classmethod
     def from_env(cls) -> "FastPaperConfig":
@@ -133,6 +134,12 @@ class FastPaperConfig:
                     cls.telemetry_every_events,
                 )
             ),
+            max_exchange_clock_skew_ms=int(
+                os.environ.get(
+                    "QR_CRYPTO_FAST_MAX_EXCHANGE_CLOCK_SKEW_MS",
+                    cls.max_exchange_clock_skew_ms,
+                )
+            ),
         )
 
 
@@ -148,7 +155,12 @@ class LocalOrderBook:
 
     @property
     def ready(self) -> bool:
-        return self.sequence is not None and bool(self.bids) and bool(self.asks)
+        return (
+            self.sequence is not None
+            and bool(self.bids)
+            and bool(self.asks)
+            and max(self.bids) < min(self.asks)
+        )
 
     def apply_whole(self, data: dict[str, Any]) -> bool:
         sequence = int(data.get("sequenceId", -1))
@@ -277,6 +289,10 @@ class LocalOrderBook:
             "mid": mid,
             "spread_bps": (ask - bid) / mid * BPS,
             "imbalance": imbalance,
+            "microprice": (
+                ask * bids[0][1] + bid * asks[0][1]
+            )
+            / (bids[0][1] + asks[0][1]),
         }
 
 
@@ -286,16 +302,43 @@ class FastMarketState:
     price_window: int
     book: LocalOrderBook = field(default_factory=LocalOrderBook)
     prices: deque[Decimal] = field(init=False)
+    signed_trade_notional: deque[Decimal] = field(init=False)
     event_count: int = 0
     ticker_at_ms: int = 0
     last_trade_at_ms: int = 0
+    circuit_mode: str = "UNKNOWN"
+    circuit_at_ms: int = 0
 
     def __post_init__(self) -> None:
         self.prices = deque(maxlen=self.price_window)
+        self.signed_trade_notional = deque(maxlen=self.price_window)
 
     def observe_price(self, price: Decimal) -> None:
         if price > 0:
             self.prices.append(price)
+
+    def observe_transactions(self, rows: list[dict[str, Any]]) -> None:
+        signed = Decimal("0")
+        for row in rows:
+            notional = _d(row.get("price")) * _d(row.get("amount"))
+            signed += (
+                notional
+                if str(row.get("side")).lower() == "buy"
+                else -notional
+            )
+        if signed:
+            self.signed_trade_notional.append(signed)
+
+    def trade_flow_imbalance(self) -> Decimal:
+        absolute = sum(
+            (abs(value) for value in self.signed_trade_notional),
+            Decimal("0"),
+        )
+        return (
+            sum(self.signed_trade_notional, Decimal("0")) / absolute
+            if absolute
+            else Decimal("0")
+        )
 
 
 class FastMicrostructureRouter:
@@ -525,6 +568,7 @@ class FastPaperRunner:
             f"{kind}_{pair}"
             for pair in normalized
             for kind in (
+                "circuit_break_info",
                 "ticker",
                 "transactions",
                 "depth_whole",
@@ -538,6 +582,7 @@ class FastPaperRunner:
         ).hexdigest()[:20]
         decision_latencies_us: list[float] = []
         exchange_latencies_ms: list[float] = []
+        exchange_clock_offsets_ms: list[float] = []
         reasons: Counter[str] = Counter()
         actions: Counter[str] = Counter()
         room_counts: Counter[str] = Counter()
@@ -551,6 +596,7 @@ class FastPaperRunner:
         prediction_fingerprints: Counter[str] = Counter()
         margin_call_recorded = False
         processed = 0
+        venue_now_ms = 0
         next_progress_ns = started_ns
         progress_write_failures = 0
 
@@ -605,7 +651,10 @@ class FastPaperRunner:
         _emit_progress("STARTING")
 
         async def _consume() -> None:
-            nonlocal processed, margin_call_recorded, near_threshold_waits
+            nonlocal processed
+            nonlocal margin_call_recorded
+            nonlocal near_threshold_waits
+            nonlocal venue_now_ms
             async for message in self.stream.messages(
                 rooms, max_messages=max_events
             ):
@@ -626,6 +675,13 @@ class FastPaperRunner:
                 state.event_count += 1
                 if exchange_ms > 0:
                     exchange_latencies_ms.append(max(0.0, wall_ms - exchange_ms))
+                    offset_ms = exchange_ms - wall_ms
+                    exchange_clock_offsets_ms.append(float(offset_ms))
+                    if (
+                        abs(offset_ms)
+                        <= self.config.max_exchange_clock_skew_ms
+                    ):
+                        venue_now_ms = max(venue_now_ms, exchange_ms)
                 features = state.book.features(self.config.book_levels)
                 if features:
                     state.observe_price(features["mid"])
@@ -635,16 +691,28 @@ class FastPaperRunner:
                 average_cost = self.paper.state.average_costs.get(
                     pair, Decimal("0")
                 )
-                decision = self.router.decide(
-                    state,
-                    position=position,
-                    average_cost=average_cost,
-                    maker_fee_rate=maker_fee,
-                    taker_fee_rate=taker_fee,
-                    allow_short=self.paper.allow_short,
-                    now_ns=decision_started,
-                    wall_time_ms=wall_ms,
-                )
+                if state.circuit_mode != "NONE":
+                    decision = {
+                        "pair": pair,
+                        "strategy": self.strategy_name,
+                        "action": "WAIT",
+                        "reason": f"CIRCUIT_MODE_{state.circuit_mode}",
+                        "circuit_mode": state.circuit_mode,
+                        "authority": "NONE",
+                        "live_permission": False,
+                        "no_future_data": True,
+                    }
+                else:
+                    decision = self.router.decide(
+                        state,
+                        position=position,
+                        average_cost=average_cost,
+                        maker_fee_rate=maker_fee,
+                        taker_fee_rate=taker_fee,
+                        allow_short=self.paper.allow_short,
+                        now_ns=decision_started,
+                        wall_time_ms=venue_now_ms or wall_ms,
+                    )
                 decision_latencies_us.append(
                     (time.monotonic_ns() - decision_started) / 1_000
                 )
@@ -757,11 +825,25 @@ class FastPaperRunner:
         metrics = self.paper.mark_to_market(bids, asks)
         books_ready = sum(state.book.ready for state in states.values())
         guardian_issues: list[str] = []
+        if exchange_clock_offsets_ms and max(
+            abs(value) for value in exchange_clock_offsets_ms
+        ) > self.config.max_exchange_clock_skew_ms:
+            guardian_issues.append("EXCHANGE_CLOCK_SKEW")
         if books_ready != len(states):
             guardian_issues.append("BOOK_NOT_READY")
         if processed == 0:
             guardian_issues.append("NO_STREAM_EVENTS")
-        guardian_state = "HALT" if processed == 0 else (
+        active_circuit_modes = sorted(
+            {
+                state.circuit_mode
+                for state in states.values()
+                if state.circuit_mode != "NONE"
+            }
+        )
+        guardian_issues.extend(
+            f"CIRCUIT_MODE_{mode}" for mode in active_circuit_modes
+        )
+        guardian_state = "HALT" if processed == 0 or active_circuit_modes else (
             "RESTRICT" if guardian_issues else "GREEN"
         )
         result = {
@@ -791,6 +873,10 @@ class FastPaperRunner:
                 "events_processed": processed,
                 "events_per_sec": processed / elapsed_sec,
                 "books_ready": books_ready,
+                "circuit_modes": {
+                    pair: state.circuit_mode
+                    for pair, state in states.items()
+                },
                 "room_event_counts": dict(room_counts),
                 "modeled_interest_cost_jpy": str(interest_cost),
             },
@@ -804,6 +890,16 @@ class FastPaperRunner:
                 "exchange_to_receive_ms_p95": _percentile(
                     exchange_latencies_ms, 0.95
                 ),
+                "exchange_clock_offset_ms_p50": _percentile(
+                    exchange_clock_offsets_ms, 0.50
+                ),
+                "exchange_clock_offset_ms_p95": _percentile(
+                    exchange_clock_offsets_ms, 0.95
+                ),
+                "exchange_clock_skew_limit_ms": (
+                    self.config.max_exchange_clock_skew_ms
+                ),
+                "decision_clock": "MAX_OBSERVED_EXCHANGE_TIMESTAMP",
             },
             "decisions": {
                 "actions": dict(actions),
@@ -958,12 +1054,18 @@ class FastPaperRunner:
             transactions = data.get("transactions", [])
             if not isinstance(transactions, list) or not transactions:
                 return False, 0
+            state.observe_transactions(transactions)
             latest = max(
                 transactions, key=lambda row: int(row.get("executed_at", 0))
             )
             timestamp = int(latest.get("executed_at", 0))
             state.last_trade_at_ms = timestamp
             state.observe_price(_d(latest.get("price")))
+            return True, timestamp
+        if room.startswith("circuit_break_info_"):
+            timestamp = int(data.get("timestamp", 0))
+            state.circuit_mode = str(data.get("mode") or "UNKNOWN")
+            state.circuit_at_ms = timestamp
             return True, timestamp
         return False, 0
 

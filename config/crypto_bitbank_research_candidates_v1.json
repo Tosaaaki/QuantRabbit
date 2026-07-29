@@ -1,0 +1,205 @@
+{
+  "schema": "QR_BITBANK_RESEARCH_CANDIDATES_V1",
+  "verified_on": "2026-07-29",
+  "baseline_profiles": [
+    "RANGE_MAKER_REVERSION",
+    "BREAKOUT_CONFIRMATION",
+    "TREND_PULLBACK_MAKER",
+    "ORDER_BOOK_FADE",
+    "ORDER_BOOK_FADE_COOLDOWN_5S"
+  ],
+  "all_profiles": [
+    "RANGE_MAKER_REVERSION",
+    "BREAKOUT_CONFIRMATION",
+    "TREND_PULLBACK_MAKER",
+    "ORDER_BOOK_FADE",
+    "ORDER_BOOK_FADE_COOLDOWN_5S",
+    "ORDER_BOOK_FADE_MAKER_EXIT"
+  ],
+  "maker_exit_variant": "ORDER_BOOK_FADE_MAKER_EXIT",
+  "adoption_gate": {
+    "profit_factor_after_cost": ">1",
+    "expectancy_jpy": ">0",
+    "max_drawdown": "NON_WORSE_THAN_SAME_WINDOW_BASELINE",
+    "minimum_completed_trades_per_lane": 30,
+    "minimum_unseen_windows": 3,
+    "unseen_window_class": "PROSPECTIVE_ONLY",
+    "live_promotion_allowed": false
+  },
+  "screening": {
+    "min_entry_net_edge_bps": "0.20",
+    "regime_strategy_map": {
+      "RANGE": [
+        "RANGE_MAKER_REVERSION"
+      ],
+      "TREND_UP": [
+        "BREAKOUT_CONFIRMATION",
+        "TREND_PULLBACK_MAKER"
+      ],
+      "TREND_DOWN": [
+        "BREAKOUT_CONFIRMATION",
+        "TREND_PULLBACK_MAKER"
+      ]
+    },
+    "full_size_net_edge_bps": "0.35",
+    "low_edge_size_multiplier": "0.50",
+    "candidate_max_hold_ms": 6000
+  },
+  "sources": [
+    {
+      "id": "bitbank-official-api",
+      "kind": "OFFICIAL_PRIMARY",
+      "url": "https://github.com/bitbankinc/bitbank-api-docs",
+      "use": "Public REST/Stream, private mutation boundary, status and pair constraints",
+      "license": "DOCUMENTATION_REFERENCE_ONLY"
+    },
+    {
+      "id": "bitbank-public-stream",
+      "kind": "OFFICIAL_PRIMARY",
+      "url": "https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-stream.md",
+      "use": "ticker, transactions, depth_whole, depth_diff and sequence reconstruction",
+      "license": "DOCUMENTATION_REFERENCE_ONLY"
+    },
+    {
+      "id": "bitbank-rest",
+      "kind": "OFFICIAL_PRIMARY",
+      "url": "https://github.com/bitbankinc/bitbank-api-docs/blob/master/rest-api.md",
+      "use": "maker/taker fees, margin costs, order limits and PostOnly caveats",
+      "license": "DOCUMENTATION_REFERENCE_ONLY"
+    },
+    {
+      "id": "gould-bonart-queue-imbalance",
+      "kind": "ACADEMIC_PRIMARY",
+      "url": "https://arxiv.org/abs/1512.03492",
+      "use": "Queue imbalance as a short-horizon directional feature",
+      "fit_risk": "NASDAQ equities; must be revalidated on bitbank"
+    },
+    {
+      "id": "cont-kukanov-stoikov-ofi",
+      "kind": "ACADEMIC_PRIMARY",
+      "url": "https://arxiv.org/abs/1011.6402",
+      "use": "Order-flow imbalance and depth-scaled short-horizon impact",
+      "fit_risk": "NYSE data; same-interval mechanical impact must not become label leakage"
+    },
+    {
+      "id": "stoikov-microprice",
+      "kind": "ACADEMIC_PRIMARY",
+      "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2970694",
+      "use": "Spread and imbalance adjusted short-horizon fair value",
+      "fit_risk": "Reference model only; linked sample repository has no visible license"
+    },
+    {
+      "id": "avellaneda-stoikov-market-making",
+      "kind": "ACADEMIC_PRIMARY",
+      "url": "https://people.orie.cornell.edu/sfs33/LimitOrderBook.pdf",
+      "use": "Inventory-aware reservation price and adaptive quotes",
+      "fit_risk": "Idealized fills and Poisson assumptions can overstate profitability"
+    },
+    {
+      "id": "law-viens-consistent-lob",
+      "kind": "ACADEMIC_PRIMARY",
+      "url": "https://arxiv.org/abs/1903.07222",
+      "use": "Queue/price-time consistency and realistic market-making caution",
+      "fit_risk": "ETF calibration; implementation remains Paper-specific"
+    },
+    {
+      "id": "hummingbot",
+      "kind": "OSS_REFERENCE",
+      "url": "https://github.com/hummingbot/hummingbot",
+      "license": "Apache-2.0",
+      "use": "Market-making and arbitrage architecture comparison",
+      "bitbank_adapter_verified": false
+    },
+    {
+      "id": "cryptofeed",
+      "kind": "OSS_REFERENCE",
+      "url": "https://github.com/bmoscon/cryptofeed",
+      "license": "BSD-4-Clause-like project license",
+      "use": "Normalized public L2/trade feed design comparison",
+      "bitbank_adapter_verified": false
+    },
+    {
+      "id": "nautilus-trader",
+      "kind": "OSS_REFERENCE",
+      "url": "https://github.com/nautechsystems/nautilus_trader",
+      "license": "LGPL-3.0",
+      "use": "Deterministic event replay, queue-aware fill and cost model comparison",
+      "bitbank_adapter_verified": false
+    },
+    {
+      "id": "freqtrade",
+      "kind": "OSS_REFERENCE",
+      "url": "https://github.com/freqtrade/freqtrade",
+      "license": "GPL-3.0",
+      "use": "Walk-forward, dry-run and overfitting control comparison",
+      "bitbank_adapter_verified": false
+    }
+  ],
+  "candidate_shortlist": [
+    {
+      "candidate": "QUEUE_FLOW_MICROPRICE_MAKER",
+      "priority": 1,
+      "inputs": [
+        "depth_whole+depth_diff",
+        "transactions",
+        "ticker"
+      ],
+      "decision": "imbalance, microprice and signed trade flow must agree",
+      "execution": "Paper maker entry and maker-first exit",
+      "status": "BLOCKED_CIRCUIT_RESUMPTION",
+      "reason": "Directly tests continuation instead of the failed extreme-book fade; resume only after all selected pairs report circuit mode NONE",
+      "bounded_paper_evidence": {
+        "observed_at_utc": "2026-07-29T02:10:00Z",
+        "pairs": [
+          "btc_jpy",
+          "eth_jpy"
+        ],
+        "spot_events": 25,
+        "margin_events": 24,
+        "completed_trades": 0,
+        "fees_jpy": "0",
+        "net_pnl_jpy": "0",
+        "max_drawdown_jpy": "0",
+        "profit_factor_after_cost": null,
+        "decision_us_p95_spot": "8.708",
+        "decision_us_p95_margin": "11.042",
+        "guardian": "HALT",
+        "blocker": "CIRCUIT_MODE_RESUMPTION"
+      }
+    },
+    {
+      "candidate": "REGIME_ROUTED_MAKER_REVERSION_BREAKOUT",
+      "priority": 2,
+      "inputs": [
+        "spread",
+        "volatility",
+        "signed trade flow"
+      ],
+      "status": "RESEARCH_SCREEN",
+      "reason": "Avoids applying reversion and breakout in the same regime"
+    },
+    {
+      "candidate": "ADAPTIVE_SPREAD_INVENTORY_QUOTING",
+      "priority": 3,
+      "inputs": [
+        "microprice",
+        "inventory",
+        "volatility",
+        "fill intensity"
+      ],
+      "status": "DEFERRED",
+      "reason": "Requires queue-aware fills; current fixed partial-fill model is insufficient"
+    },
+    {
+      "candidate": "CROSS_PAIR_LEAD_LAG",
+      "priority": 4,
+      "inputs": [
+        "synchronized JPY pair books",
+        "exchange timestamps",
+        "local receive timestamps"
+      ],
+      "status": "DEFERRED",
+      "reason": "Clock alignment and multiple-testing controls must precede Paper"
+    }
+  ]
+}

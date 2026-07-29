@@ -34,6 +34,8 @@ class StrategyProfile:
     stop_loss_bps: Decimal
     max_hold_ms: int
     cooldown_ms: int
+    min_trade_flow_imbalance: Decimal
+    min_microprice_edge_bps: Decimal
 
     @classmethod
     def from_dict(cls, name: str, raw: dict[str, Any]) -> "StrategyProfile":
@@ -75,6 +77,12 @@ class StrategyProfile:
             stop_loss_bps=_d(raw["stop_loss_bps"]),
             max_hold_ms=int(raw["max_hold_ms"]),
             cooldown_ms=int(raw["cooldown_ms"]),
+            min_trade_flow_imbalance=_d(
+                raw.get("min_trade_flow_imbalance", "0")
+            ),
+            min_microprice_edge_bps=_d(
+                raw.get("min_microprice_edge_bps", "0")
+            ),
         )
         if (
             profile.min_signal_bps < 0
@@ -85,6 +93,10 @@ class StrategyProfile:
             or profile.stop_loss_bps <= 0
             or profile.max_hold_ms <= 0
             or profile.cooldown_ms < 0
+            or not Decimal("0")
+            <= profile.min_trade_flow_imbalance
+            <= Decimal("1")
+            or profile.min_microprice_edge_bps < 0
         ):
             raise ValueError(f"{name} has invalid strategy bounds")
         return profile
@@ -177,11 +189,21 @@ class ConfiguredStrategyRouter:
         )
         spread_bps = features["spread_bps"]
         imbalance = features["imbalance"]
+        microprice_edge_bps = (
+            (features["microprice"] - features["mid"])
+            / features["mid"]
+            * BPS
+            if features["mid"] > 0
+            else Decimal("0")
+        )
+        trade_flow_imbalance = state.trade_flow_imbalance()
         signal = self._entry_signal(
             momentum_bps=momentum_bps,
             recent_bps=recent_bps,
             second_half_bps=second_half_bps,
             imbalance=imbalance,
+            microprice_edge_bps=microprice_edge_bps,
+            trade_flow_imbalance=trade_flow_imbalance,
         )
         gross_edge_bps = (
             signal["raw_edge_bps"] * self.profile.gross_edge_multiplier
@@ -202,6 +224,8 @@ class ConfiguredStrategyRouter:
             "recent_bps": str(recent_bps),
             "spread_bps": str(spread_bps),
             "imbalance": str(imbalance),
+            "microprice_edge_bps": str(microprice_edge_bps),
+            "trade_flow_imbalance": str(trade_flow_imbalance),
             "expected_cost_bps": str(expected_cost_bps),
             "gross_edge_bps": str(gross_edge_bps),
             "net_edge_bps": str(net_edge_bps),
@@ -263,6 +287,8 @@ class ConfiguredStrategyRouter:
             momentum_bps=momentum_bps,
             recent_bps=recent_bps,
             imbalance=imbalance,
+            microprice_edge_bps=microprice_edge_bps,
+            trade_flow_imbalance=trade_flow_imbalance,
         ):
             exit_reason = "SIGNAL_INVALIDATED"
         if exit_reason is not None:
@@ -298,6 +324,8 @@ class ConfiguredStrategyRouter:
         recent_bps: Decimal,
         second_half_bps: Decimal,
         imbalance: Decimal,
+        microprice_edge_bps: Decimal,
+        trade_flow_imbalance: Decimal,
     ) -> dict[str, Any]:
         family = self.profile.family
         magnitude = abs(momentum_bps)
@@ -380,6 +408,36 @@ class ConfiguredStrategyRouter:
                 "EXTREME_BOOK_FADE",
                 "RANGE",
             )
+        if family == "QUEUE_FLOW_MICROPRICE_MAKER":
+            if (
+                abs(microprice_edge_bps)
+                < self.profile.min_microprice_edge_bps
+            ):
+                return self._no_signal(
+                    "MICROPRICE_EDGE_TOO_SMALL", "QUEUE_FLOW_PENDING"
+                )
+            side = "LONG" if microprice_edge_bps > 0 else "SHORT"
+            direction = Decimal("1") if side == "LONG" else Decimal("-1")
+            aligned_book = imbalance * direction
+            aligned_flow = trade_flow_imbalance * direction
+            if aligned_book < self.profile.min_imbalance:
+                return self._no_signal(
+                    "BOOK_NOT_ALIGNED", "QUEUE_FLOW_PENDING"
+                )
+            if (
+                aligned_flow
+                < self.profile.min_trade_flow_imbalance
+            ):
+                return self._no_signal(
+                    "TRADE_FLOW_NOT_ALIGNED", "QUEUE_FLOW_PENDING"
+                )
+            return self._signal(
+                side,
+                max(magnitude, abs(microprice_edge_bps)),
+                aligned_book,
+                "QUEUE_FLOW_MICROPRICE_CONFIRMED",
+                "QUEUE_FLOW_CONTINUATION",
+            )
         raise ValueError(f"unsupported strategy family: {family}")
 
     def _invalidated(
@@ -389,6 +447,8 @@ class ConfiguredStrategyRouter:
         momentum_bps: Decimal,
         recent_bps: Decimal,
         imbalance: Decimal,
+        microprice_edge_bps: Decimal,
+        trade_flow_imbalance: Decimal,
     ) -> bool:
         family = self.profile.family
         if family in {"RANGE_MAKER_REVERSION", "ORDER_BOOK_FADE"}:
@@ -402,6 +462,16 @@ class ConfiguredStrategyRouter:
                 recent_bps < 0 or imbalance < 0
                 if position_side == "LONG"
                 else recent_bps > 0 or imbalance > 0
+            )
+        if family == "QUEUE_FLOW_MICROPRICE_MAKER":
+            direction = (
+                Decimal("1")
+                if position_side == "LONG"
+                else Decimal("-1")
+            )
+            return (
+                microprice_edge_bps * direction <= 0
+                or trade_flow_imbalance * direction <= 0
             )
         return recent_bps * (Decimal("1") if position_side == "LONG" else -1) > 0
 

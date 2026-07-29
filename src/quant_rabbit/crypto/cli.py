@@ -22,6 +22,7 @@ from .fast import FastPaperConfig, FastPaperRunner, fast_report_markdown
 from .improvement import CryptoImprovementEvaluator
 from .ledger import CryptoLedger
 from .paper import PaperEngine
+from .profitability_study import BitbankProfitabilityStudy
 from .report import atomic_write_json, atomic_write_text, scan_markdown
 from .reporting import IroriSlackSummarySink, PaperShadowReportingWriter
 from .shadow import (
@@ -631,6 +632,26 @@ def run_strategy_lab_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_profitability_study(args: argparse.Namespace) -> int:
+    CryptoSafetyContract.from_env().assert_safe()
+    payload = BitbankProfitabilityStudy(
+        Path(args.runtime_root),
+        research_config=Path(args.research_config),
+        output_root=Path(args.output_root),
+    ).run_once()
+    _json_print(
+        {
+            "schema": payload["schema"],
+            "operation_id": payload["operation_id"],
+            "baseline": payload["baseline_contract"]["metrics"],
+            "comparisons": payload["isolated_comparisons"],
+            "output_root": str(Path(args.output_root)),
+            "safety": payload["safety"],
+        }
+    )
+    return 0
+
+
 def run_private_check(_: argparse.Namespace) -> int:
     CryptoSafetyContract.from_env().assert_safe()
     api_key = os.environ.get("QR_BITBANK_API_KEY", "")
@@ -856,6 +877,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lab_evaluation.add_argument("--trailing-minutes", type=int)
     lab_evaluation.set_defaults(func=run_strategy_lab_evaluate)
+
+    profitability = subparsers.add_parser(
+        "strategy-profitability-study",
+        help="Run read-only bitbank Paper one-category comparisons.",
+    )
+    profitability.add_argument(
+        "--runtime-root",
+        default="data/crypto/strategy-lab",
+    )
+    profitability.add_argument(
+        "--research-config",
+        default="config/crypto_bitbank_research_candidates_v1.json",
+    )
+    profitability.add_argument(
+        "--output-root",
+        default="data/crypto/profitability-study",
+    )
+    profitability.set_defaults(func=run_profitability_study)
 
     private = subparsers.add_parser(
         "private-check", help="Authenticate and GET assets only."
