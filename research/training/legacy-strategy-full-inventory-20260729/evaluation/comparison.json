@@ -1,0 +1,127 @@
+{
+  "generated_at": "2026-07-29T03:00:49.105346+00:00",
+  "authority": "NONE",
+  "live_permission": false,
+  "replay_window": "2026-01-27T00:00:04.892723Z/2026-01-27T23:59:59.681762Z",
+  "conditions": {
+    "pair": "USD_JPY",
+    "resample_seconds": 5,
+    "initial_units": "worker-defined; identical per A/B",
+    "cost_model": "realistic: next-tick fill, 180ms latency, spread/ATR/latency slippage",
+    "hard_stop_loss": "disabled",
+    "end_of_replay_liquidation": "excluded"
+  },
+  "strategies": [
+    {
+      "strategy_id": "trend_breakout",
+      "bot_only": {
+        "net_pnl_jpy": -582.57,
+        "profit_factor": 0.0,
+        "expectancy_jpy": -582.57,
+        "max_drawdown_jpy": 582.57,
+        "profit_giveback_rate": null,
+        "trades": 1,
+        "status": "observed"
+      },
+      "ai_inventory_shadow": {
+        "net_pnl_jpy": -168.57,
+        "profit_factor": 0.0,
+        "expectancy_jpy": -168.57,
+        "max_drawdown_jpy": 168.57,
+        "profit_giveback_rate": null,
+        "trades": 1,
+        "status": "observed"
+      },
+      "ai_management_delta_jpy": 414.0,
+      "ai_judgment_count": 1,
+      "ai_cost_jpy": null,
+      "ai_cost_status": "not_metered_in_codex_session",
+      "decision": "reject_economic_ai_shadow_only"
+    },
+    {
+      "strategy_id": "pullback_continuation",
+      "bot_only": {
+        "net_pnl_jpy": null,
+        "profit_factor": null,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": null,
+        "profit_giveback_rate": null,
+        "trades": 0,
+        "status": "insufficient_no_trades"
+      },
+      "ai_inventory_shadow": {
+        "net_pnl_jpy": null,
+        "profit_factor": null,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": null,
+        "profit_giveback_rate": null,
+        "trades": 0,
+        "status": "insufficient_no_trades"
+      },
+      "ai_management_delta_jpy": null,
+      "ai_judgment_count": 0,
+      "ai_cost_jpy": null,
+      "ai_cost_status": "not_metered_in_codex_session",
+      "decision": "insufficient_samples"
+    },
+    {
+      "strategy_id": "failed_break_reverse",
+      "bot_only": {
+        "net_pnl_jpy": null,
+        "profit_factor": null,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": null,
+        "profit_giveback_rate": null,
+        "trades": 0,
+        "status": "insufficient_no_trades"
+      },
+      "ai_inventory_shadow": {
+        "net_pnl_jpy": null,
+        "profit_factor": null,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": null,
+        "profit_giveback_rate": null,
+        "trades": 0,
+        "status": "insufficient_no_trades"
+      },
+      "ai_management_delta_jpy": null,
+      "ai_judgment_count": 0,
+      "ai_cost_jpy": null,
+      "ai_cost_status": "not_metered_in_codex_session",
+      "decision": "insufficient_samples"
+    },
+    {
+      "strategy_id": "session_open",
+      "bot_only": {
+        "net_pnl_jpy": 461.44,
+        "profit_factor": "Infinity",
+        "expectancy_jpy": 461.44,
+        "max_drawdown_jpy": 0.0,
+        "profit_giveback_rate": 0.0,
+        "trades": 1,
+        "status": "observed"
+      },
+      "ai_inventory_shadow": {
+        "net_pnl_jpy": 461.44,
+        "profit_factor": "Infinity",
+        "expectancy_jpy": 461.44,
+        "max_drawdown_jpy": 0.0,
+        "profit_giveback_rate": 0.0,
+        "trades": 1,
+        "status": "observed"
+      },
+      "ai_management_delta_jpy": 0.0,
+      "ai_judgment_count": 0,
+      "ai_cost_jpy": null,
+      "ai_cost_status": "not_metered_in_codex_session",
+      "decision": "provisional_promising_more_samples_required"
+    }
+  ],
+  "counts": {
+    "replay_attempted": 4,
+    "observed_with_trades": 2,
+    "insufficient_no_trades": 2,
+    "provisional_promising": 1,
+    "fresh_ai_judgments": 1
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "trades": 1,
+    "total_pnl_pips": 4.614,
+    "total_pnl_jpy": 461.44,
+    "win_rate": 1.0,
+    "profit_factor": Infinity,
+    "profit_factor_jpy": Infinity
+  },
+  "trades": [
+    {
+      "trade_id": "sim-1",
+      "pocket": "scalp",
+      "strategy_tag": "session_open_breakout",
+      "entry_time": "2026-01-27T07:26:04.696739+00:00",
+      "exit_time": "2026-01-27T07:34:19.985412+00:00",
+      "entry_price": 154.59391829444795,
+      "exit_price": 154.64006227951216,
+      "pnl_pips": 4.614,
+      "pnl_jpy": 461.44,
+      "reason": "tp_hit",
+      "source": "session_open",
+      "units": 10000,
+      "exit_slip_pips": 0.29377204878473573,
+      "exit_latency_ms": 0.0,
+      "regime_route": "unknown"
+    }
+  ]
+}

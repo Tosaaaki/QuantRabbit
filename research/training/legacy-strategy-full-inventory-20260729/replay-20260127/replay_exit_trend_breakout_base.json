@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "trades": 1,
+    "total_pnl_pips": -9.709,
+    "total_pnl_jpy": -582.57,
+    "win_rate": 0.0,
+    "profit_factor": 0.0,
+    "profit_factor_jpy": 0.0
+  },
+  "trades": [
+    {
+      "trade_id": "sim-1",
+      "pocket": "scalp",
+      "strategy_tag": "TrendBreakout",
+      "entry_time": "2026-01-27T00:47:09.999925+00:00",
+      "exit_time": "2026-01-27T00:50:39.475596+00:00",
+      "entry_price": 154.27005676842344,
+      "exit_price": 154.17296194598165,
+      "pnl_pips": -9.709,
+      "pnl_jpy": -582.57,
+      "reason": "max_adverse",
+      "source": "trend_breakout",
+      "units": 6000,
+      "exit_slip_pips": 0.30380540183379073,
+      "exit_latency_ms": 180.0,
+      "regime_route": "unknown"
+    }
+  ]
+}

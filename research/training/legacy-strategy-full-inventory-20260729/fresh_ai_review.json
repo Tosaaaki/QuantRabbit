@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-07-29T12:02:00+09:00",
+  "mode": "fresh_ai_post_replay_high_information_window_only",
+  "authority": "NONE",
+  "live_permission": false,
+  "economic_application": false,
+  "observed_external_ai_api_calls": 0,
+  "ai_cost_jpy": null,
+  "ai_cost_status": "not_metered_in_codex_session",
+  "judgments": [
+    {
+      "strategy_id": "trend_breakout",
+      "trade_id": "sim-1",
+      "checkpoint": "2026-01-27T00:48:09.105325+00:00",
+      "information_available_at_checkpoint": {
+        "seconds_since_entry": 59.1054,
+        "entry_price": 154.27005676842344,
+        "bid": 154.245,
+        "ask": 154.253,
+        "spread_pips": 0.8,
+        "mid_move_from_entry_pips": -2.106,
+        "mfe_pips": 0.294,
+        "mae_pips": -2.806
+      },
+      "decision": "exit_all_shadow",
+      "reason": "direction confirmation failed after 60 seconds; adverse move exceeded 2 pips while favorable excursion stayed below 0.3 pip",
+      "counterfactual_exit_price": 154.24196194598165,
+      "counterfactual_pnl_pips": -2.81,
+      "counterfactual_pnl_jpy": -168.57,
+      "execution_cost_assumption": "same realistic replay spread, latency and 0.3038 pip exit slippage",
+      "lookahead_used": false
+    }
+  ]
+}

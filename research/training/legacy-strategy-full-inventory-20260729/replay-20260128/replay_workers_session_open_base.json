@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "trades": 0,
+    "total_pnl_pips": 0.0,
+    "total_pnl_jpy": 0.0,
+    "win_rate": 0.0,
+    "coverage": {
+      "status": "ok",
+      "tick_start": "2026-01-28T00:00:00.138038+00:00",
+      "tick_end": "2026-01-28T00:03:14.423464+00:00",
+      "tick_count": 339,
+      "tick_span_sec": 194.285
+    }
+  },
+  "trades": []
+}

@@ -1,0 +1,44 @@
+{
+  "summary": {
+    "trades": 0,
+    "total_pnl_pips": 0,
+    "total_pnl_jpy": 0.0,
+    "win_rate": 0.0,
+    "profit_factor": 0.0,
+    "pending_unfilled": 0,
+    "gate_counts": {
+      "m1_closes": 3,
+      "missing_m1_factors": 3
+    },
+    "signal_tags": {},
+    "factor_readiness": {
+      "bars": {
+        "M1": 3,
+        "M5": 0,
+        "H1": 0,
+        "H4": 0
+      },
+      "first_bar_ts": {
+        "M1": "2026-01-28T00:00:48.393771+00:00"
+      }
+    },
+    "last_reject_sample": null,
+    "coverage": {
+      "status": "ok",
+      "tick_start": "2026-01-28T00:00:00.138038+00:00",
+      "tick_end": "2026-01-28T00:03:14.423464+00:00",
+      "tick_count": 339,
+      "tick_span_sec": 194.285,
+      "live_trade_overlap": {
+        "status": "ok",
+        "strategy_tag": "FailedBreakReverse",
+        "db_path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/logs/trades.db",
+        "window_start": "2026-01-28T00:00:00.138038+00:00",
+        "window_end": "2026-01-28T00:03:14.423464+00:00",
+        "overlap_count": 0,
+        "total_strategy_trades": 0
+      }
+    }
+  },
+  "trades": []
+}

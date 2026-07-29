@@ -1,0 +1,26 @@
+{
+  "summary": {
+    "trades": 1,
+    "total_pnl_pips": 0.0,
+    "total_pnl_jpy": 0.0,
+    "win_rate": 0.0,
+    "coverage": {
+      "status": "ok",
+      "tick_start": "2026-01-27T00:00:04.892723+00:00",
+      "tick_end": "2026-01-27T23:59:59.681762+00:00",
+      "tick_count": 16067,
+      "tick_span_sec": 86394.789
+    }
+  },
+  "trades": [
+    {
+      "direction": "long",
+      "entry_time": "2026-01-27T07:25:59.440537+00:00",
+      "entry_price": 154.578,
+      "tp_price": 154.62686,
+      "sl_price": 154.54746,
+      "units": 10000,
+      "strategy_tag": "session_open_breakout"
+    }
+  ]
+}

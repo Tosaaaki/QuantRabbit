@@ -1,0 +1,419 @@
+{
+  "trend_breakout": {
+    "entry_replay": {
+      "summary": {
+        "trades": 1,
+        "total_pnl_pips": -5.5,
+        "total_pnl_jpy": -550.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "pending_unfilled": 0,
+        "gate_counts": {
+          "cooldown_blocked": 1,
+          "entry_cap_blocked": 2,
+          "entry_opened": 1,
+          "m1_closes": 1400,
+          "missing_m1_factors": 19,
+          "signal_dict": 8,
+          "signal_none": 1318,
+          "spread_blocked": 52,
+          "tag_filtered": 7
+        },
+        "signal_tags": {
+          "M1Scalper-buy-dip": 7,
+          "M1Scalper-trend-long": 1
+        },
+        "factor_readiness": {
+          "bars": {
+            "M1": 1400,
+            "M5": 285,
+            "H1": 23,
+            "H4": 5
+          },
+          "first_bar_ts": {
+            "M1": "2026-01-27T00:00:59.984240+00:00",
+            "M5": "2026-01-27T00:04:58.934842+00:00",
+            "H1": "2026-01-27T00:59:59.318669+00:00",
+            "H4": "2026-01-27T03:59:58.184302+00:00"
+          }
+        },
+        "last_reject_sample": {
+          "ts": "2026-01-27T00:40:03.313638+00:00",
+          "reject_gate": "tag_filtered",
+          "tag": "M1Scalper-buy-dip",
+          "action": "OPEN_LONG",
+          "confidence": null,
+          "spread_pips": 0.8,
+          "range_mode": "NEUTRAL",
+          "range_score": 0.4735
+        },
+        "coverage": {
+          "status": "ok",
+          "tick_start": "2026-01-27T00:00:04.892723+00:00",
+          "tick_end": "2026-01-27T23:59:59.681762+00:00",
+          "tick_count": 16067,
+          "tick_span_sec": 86394.789,
+          "live_trade_overlap": {
+            "status": "ok",
+            "strategy_tag": "TrendBreakout",
+            "db_path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/logs/trades.db",
+            "window_start": "2026-01-27T00:00:04.892723+00:00",
+            "window_end": "2026-01-27T23:59:59.681762+00:00",
+            "overlap_count": 0,
+            "total_strategy_trades": 0
+          }
+        }
+      },
+      "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_workers_trend_breakout_base.json"
+    },
+    "base": {
+      "trades": 1,
+      "total_pnl_pips": -9.709,
+      "total_pnl_jpy": -582.57,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "profit_factor_jpy": 0.0
+    },
+    "base_scenarios": {
+      "all": {
+        "summary": {
+          "trades": 1,
+          "total_pnl_pips": -9.709,
+          "total_pnl_jpy": -582.57,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "profit_factor_jpy": 0.0
+        },
+        "selection": {
+          "requested": 1,
+          "applied": 1,
+          "excluded": 0
+        },
+        "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_exit_trend_breakout_base.json",
+        "tick_count": 16067,
+        "tick_meta": {
+          "count": 16067,
+          "spread_percentiles": {
+            "q20": 0.7999999999981355,
+            "q80": 0.8000000000009777
+          },
+          "minute_rows": 1401,
+          "counts": {
+            "all": 16067,
+            "wide_spread": 10787,
+            "tight_spread": 5280,
+            "high_vol": 2158,
+            "low_vol": 2936,
+            "trend": 4379,
+            "range": 4610,
+            "trend_up": 2212,
+            "trend_down": 2167,
+            "gap": 342,
+            "gap_up": 177,
+            "gap_down": 165,
+            "stale": 80
+          }
+        }
+      }
+    }
+  },
+  "pullback_continuation": {
+    "entry_replay": {
+      "summary": {
+        "trades": 0,
+        "total_pnl_pips": 0,
+        "total_pnl_jpy": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "pending_unfilled": 0,
+        "gate_counts": {
+          "buy_dip_blocked": 7,
+          "m1_closes": 1400,
+          "missing_m1_factors": 19,
+          "signal_dict": 9,
+          "signal_none": 1320,
+          "spread_blocked": 52,
+          "tag_filtered": 2
+        },
+        "signal_tags": {
+          "M1Scalper-buy-dip": 7,
+          "M1Scalper-trend-long": 2
+        },
+        "factor_readiness": {
+          "bars": {
+            "M1": 1400,
+            "M5": 285,
+            "H1": 23,
+            "H4": 5
+          },
+          "first_bar_ts": {
+            "M1": "2026-01-27T00:00:59.984240+00:00",
+            "M5": "2026-01-27T00:04:58.934842+00:00",
+            "H1": "2026-01-27T00:59:59.318669+00:00",
+            "H4": "2026-01-27T03:59:58.184302+00:00"
+          }
+        },
+        "last_reject_sample": {
+          "ts": "2026-01-27T00:48:04.751145+00:00",
+          "reject_gate": "tag_filtered",
+          "tag": "M1Scalper-trend-long",
+          "action": "OPEN_LONG",
+          "confidence": null,
+          "spread_pips": 0.8,
+          "range_mode": "RANGE",
+          "range_score": 0.4843
+        },
+        "coverage": {
+          "status": "ok",
+          "tick_start": "2026-01-27T00:00:04.892723+00:00",
+          "tick_end": "2026-01-27T23:59:59.681762+00:00",
+          "tick_count": 16067,
+          "tick_span_sec": 86394.789,
+          "live_trade_overlap": {
+            "status": "ok",
+            "strategy_tag": "PullbackContinuation",
+            "db_path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/logs/trades.db",
+            "window_start": "2026-01-27T00:00:04.892723+00:00",
+            "window_end": "2026-01-27T23:59:59.681762+00:00",
+            "overlap_count": 0,
+            "total_strategy_trades": 0
+          }
+        }
+      },
+      "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_workers_pullback_continuation_base.json"
+    },
+    "base": {
+      "trades": 0,
+      "total_pnl_pips": 0,
+      "total_pnl_jpy": 0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "profit_factor_jpy": Infinity
+    },
+    "base_scenarios": {
+      "all": {
+        "summary": {
+          "trades": 0,
+          "total_pnl_pips": 0,
+          "total_pnl_jpy": 0,
+          "win_rate": 0.0,
+          "profit_factor": Infinity,
+          "profit_factor_jpy": Infinity
+        },
+        "selection": {
+          "requested": 0,
+          "applied": 0,
+          "excluded": 0
+        },
+        "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_exit_pullback_continuation_base.json",
+        "tick_count": 16067,
+        "tick_meta": {
+          "count": 16067,
+          "spread_percentiles": {
+            "q20": 0.7999999999981355,
+            "q80": 0.8000000000009777
+          },
+          "minute_rows": 1401,
+          "counts": {
+            "all": 16067,
+            "wide_spread": 10787,
+            "tight_spread": 5280,
+            "high_vol": 2158,
+            "low_vol": 2936,
+            "trend": 4379,
+            "range": 4610,
+            "trend_up": 2212,
+            "trend_down": 2167,
+            "gap": 342,
+            "gap_up": 177,
+            "gap_down": 165,
+            "stale": 80
+          }
+        }
+      }
+    }
+  },
+  "failed_break_reverse": {
+    "entry_replay": {
+      "summary": {
+        "trades": 0,
+        "total_pnl_pips": 0,
+        "total_pnl_jpy": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "pending_unfilled": 0,
+        "gate_counts": {
+          "m1_closes": 1400,
+          "missing_m1_factors": 19,
+          "signal_dict": 9,
+          "signal_none": 1320,
+          "spread_blocked": 52,
+          "tag_filtered": 9
+        },
+        "signal_tags": {
+          "M1Scalper-buy-dip": 7,
+          "M1Scalper-trend-long": 2
+        },
+        "factor_readiness": {
+          "bars": {
+            "M1": 1400,
+            "M5": 285,
+            "H1": 23,
+            "H4": 5
+          },
+          "first_bar_ts": {
+            "M1": "2026-01-27T00:00:59.984240+00:00",
+            "M5": "2026-01-27T00:04:58.934842+00:00",
+            "H1": "2026-01-27T00:59:59.318669+00:00",
+            "H4": "2026-01-27T03:59:58.184302+00:00"
+          }
+        },
+        "last_reject_sample": {
+          "ts": "2026-01-27T00:48:04.751145+00:00",
+          "reject_gate": "tag_filtered",
+          "tag": "M1Scalper-trend-long",
+          "action": "OPEN_LONG",
+          "confidence": null,
+          "spread_pips": 0.8,
+          "range_mode": "RANGE",
+          "range_score": 0.4843
+        },
+        "coverage": {
+          "status": "ok",
+          "tick_start": "2026-01-27T00:00:04.892723+00:00",
+          "tick_end": "2026-01-27T23:59:59.681762+00:00",
+          "tick_count": 16067,
+          "tick_span_sec": 86394.789,
+          "live_trade_overlap": {
+            "status": "ok",
+            "strategy_tag": "FailedBreakReverse",
+            "db_path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/archive/logs/trades.db",
+            "window_start": "2026-01-27T00:00:04.892723+00:00",
+            "window_end": "2026-01-27T23:59:59.681762+00:00",
+            "overlap_count": 0,
+            "total_strategy_trades": 0
+          }
+        }
+      },
+      "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_workers_failed_break_reverse_base.json"
+    },
+    "base": {
+      "trades": 0,
+      "total_pnl_pips": 0,
+      "total_pnl_jpy": 0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "profit_factor_jpy": Infinity
+    },
+    "base_scenarios": {
+      "all": {
+        "summary": {
+          "trades": 0,
+          "total_pnl_pips": 0,
+          "total_pnl_jpy": 0,
+          "win_rate": 0.0,
+          "profit_factor": Infinity,
+          "profit_factor_jpy": Infinity
+        },
+        "selection": {
+          "requested": 0,
+          "applied": 0,
+          "excluded": 0
+        },
+        "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_exit_failed_break_reverse_base.json",
+        "tick_count": 16067,
+        "tick_meta": {
+          "count": 16067,
+          "spread_percentiles": {
+            "q20": 0.7999999999981355,
+            "q80": 0.8000000000009777
+          },
+          "minute_rows": 1401,
+          "counts": {
+            "all": 16067,
+            "wide_spread": 10787,
+            "tight_spread": 5280,
+            "high_vol": 2158,
+            "low_vol": 2936,
+            "trend": 4379,
+            "range": 4610,
+            "trend_up": 2212,
+            "trend_down": 2167,
+            "gap": 342,
+            "gap_up": 177,
+            "gap_down": 165,
+            "stale": 80
+          }
+        }
+      }
+    }
+  },
+  "session_open": {
+    "entry_replay": {
+      "summary": {
+        "trades": 1,
+        "total_pnl_pips": 0.0,
+        "total_pnl_jpy": 0.0,
+        "win_rate": 0.0,
+        "coverage": {
+          "status": "ok",
+          "tick_start": "2026-01-27T00:00:04.892723+00:00",
+          "tick_end": "2026-01-27T23:59:59.681762+00:00",
+          "tick_count": 16067,
+          "tick_span_sec": 86394.789
+        }
+      },
+      "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_workers_session_open_base.json"
+    },
+    "base": {
+      "trades": 1,
+      "total_pnl_pips": 4.614,
+      "total_pnl_jpy": 461.44,
+      "win_rate": 1.0,
+      "profit_factor": Infinity,
+      "profit_factor_jpy": Infinity
+    },
+    "base_scenarios": {
+      "all": {
+        "summary": {
+          "trades": 1,
+          "total_pnl_pips": 4.614,
+          "total_pnl_jpy": 461.44,
+          "win_rate": 1.0,
+          "profit_factor": Infinity,
+          "profit_factor_jpy": Infinity
+        },
+        "selection": {
+          "requested": 1,
+          "applied": 1,
+          "excluded": 0
+        },
+        "out_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/research/training/legacy-strategy-full-inventory-20260729/replay-20260127/replay_exit_session_open_base.json",
+        "tick_count": 16067,
+        "tick_meta": {
+          "count": 16067,
+          "spread_percentiles": {
+            "q20": 0.7999999999981355,
+            "q80": 0.8000000000009777
+          },
+          "minute_rows": 1401,
+          "counts": {
+            "all": 16067,
+            "wide_spread": 10787,
+            "tight_spread": 5280,
+            "high_vol": 2158,
+            "low_vol": 2936,
+            "trend": 4379,
+            "range": 4610,
+            "trend_up": 2212,
+            "trend_down": 2167,
+            "gap": 342,
+            "gap_up": 177,
+            "gap_down": 165,
+            "stale": 80
+          }
+        }
+      }
+    }
+  }
+}
