@@ -1,0 +1,72 @@
+{
+  "contract": "QR_DOJO_LEGACY_M1_PAPER_ROOMS_V1",
+  "schema_version": 1,
+  "authority": {
+    "paper_replay_only": true,
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE"
+  },
+  "experiment_id": "dojo-legacy-m1scalper-ai-ab-20260729-v1",
+  "initial_balance_jpy": 200000.0,
+  "window_end_utc": "2026-08-29T00:00:00Z",
+  "cost_model": {
+    "quote_spread": "OBSERVED_BID_ASK",
+    "slippage_pips_per_fill": 0.2,
+    "financing_pips_per_day": 0.05,
+    "replay_round_trip_cost_pips": 1.1
+  },
+  "candidate_status": {
+    "status": "PROVISIONAL_FORWARD_OBSERVATION",
+    "positive_proof": false,
+    "reason": "51 JPY over 6 diagnostic trades is insufficient",
+    "admission_requires": [
+      "multiple lineage-unseen windows",
+      "sufficient closed trades",
+      "PF above 1 after costs",
+      "positive expectancy after costs",
+      "acceptable max drawdown",
+      "prospective Paper confirmation"
+    ]
+  },
+  "rooms": [
+    {
+      "room_id": "m1scalper-bot-only",
+      "management_arm": "BOT_ONLY",
+      "bot_config": {
+        "authority": {
+          "paper_replay_only": true,
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE"
+        },
+        "management_arm": "BOT_ONLY",
+        "strategy_owner_id": "legacy-paper-m1scalper-bot",
+        "operation_id": "dojo-m1scalper-paper:bot-only:v1",
+        "pairs": ["USD_JPY"],
+        "fixed_units": 1000,
+        "ceiling_bars": 10,
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_m1_ai_inventory_policy_v1.json"
+      }
+    },
+    {
+      "room_id": "m1scalper-ai-inventory",
+      "management_arm": "AI_INVENTORY",
+      "bot_config": {
+        "authority": {
+          "paper_replay_only": true,
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE"
+        },
+        "management_arm": "AI_INVENTORY",
+        "strategy_owner_id": "legacy-paper-m1scalper-ai",
+        "operation_id": "dojo-m1scalper-paper:ai-inventory:v1",
+        "pairs": ["USD_JPY"],
+        "fixed_units": 1000,
+        "ceiling_bars": 10,
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_m1_ai_inventory_policy_v1.json"
+      }
+    }
+  ]
+}

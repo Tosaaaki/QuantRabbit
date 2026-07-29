@@ -1,0 +1,158 @@
+{
+  "authority": {
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true
+  },
+  "contract": "QR_DOJO_LEGACY_M1_PORT_REPLAY_V1",
+  "end_of_replay_liquidation_included": false,
+  "evidence_class": "LINEAGE_UNSEEN_DIAGNOSTIC_NOT_GLOBAL_HOLDOUT",
+  "fixed_units_cap": 1000,
+  "future_data_allowed": false,
+  "lot_increase_allowed": false,
+  "result_sha256": "fdca6b4f90ba3227027a4a3f244470ffc74565919ec28ed062c6ed7fa5f41157",
+  "round_trip_cost_pips": 1.1,
+  "windows": {
+    "candles_M1_20251023": {
+      "AI_INVENTORY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 443,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": 0.0,
+        "net_profit_jpy": 0,
+        "profit_factor": 0.0,
+        "profit_giveback_ratio": null,
+        "trade_count": 0
+      },
+      "BOT_ONLY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 0,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -13.81,
+        "max_drawdown_jpy": 1047.9,
+        "net_profit_jpy": -966.4,
+        "profit_factor": 0.4851,
+        "profit_giveback_ratio": 12.8577,
+        "trade_count": 70
+      }
+    },
+    "candles_M1_20251024": {
+      "AI_INVENTORY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 383,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": null,
+        "max_drawdown_jpy": 0.0,
+        "net_profit_jpy": 0,
+        "profit_factor": 0.0,
+        "profit_giveback_ratio": null,
+        "trade_count": 0
+      },
+      "BOT_ONLY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 0,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -2.6,
+        "max_drawdown_jpy": 610.3,
+        "net_profit_jpy": -158.5,
+        "profit_factor": 0.8806,
+        "profit_giveback_ratio": null,
+        "trade_count": 61
+      }
+    },
+    "candles_M1_20251027": {
+      "AI_INVENTORY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 583,
+        "end_open_position_excluded": true,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": 21.1,
+        "max_drawdown_jpy": 0.0,
+        "net_profit_jpy": 21.1,
+        "profit_factor": null,
+        "profit_giveback_ratio": 0.0,
+        "trade_count": 1
+      },
+      "BOT_ONLY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 0,
+        "end_open_position_excluded": true,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -7.41,
+        "max_drawdown_jpy": 925.0,
+        "net_profit_jpy": -637.1,
+        "profit_factor": 0.6847,
+        "profit_giveback_ratio": 4.8218,
+        "trade_count": 86
+      }
+    },
+    "candles_M1_20251028": {
+      "AI_INVENTORY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 671,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -51.0,
+        "max_drawdown_jpy": 51.0,
+        "net_profit_jpy": -51.0,
+        "profit_factor": 0.0,
+        "profit_giveback_ratio": null,
+        "trade_count": 1
+      },
+      "BOT_ONLY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 0,
+        "end_open_position_excluded": false,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -14.62,
+        "max_drawdown_jpy": 1809.2,
+        "net_profit_jpy": -1622.7,
+        "profit_factor": 0.5392,
+        "profit_giveback_ratio": 9.7008,
+        "trade_count": 111
+      }
+    },
+    "candles_M1_20251029": {
+      "AI_INVENTORY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 792,
+        "end_open_position_excluded": true,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -10.01,
+        "max_drawdown_jpy": 79.75,
+        "net_profit_jpy": -60.07,
+        "profit_factor": 0.4505,
+        "profit_giveback_ratio": null,
+        "trade_count": 6
+      },
+      "BOT_ONLY": {
+        "ai_cost_jpy": 0.0,
+        "ai_model_calls": 0,
+        "ai_policy_decision_count": 0,
+        "end_open_position_excluded": true,
+        "end_pending_order_excluded": false,
+        "expectancy_jpy": -9.85,
+        "max_drawdown_jpy": 1511.8,
+        "net_profit_jpy": -1329.2,
+        "profit_factor": 0.6651,
+        "profit_giveback_ratio": 9.1646,
+        "trade_count": 135
+      }
+    }
+  }
+}

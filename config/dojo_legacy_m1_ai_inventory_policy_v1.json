@@ -1,0 +1,30 @@
+{
+  "contract": "QR_DOJO_LEGACY_M1_AI_INVENTORY_POLICY_V1",
+  "authority": {
+    "paper_replay_only": true,
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE"
+  },
+  "model_review": {
+    "method": "MECHANICAL_REPLAY_THEN_HIGH_INFORMATION_WINDOW_REVIEW",
+    "economic_scope": "PAPER_ONLY",
+    "policy_status": "PROVISIONAL_FORWARD_OBSERVATION",
+    "source_result": "M1SCALPER_UTC23_LONG_51JPY_6TRADES_NOT_CONFIRMATORY"
+  },
+  "parameters": {
+    "allowed_utc_hours": [23],
+    "allowed_sides": ["LONG"],
+    "cooldown_seconds": 180,
+    "max_concurrent": 1,
+    "fixed_units_cap": 1000,
+    "high_volatility_atr_pips": 4.0,
+    "high_volatility_size_multiple": 0.5,
+    "breakeven_trigger_r": 0.6,
+    "partial_trigger_r": 0.8,
+    "partial_fraction": 0.5,
+    "trailing_trigger_r": 1.0,
+    "trailing_atr_multiple": 1.0,
+    "early_exit_opposition_bars": 3
+  }
+}
