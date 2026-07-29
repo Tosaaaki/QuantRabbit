@@ -118,6 +118,23 @@ def test_outbox_recovers_from_ledger_without_duplicate(
     assert second.close()
 
 
+def test_outbox_restart_recovers_only_ledger_suffix(tmp_path: Path) -> None:
+    ledger = CryptoLedger(tmp_path / "margin" / "ledger.db")
+    _round_trip(ledger, allow_short=True)
+    path = tmp_path / "margin" / "trade_outbox.jsonl"
+    first = AsyncTradeOutbox(path, ledger)
+    assert first.close()
+    ledger.events = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("outbox restart must not rescan the full ledger")
+    )
+
+    second = AsyncTradeOutbox(path, ledger)
+
+    assert second.status()["known_operations"] == 1
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+    assert second.close()
+
+
 class FakeSheets:
     def __init__(self) -> None:
         self.trades: dict[str, dict[str, Any]] = {}

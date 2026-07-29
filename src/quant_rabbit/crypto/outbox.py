@@ -56,7 +56,7 @@ class AsyncTradeOutbox:
         self.path = path
         self.ledger = ledger
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._known = self._load_known()
+        self._known, self._last_ledger_sequence = self._load_known()
         self._pending: set[str] = set()
         self._lock = threading.Lock()
         self._queue: queue.SimpleQueue[dict[str, Any] | object] = (
@@ -72,10 +72,11 @@ class AsyncTradeOutbox:
         self._thread.start()
         self.recover_from_ledger()
 
-    def _load_known(self) -> set[str]:
+    def _load_known(self) -> tuple[set[str], int]:
         known: set[str] = set()
+        last_ledger_sequence = 0
         if not self.path.exists():
-            return known
+            return known, last_ledger_sequence
         with self.path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, 1):
                 try:
@@ -89,8 +90,21 @@ class AsyncTradeOutbox:
                     raise RuntimeError(
                         f"invalid trade outbox operation at line {line_number}"
                     )
+                try:
+                    ledger_sequence = int(payload["ledger_sequence"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        f"invalid trade outbox ledger sequence at line "
+                        f"{line_number}"
+                    ) from exc
+                if ledger_sequence <= last_ledger_sequence:
+                    raise RuntimeError(
+                        f"non-increasing trade outbox ledger sequence at line "
+                        f"{line_number}"
+                    )
                 known.add(operation_id)
-        return known
+                last_ledger_sequence = ledger_sequence
+        return known, last_ledger_sequence
 
     def enqueue(self, payload: dict[str, Any]) -> str:
         trade_id = str(payload["trade_id"])
@@ -113,7 +127,10 @@ class AsyncTradeOutbox:
 
     def recover_from_ledger(self) -> int:
         recovered = 0
-        for row in self.ledger.events("PAPER_TRADE_CLOSED"):
+        for row in self.ledger.events_after(
+            "PAPER_TRADE_CLOSED",
+            self._last_ledger_sequence,
+        ):
             payload = dict(row["payload"])
             payload.update(
                 {
@@ -179,6 +196,10 @@ class AsyncTradeOutbox:
                     os.fsync(handle.fileno())
                 with self._lock:
                     self._known.add(operation_id)
+                    self._last_ledger_sequence = max(
+                        self._last_ledger_sequence,
+                        int(event["ledger_sequence"]),
+                    )
                     self._pending.discard(operation_id)
                     self._written += 1
             except Exception as exc:

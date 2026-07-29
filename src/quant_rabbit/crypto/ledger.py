@@ -157,6 +157,23 @@ class CryptoLedger:
             item["payload"] = json.loads(item.pop("payload_json"))
             yield item
 
+    def events_after(
+        self,
+        event_type: str,
+        sequence: int,
+    ) -> Iterator[dict[str, Any]]:
+        """Read one event type strictly after a verified ledger sequence."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM crypto_events "
+                "WHERE event_type=? AND sequence>? ORDER BY sequence",
+                (event_type, sequence),
+            ).fetchall()
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            yield item
+
     def events_between(
         self,
         start_utc: str,

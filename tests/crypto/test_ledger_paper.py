@@ -96,6 +96,17 @@ def test_ledger_reads_bounded_utc_window(tmp_path: Path) -> None:
     assert [row["payload"]["n"] for row in rows] == [2]
 
 
+def test_ledger_reads_event_type_after_sequence(tmp_path: Path) -> None:
+    ledger = CryptoLedger(tmp_path / "ledger.db")
+    ledger.append("DECISION", "btc_jpy", {"n": 1}, dedupe_key="one")
+    ledger.append("PAPER_TRADE_CLOSED", "btc_jpy", {"n": 2}, dedupe_key="two")
+    ledger.append("PAPER_TRADE_CLOSED", "btc_jpy", {"n": 3}, dedupe_key="three")
+
+    rows = list(ledger.events_after("PAPER_TRADE_CLOSED", 2))
+
+    assert [row["payload"]["n"] for row in rows] == [3]
+
+
 def test_paper_partial_fill_restart_and_duplicate_are_deterministic(
     tmp_path: Path,
 ) -> None:
