@@ -10,8 +10,10 @@
 採用できない。
 
 maker出口、エントリー方向・閾値、regime選択、動的サイズ、6秒途中離脱も
-費用後PFと期待値のゲートを通らなかった。現行Paper Shadowは停止・変更せず、
-全候補を不採用または前向き継続検証とした。
+費用後PFと期待値のゲートを通らなかった。ユーザー判断後、2026-07-29に
+`ORDER_BOOK_FADE`と`ORDER_BOOK_FADE_COOLDOWN_5S`のSpot/Margin 4レーンだけを
+新規エントリー`QUARANTINE`へ移した。既存成績・台帳・未決済Paperポジションの
+現行risk contractは保持し、Paper全体と他レーンは継続する。
 
 ## 安全境界
 
@@ -21,7 +23,10 @@ maker出口、エントリー方向・閾値、regime選択、動的サイズ、
 - `CRYPTO_ORDER_AUTHORITY=NONE`
 - 注文・取消・決済・出金API呼び出しなし
 - 実口座変更なし
-- 既存Paper Shadow停止・再起動・設定変更なし
+- Paper全体・他レーン・記録・改善ループは継続
+- 板フェード4レーンは永続台帳から建玉を復元する短い再起動だけを行い、
+  新規`ENTER`のみ遮断
+- 未決済Paperポジションの強制決済なし
 - OANDAから再利用したものは安全契約、append-only台帳、評価指標、
   未使用窓ゲートであり、戦略ロジックは移植していない
 
@@ -62,6 +67,32 @@ maker出口だけが既存baselineと同時並行の前向きPaperで、それ�
 途中離脱は、各ポジションの6秒以後で最初に記録されたquote-state PnLを用い、
 実現済み費用を全額残す保守的近似である。queue-awareな約定再生ではないため、
 不採用判定の補助証拠に限定する。
+
+## 板フェード4レーンの新規エントリー隔離
+
+制御正本は`config/crypto_paper_entry_control_v1.json`である。各Shadow processは
+同ファイルを継続readbackし、次を満たさない設定はフラット時の新規entryだけを
+fail-closedする。
+
+- schema: `QR_CRYPTO_ENTRY_CONTROL_V1`
+- status: `QUARANTINE_NEW_ENTRIES`
+- existing position policy: `RISK_CONTRACT`
+- authority: `NONE`
+- live permission: `false`
+
+変更前には4レーンすべてでBTC/JPY・ETH/JPYのPaper建玉が残っていた。したがって
+process停止による状態初期化は使わず、append-only `PAPER_STATE`から同じ建玉、
+平均取得価格、費用、DD、round tripを復元した。フラット時は
+`ENTRY_QUARANTINED_NEW_ENTRIES`、建玉ありでは従来のTP/SL、MAX_HOLD、
+signal invalidation、Paper margin contractを評価し続ける。
+
+各ledgerにはpolicy SHA、mode、strategy、`new_entries_allowed=false`、
+`existing_position_policy=RISK_CONTRACT`を
+`ENTRY_CONTROL_READBACK`として重複なしで記録する。
+
+`QUEUE_FLOW_MICROPRICE_MAKER`は`FORWARD_PAPER_ONLY`のままであり、
+circuitが`NONE`の新規未使用窓以外では開始しない。費用後期待値`>0`、PF`>1`、
+DD非悪化が複数の独立窓で再現するまで採用しない。
 
 ## bitbank固有仕様の確認
 
@@ -143,6 +174,8 @@ Guardianは`HALT`、取引0、費用0、損益0、DD 0、PF未定義となった
 
 ## ロールバック
 
-今回の実装はread-only比較器、研究設定、テスト、報告書だけである。コード変更を
-revertしても既存Paper Shadowと台帳には影響しない。生成物は
-`data/crypto/profitability-study-20260729/`を削除すればよい。
+新規entryを再開するには、制御正本の対象strategyを`ACTIVE`へ変える別の明示承認と
+再検証が必要である。コードをrevertするだけでは運用判断を解除しない。
+既存ledgerは削除・巻き戻しせず、`ENTRY_CONTROL_READBACK`を含めて履歴として
+保持する。生成済み分析だけを破棄する場合は
+`data/crypto/profitability-study-20260729/`を対象とし、runtime ledgerへは触れない。

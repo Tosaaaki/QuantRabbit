@@ -16,6 +16,9 @@ CONFIG = Path("config/crypto_strategy_lab_v1.json")
 QUEUE_FLOW_CONFIG = Path(
     "config/crypto_bitbank_queue_flow_paper_v1.json"
 )
+ENTRY_CONTROL_CONFIG = Path(
+    "config/crypto_paper_entry_control_v1.json"
+)
 
 
 def _state(
@@ -253,6 +256,90 @@ def test_maker_exit_variant_keeps_stop_loss_taker() -> None:
     assert decision["action"] == "EXIT"
     assert decision["reason"] == "STOP_LOSS"
     assert decision["exit_order_style"] == "PAPER_TAKER"
+
+
+def test_entry_control_quarantines_only_new_order_book_fade_entries() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE",
+        config_path=CONFIG,
+        entry_control_path=ENTRY_CONTROL_CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    decision = router.decide(
+        state,
+        position=Decimal("0"),
+        average_cost=Decimal("0"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "WAIT"
+    assert decision["reason"] == "ENTRY_QUARANTINED_NEW_ENTRIES"
+    control = decision["entry_control"]
+    assert control["status"] == "QUARANTINE_NEW_ENTRIES"
+    assert control["new_entries_allowed"] is False
+    assert control["existing_position_policy"] == "RISK_CONTRACT"
+    assert control["authority"] == "NONE"
+    assert control["live_permission"] is False
+
+
+def test_entry_control_preserves_existing_position_exit_contract() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE",
+        config_path=CONFIG,
+        entry_control_path=ENTRY_CONTROL_CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    router.opened_ns[state.pair] = 1
+    decision = router.decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=20_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "EXIT"
+    assert decision["reason"] == "MAX_HOLD"
+    assert decision["entry_control"]["new_entries_allowed"] is False
+    assert (
+        decision["entry_control"]["existing_position_policy"]
+        == "RISK_CONTRACT"
+    )
+
+
+def test_missing_entry_control_fails_closed_for_new_entries(
+    tmp_path: Path,
+) -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE",
+        config_path=CONFIG,
+        entry_control_path=tmp_path / "missing.json",
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    decision = router.decide(
+        _state(["100", "100.001", "100.002", "100.003"]),
+        position=Decimal("0"),
+        average_cost=Decimal("0"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "WAIT"
+    assert decision["reason"] == "ENTRY_QUARANTINED_NEW_ENTRIES"
+    assert decision["entry_control"]["status"] == "FAIL_CLOSED"
+    assert decision["entry_control"]["valid"] is False
 
 
 def test_queue_flow_candidate_requires_three_way_current_data_alignment() -> None:

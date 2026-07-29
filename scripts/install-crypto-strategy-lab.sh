@@ -75,6 +75,8 @@ payload = {
         runtime_root,
         "--strategy",
         strategy,
+        "--entry-control",
+        os.path.join(root, "config", "crypto_paper_entry_control_v1.json"),
         "--initial-cash-jpy",
         "10000",
         "--pair-limit",

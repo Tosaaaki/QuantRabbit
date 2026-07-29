@@ -419,6 +419,11 @@ def run_fast_paper(args: argparse.Namespace) -> int:
                 if args.strategy_config
                 else None
             ),
+            entry_control_path=(
+                Path(args.entry_control)
+                if args.entry_control
+                else None
+            ),
             warmup_events=fast_config.warmup_events,
             book_levels=fast_config.book_levels,
             max_data_age_ms=fast_config.max_data_age_ms,
@@ -472,6 +477,7 @@ def run_fast_paper(args: argparse.Namespace) -> int:
                 "run_id": result["run_id"],
                 "pairs": result["pairs"],
                 "safety": result["safety"],
+                "entry_control": result["entry_control"],
                 "guardian": result["guardian"],
                 "runtime": result["runtime"],
                 "latency": result["latency"],
@@ -505,6 +511,11 @@ def run_shadow_service(args: argparse.Namespace) -> int:
             strategy_config=(
                 Path(args.strategy_config)
                 if args.strategy_config
+                else None
+            ),
+            entry_control_path=(
+                Path(args.entry_control)
+                if args.entry_control
                 else None
             ),
             initial_cash_jpy=Decimal(str(args.initial_cash_jpy)),
@@ -800,6 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Paper strategy name; configured siblings remain authority NONE.",
     )
     fast.add_argument("--strategy-config")
+    fast.add_argument("--entry-control")
     fast.set_defaults(func=run_fast_paper)
 
     shadow = subparsers.add_parser(
@@ -825,6 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Paper strategy name; use a distinct runtime root per strategy.",
     )
     shadow.add_argument("--strategy-config")
+    shadow.add_argument("--entry-control")
     shadow.set_defaults(func=run_shadow_service)
 
     reporting = subparsers.add_parser(

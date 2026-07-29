@@ -609,6 +609,11 @@ class FastPaperRunner:
             books_ready_now = sum(
                 state.book.ready for state in states.values()
             )
+            entry_control_snapshot = getattr(
+                self.router,
+                "entry_control_snapshot",
+                None,
+            )
             payload = {
                 "schema": "QR_CRYPTO_PAPER_SHADOW_STATE_V1",
                 "status": status,
@@ -638,6 +643,11 @@ class FastPaperRunner:
                     bids_now, asks_now
                 ),
                 "safety": self.safety.as_dict(),
+                "entry_control": (
+                    entry_control_snapshot.as_dict()
+                    if entry_control_snapshot is not None
+                    else None
+                ),
                 "progress_write_failures": progress_write_failures,
             }
             try:
@@ -846,6 +856,11 @@ class FastPaperRunner:
         guardian_state = "HALT" if processed == 0 or active_circuit_modes else (
             "RESTRICT" if guardian_issues else "GREEN"
         )
+        entry_control_snapshot = getattr(
+            self.router,
+            "entry_control_snapshot",
+            None,
+        )
         result = {
             "schema": "QR_CRYPTO_FAST_PAPER_CANARY_V1",
             "strategy": self.strategy_name,
@@ -859,6 +874,11 @@ class FastPaperRunner:
             "pairs": normalized,
             "rooms": rooms,
             "safety": self.safety.as_dict(),
+            "entry_control": (
+                entry_control_snapshot.as_dict()
+                if entry_control_snapshot is not None
+                else None
+            ),
             "guardian": {
                 "state": guardian_state,
                 "issues": guardian_issues,

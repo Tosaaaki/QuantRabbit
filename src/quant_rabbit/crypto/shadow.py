@@ -27,6 +27,7 @@ class PaperShadowServiceConfig:
     runtime_dir: Path
     strategy: str = "FAST_MICROSTRUCTURE"
     strategy_config: Path | None = None
+    entry_control_path: Path | None = None
     initial_cash_jpy: Decimal = Decimal("10000")
     max_leverage: Decimal = Decimal("2")
     epoch_sec: float = 60.0
@@ -138,11 +139,34 @@ class PaperShadowService:
                     else strategy_router(
                         self.config.strategy,
                         config_path=self.config.strategy_config,
+                        entry_control_path=self.config.entry_control_path,
                         warmup_events=fast_config.warmup_events,
                         book_levels=fast_config.book_levels,
                         max_data_age_ms=fast_config.max_data_age_ms,
                     )
                 )
+                entry_control_snapshot = getattr(
+                    router,
+                    "entry_control_snapshot",
+                    None,
+                )
+                if entry_control_snapshot is not None:
+                    entry_control_payload = {
+                        **entry_control_snapshot.as_dict(),
+                        "mode": self.config.mode.upper(),
+                        "paper_only": True,
+                        "broker_mutation_allowed": False,
+                    }
+                    ledger.append(
+                        "ENTRY_CONTROL_READBACK",
+                        self.config.strategy,
+                        entry_control_payload,
+                        dedupe_key=(
+                            f"entry-control:{self.config.strategy}:"
+                            f"{self.config.mode}:"
+                            f"{entry_control_snapshot.policy_sha256}"
+                        ),
+                    )
                 runner = FastPaperRunner(
                     ledger,
                     paper,

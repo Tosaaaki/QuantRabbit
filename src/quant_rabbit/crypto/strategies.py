@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from .entry_control import PaperEntryControl, PaperEntryControlSnapshot
 from .fast import BPS, FastMarketState, _d
 
 DEFAULT_STRATEGY_CONFIG = Path("config/crypto_strategy_lab_v1.json")
@@ -133,13 +134,20 @@ class ConfiguredStrategyRouter:
         warmup_events: int = 12,
         book_levels: int = 8,
         max_data_age_ms: int = 3_000,
+        entry_control: PaperEntryControl | None = None,
     ) -> None:
         self.profile = profile
         self.warmup_events = warmup_events
         self.book_levels = book_levels
         self.max_data_age_ms = max_data_age_ms
+        self.entry_control = entry_control
         self.last_intent_ns: dict[str, int] = {}
         self.opened_ns: dict[str, int] = {}
+        self.entry_control_snapshot: PaperEntryControlSnapshot | None = (
+            entry_control.snapshot(profile.name)
+            if entry_control is not None
+            else None
+        )
 
     def decide(
         self,
@@ -236,6 +244,24 @@ class ConfiguredStrategyRouter:
             "live_permission": False,
             "no_future_data": True,
         }
+        if self.entry_control is not None:
+            self.entry_control_snapshot = self.entry_control.snapshot(
+                self.profile.name,
+                now_ns=now_ns,
+            )
+            common["entry_control"] = (
+                self.entry_control_snapshot.as_dict()
+            )
+        if (
+            position == 0
+            and self.entry_control_snapshot is not None
+            and not self.entry_control_snapshot.new_entries_allowed
+        ):
+            return {
+                **common,
+                "action": "WAIT",
+                "reason": "ENTRY_QUARANTINED_NEW_ENTRIES",
+            }
         if spread_bps > self.profile.max_spread_bps:
             return {**common, "action": "WAIT", "reason": "WIDE_SPREAD"}
 
@@ -541,6 +567,7 @@ def strategy_router(
     name: str,
     *,
     config_path: Path | None = None,
+    entry_control_path: Path | None = None,
     warmup_events: int = 12,
     book_levels: int = 8,
     max_data_age_ms: int = 3_000,
@@ -555,4 +582,9 @@ def strategy_router(
         warmup_events=warmup_events,
         book_levels=book_levels,
         max_data_age_ms=max_data_age_ms,
+        entry_control=(
+            PaperEntryControl(entry_control_path)
+            if entry_control_path is not None
+            else None
+        ),
     )
