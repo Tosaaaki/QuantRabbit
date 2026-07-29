@@ -23,11 +23,17 @@ class LedgerIntegrityError(RuntimeError):
 class CryptoLedger:
     """Append-only, hash-chained decision/order/fill/PnL event ledger."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        verify_on_open: bool = True,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
-        self.verify()
+        if verify_on_open:
+            self.verify()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
@@ -151,6 +157,24 @@ class CryptoLedger:
             item["payload"] = json.loads(item.pop("payload_json"))
             yield item
 
+    def events_between(
+        self,
+        start_utc: str,
+        end_utc: str,
+    ) -> Iterator[dict[str, Any]]:
+        """Read only rows in a bounded UTC ISO-8601 time window."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM crypto_events "
+                "WHERE created_at_utc>=? AND created_at_utc<? "
+                "ORDER BY sequence",
+                (start_utc, end_utc),
+            ).fetchall()
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            yield item
+
     def latest_payload(self, event_type: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -183,6 +207,71 @@ class CryptoLedger:
         for row in self.events():
             payload_json = _canonical(row["payload"])
             payload_sha = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+            if payload_sha != row["payload_sha256"]:
+                raise LedgerIntegrityError(
+                    f"payload digest mismatch at sequence={row['sequence']}"
+                )
+            if row["prev_hash"] != previous:
+                raise LedgerIntegrityError(
+                    f"chain mismatch at sequence={row['sequence']}"
+                )
+            expected = hashlib.sha256(
+                "|".join(
+                    [
+                        previous,
+                        row["event_id"],
+                        row["dedupe_key"],
+                        row["event_type"],
+                        row["entity_id"],
+                        payload_sha,
+                        row["created_at_utc"],
+                    ]
+                ).encode("utf-8")
+            ).hexdigest()
+            if expected != row["event_hash"]:
+                raise LedgerIntegrityError(
+                    f"event digest mismatch at sequence={row['sequence']}"
+                )
+            previous = expected
+            count += 1
+        return {"valid": True, "event_count": count, "head_hash": previous}
+
+    def verify_incremental(
+        self,
+        *,
+        event_count: int,
+        head_hash: str,
+    ) -> dict[str, Any]:
+        """Verify an append-only suffix anchored to a verified checkpoint."""
+        if event_count < 0:
+            raise LedgerIntegrityError("negative ledger checkpoint")
+        previous = GENESIS_HASH
+        if event_count:
+            with self._connect() as conn:
+                anchor = conn.execute(
+                    "SELECT event_hash FROM crypto_events WHERE sequence=?",
+                    (event_count,),
+                ).fetchone()
+            if anchor is None or str(anchor["event_hash"]) != head_hash:
+                raise LedgerIntegrityError(
+                    "ledger checkpoint anchor mismatch"
+                )
+            previous = head_hash
+        elif head_hash != GENESIS_HASH:
+            raise LedgerIntegrityError("genesis checkpoint mismatch")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM crypto_events WHERE sequence>? "
+                "ORDER BY sequence",
+                (event_count,),
+            ).fetchall()
+        count = event_count
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            payload_json = _canonical(payload)
+            payload_sha = hashlib.sha256(
+                payload_json.encode("utf-8")
+            ).hexdigest()
             if payload_sha != row["payload_sha256"]:
                 raise LedgerIntegrityError(
                     f"payload digest mismatch at sequence={row['sequence']}"

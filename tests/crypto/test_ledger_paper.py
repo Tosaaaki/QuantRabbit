@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -40,6 +41,59 @@ def test_ledger_detects_tampering(tmp_path: Path) -> None:
         )
     with pytest.raises(LedgerIntegrityError):
         CryptoLedger(path)
+
+
+def test_incremental_ledger_verify_anchors_verified_prefix(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.db"
+    ledger = CryptoLedger(path)
+    ledger.append("DECISION", "btc_jpy", {"n": 1}, dedupe_key="one")
+    checkpoint = ledger.verify()
+    ledger.append("DECISION", "btc_jpy", {"n": 2}, dedupe_key="two")
+    reopened = CryptoLedger(path, verify_on_open=False)
+    result = reopened.verify_incremental(
+        event_count=int(checkpoint["event_count"]),
+        head_hash=str(checkpoint["head_hash"]),
+    )
+    assert result == ledger.verify()
+
+
+def test_incremental_ledger_verify_rejects_wrong_anchor(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.db"
+    ledger = CryptoLedger(path)
+    ledger.append("DECISION", "btc_jpy", {"n": 1}, dedupe_key="one")
+    reopened = CryptoLedger(path, verify_on_open=False)
+    with pytest.raises(LedgerIntegrityError):
+        reopened.verify_incremental(event_count=1, head_hash="f" * 64)
+
+
+def test_ledger_reads_bounded_utc_window(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.db"
+    ledger = CryptoLedger(path)
+    ledger.append(
+        "DECISION",
+        "btc_jpy",
+        {"n": 1},
+        dedupe_key="one",
+        created_at=datetime(2026, 7, 29, 0, 0, tzinfo=timezone.utc),
+    )
+    ledger.append(
+        "DECISION",
+        "btc_jpy",
+        {"n": 2},
+        dedupe_key="two",
+        created_at=datetime(2026, 7, 29, 1, 0, tzinfo=timezone.utc),
+    )
+    rows = list(
+        ledger.events_between(
+            "2026-07-29T00:30:00+00:00",
+            "2026-07-29T01:30:00+00:00",
+        )
+    )
+    assert [row["payload"]["n"] for row in rows] == [2]
 
 
 def test_paper_partial_fill_restart_and_duplicate_are_deterministic(

@@ -69,6 +69,7 @@ def test_all_strategy_profiles_are_externalized_and_safe() -> None:
         "TREND_PULLBACK_MAKER",
         "ORDER_BOOK_FADE",
         "ORDER_BOOK_FADE_COOLDOWN_5S",
+        "ORDER_BOOK_FADE_MAKER_EXIT",
     }
     assert all(
         profile.entry_order_style.startswith("PAPER_")
@@ -84,6 +85,19 @@ def test_all_strategy_profiles_are_externalized_and_safe() -> None:
     assert variant.variant_of == baseline.name
     assert variant.changed_category == "cooldown_ms"
     assert variant.cooldown_ms == 5000
+    maker_exit = profiles["ORDER_BOOK_FADE_MAKER_EXIT"]
+    ignored = {
+        "name",
+        "variant_of",
+        "changed_category",
+        "forced_exit_order_style",
+    }
+    for field in baseline.__dataclass_fields__:
+        if field not in ignored:
+            assert getattr(maker_exit, field) == getattr(baseline, field)
+    assert maker_exit.variant_of == baseline.name
+    assert maker_exit.changed_category == "forced_exit_order_style"
+    assert maker_exit.forced_exit_order_style == "PAPER_MAKER_LIMIT"
 
 
 @pytest.mark.parametrize(
@@ -188,4 +202,51 @@ def test_maker_variant_uses_taker_fallback_at_max_hold() -> None:
     )
     assert decision["action"] == "EXIT"
     assert decision["reason"] == "MAX_HOLD"
+    assert decision["exit_order_style"] == "PAPER_TAKER"
+
+
+def test_maker_exit_variant_keeps_forced_non_stop_exit_maker_only() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE_MAKER_EXIT",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    router.opened_ns[state.pair] = 1
+    decision = router.decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=20_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "EXIT"
+    assert decision["reason"] == "MAX_HOLD"
+    assert decision["exit_order_style"] == "PAPER_MAKER_LIMIT"
+
+
+def test_maker_exit_variant_keeps_stop_loss_taker() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE_MAKER_EXIT",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    decision = router.decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100.1"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "EXIT"
+    assert decision["reason"] == "STOP_LOSS"
     assert decision["exit_order_style"] == "PAPER_TAKER"

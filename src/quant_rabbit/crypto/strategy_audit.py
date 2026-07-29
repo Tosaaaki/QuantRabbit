@@ -120,7 +120,32 @@ def _window_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _fill_audit(path: Path) -> dict[str, Any]:
+def _fill_audit(
+    path: Path,
+    *,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metrics = metrics or {}
+    if metrics.get("fill_count") is not None:
+        fill_events = int(metrics["fill_count"])
+        partial = int(metrics.get("partial_fill_count") or 0)
+        maker = int(metrics.get("maker_fill_count") or 0)
+        taker = int(metrics.get("taker_fill_count") or 0)
+        return {
+            "fill_events": fill_events,
+            "statuses": {
+                "PARTIALLY_FILLED": partial,
+                "FILLED": max(0, fill_events - partial),
+            },
+            "order_styles": {
+                "PAPER_MAKER_LIMIT": maker,
+                "PAPER_TAKER": taker,
+            },
+            "partial_fill_ratio": (
+                partial / fill_events if fill_events else None
+            ),
+            "source": "PERSISTED_PAPER_STATE",
+        }
     if not path.exists():
         return {
             "fill_events": 0,
@@ -129,21 +154,41 @@ def _fill_audit(path: Path) -> dict[str, Any]:
             "partial_fill_ratio": None,
         }
     with sqlite3.connect(path) as connection:
-        rows = [
-            json.loads(row[0])
-            for row in connection.execute(
-                "SELECT payload_json FROM crypto_events "
+        fill_events = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM crypto_events "
                 "WHERE event_type='PAPER_FILL'"
-            )
-        ]
-    statuses = Counter(str(row.get("status")) for row in rows)
-    styles = Counter(str(row.get("order_style")) for row in rows)
+            ).fetchone()[0]
+        )
+        statuses = Counter(
+            {
+                str(key): int(count)
+                for key, count in connection.execute(
+                    "SELECT json_extract(payload_json, '$.status'), COUNT(*) "
+                    "FROM crypto_events WHERE event_type='PAPER_FILL' "
+                    "GROUP BY json_extract(payload_json, '$.status')"
+                )
+            }
+        )
+        styles = Counter(
+            {
+                str(key): int(count)
+                for key, count in connection.execute(
+                    "SELECT json_extract(payload_json, '$.order_style'), "
+                    "COUNT(*) FROM crypto_events "
+                    "WHERE event_type='PAPER_FILL' "
+                    "GROUP BY json_extract(payload_json, '$.order_style')"
+                )
+            }
+        )
     return {
-        "fill_events": len(rows),
+        "fill_events": fill_events,
         "statuses": dict(statuses),
         "order_styles": dict(styles),
         "partial_fill_ratio": (
-            statuses["PARTIALLY_FILLED"] / len(rows) if rows else None
+            statuses["PARTIALLY_FILLED"] / fill_events
+            if fill_events
+            else None
         ),
     }
 
@@ -271,10 +316,21 @@ class StrategyLabAudit:
     def run_once(self) -> dict[str, Any]:
         lanes: list[dict[str, Any]] = []
         source_tips: list[str] = []
+        previous = _json(self.latest_path)
+        checkpoints = {
+            str(lane.get("lane_id")): dict(lane.get("ledger") or {})
+            for lane in previous.get("strategy_lanes", [])
+        }
         for strategy in self.profiles:
             slug = strategy.lower().replace("_", "-")
             for mode in ("spot", "margin"):
-                lane = self._lane(strategy, slug, mode)
+                lane_id = f"{strategy}:{mode.upper()}"
+                lane = self._lane(
+                    strategy,
+                    slug,
+                    mode,
+                    checkpoint=checkpoints.get(lane_id),
+                )
                 lanes.append(lane)
                 source_tips.append(
                     f"{strategy}:{mode}:{lane['ledger']['head_hash']}:"
@@ -388,7 +444,8 @@ class StrategyLabAudit:
                 variant_fee = variant_metrics["fees_per_trade_jpy"]
                 baseline_fee = baseline_metrics["fees_per_trade_jpy"]
                 if (
-                    variant_count >= 2
+                    profile.changed_category == "cooldown_ms"
+                    and variant_count >= 2
                     and variant_expectancy is not None
                     and _d(variant_expectancy) < 0
                     and variant_fee is not None
@@ -461,13 +518,34 @@ class StrategyLabAudit:
         return result
 
     def _lane(
-        self, strategy: str, slug: str, mode: str
+        self,
+        strategy: str,
+        slug: str,
+        mode: str,
+        *,
+        checkpoint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         root = self.runtime_root / slug / mode
         state = _json(root / "state.json")
         rows = _jsonl(root / "trade_outbox.jsonl")
-        fills = _fill_audit(root / "ledger.db")
-        ledger = CryptoLedger(root / "ledger.db").verify()
+        metrics = dict(state.get("metrics") or {})
+        fills = _fill_audit(root / "ledger.db", metrics=metrics)
+        ledger_store = CryptoLedger(
+            root / "ledger.db",
+            verify_on_open=False,
+        )
+        if (
+            checkpoint
+            and checkpoint.get("valid") is True
+            and checkpoint.get("event_count") is not None
+            and checkpoint.get("head_hash")
+        ):
+            ledger = ledger_store.verify_incremental(
+                event_count=int(checkpoint["event_count"]),
+                head_hash=str(checkpoint["head_hash"]),
+            )
+        else:
+            ledger = ledger_store.verify()
         gross = sum(
             (_d(row["gross_pnl_jpy"]) for row in rows), Decimal("0")
         )

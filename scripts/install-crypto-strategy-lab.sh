@@ -22,6 +22,7 @@ STRATEGIES=(
   "TREND_PULLBACK_MAKER"
   "ORDER_BOOK_FADE"
   "ORDER_BOOK_FADE_COOLDOWN_5S"
+  "ORDER_BOOK_FADE_MAKER_EXIT"
 )
 
 slug_for() {
@@ -225,8 +226,35 @@ case "$ACTION" in
     bootstrap_agent "$evaluator_plist"
     echo "[crypto-strategy-lab] started ${#STRATEGIES[@]} strategies x Spot/Margin"
     ;;
+  install-one|start-one)
+    requested_strategy="${2:-}"
+    allowed=false
+    for strategy in "${STRATEGIES[@]}"; do
+      if [[ "$strategy" == "$requested_strategy" ]]; then
+        allowed=true
+        break
+      fi
+    done
+    if [[ "$allowed" != true ]]; then
+      echo "unknown configured strategy: $requested_strategy" >&2
+      exit 2
+    fi
+    mkdir -p "$HOME/Library/LaunchAgents" "$RUNTIME_ROOT" "$LOG_ROOT"
+    for mode in spot margin; do
+      label="$(label_for "$requested_strategy" "$mode")"
+      plist="$(plist_for "$label")"
+      temporary="$(mktemp "$HOME/Library/LaunchAgents/.$label.XXXXXX")"
+      write_plist "$temporary" "$label" "$requested_strategy" "$mode"
+      plutil -lint "$temporary" >/dev/null
+      chmod 600 "$temporary"
+      mv -f "$temporary" "$plist"
+      launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
+      bootstrap_agent "$plist"
+    done
+    echo "[crypto-strategy-lab] started $requested_strategy x Spot/Margin"
+    ;;
   *)
-    echo "usage: $0 [install|start|stop|status|uninstall|--check]" >&2
+    echo "usage: $0 [install|start|install-one STRATEGY|start-one STRATEGY|stop|status|uninstall|--check]" >&2
     exit 2
     ;;
 esac

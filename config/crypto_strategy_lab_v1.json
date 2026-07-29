@@ -92,6 +92,27 @@
       "stop_loss_bps": "2.5",
       "max_hold_ms": 12000,
       "cooldown_ms": 5000
+    },
+    "ORDER_BOOK_FADE_MAKER_EXIT": {
+      "family": "ORDER_BOOK_FADE",
+      "variant_of": "ORDER_BOOK_FADE",
+      "changed_category": "forced_exit_order_style",
+      "entry_order_style": "PAPER_MAKER_LIMIT",
+      "exit_order_style": "PAPER_MAKER_LIMIT",
+      "forced_exit_order_style": "PAPER_MAKER_LIMIT",
+      "min_signal_bps": "0.02",
+      "max_signal_bps": "0.80",
+      "min_imbalance": "0.35",
+      "max_spread_bps": "8",
+      "gross_edge_multiplier": "0.40",
+      "imbalance_edge_scale_bps": "0.30",
+      "spread_cost_multiplier": "0.50",
+      "adverse_selection_bps": "0.08",
+      "safety_buffer_bps": "0.03",
+      "take_profit_bps": "2.0",
+      "stop_loss_bps": "2.5",
+      "max_hold_ms": 12000,
+      "cooldown_ms": 750
     }
   }
 }

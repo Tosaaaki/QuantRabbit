@@ -20,6 +20,7 @@ class StrategyProfile:
     changed_category: str | None
     entry_order_style: str
     exit_order_style: str
+    forced_exit_order_style: str
     min_signal_bps: Decimal
     max_signal_bps: Decimal
     min_imbalance: Decimal
@@ -39,6 +40,7 @@ class StrategyProfile:
         order_styles = {
             str(raw.get("entry_order_style")),
             str(raw.get("exit_order_style")),
+            str(raw.get("forced_exit_order_style", "PAPER_TAKER")),
         }
         if not order_styles <= {"PAPER_MAKER_LIMIT", "PAPER_TAKER"}:
             raise ValueError(f"{name} has an invalid Paper order style")
@@ -55,6 +57,9 @@ class StrategyProfile:
             ),
             entry_order_style=str(raw["entry_order_style"]),
             exit_order_style=str(raw["exit_order_style"]),
+            forced_exit_order_style=str(
+                raw.get("forced_exit_order_style", "PAPER_TAKER")
+            ),
             min_signal_bps=_d(raw["min_signal_bps"]),
             max_signal_bps=_d(raw["max_signal_bps"]),
             min_imbalance=_d(raw["min_imbalance"]),
@@ -271,6 +276,8 @@ class ConfiguredStrategyRouter:
                     self.profile.exit_order_style
                     if exit_reason == "TAKE_PROFIT"
                     else "PAPER_TAKER"
+                    if exit_reason == "STOP_LOSS"
+                    else self.profile.forced_exit_order_style
                 ),
                 "position_pnl_bps": str(pnl_bps),
                 "held_ms": int(held_ms),

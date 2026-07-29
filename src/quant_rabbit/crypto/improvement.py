@@ -201,12 +201,13 @@ class CryptoImprovementEvaluator:
         window_kind: str,
     ) -> dict[str, Any]:
         mode_root = self.runtime_root / mode
-        ledger = CryptoLedger(mode_root / "ledger.db")
-        events = [
-            row
-            for row in ledger.events()
-            if start <= _utc(str(row["created_at_utc"])) < end
-        ]
+        ledger = CryptoLedger(
+            mode_root / "ledger.db",
+            verify_on_open=False,
+        )
+        events = list(
+            ledger.events_between(start.isoformat(), end.isoformat())
+        )
         epochs = [
             row["payload"]
             for row in events
