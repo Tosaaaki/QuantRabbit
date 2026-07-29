@@ -1,0 +1,202 @@
+{
+  "authority": {
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true
+  },
+  "by_strategy": {
+    "M1Scalper": {
+      "A_bot_only": {
+        "ending_equity_jpy": -152351.19,
+        "expectancy_jpy": -229.54,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 364030.9,
+        "net_profit_jpy": -352351.19,
+        "profit_factor": 0.8067,
+        "profit_giveback_ratio": 170.4038,
+        "trade_count": 1535,
+        "win_rate": 0.4736
+      },
+      "B_ai_inventory": {
+        "ai_cost_jpy": null,
+        "ai_cost_status": "PLATFORM_COST_UNAVAILABLE",
+        "ai_decision_count": 1886,
+        "ending_equity_jpy": 142793.4,
+        "expectancy_jpy": -37.27,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 57526.6,
+        "net_profit_jpy": -57206.6,
+        "profit_factor": 0.5079,
+        "profit_giveback_ratio": 0.0,
+        "trade_count": 1535,
+        "win_rate": 0.0371
+      },
+      "adoption": "PAPER_OBSERVE_COST_EDGE_STILL_NEGATIVE",
+      "ai_net_profit_delta_jpy_before_ai_cost": 295144.59
+    },
+    "PulseBreak": {
+      "A_bot_only": {
+        "ending_equity_jpy": 202053.53,
+        "expectancy_jpy": 78.98,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 10428.37,
+        "net_profit_jpy": 2053.53,
+        "profit_factor": 1.0793,
+        "profit_giveback_ratio": 0.0,
+        "trade_count": 26,
+        "win_rate": 0.5385
+      },
+      "B_ai_inventory": {
+        "ai_cost_jpy": null,
+        "ai_cost_status": "PLATFORM_COST_UNAVAILABLE",
+        "ai_decision_count": 91,
+        "ending_equity_jpy": 202530.95,
+        "expectancy_jpy": 97.34,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 5007.92,
+        "net_profit_jpy": 2530.95,
+        "profit_factor": 1.2252,
+        "profit_giveback_ratio": 0.0,
+        "trade_count": 26,
+        "win_rate": 0.5
+      },
+      "adoption": "AI_PAPER_CONTINUE",
+      "ai_net_profit_delta_jpy_before_ai_cost": 477.42
+    },
+    "TrendMA": {
+      "A_bot_only": {
+        "ending_equity_jpy": 231107.84,
+        "expectancy_jpy": 384.05,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 14460.0,
+        "net_profit_jpy": 31107.84,
+        "profit_factor": 1.3577,
+        "profit_giveback_ratio": 0.2423,
+        "trade_count": 81,
+        "win_rate": 0.4568
+      },
+      "B_ai_inventory": {
+        "ai_cost_jpy": null,
+        "ai_cost_status": "PLATFORM_COST_UNAVAILABLE",
+        "ai_decision_count": 266,
+        "ending_equity_jpy": 191414.28,
+        "expectancy_jpy": -106.0,
+        "initial_balance_jpy": 200000.0,
+        "max_drawdown_jpy": 10047.49,
+        "net_profit_jpy": -8585.72,
+        "profit_factor": 0.5278,
+        "profit_giveback_ratio": 11.6436,
+        "trade_count": 81,
+        "win_rate": 0.2963
+      },
+      "adoption": "BOT_ONLY_PAPER_CONTINUE_AI_POLICY_REJECT",
+      "ai_net_profit_delta_jpy_before_ai_cost": -39693.56
+    }
+  },
+  "candidate_priority": [
+    "TrendMA",
+    "PulseBreak",
+    "M1Scalper"
+  ],
+  "comparison_design": {
+    "84_cell_queue_used": false,
+    "initial_balance_jpy": 200000.0,
+    "mechanical_replay_then_high_information_ai_review": true,
+    "round_trip_cost_pips": 0.8,
+    "same_entry_cohort": true,
+    "same_initial_balance": true,
+    "same_market": true,
+    "same_round_trip_cost": true
+  },
+  "contract": "QR_DOJO_LEGACY_WORKER_AB_REPLAY_V1",
+  "economic_status": "UNDETERMINED_AI_COST_MISSING",
+  "rejected_or_deferred": {
+    "RangeFader": "DEFER_SAMPLE_COUNT_6"
+  },
+  "result_sha256": "5d86f5b4c63e8e0c8fc42235039d30c1b5e4a1f307e730c2b3c19f0caed96496",
+  "source": {
+    "candle_files": [
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251001.json",
+        "sha256": "4d9a8f9323207f5f86931e9dc57b6a60fcab3023a9298383407c0281690629a8"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251002.json",
+        "sha256": "a46ab72d583aa8c402fa9e3183c8cf8a6d9da35ff41cbee526938dc0c5587654"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251003.json",
+        "sha256": "d8d72532d6e52ac16a24357b7144ea25d1537f5c1490999ccb4ca8bf7c2f557d"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251005.json",
+        "sha256": "7a9653702d7b7471a04cab3e59234b5f23f48fd2bd07fd68a69a86d9aa845e16"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251006.json",
+        "sha256": "0b7f1c6564cfae6432bbee661556214026d51eb46bc539d77535500dddfce8d0"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251007.json",
+        "sha256": "d5ddcb6b97e8f1753dd2987504f33e4ecc66e38b62bdf2da48452635ecd4a48c"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251008.json",
+        "sha256": "7f77f9495e52a5957932dcbae049c99a84420e15ab40801818114ace5f520991"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251009.json",
+        "sha256": "526dd57649248efa4febeb031c75ba6150a8fc12bca27f0021dbe29f8506937c"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251010.json",
+        "sha256": "017052b2f895ddbf14d89c2eb96fe37061f9366802af58c4a482d494260b894b"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251012.json",
+        "sha256": "a3e6ad3e7f48778888294f2864cfa7152e644757d0c7b3410fb5a4cfacc15cca"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251013.json",
+        "sha256": "6fb290e8dede7315d650df1e4c8b37f3b514a60903b62a38c5921558d49da3a4"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251014.json",
+        "sha256": "b2d925f259a6a817d9b883072167aba11bc6281c2ece33148307661ca8e1c5b2"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251015.json",
+        "sha256": "fd7732151d75bb3985d7f75513d74e3d2cb42882c91cfdb536f5c51b80997b86"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251016.json",
+        "sha256": "c8290b819e01ce1eb75a7a00789fb4d6fa7610b7f6742334996c542bec326338"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251017.json",
+        "sha256": "642a48983647363f5009e124dc8b9d0026929ec22d6be57435754fab007b10c6"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251019.json",
+        "sha256": "3e6da1be1ec7c562233f7f5a7fd75bd84d837e0f831525701b565f81c17f9bf8"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251020.json",
+        "sha256": "aa584f856ca688d1ce251637ede6f62402eb8da2fed368e54080eae82770816f"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251021.json",
+        "sha256": "d4c0f16f1aaf429174b065e89449fba8234206dd7b0a552b077d10cb2b164f1c"
+      },
+      {
+        "path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/candles_M1_20251022.json",
+        "sha256": "9dcdba63542318944278ec72ec2339587dd5be77b5f413ab9907c4c84e8a5be7"
+      }
+    ],
+    "policy_path": "config/dojo_legacy_ai_inventory_policy_v1.json",
+    "policy_sha256": "b0a7022f694a6286527a0994d3fd019ae491f7d48588c9573ebbe796812f662e",
+    "result_ledger_path": "/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/archive_legacy/backtest_20251001_20251022_full.json",
+    "result_ledger_sha256": "f722cb0234ab8156f4ab49df4b5bdb0136c3af25852229f5b489e6a07821c25e"
+  }
+}

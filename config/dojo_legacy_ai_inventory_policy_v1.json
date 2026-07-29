@@ -1,0 +1,42 @@
+{
+  "authority": {
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true
+  },
+  "contract": "QR_DOJO_LEGACY_AI_INVENTORY_POLICY_V1",
+  "model_review": {
+    "high_information_packet_sha256": "41c9d71263428633646de06ebb467aa55d5368c8f373343d83030dcd9a321f46",
+    "method": "MECHANICAL_REPLAY_THEN_FRESH_MODEL_POST_OUTCOME_REVIEW",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "medium",
+    "reviewed_at_utc": "2026-07-29T02:15:00Z",
+    "scope": [
+      "direction",
+      "entry_suppression",
+      "dynamic_lot",
+      "inventory_bias",
+      "early_exit",
+      "breakeven",
+      "partial_close",
+      "trailing"
+    ]
+  },
+  "parameters": {
+    "breakeven_trigger_r": 0.6,
+    "direction_block_pips": 3.0,
+    "direction_lookback_bars": 15,
+    "early_exit_opposition_bars": 3,
+    "high_volatility_atr_pips": 4.0,
+    "high_volatility_size_multiple": 0.5,
+    "inventory_same_side_cap": 1,
+    "partial_fraction": 0.5,
+    "partial_trigger_r": 0.8,
+    "risk_fraction": 0.01,
+    "trailing_atr_multiple": 1.0,
+    "trailing_trigger_r": 1.0
+  },
+  "policy_intent": "Trim or protect Paper inventory; never add risk, reverse a strategy signal, or authorize live execution.",
+  "schema_version": 1
+}

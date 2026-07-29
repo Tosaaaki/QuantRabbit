@@ -1,0 +1,105 @@
+{
+  "authority": {
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true
+  },
+  "contract": "QR_DOJO_LEGACY_WORKER_PAPER_ROOMS_V1",
+  "experiment_id": "dojo-legacy-worker-ai-ab-20260729-v1",
+  "initial_balance_jpy": 200000.0,
+  "rooms": [
+    {
+      "bot_config": {
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_ai_inventory_policy_v1.json",
+        "authority": {
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE",
+          "paper_replay_only": true
+        },
+        "ceiling_bars": 743,
+        "family": "TrendMA",
+        "management_arm": "BOT_ONLY",
+        "pairs": ["USD_JPY"],
+        "risk_fraction": 0.01,
+        "sl_pips": 24.25,
+        "strategy_owner_id": "legacy-paper-trendma-bot",
+        "tp_pips": 47.89
+      },
+      "family": "TrendMA",
+      "management_arm": "BOT_ONLY",
+      "room_id": "trendma-bot-only"
+    },
+    {
+      "bot_config": {
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_ai_inventory_policy_v1.json",
+        "authority": {
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE",
+          "paper_replay_only": true
+        },
+        "ceiling_bars": 743,
+        "family": "TrendMA",
+        "management_arm": "AI_INVENTORY",
+        "pairs": ["USD_JPY"],
+        "risk_fraction": 0.01,
+        "sl_pips": 24.25,
+        "strategy_owner_id": "legacy-paper-trendma-ai",
+        "tp_pips": 47.89
+      },
+      "family": "TrendMA",
+      "management_arm": "AI_INVENTORY",
+      "room_id": "trendma-ai-inventory"
+    },
+    {
+      "bot_config": {
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_ai_inventory_policy_v1.json",
+        "authority": {
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE",
+          "paper_replay_only": true
+        },
+        "ceiling_bars": 7,
+        "family": "PulseBreak",
+        "management_arm": "BOT_ONLY",
+        "pairs": ["USD_JPY"],
+        "risk_fraction": 0.01,
+        "sl_pips": 4.48,
+        "strategy_owner_id": "legacy-paper-pulsebreak-bot",
+        "tp_pips": 6.4
+      },
+      "family": "PulseBreak",
+      "management_arm": "BOT_ONLY",
+      "room_id": "pulsebreak-bot-only"
+    },
+    {
+      "bot_config": {
+        "ai_policy_path": "/Users/tossaki/App/QuantRabbit-worktrees/dojo-dual-eval/config/dojo_legacy_ai_inventory_policy_v1.json",
+        "authority": {
+          "external_broker_mutation_allowed": false,
+          "live_permission": false,
+          "order_authority": "NONE",
+          "paper_replay_only": true
+        },
+        "ceiling_bars": 7,
+        "family": "PulseBreak",
+        "management_arm": "AI_INVENTORY",
+        "pairs": ["USD_JPY"],
+        "risk_fraction": 0.01,
+        "sl_pips": 4.48,
+        "strategy_owner_id": "legacy-paper-pulsebreak-ai",
+        "tp_pips": 6.4
+      },
+      "family": "PulseBreak",
+      "management_arm": "AI_INVENTORY",
+      "room_id": "pulsebreak-ai-inventory"
+    }
+  ],
+  "schema_version": 1,
+  "slippage_pips_per_fill": 0.2,
+  "financing_pips_per_day": 0.05,
+  "window_end_utc": "2026-08-29T00:00:00Z"
+}
