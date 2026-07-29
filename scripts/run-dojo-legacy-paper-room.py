@@ -23,6 +23,14 @@ def main() -> int:
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--room-id", required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--resume-existing",
+        action="store_true",
+        help=(
+            "resume an existing room only for an AI_SHADOW_ONLY transition; "
+            "the broker snapshot and ledger are preserved"
+        ),
+    )
     args = parser.parse_args()
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     if registry.get("contract") != "QR_DOJO_LEGACY_WORKER_PAPER_ROOMS_V1" or registry.get("authority") != AUTHORITY:
@@ -74,10 +82,46 @@ def main() -> int:
     env.setdefault("QR_OANDA_ENV_FILE", "/Users/tossaki/App/QuantRabbit-live/.env.local")
     if room["management_arm"] == "AI_INVENTORY":
         env["DOJO_AI_DECISION_LEDGER"] = str(session_dir / "ai_decisions.jsonl")
+    elif room["management_arm"] == "AI_SHADOW_ONLY":
+        env["DOJO_AI_DECISION_LEDGER"] = str(
+            session_dir / "ai_shadow_decisions.jsonl"
+        )
+    if args.resume_existing:
+        if room["management_arm"] != "AI_SHADOW_ONLY":
+            raise SystemExit("existing rooms may be resumed only in AI_SHADOW_ONLY")
+        required = {
+            "ledger.jsonl",
+            "broker_snapshot.json",
+            "state.json",
+            "ai_decisions.jsonl",
+        }
+        if not session_dir.is_dir() or any(
+            not (session_dir / name).is_file() for name in required
+        ):
+            raise SystemExit("shadow transition requires a complete existing AI room")
+        if (session_dir / "ai_shadow_decisions.jsonl").exists():
+            raise SystemExit("shadow decision ledger must be create-once")
+        state = json.loads((session_dir / "state.json").read_text(encoding="utf-8"))
+        if state.get("resting_orders"):
+            raise SystemExit("shadow transition refuses a room with resting orders")
     if args.dry_run:
-        print(json.dumps({"room_id": args.room_id, "session_dir": str(session_dir), "command": command, "bot_config": config}, ensure_ascii=False, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "room_id": args.room_id,
+                    "session_dir": str(session_dir),
+                    "command": command,
+                    "bot_config": config,
+                    "resume_existing": args.resume_existing,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
-    session_dir.mkdir(parents=True, exist_ok=False)
+    if not args.resume_existing:
+        session_dir.mkdir(parents=True, exist_ok=False)
     os.execvpe(command[0], command, env)
     return 1
 

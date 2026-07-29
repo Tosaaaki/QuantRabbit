@@ -41,8 +41,9 @@
           "paper_replay_only": true
         },
         "ceiling_bars": 743,
+        "economic_application_allowed": false,
         "family": "TrendMA",
-        "management_arm": "AI_INVENTORY",
+        "management_arm": "AI_SHADOW_ONLY",
         "pairs": ["USD_JPY"],
         "risk_fraction": 0.01,
         "sl_pips": 24.25,
@@ -50,7 +51,7 @@
         "tp_pips": 47.89
       },
       "family": "TrendMA",
-      "management_arm": "AI_INVENTORY",
+      "management_arm": "AI_SHADOW_ONLY",
       "room_id": "trendma-ai-inventory"
     },
     {

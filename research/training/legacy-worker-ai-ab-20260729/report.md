@@ -109,3 +109,17 @@ replay工程で停止しない。
 - 高速replayは昨年の固定entry cohort比較で、AI entry抑制後の代替signalを
   再生成しない保守的counterfactual。継続Paperでforward差を検証する。
 - AI cost未計測のため最終経済判定は未確定。
+
+## 2026-07-29 判断更新｜TrendMA AI経済適用停止
+
+- TrendMAのBot対照Paperは継続する。
+- 共通AI方針はBot `+31,107.84円`をAI `-8,585.72円`へ悪化させたためreject。
+  TrendMA AI室は新規注文、途中離脱、建値、部分決済、trailingを一切適用しない
+  `AI_SHADOW_ONLY`へ移行する。
+- 移行時点のTrendMA AI Paperには1件の既存SHORTがあった。放置や強制決済はせず、
+  既存の固定TP/SLだけをvirtual brokerへ維持し、AIによる変更を止める。
+  決済後も同室は判断提案だけを別hash-chain ledgerへ記録し、Paper注文を出さない。
+- TrendMA専用AI policyは新しい未使用窓でBotを上回るまで経済適用へ戻さない。
+- PulseBreakのBot/AI Paperは継続。M1Scalperは不採用。RangeFaderは追加sample待ち。
+- 現行4室、live、外部broker、実注文は変更しない。authorityは引き続き
+  `live_permission=false`、external broker mutation禁止、`order_authority=NONE`。

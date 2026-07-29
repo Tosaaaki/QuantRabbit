@@ -3,7 +3,8 @@
 The worker deliberately exposes no live/broker client.  It receives only the
 DOJO virtual broker and completed M1 bars.  ``BOT_ONLY`` preserves the frozen
 family rule; ``AI_INVENTORY`` adds a frozen, model-authored, trim/protect-only
-inventory policy and records every decision in a separate hash-chained ledger.
+inventory policy. ``AI_SHADOW_ONLY`` records the same entry evaluation but is
+structurally unable to open, close, resize, or modify a Paper position.
 """
 
 from __future__ import annotations
@@ -63,8 +64,17 @@ class Bot:
         if self.family not in {"TrendMA", "PulseBreak"}:
             raise ValueError("unsupported archived family")
         self.arm = str(config["management_arm"])
-        if self.arm not in {"BOT_ONLY", "AI_INVENTORY"}:
+        if self.arm not in {"BOT_ONLY", "AI_INVENTORY", "AI_SHADOW_ONLY"}:
             raise ValueError("unsupported management arm")
+        economic_application_allowed = config.get(
+            "economic_application_allowed",
+            self.arm != "AI_SHADOW_ONLY",
+        )
+        if not isinstance(economic_application_allowed, bool):
+            raise ValueError("economic application flag must be boolean")
+        if self.arm == "AI_SHADOW_ONLY" and economic_application_allowed:
+            raise ValueError("shadow-only arm cannot allow economic application")
+        self.economic_application_allowed = economic_application_allowed
         self.owner_id = str(config["strategy_owner_id"])
         self.pairs = list(config.get("pairs") or ["USD_JPY"])
         if self.pairs != ["USD_JPY"]:
@@ -86,7 +96,7 @@ class Bot:
         self.policy: dict[str, Any] | None = None
         self.decision_ledger: Path | None = None
         self.decision_tip = "0" * 64
-        if self.arm == "AI_INVENTORY":
+        if self.arm in {"AI_INVENTORY", "AI_SHADOW_ONLY"}:
             policy_path = Path(str(config["ai_policy_path"])).resolve()
             policy = json.loads(policy_path.read_text(encoding="utf-8"))
             if policy.get("contract") != POLICY_CONTRACT or policy.get("authority") != AUTHORITY:
@@ -106,6 +116,7 @@ class Bot:
                     "policy_contract": policy["contract"],
                     "policy_sha256": _canonical_sha256(policy),
                     "paper_only": True,
+                    "economic_application_allowed": self.economic_application_allowed,
                 },
             )
 
@@ -275,7 +286,10 @@ class Bot:
                 state.trade_risk.pop(trade_id, None)
                 state.favorable.pop(trade_id, None)
                 state.opposition_bars.pop(trade_id, None)
-            elif epoch - self.opened_epoch[trade_id] >= self.ceiling_bars * 60:
+            elif (
+                self.arm != "AI_SHADOW_ONLY"
+                and epoch - self.opened_epoch[trade_id] >= self.ceiling_bars * 60
+            ):
                 try:
                     self.broker.close_trade(trade_id)
                 except VirtualBrokerError:
@@ -289,7 +303,7 @@ class Bot:
             return
         atr = self._atr(state)
         size_multiple = 1.0
-        if self.arm == "AI_INVENTORY":
+        if self.arm in {"AI_INVENTORY", "AI_SHADOW_ONLY"}:
             assert self.policy is not None
             lookback = int(self.policy["direction_lookback_bars"])
             closes = list(state.closes)
@@ -297,7 +311,17 @@ class Bot:
             blocked = (side == "LONG" and drift < -float(self.policy["direction_block_pips"])) or (
                 side == "SHORT" and drift > float(self.policy["direction_block_pips"])
             )
-            self._record_ai(epoch, None, "ENTRY_DIRECTION_CHECK", {"side": side, "drift_pips": drift, "blocked": blocked})
+            action = (
+                "SHADOW_ENTRY_DIRECTION_CHECK"
+                if self.arm == "AI_SHADOW_ONLY"
+                else "ENTRY_DIRECTION_CHECK"
+            )
+            self._record_ai(
+                epoch,
+                None,
+                action,
+                {"side": side, "drift_pips": drift, "blocked": blocked},
+            )
             if blocked:
                 return
             if atr / PIP >= float(self.policy["high_volatility_atr_pips"]):
@@ -310,6 +334,21 @@ class Bot:
         risk_fraction = self.risk_fraction if self.arm == "BOT_ONLY" else float(self.policy["risk_fraction"])
         units = math.floor(equity * risk_fraction / (self.sl_pips * PIP) * size_multiple)
         if units <= 0:
+            return
+        if self.arm == "AI_SHADOW_ONLY":
+            self._record_ai(
+                epoch,
+                None,
+                "SHADOW_ENTRY_PROPOSAL",
+                {
+                    "side": side,
+                    "units": units,
+                    "size_multiple": size_multiple,
+                    "entry_price": entry_price,
+                    "paper_order_submitted": False,
+                    "economic_application_allowed": False,
+                },
+            )
             return
         try:
             trade_id = self.broker.market_order(

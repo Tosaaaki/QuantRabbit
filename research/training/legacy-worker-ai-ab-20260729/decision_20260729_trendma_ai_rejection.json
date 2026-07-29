@@ -1,0 +1,43 @@
+{
+  "authority": {
+    "external_broker_mutation_allowed": false,
+    "live_permission": false,
+    "order_authority": "NONE",
+    "paper_replay_only": true
+  },
+  "contract": "QR_DOJO_LEGACY_WORKER_DECISION_V1",
+  "decision_time_jst": "2026-07-29T11:14:36+09:00",
+  "decisions": {
+    "M1Scalper": "REJECT",
+    "PulseBreak": "BOT_AND_AI_PAPER_CONTINUE",
+    "RangeFader": "WAIT_FOR_ADDITIONAL_SAMPLE",
+    "TrendMA": "BOT_PAPER_CONTINUE_AI_ECONOMIC_APPLICATION_REJECT"
+  },
+  "trendma": {
+    "ai_net_profit_jpy": -8585.72,
+    "ai_policy_status": "REJECTED",
+    "bot_net_profit_jpy": 31107.84,
+    "economic_application": "STOPPED",
+    "forward_mode": "AI_SHADOW_ONLY",
+    "net_delta_jpy_before_ai_cost": -39693.56,
+    "reapply_gate": {
+      "costs_included": true,
+      "must_beat_bot": true,
+      "risk_metrics_required": [
+        "profit_factor",
+        "expectancy_jpy",
+        "max_drawdown_jpy",
+        "profit_giveback_ratio",
+        "ai_cost_jpy",
+        "ai_decision_count"
+      ],
+      "window": "NEW_UNUSED_WINDOW"
+    },
+    "transition": {
+      "existing_paper_position_action": "KEEP_EXISTING_FIXED_TP_SL_WITHOUT_AI_MODIFICATION",
+      "new_paper_orders_allowed": false,
+      "paper_inventory_mutation_by_ai_allowed": false,
+      "shadow_decision_ledger": "ai_shadow_decisions.jsonl"
+    }
+  }
+}

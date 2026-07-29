@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.virtual_broker import VirtualBroker
 from quant_rabbit.dojo_legacy_worker_comparison import (
@@ -105,6 +107,74 @@ class LegacyWorkerComparisonTests(unittest.TestCase):
             }
             with self.assertRaises(ValueError):
                 BOT_MODULE.Bot(broker, config)
+
+    def test_shadow_arm_records_proposal_without_opening_paper_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            broker = VirtualBroker(
+                ledger_path=root / "ledger.jsonl",
+                balance_jpy=200_000.0,
+            )
+            policy_path = root / "policy.json"
+            policy_path.write_text(json.dumps(self._policy()), encoding="utf-8")
+            decision_path = root / "ai_shadow_decisions.jsonl"
+            config = {
+                "authority": AUTHORITY,
+                "family": "TrendMA",
+                "management_arm": "AI_SHADOW_ONLY",
+                "economic_application_allowed": False,
+                "strategy_owner_id": "test-trendma-shadow",
+                "pairs": ["USD_JPY"],
+                "risk_fraction": 0.01,
+                "tp_pips": 47.89,
+                "sl_pips": 24.25,
+                "ceiling_bars": 743,
+                "ai_policy_path": str(policy_path),
+            }
+            with patch.dict(
+                os.environ,
+                {"DOJO_AI_DECISION_LEDGER": str(decision_path)},
+                clear=False,
+            ):
+                bot = BOT_MODULE.Bot(broker, config)
+            for index in range(80):
+                close = 160.0 + index * 0.01
+                bar = {
+                    "bid_o": close - 0.01,
+                    "ask_o": close,
+                    "bid_h": close + 0.02,
+                    "ask_h": close + 0.03,
+                    "bid_l": close - 0.02,
+                    "ask_l": close - 0.01,
+                    "bid_c": close,
+                    "ask_c": close + 0.01,
+                }
+                broker.on_quote_batch(
+                    [
+                        (
+                            "USD_JPY",
+                            close,
+                            close + 0.01,
+                            f"2026-07-29T{index // 60:02d}:{index % 60:02d}:00+00:00",
+                        )
+                    ]
+                )
+                bot.on_bar_closed("USD_JPY", bar, 1_785_283_200 + index * 60)
+            self.assertEqual(broker.positions, {})
+            self.assertEqual(broker.orders, {})
+            decisions = [
+                json.loads(line)
+                for line in decision_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertTrue(
+                any(row["action"] == "SHADOW_ENTRY_PROPOSAL" for row in decisions)
+            )
+            self.assertTrue(
+                all(
+                    row["detail"].get("paper_order_submitted") is not True
+                    for row in decisions
+                )
+            )
 
 
 if __name__ == "__main__":
