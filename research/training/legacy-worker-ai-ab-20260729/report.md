@@ -116,9 +116,10 @@ replay工程で停止しない。
 - 共通AI方針はBot `+31,107.84円`をAI `-8,585.72円`へ悪化させたためreject。
   TrendMA AI室は新規注文、途中離脱、建値、部分決済、trailingを一切適用しない
   `AI_SHADOW_ONLY`へ移行する。
-- 移行時点のTrendMA AI Paperには1件の既存SHORTがあった。放置や強制決済はせず、
-  既存の固定TP/SLだけをvirtual brokerへ維持し、AIによる変更を止める。
-  決済後も同室は判断提案だけを別hash-chain ledgerへ記録し、Paper注文を出さない。
+- 移行準備中の11:20:03 JST、旧AIプロセスが既存SHORTを`EARLY_EXIT`し、
+  `-206.21円`を実現した。強制決済は行っていない。11:20:20 JSTに旧プロセスを
+  graceful停止し、ポジション0・注文0のsnapshotからshadow専用プロセスを再開した。
+  以後は判断提案だけを別hash-chain ledgerへ記録し、Paper注文を出さない。
 - TrendMA専用AI policyは新しい未使用窓でBotを上回るまで経済適用へ戻さない。
 - PulseBreakのBot/AI Paperは継続。M1Scalperは不採用。RangeFaderは追加sample待ち。
 - 現行4室、live、外部broker、実注文は変更しない。authorityは引き続き

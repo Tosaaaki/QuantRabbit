@@ -34,7 +34,16 @@
       "window": "NEW_UNUSED_WINDOW"
     },
     "transition": {
-      "existing_paper_position_action": "KEEP_EXISTING_FIXED_TP_SL_WITHOUT_AI_MODIFICATION",
+      "existing_paper_position_action": "OLD_POLICY_EARLY_EXIT_BEFORE_SHADOW_RESTART",
+      "old_policy_last_action": {
+        "action": "EARLY_EXIT",
+        "realized_pl_jpy": -206.21,
+        "time_jst": "2026-07-29T11:20:03+09:00",
+        "trade_id": "T000001"
+      },
+      "post_transition_open_positions": 0,
+      "post_transition_resting_orders": 0,
+      "shadow_restart_time_jst": "2026-07-29T11:20:59+09:00",
       "new_paper_orders_allowed": false,
       "paper_inventory_mutation_by_ai_allowed": false,
       "shadow_decision_ledger": "ai_shadow_decisions.jsonl"
