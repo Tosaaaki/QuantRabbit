@@ -94,6 +94,32 @@ signal invalidation、Paper margin contractを評価し続ける。
 circuitが`NONE`の新規未使用窓以外では開始しない。費用後期待値`>0`、PF`>1`、
 DD非悪化が複数の独立窓で再現するまで採用しない。
 
+### 変更後readback
+
+2026-07-29 11:44 JST、4レーンは制御正本SHA
+`0868e66deca18ecec47c535a9835758923378f3f9805d7377e2c7af5a91c5c32`を
+readbackし、全て`RUNNING`へ復帰した。全Shadow serviceは14 processのままで、
+隔離対象外10 processのPIDは変わっていない。
+
+| レーン | open Paper | 確定取引 | 費用 JPY | Net JPY | DD JPY | control後OPEN |
+|---|---:|---:|---:|---:|---:|---:|
+| Fade Spot | 2 | 198 | 164.08 | -169.48 | 1,542.46 | 0 |
+| Fade Margin | 2 | 522 | 511.63 | -533.26 | 2,985.46 | 0 |
+| Cooldown Spot | 2 | 80 | 67.31 | -73.94 | 2,544.48 | 0 |
+| Cooldown Margin | 2 | 510 | 510.61 | -526.81 | 3,296.05 | 0 |
+
+control event以後の`PAPER_ORDER`と`PAPER_FILL`をledger sequenceで照合し、
+`position_effect=OPEN`は4レーンとも0件だった。一方、既存の微小残存建玉には
+`CLOSE`だけが継続している。強制決済、確定取引の増加、費用の増加、DD更新はなく、
+`forced_liquidation_count=0`を維持した。安全readbackも4レーン全てで
+`NO_EXECUTE=true`、`CRYPTO_LIVE_READY=false`、`WITHDRAWAL_ENABLED=false`、
+broker mutation `false`、order authority `NONE`だった。
+
+起動時のappend-only ledger検証とtrade outbox復旧は、検証済みcheckpointと
+outbox末尾sequence以後だけを読むようにした。これにより大規模ledgerでも
+既存成績・台帳を変更せず短時間でrisk contractを再開できる。outboxの欠損時は
+従来どおりledgerから復旧し、不正なsequenceはfail-closedする。
+
 ## bitbank固有仕様の確認
 
 公式Public StreamはSocket.IO 4.xで、`ticker_{pair}`、
@@ -140,6 +166,19 @@ maker entryとmaker-first exitを許す。失敗した板フェードの逆張�
 decision p95 `11.042 µs`だった。両ペアとも公式circuit modeが`RESUMPTION`で、
 Guardianは`HALT`、取引0、費用0、損益0、DD 0、PF未定義となった。これは利益証拠
 ではなく、安全境界が働いた証拠である。全選択ペアが`NONE`へ戻るまで再開しない。
+
+2026-07-29 11:45 JST、両ペアのcircuit modeが`NONE`へ戻ったことを同じPublic
+Streamで確認し、新規未使用窓1をSpot/Margin同時45秒で開始した。
+
+| Mode | events | completed trades | 費用 JPY | Net JPY | PF | DD JPY | decision p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Spot | 352 | 0 | 0 | 0 | 未定義 | 0 | 338.333 µs |
+| Margin | 352 | 0 | -0.25 | +0.2497 MTM | 未定義 | 0 | 336.209 µs |
+
+Spotは全てWAIT、Marginはmaker部分約定1件で終了時に未決済Paper shortが1件残った。
+確定取引が0のため、費用後期待値もPFも判定不能である。Guardianはclock skew観測で
+`RESTRICT`だったため、窓1は利益再現性の証拠に数えず`FORWARD_PAPER_ONLY`を維持する。
+別の未使用窓でも費用後期待値`>0`、PF`>1`、DD非悪化を満たすまでは採用しない。
 
 ## OSS比較・ライセンス監査
 
