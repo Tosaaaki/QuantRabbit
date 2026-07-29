@@ -172,3 +172,7 @@ def test_strategy_audit_separates_fills_from_completed_trades(
     assert experiment["reason"] == (
         "COOLDOWN_DID_NOT_REDUCE_PER_TRADE_FEE_DRAG"
     )
+    assert experiment["variant_metrics"]["stop_out_count"] == 0
+    assert experiment["variant_metrics"]["stop_out_rate"] == "0"
+    assert experiment["opportunity_loss_vs_baseline_jpy"] == "0.9"
+    assert experiment["opportunity_gain_vs_baseline_jpy"] == "0"

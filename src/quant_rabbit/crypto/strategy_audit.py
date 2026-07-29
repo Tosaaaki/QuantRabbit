@@ -105,6 +105,9 @@ def _window_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         (_trade_turnover(row) for row in rows),
         Decimal("0"),
     )
+    stopped = sum(
+        1 for row in rows if row.get("exit_reason") == "STOP_LOSS"
+    )
     return {
         "completed_trades": completed,
         "gross_pnl_jpy": _s(gross),
@@ -116,6 +119,10 @@ def _window_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "turnover_jpy": _s(turnover),
         "fees_per_trade_jpy": (
             _s(fees / completed) if completed else None
+        ),
+        "stop_out_count": stopped,
+        "stop_out_rate": (
+            _s(Decimal(stopped) / completed) if completed else None
         ),
     }
 
@@ -436,6 +443,8 @@ class StrategyLabAudit:
                     baseline_rows = []
                 baseline_metrics = _window_metrics(baseline_rows)
                 variant_metrics = _window_metrics(variant_rows)
+                baseline_net = _d(baseline_metrics["net_pnl_jpy"])
+                variant_net = _d(variant_metrics["net_pnl_jpy"])
                 status = "COLLECTING"
                 reason = "MINIMUM_30_COMPLETED_TRADES_NOT_REACHED"
                 variant_count = int(variant_metrics["completed_trades"])
@@ -508,6 +517,15 @@ class StrategyLabAudit:
                         ).isoformat(),
                         "baseline_metrics": baseline_metrics,
                         "variant_metrics": variant_metrics,
+                        "opportunity_loss_vs_baseline_jpy": _s(
+                            max(Decimal("0"), baseline_net - variant_net)
+                        ),
+                        "opportunity_gain_vs_baseline_jpy": _s(
+                            max(Decimal("0"), variant_net - baseline_net)
+                        ),
+                        "opportunity_metric_note": (
+                            "FORWARD_WINDOW_AGGREGATE_NOT_TRADE_PAIRED"
+                        ),
                         "status": status,
                         "reason": reason,
                         "unseen_window_count": 1,

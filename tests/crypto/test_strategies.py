@@ -76,6 +76,9 @@ def test_all_strategy_profiles_are_externalized_and_safe() -> None:
         "ORDER_BOOK_FADE",
         "ORDER_BOOK_FADE_COOLDOWN_5S",
         "ORDER_BOOK_FADE_MAKER_EXIT",
+        "ORDER_BOOK_FADE_SL_FIXED_CONTROL",
+        "ORDER_BOOK_FADE_SL_VOLATILITY",
+        "ORDER_BOOK_FADE_SL_TIME",
     }
     assert all(
         profile.entry_order_style.startswith("PAPER_")
@@ -104,6 +107,12 @@ def test_all_strategy_profiles_are_externalized_and_safe() -> None:
     assert maker_exit.variant_of == baseline.name
     assert maker_exit.changed_category == "forced_exit_order_style"
     assert maker_exit.forced_exit_order_style == "PAPER_MAKER_LIMIT"
+    fixed_control = profiles["ORDER_BOOK_FADE_SL_FIXED_CONTROL"]
+    volatility = profiles["ORDER_BOOK_FADE_SL_VOLATILITY"]
+    time_only = profiles["ORDER_BOOK_FADE_SL_TIME"]
+    assert fixed_control.stop_loss_mode == "FIXED_BPS"
+    assert volatility.stop_loss_mode == "REALIZED_VOLATILITY"
+    assert time_only.stop_loss_mode == "TIME_ONLY"
 
 
 @pytest.mark.parametrize(
@@ -256,6 +265,94 @@ def test_maker_exit_variant_keeps_stop_loss_taker() -> None:
     assert decision["action"] == "EXIT"
     assert decision["reason"] == "STOP_LOSS"
     assert decision["exit_order_style"] == "PAPER_TAKER"
+
+
+def test_volatility_stop_is_causal_cost_aware_and_bounded() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE_SL_VOLATILITY",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.01", "99.99", "100.02"])
+    decision = router.decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100.05"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["stop_loss_mode"] == "REALIZED_VOLATILITY"
+    trigger = Decimal(str(decision["stop_loss_trigger_bps"]))
+    assert Decimal("2.5") <= trigger <= Decimal("8")
+    assert Decimal(str(decision["realized_range_bps"])) > 0
+
+
+def test_volatility_stop_avoids_legacy_fixed_stop_in_current_noise() -> None:
+    state = _state(["100", "100.01", "99.99", "100.02"])
+    fixed = strategy_router(
+        "ORDER_BOOK_FADE_SL_FIXED_CONTROL",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    ).decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100.03"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    volatility = strategy_router(
+        "ORDER_BOOK_FADE_SL_VOLATILITY",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    ).decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("100.03"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert fixed["reason"] == "STOP_LOSS"
+    assert volatility["reason"] == "HOLD"
+    assert Decimal(str(volatility["stop_loss_trigger_bps"])) > Decimal(
+        str(fixed["stop_loss_trigger_bps"])
+    )
+
+
+def test_time_stop_does_not_emit_price_stop_before_hold_limit() -> None:
+    router = strategy_router(
+        "ORDER_BOOK_FADE_SL_TIME",
+        config_path=CONFIG,
+        warmup_events=1,
+        max_data_age_ms=5_000,
+    )
+    state = _state(["100", "100.001", "100.002", "100.003"])
+    router.opened_ns[state.pair] = 1_500_000_000
+    decision = router.decide(
+        state,
+        position=Decimal("1"),
+        average_cost=Decimal("101"),
+        maker_fee_rate=Decimal("-0.0002"),
+        taker_fee_rate=Decimal("0.001"),
+        allow_short=True,
+        now_ns=2_000_000_000,
+        wall_time_ms=1_001,
+    )
+    assert decision["action"] == "WAIT"
+    assert decision["reason"] == "HOLD"
+    assert decision["stop_loss_mode"] == "TIME_ONLY"
+    assert decision["stop_loss_trigger_bps"] is None
 
 
 def test_entry_control_quarantines_only_new_order_book_fade_entries() -> None:

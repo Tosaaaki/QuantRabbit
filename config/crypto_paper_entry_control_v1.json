@@ -46,6 +46,27 @@
       "authority": "NONE",
       "live_permission": false
     },
+    "ORDER_BOOK_FADE_SL_FIXED_CONTROL": {
+      "status": "FORWARD_PAPER_ONLY",
+      "reason": "PROSPECTIVE_STOP_POLICY_CONTROL",
+      "existing_position_policy": "RISK_CONTRACT",
+      "authority": "NONE",
+      "live_permission": false
+    },
+    "ORDER_BOOK_FADE_SL_VOLATILITY": {
+      "status": "FORWARD_PAPER_ONLY",
+      "reason": "PROSPECTIVE_VOLATILITY_STOP_EXPERIMENT",
+      "existing_position_policy": "RISK_CONTRACT",
+      "authority": "NONE",
+      "live_permission": false
+    },
+    "ORDER_BOOK_FADE_SL_TIME": {
+      "status": "FORWARD_PAPER_ONLY",
+      "reason": "PROSPECTIVE_TIME_STOP_EXPERIMENT",
+      "existing_position_policy": "RISK_CONTRACT",
+      "authority": "NONE",
+      "live_permission": false
+    },
     "QUEUE_FLOW_MICROPRICE_MAKER": {
       "status": "FORWARD_PAPER_ONLY",
       "reason": "START_ONLY_IN_NEW_WINDOW_AFTER_CIRCUIT_NONE",

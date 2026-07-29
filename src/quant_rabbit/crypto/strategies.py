@@ -33,6 +33,11 @@ class StrategyProfile:
     safety_buffer_bps: Decimal
     take_profit_bps: Decimal
     stop_loss_bps: Decimal
+    stop_loss_mode: str
+    volatility_window_events: int
+    volatility_stop_multiplier: Decimal
+    stop_cost_floor_multiple: Decimal
+    max_stop_loss_bps: Decimal
     max_hold_ms: int
     cooldown_ms: int
     min_trade_flow_imbalance: Decimal
@@ -76,6 +81,21 @@ class StrategyProfile:
             safety_buffer_bps=_d(raw["safety_buffer_bps"]),
             take_profit_bps=_d(raw["take_profit_bps"]),
             stop_loss_bps=_d(raw["stop_loss_bps"]),
+            stop_loss_mode=str(
+                raw.get("stop_loss_mode", "FIXED_BPS")
+            ).upper(),
+            volatility_window_events=int(
+                raw.get("volatility_window_events", 16)
+            ),
+            volatility_stop_multiplier=_d(
+                raw.get("volatility_stop_multiplier", "1")
+            ),
+            stop_cost_floor_multiple=_d(
+                raw.get("stop_cost_floor_multiple", "1")
+            ),
+            max_stop_loss_bps=_d(
+                raw.get("max_stop_loss_bps", raw["stop_loss_bps"])
+            ),
             max_hold_ms=int(raw["max_hold_ms"]),
             cooldown_ms=int(raw["cooldown_ms"]),
             min_trade_flow_imbalance=_d(
@@ -92,6 +112,12 @@ class StrategyProfile:
             or profile.max_spread_bps <= 0
             or profile.take_profit_bps <= 0
             or profile.stop_loss_bps <= 0
+            or profile.stop_loss_mode
+            not in {"FIXED_BPS", "REALIZED_VOLATILITY", "TIME_ONLY"}
+            or profile.volatility_window_events < 4
+            or profile.volatility_stop_multiplier <= 0
+            or profile.stop_cost_floor_multiple <= 0
+            or profile.max_stop_loss_bps < profile.stop_loss_bps
             or profile.max_hold_ms <= 0
             or profile.cooldown_ms < 0
             or not Decimal("0")
@@ -301,10 +327,18 @@ class ConfiguredStrategyRouter:
         opened_ns = self.opened_ns.setdefault(state.pair, now_ns)
         held_ms = (now_ns - opened_ns) // 1_000_000
         position_side = "LONG" if position > 0 else "SHORT"
+        realized_range_bps = self._realized_range_bps(state.prices)
+        stop_loss_trigger_bps = self._stop_loss_trigger_bps(
+            expected_cost_bps=expected_cost_bps,
+            realized_range_bps=realized_range_bps,
+        )
         exit_reason: str | None = None
         if pnl_bps >= self.profile.take_profit_bps:
             exit_reason = "TAKE_PROFIT"
-        elif pnl_bps <= -self.profile.stop_loss_bps:
+        elif (
+            stop_loss_trigger_bps is not None
+            and pnl_bps <= -stop_loss_trigger_bps
+        ):
             exit_reason = "STOP_LOSS"
         elif held_ms >= self.profile.max_hold_ms:
             exit_reason = "MAX_HOLD"
@@ -332,6 +366,13 @@ class ConfiguredStrategyRouter:
                     else self.profile.forced_exit_order_style
                 ),
                 "position_pnl_bps": str(pnl_bps),
+                "stop_loss_mode": self.profile.stop_loss_mode,
+                "stop_loss_trigger_bps": (
+                    str(stop_loss_trigger_bps)
+                    if stop_loss_trigger_bps is not None
+                    else None
+                ),
+                "realized_range_bps": str(realized_range_bps),
                 "held_ms": int(held_ms),
             }
         return {
@@ -340,8 +381,49 @@ class ConfiguredStrategyRouter:
             "position_side": position_side,
             "reason": "HOLD",
             "position_pnl_bps": str(pnl_bps),
+            "stop_loss_mode": self.profile.stop_loss_mode,
+            "stop_loss_trigger_bps": (
+                str(stop_loss_trigger_bps)
+                if stop_loss_trigger_bps is not None
+                else None
+            ),
+            "realized_range_bps": str(realized_range_bps),
             "held_ms": int(held_ms),
         }
+
+    def _realized_range_bps(
+        self, prices: object
+    ) -> Decimal:
+        """Return a causal tick-window range, never a future ATR proxy."""
+        values = list(prices)[-self.profile.volatility_window_events :]
+        if len(values) < 4 or values[-1] <= 0:
+            return Decimal("0")
+        return (max(values) - min(values)) / values[-1] * BPS
+
+    def _stop_loss_trigger_bps(
+        self,
+        *,
+        expected_cost_bps: Decimal,
+        realized_range_bps: Decimal,
+    ) -> Decimal | None:
+        """Resolve the Paper stop from the predeclared causal policy.
+
+        The configurable fixed floor preserves the current Paper control.
+        The volatility arm widens only to the larger of observed tick range
+        and round-trip cost, then remains bounded by the configured Paper
+        loss cap.  These are named experiment inputs, not live permissions.
+        """
+        if self.profile.stop_loss_mode == "TIME_ONLY":
+            return None
+        if self.profile.stop_loss_mode == "FIXED_BPS":
+            return self.profile.stop_loss_bps
+        dynamic = max(
+            self.profile.stop_loss_bps,
+            realized_range_bps
+            * self.profile.volatility_stop_multiplier,
+            expected_cost_bps * self.profile.stop_cost_floor_multiple,
+        )
+        return min(dynamic, self.profile.max_stop_loss_bps)
 
     def _entry_signal(
         self,
