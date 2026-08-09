@@ -1,0 +1,57 @@
+{
+  "contract": "historical_source_admission_v2",
+  "checked_at_utc": "2026-08-09T14:06:11Z",
+  "oanda": {
+    "endpoint": "GET /v3/instruments/EUR_USD/candles",
+    "window": {"from_utc": "2026-07-08T12:00:00Z", "to_utc": "2026-07-08T13:00:00Z"},
+    "request_contract": {"granularity": "S5", "price": "BA", "includeFirst": true},
+    "first_fetch_rows": 697,
+    "second_fetch_rows": 697,
+    "expected_aligned_slots": 720,
+    "omitted_slots": 23,
+    "complete_false": 0,
+    "bid_ask_invalid": 0,
+    "first_semantic_sha256": "b9739c6124bebbb7564a827b5c11b0729bd412fed1e9b452e926000442074fdf",
+    "second_semantic_sha256": "b9739c6124bebbb7564a827b5c11b0729bd412fed1e9b452e926000442074fdf",
+    "double_fetch_identical": true,
+    "admission": "REPRODUCIBLE_S5_CANDLES_NOT_GAPLESS_TICK_TRUTH",
+    "reason": "Official OANDA schema defines complete only as candle ending time not being in the future. Identical omissions prove reproducible transport, not that the omitted intervals had no source prices."
+  },
+  "dukascopy": {
+    "endpoint_example": "https://datafeed.dukascopy.com/datafeed/EURUSD/2026/06/08/12h_ticks.bi5",
+    "utc_hour": "2026-07-08T12:00:00Z",
+    "raw_bytes": 19539,
+    "decoded_bytes": 87040,
+    "records": 4352,
+    "record_remainder": 0,
+    "raw_sha256": "da9cf66d9ffe3310613ded277247657ca04d13b906fc5635dae728c5944ab134",
+    "first_tick_millis": 57,
+    "first_ask": 1.13983,
+    "first_bid": 1.13981,
+    "cross_source_spot_check": "The first Dukascopy bid is inside the corresponding OANDA S5 bid range; the ask differs by broker/source and is intentionally not treated as an OANDA fill.",
+    "admission": "FEATURE_SOURCE_ONLY_WITH_EXPLICIT_SOURCE_BOUNDARY",
+    "historical_export_ui_spot_check": {
+      "instrument": "EUR/USD",
+      "utc_hour": "2026-05-06T13:00:00Z",
+      "period": "Tick",
+      "timezone": "UTC",
+      "bid_rows_excluding_header": 8994,
+      "ask_rows_excluding_header": 8994,
+      "bid_sha256": "c1b0259b84c89a9d9e15d3f99ee3a423533ce39b4a368379dde335e20bb5c085",
+      "ask_sha256": "a0311932baaf2065cbe96775d7159c7e0f99544bc19ade2ec0ebf92b9b50fcec",
+      "timestamp_columns_equal": true,
+      "crossed_quotes": 0,
+      "use": "independent official-UI spot check only",
+      "not_primary_reason": "UI files expose only second-resolution timestamps and one offer side per download; raw bi5 preserves millisecond order and both sides in one record"
+    }
+  },
+  "official_references": [
+    "https://developer.oanda.com/rest-live-v20/pricing-ep/",
+    "https://developer.oanda.com/rest-live-v20/instrument-df/",
+    "https://help.oanda.com/us/en/faqs/hours-of-operation.htm",
+    "https://www.dukascopy.com/swiss/english/marketwatch/historical/",
+    "https://www.dukascopy.com/wiki/en/development/strategy-api/historical-data/history-ticks/",
+    "https://www.dukascopy.com/wiki/en/forex-cfds/jforex/historical-tester/",
+    "https://www.dukascopy.com/swiss/english/legal-pages/important-disclaimer/"
+  ]
+}

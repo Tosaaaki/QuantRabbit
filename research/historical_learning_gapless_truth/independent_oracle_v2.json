@@ -1,0 +1,52 @@
+{
+  "contract": "historical_learning_gapless_truth_independent_oracle_v2",
+  "double_download_pass": true,
+  "generated_at_utc": "2026-08-09T14:53:02.454366Z",
+  "holdout_sealed": true,
+  "metrics": {
+    "pass": true,
+    "windows": [
+      {
+        "exact_match": true,
+        "id": "INITIAL_16D",
+        "status": "NOT_FIT_ADMISSION_GATE"
+      },
+      {
+        "exact_match": true,
+        "id": "DOUBLE_32D",
+        "status": "NOT_FIT_ADMISSION_GATE"
+      },
+      {
+        "exact_match": true,
+        "id": "QUADRUPLE_64D",
+        "independent_bootstrap_lcb_jpy": -143.12375247524753,
+        "oracle": {
+          "baseline_net_jpy": 15144.4802,
+          "incremental_net_jpy": -4707.3811,
+          "max_drawdown_jpy": 6452.156300000001,
+          "net_jpy": 10437.0991,
+          "profit_factor": 1.4870727399479444,
+          "trades_available": 101,
+          "trades_selected": 85
+        },
+        "reported_bootstrap_lcb_jpy": -142.06781584158415,
+        "status": "EVALUATED"
+      }
+    ]
+  },
+  "overall_pass": true,
+  "raw": {
+    "duplicate_timestamps": 0,
+    "errors": [],
+    "exact_duplicate_records": 0,
+    "manifest_entries": 418,
+    "pass": true,
+    "rows_by_pair": {
+      "AUD_JPY": 359077,
+      "EUR_JPY": 316230,
+      "EUR_USD": 745291
+    },
+    "unique_hours": 418
+  },
+  "scope_pass": true
+}

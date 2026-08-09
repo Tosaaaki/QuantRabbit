@@ -1,0 +1,105 @@
+{
+  "contract": "historical_learning_gapless_truth_rca_v2",
+  "decision": "REJECT",
+  "holdout_used": false,
+  "acquisition": {
+    "required_hours": 418,
+    "raw_complete_hours": 413,
+    "scheduled_market_closed_hours": 5,
+    "market_open_defects": 0,
+    "double_download_pairs": 3,
+    "double_download_hash_and_row_count_match": true,
+    "cache_bytes_at_manifest": 7536938
+  },
+  "coverage": {
+    "all_episodes": 251,
+    "allowed_pair_episodes": 146,
+    "strict_available_all": 141,
+    "strict_available_allowed_pairs": 141,
+    "coverage_all": 0.5617529880478087,
+    "coverage_allowed_pairs": 0.9657534246575342,
+    "out_of_scope_by_frozen_allowlist": 105,
+    "market_closed_lookback_excluded": 5,
+    "acquisition_gap_or_incomplete": 0
+  },
+  "windows": [
+    {
+      "id": "INITIAL_16D",
+      "status": "NOT_FIT_ADMISSION_GATE",
+      "labeled_events": 30,
+      "train_events": 13,
+      "validation_events": 12,
+      "train_price_action_features": 7,
+      "validation_price_action_features": 3,
+      "all_trades_net_jpy": 10579.5043,
+      "all_trades_profit_factor": 4.9318828837155815,
+      "all_trades_max_drawdown_jpy": 2690.6967,
+      "all_trades_margin_coverage": 0.0
+    },
+    {
+      "id": "DOUBLE_32D",
+      "status": "NOT_FIT_ADMISSION_GATE",
+      "labeled_events": 76,
+      "train_events": 43,
+      "validation_events": 31,
+      "train_price_action_features": 4,
+      "validation_price_action_features": 10,
+      "all_trades_net_jpy": 18764.564599999998,
+      "all_trades_profit_factor": 3.6746217307246662,
+      "all_trades_max_drawdown_jpy": 2690.6967000000004,
+      "all_trades_margin_coverage": 0.22580645161290322
+    },
+    {
+      "id": "QUADRUPLE_64D",
+      "status": "EVALUATED_REJECT",
+      "labeled_events": 251,
+      "train_events": 145,
+      "validation_events": 101,
+      "train_price_action_features": 114,
+      "validation_price_action_features": 22,
+      "all_trades_net_jpy": 15144.4802,
+      "all_trades_profit_factor": 1.5852461375462732,
+      "all_trades_max_drawdown_jpy": 6794.7768000000015,
+      "price_action_net_jpy": 10437.0991,
+      "incremental_net_jpy": -4707.3811,
+      "paired_lcb_jpy": -142.06781584158415,
+      "independent_bootstrap_lcb_jpy": -143.12375247524753,
+      "price_action_profit_factor": 1.4870727399479444,
+      "price_action_max_drawdown_jpy": 6452.156300000001,
+      "price_action_margin_coverage": 0.10588235294117647,
+      "price_action_selected": 85,
+      "price_action_rejected": 16,
+      "rejected_winners": 11,
+      "rejected_winner_net_jpy": 9156.2793,
+      "avoided_losers": 5,
+      "avoided_loss_jpy": 4448.8982000000005
+    }
+  ],
+  "root_causes_ranked": [
+    {
+      "rank": 1,
+      "cause": "PRICE_ACTION_SELECTION_FALSE_NEGATIVE_WINNERS",
+      "evidence": "In 64d validation the filter rejected 11 winners worth 9156.2793 JPY while avoiding 5 losers worth 4448.8982 JPY, producing -4707.3811 JPY incremental net."
+    },
+    {
+      "rank": 2,
+      "cause": "FROZEN_THREE_PAIR_SCOPE_DOES_NOT_COVER_ALL_251",
+      "evidence": "Only 146/251 labeled episodes belong to AUD_JPY, EUR_JPY, or EUR_USD. The allowlist was not expanded after seeing results."
+    },
+    {
+      "rank": 3,
+      "cause": "SMALL_EARLY_WINDOW_AND_INCOMPLETE_MARGIN_EVIDENCE",
+      "evidence": "16d and 32d do not meet the fit gate; 64d selected margin coverage is 0.1058823529, so DD/margin/ruin adoption cannot be established."
+    }
+  ],
+  "next_independent_hypothesis": {
+    "id": "INVENTORY_CONCURRENCY_AND_EXPOSURE_CAP_ON_ALL_TRADES",
+    "reason": "The all-trades baseline is profitable while selection destroys net. A separately preregistered inventory/risk overlay should test whether DD and peak margin can improve without discarding the winners that carry expectancy.",
+    "not_authorized_in_this_run": [
+      "retuning the rejected price-action filter",
+      "validation-driven parameter search",
+      "holdout access",
+      "live or Paper changes"
+    ]
+  }
+}

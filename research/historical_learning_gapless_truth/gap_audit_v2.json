@@ -1,0 +1,20 @@
+{
+  "contract": "episode_gap_coverage_audit_v2",
+  "coverage_all": 0.5617529880478087,
+  "coverage_allowed_pairs": 0.9657534246575342,
+  "episodes_all": 251,
+  "episodes_allowed_pairs": 146,
+  "ledger_path": "research/historical_learning_gapless_truth/episode_coverage_v2.jsonl",
+  "ledger_sha256": "5873ab0367c468111de8392f499280c0edf6c9d508abd742004a04fa9e61f56f",
+  "parent_reason_readback": {
+    "AVAILABLE": 141,
+    "GAP_OR_LOOKBACK_INCOMPLETE": 5,
+    "PAIR_ARCHIVE_MISSING": 105
+  },
+  "reasons": {
+    "MARKET_CLOSED_LOOKBACK_EXCLUDED": 5,
+    "PAIR_OUT_OF_SCOPE_BY_EXPLICIT_ALLOWLIST": 105
+  },
+  "strict_available_all": 141,
+  "strict_available_allowed_pairs": 141
+}
