@@ -1,0 +1,8 @@
+{
+  "fixture_record_count": 252,
+  "holdout_read": false,
+  "live_paper_broker_order_deploy_touched": false,
+  "long_row_count": 567,
+  "missing_cell_policy": "absent/null, never zero",
+  "source_sha": "2ca0c51cb1ac48e1fcd76193a5ddafcf365d007d58bf53cbd72c7d9385a7e121"
+}

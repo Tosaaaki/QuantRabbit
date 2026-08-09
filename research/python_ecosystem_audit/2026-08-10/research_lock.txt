@@ -1,0 +1,6 @@
+# No new package was installed for this audit.
+# The baseline research environment is pinned by:
+# research/historical_learning_admission/requirements.lock
+# Python: 3.12.8 arm64 (existing isolated environment)
+# Optional adapters are import-time only and must fail closed when absent.
+

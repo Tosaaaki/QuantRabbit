@@ -1,0 +1,183 @@
+{
+  "external_adapter_status": {
+    "SALib": {
+      "installed": false,
+      "package": "SALib"
+    },
+    "dowhy": {
+      "installed": false,
+      "package": "dowhy"
+    },
+    "mapie": {
+      "installed": false,
+      "package": "mapie"
+    },
+    "pymoo": {
+      "installed": false,
+      "package": "pymoo"
+    },
+    "river": {
+      "installed": false,
+      "package": "river"
+    },
+    "xarray": {
+      "installed": false,
+      "package": "xarray"
+    }
+  },
+  "fallback_proofs": {
+    "causal_placebo": {
+      "observed_mean": 4.625498007968128,
+      "placebo_mean": 4.992,
+      "seed": 17,
+      "status": "EXECUTED_FALLBACK"
+    },
+    "conformal_interval": {
+      "coverage": 0.9285714285714286,
+      "status": "EXECUTED_FALLBACK",
+      "train_count": 125,
+      "validation_count": 126,
+      "width": 46.528
+    },
+    "streaming_drift": {
+      "change_index": 239,
+      "mean_after": -17.666666666666668,
+      "mean_before": 5.7447698744769875,
+      "status": "EXECUTED_FALLBACK"
+    }
+  },
+  "interaction_contrasts": [
+    {
+      "contrast": 27.51249999999999,
+      "corners": [
+        -43.6875,
+        76.0,
+        -55.2,
+        92.0
+      ],
+      "factor_a": "method",
+      "factor_b": "regime"
+    },
+    {
+      "contrast": 5.112500000000001,
+      "corners": [
+        30.3125,
+        2.0,
+        32.0,
+        8.8
+      ],
+      "factor_a": "method",
+      "factor_b": "cost"
+    },
+    {
+      "contrast": -6.045833333333334,
+      "corners": [
+        16.0,
+        16.3125,
+        23.733333333333334,
+        18.0
+      ],
+      "factor_a": "method",
+      "factor_b": "risk"
+    },
+    {
+      "contrast": 6.179166666666667,
+      "corners": [
+        14.3125,
+        18.0,
+        16.0,
+        25.866666666666667
+      ],
+      "factor_a": "method",
+      "factor_b": "exit"
+    },
+    {
+      "contrast": 0.04583333333333428,
+      "corners": [
+        -35.6875,
+        -63.733333333333334,
+        98.0,
+        70.0
+      ],
+      "factor_a": "regime",
+      "factor_b": "cost"
+    },
+    {
+      "contrast": 0.8875000000000028,
+      "corners": [
+        -48.8,
+        -49.6875,
+        84.0,
+        84.0
+      ],
+      "factor_a": "regime",
+      "factor_b": "risk"
+    },
+    {
+      "contrast": -1.0208333333333357,
+      "corners": [
+        -51.6875,
+        -46.666666666666664,
+        82.0,
+        86.0
+      ],
+      "factor_a": "regime",
+      "factor_b": "exit"
+    },
+    {
+      "contrast": -5.045833333333333,
+      "corners": [
+        31.0,
+        31.3125,
+        7.733333333333333,
+        3.0
+      ],
+      "factor_a": "cost",
+      "factor_b": "risk"
+    },
+    {
+      "contrast": 5.179166666666667,
+      "corners": [
+        29.3125,
+        33.0,
+        1.0,
+        9.866666666666667
+      ],
+      "factor_a": "cost",
+      "factor_b": "exit"
+    },
+    {
+      "contrast": -6.112500000000001,
+      "corners": [
+        15.0,
+        24.8,
+        15.3125,
+        19.0
+      ],
+      "factor_a": "risk",
+      "factor_b": "exit"
+    }
+  ],
+  "pareto_validation": [
+    {
+      "after_cost_net_jpy": 108.0,
+      "cost": "observed_bid_ask",
+      "exit": "TIMEOUT",
+      "fill_validity": 1.0,
+      "lcb_jpy": 24.469650880477822,
+      "margin_coverage": 1.0,
+      "max_drawdown_jpy": 0.0,
+      "method": "cube_shadow",
+      "pair": "EUR_USD",
+      "profit_factor": Infinity,
+      "regime": "TREND",
+      "risk": "margin_cap_92",
+      "sample_coverage": 1.0,
+      "split": "VALIDATION",
+      "timeframe": "M15",
+      "turnover": 1000.0,
+      "unwind_validity": 1.0
+    }
+  ],
+  "simpson_candidates": []
+}

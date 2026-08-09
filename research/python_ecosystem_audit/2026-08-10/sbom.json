@@ -1,0 +1,17 @@
+{
+  "format": "research-audit-sbom-v1",
+  "generated_from": "research/historical_learning_admission/requirements.lock",
+  "environment": {"python":"3.12.8","architecture":"arm64","installation_performed":false},
+  "components": [
+    {"name":"numpy","version":"2.5.1","license":"BSD-3-Clause","source":"PyPI/official"},
+    {"name":"scipy","version":"1.18.0","license":"BSD-3-Clause","source":"PyPI/official"},
+    {"name":"scikit-learn","version":"1.9.0","license":"BSD-3-Clause","source":"PyPI/official"},
+    {"name":"hypothesis","version":"6.165.2","license":"MPL-2.0","source":"PyPI/official"},
+    {"name":"joblib","version":"1.5.3","license":"BSD-3-Clause","source":"PyPI/official transitive"},
+    {"name":"narwhals","version":"2.24.0","license":"MIT","source":"PyPI/official transitive"},
+    {"name":"sortedcontainers","version":"2.4.0","license":"Apache-2.0","source":"PyPI/official transitive"},
+    {"name":"threadpoolctl","version":"3.6.0","license":"BSD-3-Clause","source":"PyPI/official transitive"}
+  ],
+  "optional_candidates_not_installed": ["xarray","Polars","PyArrow","DuckDB","Numba","Optuna","pymoo","SALib","DoWhy","EconML","PyMC","MAPIE","River","ruptures","hmmlearn","SymPy","vectorbt","backtesting.py","Backtrader","empyrical","quantstats"],
+  "security_note": "No setup.py, GitHub Action, binary, secret, or network-enabled package installer was executed. Candidate source/release metadata was read-only."
+}

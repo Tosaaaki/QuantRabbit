@@ -1,0 +1,21 @@
+{
+  "audit_date": "2026-08-10",
+  "repo": "/Users/tossaki/App/QuantRabbit",
+  "branch_at_audit": "codex/qr-python-ecosystem-audit-20260810",
+  "safe_checkpoint": "dbcfa140777e1712398976db30d04822c880babd",
+  "contract_sha256": "30efbeb4f03b84f95852ae5e6538ec50edb5b9b7c3031ee0c066d24ef89c6526",
+  "python_contract": {"pyproject_requires": ">=3.11", "research_lock_runtime": "3.12.8 arm64", "default_shell_python": "3.10.14 (not an adoption environment)"},
+  "dirty_boundary": {"pre_existing_tracked_data_docs_preserved": true, "pre_existing_untracked_x_research_preserved": true, "live_tree_touched": false},
+  "imports": {"files_scanned": ["src", "scripts", "research", "tests", "tools"], "dominant_stdlib": ["pathlib", "json", "sqlite3", "dataclasses", "datetime", "typing", "hashlib"], "external": {"numpy": 4, "hypothesis": 3, "sklearn": 2, "scipy": 0, "pandas": 0, "xarray": 0, "backtest_engines": 0}},
+  "self_implemented_truth_components": [
+    {"path":"src/quant_rabbit/replay.py","role":"event/replay backtest","risk":"must remain source of fill/causality truth; external generic engines cannot replace it"},
+    {"path":"src/quant_rabbit/broker/execution.py","role":"gateway/fill/ownership/risk boundary","risk":"live-capable code; audit did not import or execute it"},
+    {"path":"src/quant_rabbit/loss_close_multidimensional_sweep.py","role":"paired cost/margin/dual-unwind sweep","risk":"financial contract must be retained; cube is reporting layer only"},
+    {"path":"src/quant_rabbit/loss_close_paired_shadow.py","role":"paired SL/hedge shadow","risk":"hedge/margin/unwind evidence remains separate from library audit"},
+    {"path":"research/historical_learning_admission/run_admission.py","role":"purged walk-forward admission and after-cost labels","risk":"opportunity-cost/decision-margin gaps fail closed"},
+    {"path":"research/historical_learning_gapless_truth/","role":"Dukascopy feature-only and OANDA actual-fill truth","risk":"source boundary and complete coverage are required"}
+  ],
+  "custom_metrics": ["profit_factor", "max_drawdown_jpy", "paired_lcb", "margin_coverage", "ruin_proxy", "fill_validity", "unwind_validity"],
+  "leakage_controls": ["decision-time feature timestamps", "future-only labels", "purged walk-forward", "embargo", "holdout seal", "no M1 interpolation for S5 truth", "external adapters receive labels only after causal split"],
+  "inventory_conclusion": "Keep NumPy/SciPy/scikit-learn/Hypothesis/joblib as locked research primitives. No existing QR truth component can be replaced by a generic backtest/reporting default without a same-cohort bid/ask shadow and independent arithmetic readback."
+}
