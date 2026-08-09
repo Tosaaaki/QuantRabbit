@@ -1,0 +1,1537 @@
+{
+  "causal_bottleneck": {
+    "all_trades_fallback_detected": false,
+    "effect": "all edge-positive fused candidates remain WAIT; no final TRADE is admissible",
+    "largest": "decision-time execution/fill/unwind and portfolio-margin evidence are not historically joined",
+    "secondary": "only 55/251 episodes have both causal forecast and gapless price-action evidence"
+  },
+  "classification_counts": {
+    "DISCONNECTED": 4,
+    "GENERATED_ONLY": 4,
+    "INSUFFICIENT_EVIDENCE": 4,
+    "NULLIFIED_BY_FALLBACK": 1,
+    "USED": 8
+  },
+  "contract": "SYSTEM_UTILIZATION_RCA_V1",
+  "decision_utilization_kpi": {
+    "all_trades_baseline_used_as_decision": false,
+    "episodes_with_executable_trade_answer": 0,
+    "episodes_with_one_answer": 251,
+    "systems_total": 21,
+    "systems_with_any_episode_opinion": 5
+  },
+  "ensemble_contract": "FULL_INFERENCE_ENSEMBLE_V1",
+  "episode_aligned_usable_outputs": {
+    "all_trades": 251,
+    "forecast": 138,
+    "metadata_hgb": 39,
+    "price_action": 136,
+    "price_action_hgb": 85
+  },
+  "final_decision_counts": {
+    "SKIP": 55,
+    "WAIT": 196
+  },
+  "final_trade_count": 0,
+  "fused_contract": "FUSED_DECISION_V1",
+  "fusion": {
+    "DOUBLE_32D": {
+      "all_trades_is_fallback": false,
+      "candidates": {
+        "calibrated_weighted_vote": {
+          "predictions": {},
+          "status": "INSUFFICIENT_OOF_ROWS",
+          "train": {
+            "eligible": 4,
+            "oof_n": 0,
+            "status": "INSUFFICIENT_OOF_ROWS"
+          },
+          "validation": null
+        },
+        "single_statistical": {
+          "features": [
+            "forecast_score"
+          ],
+          "predictions": {
+            "oanda:472791:ORDER_ACCEPTED:472791": {
+              "lower": -1049.462831031946,
+              "point": -47.59786704432986,
+              "upper": 954.2670969432863
+            },
+            "oanda:472801:ORDER_ACCEPTED:472801": {
+              "lower": -944.2585478562107,
+              "point": 57.60641613140547,
+              "upper": 1059.4713801190217
+            },
+            "oanda:472818:ORDER_ACCEPTED:472818": {
+              "lower": -940.9877743628608,
+              "point": 60.877189624755346,
+              "upper": 1062.7421536123716
+            },
+            "oanda:472831:ORDER_ACCEPTED:472831": {
+              "lower": -1090.0491516842665,
+              "point": -88.18418769665028,
+              "upper": 913.6807762909659
+            },
+            "oanda:472832:ORDER_ACCEPTED:472832": {
+              "lower": -925.5135266676515,
+              "point": 76.35143731996473,
+              "upper": 1078.216401307581
+            },
+            "oanda:472833:ORDER_ACCEPTED:472833": {
+              "lower": -1017.724384471792,
+              "point": -15.859420484175757,
+              "upper": 986.0055435034404
+            },
+            "oanda:472847:ORDER_ACCEPTED:472847": {
+              "lower": -1062.1008556780905,
+              "point": -60.23589169047442,
+              "upper": 941.6290722971418
+            },
+            "oanda:472860:ORDER_ACCEPTED:472860": {
+              "lower": -925.5135266676515,
+              "point": 76.35143731996473,
+              "upper": 1078.216401307581
+            },
+            "oanda:472875:ORDER_ACCEPTED:472875": {
+              "lower": -991.919299342633,
+              "point": 9.945664644983168,
+              "upper": 1011.8106286325993
+            },
+            "oanda:472883:ORDER_ACCEPTED:472883": {
+              "lower": -934.9535629792911,
+              "point": 66.91140100832519,
+              "upper": 1068.7763649959413
+            },
+            "oanda:472888:ORDER_ACCEPTED:472888": {
+              "lower": -934.9535629792911,
+              "point": 66.91140100832519,
+              "upper": 1068.7763649959413
+            },
+            "oanda:472898:ORDER_ACCEPTED:472898": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472899:ORDER_ACCEPTED:472899": {
+              "lower": -991.919299342633,
+              "point": 9.945664644983168,
+              "upper": 1011.8106286325993
+            },
+            "oanda:472908:ORDER_ACCEPTED:472908": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472912:ORDER_ACCEPTED:472912": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472918:ORDER_ACCEPTED:472918": {
+              "lower": -934.9535629792911,
+              "point": 66.91140100832519,
+              "upper": 1068.7763649959413
+            },
+            "oanda:472924:ORDER_ACCEPTED:472924": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472926:ORDER_ACCEPTED:472926": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472930:ORDER_ACCEPTED:472930": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472932:ORDER_ACCEPTED:472932": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472943:ORDER_ACCEPTED:472943": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472945:ORDER_ACCEPTED:472945": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472951:ORDER_ACCEPTED:472951": {
+              "lower": -1113.6911877914804,
+              "point": -111.8262238038643,
+              "upper": 890.0387401837519
+            },
+            "oanda:472956:ORDER_ACCEPTED:472956": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472958:ORDER_ACCEPTED:472958": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472964:ORDER_ACCEPTED:472964": {
+              "lower": -1113.6911877914804,
+              "point": -111.8262238038643,
+              "upper": 890.0387401837519
+            },
+            "oanda:472967:ORDER_ACCEPTED:472967": {
+              "lower": -1003.1171355191985,
+              "point": -1.2521715315823485,
+              "upper": 1000.6127924560338
+            },
+            "oanda:472982:ORDER_ACCEPTED:472982": {
+              "lower": -972.2335684479295,
+              "point": 29.63139553968668,
+              "upper": 1031.496359527303
+            },
+            "oanda:473002:ORDER_ACCEPTED:473002": {
+              "lower": -1004.6145205893207,
+              "point": -2.749556601704512,
+              "upper": 999.1154073859117
+            },
+            "oanda:473010:ORDER_ACCEPTED:473010": {
+              "lower": -1004.6145205893207,
+              "point": -2.749556601704512,
+              "upper": 999.1154073859117
+            },
+            "oanda:473016:ORDER_ACCEPTED:473016": {
+              "lower": -1004.6145205893207,
+              "point": -2.749556601704512,
+              "upper": 999.1154073859117
+            }
+          },
+          "selection_rule": "TRAIN OOF absolute-residual 90% lower bound > 0",
+          "status": "EVALUATED",
+          "train": {
+            "coef": [
+              -186.0164684449134,
+              -325.51849350481154
+            ],
+            "eligible": 43,
+            "oof_mae": 501.45109880632526,
+            "oof_n": 29,
+            "residual_q90": 1001.8649639876162,
+            "status": "FIT"
+          },
+          "validation": {
+            "after_cost_net_jpy": 0.0,
+            "all_trades_max_drawdown_jpy": 2690.6967000000004,
+            "all_trades_net_jpy": 18764.564600000005,
+            "available": 31,
+            "decisions_changed_vs_all_trades": 31,
+            "fill_validity": null,
+            "incremental_net_jpy": -18764.564600000005,
+            "margin_coverage": null,
+            "max_drawdown_jpy": 0.0,
+            "paired_bootstrap_lcb_jpy": -1270.675493548387,
+            "profit_factor": null,
+            "sample_coverage": 0.0,
+            "selected": 0,
+            "turnover_units": 0,
+            "unwind_validity": null
+          }
+        },
+        "single_technical": {
+          "predictions": {},
+          "status": "INSUFFICIENT_OOF_ROWS",
+          "train": {
+            "eligible": 4,
+            "oof_n": 0,
+            "status": "INSUFFICIENT_OOF_ROWS"
+          },
+          "validation": null
+        }
+      },
+      "counts": {
+        "train": 43,
+        "train_forecast": 43,
+        "train_technical": 4,
+        "train_two_family": 4,
+        "validation": 31,
+        "validation_decision_time_fill_unwind_evidence": 0,
+        "validation_margin_evidence": 7,
+        "validation_two_family": 10
+      },
+      "edge_only_not_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 2690.6967000000004,
+        "all_trades_net_jpy": 18764.564600000005,
+        "available": 31,
+        "decisions_changed_vs_all_trades": 31,
+        "fill_validity": null,
+        "incremental_net_jpy": -18764.564600000005,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -1258.1583193548386,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "fused_evidence_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 2690.6967000000004,
+        "all_trades_net_jpy": 18764.564600000005,
+        "available": 31,
+        "decisions_changed_vs_all_trades": 31,
+        "fill_validity": null,
+        "incremental_net_jpy": -18764.564600000005,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -1268.8678096774192,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "holdout_read": false,
+      "unexecuted_methods": {
+        "bayesian_model_average": "no stable independent family likelihood; forecast and price-action overlap is only 55/251",
+        "oof_stacking": "two-family complete TRAIN count below preregistered 30 in 16/32d and only 33 in 64d; base OOF overlap insufficient",
+        "pareto_mapie_abstain": "pymoo constrained front empty under margin evidence and MAPIE intervals have only 22 validation rows",
+        "regime_gated_mixture": "no independent point-in-time market-context family on the 251 cohort",
+        "rule_constraint_ensemble": "same missing execution/margin evidence makes a trade decision inadmissible"
+      }
+    },
+    "INITIAL_16D": {
+      "all_trades_is_fallback": false,
+      "candidates": {
+        "calibrated_weighted_vote": {
+          "predictions": {},
+          "status": "INSUFFICIENT_OOF_ROWS",
+          "train": {
+            "eligible": 7,
+            "oof_n": 0,
+            "status": "INSUFFICIENT_OOF_ROWS"
+          },
+          "validation": null
+        },
+        "single_statistical": {
+          "predictions": {},
+          "status": "INSUFFICIENT_OOF_ROWS",
+          "train": {
+            "eligible": 13,
+            "oof_n": 1,
+            "status": "INSUFFICIENT_OOF_ROWS"
+          },
+          "validation": null
+        },
+        "single_technical": {
+          "predictions": {},
+          "status": "INSUFFICIENT_OOF_ROWS",
+          "train": {
+            "eligible": 7,
+            "oof_n": 0,
+            "status": "INSUFFICIENT_OOF_ROWS"
+          },
+          "validation": null
+        }
+      },
+      "counts": {
+        "train": 13,
+        "train_forecast": 13,
+        "train_technical": 7,
+        "train_two_family": 7,
+        "validation": 12,
+        "validation_decision_time_fill_unwind_evidence": 0,
+        "validation_margin_evidence": 0,
+        "validation_two_family": 3
+      },
+      "edge_only_not_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 2690.6967,
+        "all_trades_net_jpy": 10579.5043,
+        "available": 12,
+        "decisions_changed_vs_all_trades": 12,
+        "fill_validity": null,
+        "incremental_net_jpy": -10579.5043,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -2230.4018083333335,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "fused_evidence_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 2690.6967,
+        "all_trades_net_jpy": 10579.5043,
+        "available": 12,
+        "decisions_changed_vs_all_trades": 12,
+        "fill_validity": null,
+        "incremental_net_jpy": -10579.5043,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -2310.3132666666666,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "holdout_read": false,
+      "unexecuted_methods": {
+        "bayesian_model_average": "no stable independent family likelihood; forecast and price-action overlap is only 55/251",
+        "oof_stacking": "two-family complete TRAIN count below preregistered 30 in 16/32d and only 33 in 64d; base OOF overlap insufficient",
+        "pareto_mapie_abstain": "pymoo constrained front empty under margin evidence and MAPIE intervals have only 22 validation rows",
+        "regime_gated_mixture": "no independent point-in-time market-context family on the 251 cohort",
+        "rule_constraint_ensemble": "same missing execution/margin evidence makes a trade decision inadmissible"
+      }
+    },
+    "QUADRUPLE_64D": {
+      "all_trades_is_fallback": false,
+      "candidates": {
+        "calibrated_weighted_vote": {
+          "features": [
+            "technical_score",
+            "forecast_score"
+          ],
+          "predictions": {
+            "oanda:471816:ORDER_ACCEPTED:471816": {
+              "lower": -288.5346410131014,
+              "point": 210.76717094054925,
+              "upper": 710.0689828942
+            },
+            "oanda:471859:ORDER_ACCEPTED:471859": {
+              "lower": -278.4100475690371,
+              "point": 220.89176438461357,
+              "upper": 720.1935763382642
+            },
+            "oanda:471862:ORDER_ACCEPTED:471862": {
+              "lower": -278.41071240902886,
+              "point": 220.8910995446218,
+              "upper": 720.1929114982725
+            },
+            "oanda:471885:ORDER_ACCEPTED:471885": {
+              "lower": -1195.1100817728063,
+              "point": -695.8082698191557,
+              "upper": -196.50645786550507
+            },
+            "oanda:471914:ORDER_ACCEPTED:471914": {
+              "lower": -782.0865170085194,
+              "point": -282.7847050548688,
+              "upper": 216.51710689878183
+            },
+            "oanda:472074:ORDER_ACCEPTED:472074": {
+              "lower": -278.4111424008364,
+              "point": 220.89066955281424,
+              "upper": 720.1924815064649
+            },
+            "oanda:472093:ORDER_ACCEPTED:472093": {
+              "lower": -1157.7643106684898,
+              "point": -658.4624987148392,
+              "upper": -159.16068676118851
+            },
+            "oanda:472132:ORDER_ACCEPTED:472132": {
+              "lower": -576.1701787756758,
+              "point": -76.86836682202522,
+              "upper": 422.43344513162543
+            },
+            "oanda:472153:ORDER_ACCEPTED:472153": {
+              "lower": -643.272026445652,
+              "point": -143.97021449200133,
+              "upper": 355.3315974616493
+            },
+            "oanda:472279:ORDER_ACCEPTED:472279": {
+              "lower": -872.2179279559577,
+              "point": -372.91611600230715,
+              "upper": 126.38569595134351
+            },
+            "oanda:472730:ORDER_ACCEPTED:472730": {
+              "lower": -517.6467106586831,
+              "point": -18.344898705032392,
+              "upper": 480.95691324861826
+            },
+            "oanda:472736:ORDER_ACCEPTED:472736": {
+              "lower": -702.5538224547865,
+              "point": -203.25201050113594,
+              "upper": 296.0498014525147
+            },
+            "oanda:472801:ORDER_ACCEPTED:472801": {
+              "lower": -1358.117021070473,
+              "point": -858.8152091168223,
+              "upper": -359.51339716317165
+            },
+            "oanda:472818:ORDER_ACCEPTED:472818": {
+              "lower": -1379.1790454458599,
+              "point": -879.8772334922093,
+              "upper": -380.5754215385586
+            },
+            "oanda:472847:ORDER_ACCEPTED:472847": {
+              "lower": -599.2808922818647,
+              "point": -99.97908032821408,
+              "upper": 399.3227316254366
+            },
+            "oanda:472875:ORDER_ACCEPTED:472875": {
+              "lower": -1051.2092797238754,
+              "point": -551.9074677702248,
+              "upper": -52.60565581657414
+            },
+            "oanda:472883:ORDER_ACCEPTED:472883": {
+              "lower": -1418.0336634760488,
+              "point": -918.7318515223982,
+              "upper": -419.43003956874753
+            },
+            "oanda:472899:ORDER_ACCEPTED:472899": {
+              "lower": -1051.2090709791598,
+              "point": -551.9072590255092,
+              "upper": -52.60544707185858
+            },
+            "oanda:472918:ORDER_ACCEPTED:472918": {
+              "lower": -1418.0352896759882,
+              "point": -918.7334777223376,
+              "upper": -419.43166576868697
+            },
+            "oanda:473002:ORDER_ACCEPTED:473002": {
+              "lower": -969.4589084241375,
+              "point": -470.15709647048686,
+              "upper": 29.144715483163793
+            },
+            "oanda:473010:ORDER_ACCEPTED:473010": {
+              "lower": -969.4588047663192,
+              "point": -470.1569928126686,
+              "upper": 29.144819140982065
+            },
+            "oanda:473016:ORDER_ACCEPTED:473016": {
+              "lower": -969.4585058217976,
+              "point": -470.15669386814704,
+              "upper": 29.14511808550361
+            }
+          },
+          "selection_rule": "TRAIN OOF absolute-residual 90% lower bound > 0",
+          "status": "EVALUATED",
+          "train": {
+            "coef": [
+              709.97677522742,
+              1.0453874857444596,
+              2096.1523898732994
+            ],
+            "eligible": 33,
+            "oof_mae": 302.67542687484877,
+            "oof_n": 19,
+            "residual_q90": 499.30181195365066,
+            "status": "FIT"
+          },
+          "validation": {
+            "after_cost_net_jpy": 0.0,
+            "all_trades_max_drawdown_jpy": 6794.7768000000015,
+            "all_trades_net_jpy": 15144.4802,
+            "available": 101,
+            "decisions_changed_vs_all_trades": 101,
+            "fill_validity": null,
+            "incremental_net_jpy": -15144.4802,
+            "margin_coverage": null,
+            "max_drawdown_jpy": 0.0,
+            "paired_bootstrap_lcb_jpy": -389.78703069306925,
+            "profit_factor": null,
+            "sample_coverage": 0.0,
+            "selected": 0,
+            "turnover_units": 0,
+            "unwind_validity": null
+          }
+        },
+        "single_statistical": {
+          "features": [
+            "forecast_score"
+          ],
+          "predictions": {
+            "oanda:471816:ORDER_ACCEPTED:471816": {
+              "lower": -288.53519567424627,
+              "point": 210.76653618285053,
+              "upper": 710.0682680399473
+            },
+            "oanda:471859:ORDER_ACCEPTED:471859": {
+              "lower": -278.4111787289222,
+              "point": 220.8905531281746,
+              "upper": 720.1922849852714
+            },
+            "oanda:471862:ORDER_ACCEPTED:471862": {
+              "lower": -278.4111787289222,
+              "point": 220.8905531281746,
+              "upper": 720.1922849852714
+            },
+            "oanda:471873:ORDER_ACCEPTED:471873": {
+              "lower": -735.8304231468568,
+              "point": -236.52869128976,
+              "upper": 262.7730405673368
+            },
+            "oanda:471882:ORDER_ACCEPTED:471882": {
+              "lower": -1538.0513278835156,
+              "point": -1038.7495960264187,
+              "upper": -539.4478641693219
+            },
+            "oanda:471885:ORDER_ACCEPTED:471885": {
+              "lower": -1195.1093262788368,
+              "point": -695.8075944217401,
+              "upper": -196.50586256464328
+            },
+            "oanda:471909:ORDER_ACCEPTED:471909": {
+              "lower": -856.9992463444131,
+              "point": -357.6975144873163,
+              "upper": 141.60421736978049
+            },
+            "oanda:471914:ORDER_ACCEPTED:471914": {
+              "lower": -782.0868468566215,
+              "point": -282.7851149995247,
+              "upper": 216.5166168575721
+            },
+            "oanda:471922:ORDER_ACCEPTED:471922": {
+              "lower": -672.8359905264452,
+              "point": -173.53425866934845,
+              "upper": 325.76747318774835
+            },
+            "oanda:471933:ORDER_ACCEPTED:471933": {
+              "lower": -1538.0513278835156,
+              "point": -1038.7495960264187,
+              "upper": -539.4478641693219
+            },
+            "oanda:471939:ORDER_ACCEPTED:471939": {
+              "lower": -247.97050266353938,
+              "point": 251.33122919355742,
+              "upper": 750.6329610506542
+            },
+            "oanda:471947:ORDER_ACCEPTED:471947": {
+              "lower": -247.97050266353938,
+              "point": 251.33122919355742,
+              "upper": 750.6329610506542
+            },
+            "oanda:471950:ORDER_ACCEPTED:471950": {
+              "lower": -247.97050266353938,
+              "point": 251.33122919355742,
+              "upper": 750.6329610506542
+            },
+            "oanda:471968:ORDER_ACCEPTED:471968": {
+              "lower": -1025.475994996938,
+              "point": -526.1742631398411,
+              "upper": -26.872531282744262
+            },
+            "oanda:471978:ORDER_ACCEPTED:471978": {
+              "lower": -247.97050266353938,
+              "point": 251.33122919355742,
+              "upper": 750.6329610506542
+            },
+            "oanda:471982:ORDER_ACCEPTED:471982": {
+              "lower": -672.8359905264452,
+              "point": -173.53425866934845,
+              "upper": 325.76747318774835
+            },
+            "oanda:472036:ORDER_ACCEPTED:472036": {
+              "lower": -242.91469830799554,
+              "point": 256.38703354910126,
+              "upper": 755.6887654061981
+            },
+            "oanda:472043:ORDER_ACCEPTED:472043": {
+              "lower": -1025.475994996938,
+              "point": -526.1742631398411,
+              "upper": -26.872531282744262
+            },
+            "oanda:472070:ORDER_ACCEPTED:472070": {
+              "lower": -1025.475994996938,
+              "point": -526.1742631398411,
+              "upper": -26.872531282744262
+            },
+            "oanda:472074:ORDER_ACCEPTED:472074": {
+              "lower": -278.4111787289222,
+              "point": 220.8905531281746,
+              "upper": 720.1922849852714
+            },
+            "oanda:472087:ORDER_ACCEPTED:472087": {
+              "lower": -1118.0708492940307,
+              "point": -618.769117436934,
+              "upper": -119.46738557983724
+            },
+            "oanda:472093:ORDER_ACCEPTED:472093": {
+              "lower": -1157.762253460126,
+              "point": -658.4605216030293,
+              "upper": -159.1587897459325
+            },
+            "oanda:472100:ORDER_ACCEPTED:472100": {
+              "lower": -257.89140696977046,
+              "point": 241.41032488732634,
+              "upper": 740.7120567444231
+            },
+            "oanda:472108:ORDER_ACCEPTED:472108": {
+              "lower": -737.6748146396694,
+              "point": -238.37308278257262,
+              "upper": 260.9286490745242
+            },
+            "oanda:472124:ORDER_ACCEPTED:472124": {
+              "lower": -434.12381236043746,
+              "point": 65.17791949665934,
+              "upper": 564.4796513537561
+            },
+            "oanda:472132:ORDER_ACCEPTED:472132": {
+              "lower": -576.1705428574894,
+              "point": -76.86881100039261,
+              "upper": 422.4329208567042
+            },
+            "oanda:472148:ORDER_ACCEPTED:472148": {
+              "lower": -111.7580757455134,
+              "point": 387.5436561115834,
+              "upper": 886.8453879686801
+            },
+            "oanda:472153:ORDER_ACCEPTED:472153": {
+              "lower": -643.2725620631214,
+              "point": -143.97083020602463,
+              "upper": 355.33090165107217
+            },
+            "oanda:472154:ORDER_ACCEPTED:472154": {
+              "lower": -760.8638330457233,
+              "point": -261.56210118862646,
+              "upper": 237.73963066847034
+            },
+            "oanda:472155:ORDER_ACCEPTED:472155": {
+              "lower": 82.68655000120896,
+              "point": 581.9882818583058,
+              "upper": 1081.2900137154024
+            },
+            "oanda:472187:ORDER_ACCEPTED:472187": {
+              "lower": -839.4349636587368,
+              "point": -340.13323180164,
+              "upper": 159.16850005545678
+            },
+            "oanda:472189:ORDER_ACCEPTED:472189": {
+              "lower": -111.7580757455134,
+              "point": 387.5436561115834,
+              "upper": 886.8453879686801
+            },
+            "oanda:472207:ORDER_ACCEPTED:472207": {
+              "lower": -111.7580757455134,
+              "point": 387.5436561115834,
+              "upper": 886.8453879686801
+            },
+            "oanda:472211:ORDER_ACCEPTED:472211": {
+              "lower": -839.4349636587368,
+              "point": -340.13323180164,
+              "upper": 159.16850005545678
+            },
+            "oanda:472215:ORDER_ACCEPTED:472215": {
+              "lower": -839.4349636587368,
+              "point": -340.13323180164,
+              "upper": 159.16850005545678
+            },
+            "oanda:472226:ORDER_ACCEPTED:472226": {
+              "lower": -609.6878156490747,
+              "point": -110.38608379197785,
+              "upper": 388.91564806511894
+            },
+            "oanda:472227:ORDER_ACCEPTED:472227": {
+              "lower": -536.1077216819479,
+              "point": -36.80598982485105,
+              "upper": 462.49574203224574
+            },
+            "oanda:472250:ORDER_ACCEPTED:472250": {
+              "lower": 82.68655000120896,
+              "point": 581.9882818583058,
+              "upper": 1081.2900137154024
+            },
+            "oanda:472279:ORDER_ACCEPTED:472279": {
+              "lower": -872.2187222121275,
+              "point": -372.91699035503075,
+              "upper": 126.38474150206605
+            },
+            "oanda:472287:ORDER_ACCEPTED:472287": {
+              "lower": -774.7225274924955,
+              "point": -275.4207956353987,
+              "upper": 223.8809362216981
+            },
+            "oanda:472302:ORDER_ACCEPTED:472302": {
+              "lower": -760.8638330457233,
+              "point": -261.56210118862646,
+              "upper": 237.73963066847034
+            },
+            "oanda:472311:ORDER_ACCEPTED:472311": {
+              "lower": -526.880856637139,
+              "point": -27.579124780042207,
+              "upper": 471.7226070770546
+            },
+            "oanda:472317:ORDER_ACCEPTED:472317": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472321:ORDER_ACCEPTED:472321": {
+              "lower": 82.68655000120896,
+              "point": 581.9882818583058,
+              "upper": 1081.2900137154024
+            },
+            "oanda:472335:ORDER_ACCEPTED:472335": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472339:ORDER_ACCEPTED:472339": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472351:ORDER_ACCEPTED:472351": {
+              "lower": -774.7225274924955,
+              "point": -275.4207956353987,
+              "upper": 223.8809362216981
+            },
+            "oanda:472379:ORDER_ACCEPTED:472379": {
+              "lower": -526.880856637139,
+              "point": -27.579124780042207,
+              "upper": 471.7226070770546
+            },
+            "oanda:472383:ORDER_ACCEPTED:472383": {
+              "lower": -526.880856637139,
+              "point": -27.579124780042207,
+              "upper": 471.7226070770546
+            },
+            "oanda:472404:ORDER_ACCEPTED:472404": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472426:ORDER_ACCEPTED:472426": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472444:ORDER_ACCEPTED:472444": {
+              "lower": 82.68655000120896,
+              "point": 581.9882818583058,
+              "upper": 1081.2900137154024
+            },
+            "oanda:472449:ORDER_ACCEPTED:472449": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472457:ORDER_ACCEPTED:472457": {
+              "lower": -1385.6683553217335,
+              "point": -886.3666234646369,
+              "upper": -387.06489160754006
+            },
+            "oanda:472495:ORDER_ACCEPTED:472495": {
+              "lower": -1288.2585701679159,
+              "point": -788.956838310819,
+              "upper": -289.65510645372217
+            },
+            "oanda:472529:ORDER_ACCEPTED:472529": {
+              "lower": -1434.8050506448685,
+              "point": -935.5033187877718,
+              "upper": -436.20158693067503
+            },
+            "oanda:472549:ORDER_ACCEPTED:472549": {
+              "lower": -1297.6817114209503,
+              "point": -798.3799795638533,
+              "upper": -299.07824770675654
+            },
+            "oanda:472589:ORDER_ACCEPTED:472589": {
+              "lower": -1413.7485082736584,
+              "point": -914.4467764165618,
+              "upper": -415.14504455946496
+            },
+            "oanda:472631:ORDER_ACCEPTED:472631": {
+              "lower": -579.4349009484552,
+              "point": -80.13316909135835,
+              "upper": 419.16856276573844
+            },
+            "oanda:472654:ORDER_ACCEPTED:472654": {
+              "lower": -579.4349009484552,
+              "point": -80.13316909135835,
+              "upper": 419.16856276573844
+            },
+            "oanda:472665:ORDER_ACCEPTED:472665": {
+              "lower": -735.9149963764637,
+              "point": -236.6132645193669,
+              "upper": 262.6884673377299
+            },
+            "oanda:472681:ORDER_ACCEPTED:472681": {
+              "lower": -579.4349009484552,
+              "point": -80.13316909135835,
+              "upper": 419.16856276573844
+            },
+            "oanda:472682:ORDER_ACCEPTED:472682": {
+              "lower": -992.5167768678469,
+              "point": -493.21504501075015,
+              "upper": 6.086686846346652
+            },
+            "oanda:472715:ORDER_ACCEPTED:472715": {
+              "lower": -579.4349009484552,
+              "point": -80.13316909135835,
+              "upper": 419.16856276573844
+            },
+            "oanda:472730:ORDER_ACCEPTED:472730": {
+              "lower": -517.6464255765052,
+              "point": -18.344693719408383,
+              "upper": 480.9570381376884
+            },
+            "oanda:472736:ORDER_ACCEPTED:472736": {
+              "lower": -702.5550221481692,
+              "point": -203.2532902910724,
+              "upper": 296.0484415660244
+            },
+            "oanda:472742:ORDER_ACCEPTED:472742": {
+              "lower": -793.1027589595344,
+              "point": -293.8010271024376,
+              "upper": 205.50070475465918
+            },
+            "oanda:472754:ORDER_ACCEPTED:472754": {
+              "lower": -872.9797397019526,
+              "point": -373.67800784485576,
+              "upper": 125.62372401224104
+            },
+            "oanda:472774:ORDER_ACCEPTED:472774": {
+              "lower": -680.6616207959212,
+              "point": -181.35988893882438,
+              "upper": 317.9418429182724
+            },
+            "oanda:472791:ORDER_ACCEPTED:472791": {
+              "lower": -680.6616207959212,
+              "point": -181.35988893882438,
+              "upper": 317.9418429182724
+            },
+            "oanda:472801:ORDER_ACCEPTED:472801": {
+              "lower": -1358.1170452750357,
+              "point": -858.8153134179388,
+              "upper": -359.513581560842
+            },
+            "oanda:472818:ORDER_ACCEPTED:472818": {
+              "lower": -1379.178956239355,
+              "point": -879.8772243822582,
+              "upper": -380.5754925251614
+            },
+            "oanda:472831:ORDER_ACCEPTED:472831": {
+              "lower": -419.3089243507178,
+              "point": 79.992807506379,
+              "upper": 579.2945393634758
+            },
+            "oanda:472832:ORDER_ACCEPTED:472832": {
+              "lower": -1478.824262726942,
+              "point": -979.5225308698452,
+              "upper": -480.22079901274844
+            },
+            "oanda:472833:ORDER_ACCEPTED:472833": {
+              "lower": -885.0390675848561,
+              "point": -385.7373357277593,
+              "upper": 113.56439612933752
+            },
+            "oanda:472847:ORDER_ACCEPTED:472847": {
+              "lower": -599.2799689012951,
+              "point": -99.9782370441983,
+              "upper": 399.3234948128985
+            },
+            "oanda:472860:ORDER_ACCEPTED:472860": {
+              "lower": -1478.824262726942,
+              "point": -979.5225308698452,
+              "upper": -480.22079901274844
+            },
+            "oanda:472875:ORDER_ACCEPTED:472875": {
+              "lower": -1051.2090596439448,
+              "point": -551.9073277868479,
+              "upper": -52.605595929751075
+            },
+            "oanda:472883:ORDER_ACCEPTED:472883": {
+              "lower": -1418.035826994555,
+              "point": -918.7340951374583,
+              "upper": -419.4323632803615
+            },
+            "oanda:472888:ORDER_ACCEPTED:472888": {
+              "lower": -1418.035826994555,
+              "point": -918.7340951374583,
+              "upper": -419.4323632803615
+            },
+            "oanda:472898:ORDER_ACCEPTED:472898": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472899:ORDER_ACCEPTED:472899": {
+              "lower": -1051.2090596439448,
+              "point": -551.9073277868479,
+              "upper": -52.605595929751075
+            },
+            "oanda:472908:ORDER_ACCEPTED:472908": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472912:ORDER_ACCEPTED:472912": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472918:ORDER_ACCEPTED:472918": {
+              "lower": -1418.035826994555,
+              "point": -918.7340951374583,
+              "upper": -419.4323632803615
+            },
+            "oanda:472924:ORDER_ACCEPTED:472924": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472926:ORDER_ACCEPTED:472926": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472930:ORDER_ACCEPTED:472930": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472932:ORDER_ACCEPTED:472932": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472943:ORDER_ACCEPTED:472943": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472945:ORDER_ACCEPTED:472945": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472951:ORDER_ACCEPTED:472951": {
+              "lower": -267.06773109236866,
+              "point": 232.23400076472814,
+              "upper": 731.535732621825
+            },
+            "oanda:472956:ORDER_ACCEPTED:472956": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472958:ORDER_ACCEPTED:472958": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472964:ORDER_ACCEPTED:472964": {
+              "lower": -267.06773109236866,
+              "point": 232.23400076472814,
+              "upper": 731.535732621825
+            },
+            "oanda:472967:ORDER_ACCEPTED:472967": {
+              "lower": -979.1013979475962,
+              "point": -479.7996660904994,
+              "upper": 19.50206576659741
+            },
+            "oanda:472982:ORDER_ACCEPTED:472982": {
+              "lower": -1177.9739096755343,
+              "point": -678.6721778184376,
+              "upper": -179.3704459613408
+            },
+            "oanda:473002:ORDER_ACCEPTED:473002": {
+              "lower": -969.4590943486656,
+              "point": -470.15736249156885,
+              "upper": 29.14436936552795
+            },
+            "oanda:473010:ORDER_ACCEPTED:473010": {
+              "lower": -969.4590943486656,
+              "point": -470.15736249156885,
+              "upper": 29.14436936552795
+            },
+            "oanda:473016:ORDER_ACCEPTED:473016": {
+              "lower": -969.4590943486656,
+              "point": -470.15736249156885,
+              "upper": 29.14436936552795
+            }
+          },
+          "selection_rule": "TRAIN OOF absolute-residual 90% lower bound > 0",
+          "status": "EVALUATED",
+          "train": {
+            "coef": [
+              709.9767518992517,
+              2096.152956289202
+            ],
+            "eligible": 33,
+            "oof_mae": 302.675378682726,
+            "oof_n": 19,
+            "residual_q90": 499.3017318570968,
+            "status": "FIT"
+          },
+          "validation": {
+            "after_cost_net_jpy": -1082.5907,
+            "all_trades_max_drawdown_jpy": 6794.7768000000015,
+            "all_trades_net_jpy": 15144.4802,
+            "available": 101,
+            "decisions_changed_vs_all_trades": 97,
+            "fill_validity": 1.0,
+            "incremental_net_jpy": -16227.070899999999,
+            "margin_coverage": 0.0,
+            "max_drawdown_jpy": 1082.5907,
+            "paired_bootstrap_lcb_jpy": -397.1656455445544,
+            "profit_factor": 0.17367758081614884,
+            "sample_coverage": 0.039603960396039604,
+            "selected": 4,
+            "turnover_units": 20100.0,
+            "unwind_validity": 1.0
+          }
+        },
+        "single_technical": {
+          "features": [
+            "technical_score"
+          ],
+          "predictions": {
+            "oanda:471816:ORDER_ACCEPTED:471816": {
+              "lower": -1842.2357225894916,
+              "point": -110.851414364177,
+              "upper": 1620.5328938611374
+            },
+            "oanda:471859:ORDER_ACCEPTED:471859": {
+              "lower": -1842.2415271304005,
+              "point": -110.85721890508606,
+              "upper": 1620.5270893202285
+            },
+            "oanda:471862:ORDER_ACCEPTED:471862": {
+              "lower": -1842.2348647312174,
+              "point": -110.85055650590294,
+              "upper": 1620.5337517194116
+            },
+            "oanda:471885:ORDER_ACCEPTED:471885": {
+              "lower": -1842.2201385763865,
+              "point": -110.83583035107188,
+              "upper": 1620.5484778742425
+            },
+            "oanda:471914:ORDER_ACCEPTED:471914": {
+              "lower": -1842.2321332571817,
+              "point": -110.84782503186706,
+              "upper": 1620.5364831934473
+            },
+            "oanda:472074:ORDER_ACCEPTED:472074": {
+              "lower": -1842.2305557589796,
+              "point": -110.84624753366505,
+              "upper": 1620.5380606916494
+            },
+            "oanda:472093:ORDER_ACCEPTED:472093": {
+              "lower": -1842.2071951533649,
+              "point": -110.82288692805044,
+              "upper": 1620.5614212972641
+            },
+            "oanda:472132:ORDER_ACCEPTED:472132": {
+              "lower": -1842.233033907379,
+              "point": -110.84872568206438,
+              "upper": 1620.53558254325
+            },
+            "oanda:472153:ORDER_ACCEPTED:472153": {
+              "lower": -1842.2345711731134,
+              "point": -110.85026294779891,
+              "upper": 1620.5340452775156
+            },
+            "oanda:472279:ORDER_ACCEPTED:472279": {
+              "lower": -1842.236543052336,
+              "point": -110.85223482702152,
+              "upper": 1620.532073398293
+            },
+            "oanda:472730:ORDER_ACCEPTED:472730": {
+              "lower": -1842.2266870733165,
+              "point": -110.8423788480021,
+              "upper": 1620.5419293773125
+            },
+            "oanda:472736:ORDER_ACCEPTED:472736": {
+              "lower": -1842.241065386903,
+              "point": -110.85675716158863,
+              "upper": 1620.527551063726
+            },
+            "oanda:472801:ORDER_ACCEPTED:472801": {
+              "lower": -1842.2275105776475,
+              "point": -110.843202352333,
+              "upper": 1620.5411058729815
+            },
+            "oanda:472818:ORDER_ACCEPTED:472818": {
+              "lower": -1842.2263170462452,
+              "point": -110.84200882093062,
+              "upper": 1620.5422994043838
+            },
+            "oanda:472847:ORDER_ACCEPTED:472847": {
+              "lower": -1842.2200695969161,
+              "point": -110.83576137160155,
+              "upper": 1620.5485468537129
+            },
+            "oanda:472875:ORDER_ACCEPTED:472875": {
+              "lower": -1842.225893652346,
+              "point": -110.84158542703157,
+              "upper": 1620.542722798283
+            },
+            "oanda:472883:ORDER_ACCEPTED:472883": {
+              "lower": -1842.2487865121607,
+              "point": -110.86447828684625,
+              "upper": 1620.5198299384683
+            },
+            "oanda:472899:ORDER_ACCEPTED:472899": {
+              "lower": -1842.2279854949527,
+              "point": -110.84367726963816,
+              "upper": 1620.5406309556763
+            },
+            "oanda:472918:ORDER_ACCEPTED:472918": {
+              "lower": -1842.232490270535,
+              "point": -110.8481820452204,
+              "upper": 1620.536126180094
+            },
+            "oanda:473002:ORDER_ACCEPTED:473002": {
+              "lower": -1842.2301836133524,
+              "point": -110.84587538803792,
+              "upper": 1620.5384328372766
+            },
+            "oanda:473010:ORDER_ACCEPTED:473010": {
+              "lower": -1842.231222374215,
+              "point": -110.84691414890034,
+              "upper": 1620.537394076414
+            },
+            "oanda:473016:ORDER_ACCEPTED:473016": {
+              "lower": -1842.234218114184,
+              "point": -110.84990988886932,
+              "upper": 1620.534398336445
+            }
+          },
+          "selection_rule": "TRAIN OOF absolute-residual 90% lower bound > 0",
+          "status": "EVALUATED",
+          "train": {
+            "coef": [
+              -110.84663898492799,
+              -10.475887156480148
+            ],
+            "eligible": 114,
+            "oof_mae": 727.4424342719907,
+            "oof_n": 99,
+            "residual_q90": 1731.3843082253145,
+            "status": "FIT"
+          },
+          "validation": {
+            "after_cost_net_jpy": 0.0,
+            "all_trades_max_drawdown_jpy": 6794.7768000000015,
+            "all_trades_net_jpy": 15144.4802,
+            "available": 101,
+            "decisions_changed_vs_all_trades": 101,
+            "fill_validity": null,
+            "incremental_net_jpy": -15144.4802,
+            "margin_coverage": null,
+            "max_drawdown_jpy": 0.0,
+            "paired_bootstrap_lcb_jpy": -396.487299009901,
+            "profit_factor": null,
+            "sample_coverage": 0.0,
+            "selected": 0,
+            "turnover_units": 0,
+            "unwind_validity": null
+          }
+        }
+      },
+      "counts": {
+        "train": 145,
+        "train_forecast": 33,
+        "train_technical": 114,
+        "train_two_family": 33,
+        "validation": 101,
+        "validation_decision_time_fill_unwind_evidence": 0,
+        "validation_margin_evidence": 15,
+        "validation_two_family": 22
+      },
+      "edge_only_not_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 6794.7768000000015,
+        "all_trades_net_jpy": 15144.4802,
+        "available": 101,
+        "decisions_changed_vs_all_trades": 101,
+        "fill_validity": null,
+        "incremental_net_jpy": -15144.4802,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -392.8855207920792,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "fused_evidence_admissible": {
+        "after_cost_net_jpy": 0.0,
+        "all_trades_max_drawdown_jpy": 6794.7768000000015,
+        "all_trades_net_jpy": 15144.4802,
+        "available": 101,
+        "decisions_changed_vs_all_trades": 101,
+        "fill_validity": null,
+        "incremental_net_jpy": -15144.4802,
+        "margin_coverage": null,
+        "max_drawdown_jpy": 0.0,
+        "paired_bootstrap_lcb_jpy": -382.1541792079208,
+        "profit_factor": null,
+        "sample_coverage": 0.0,
+        "selected": 0,
+        "turnover_units": 0,
+        "unwind_validity": null
+      },
+      "holdout_read": false,
+      "unexecuted_methods": {
+        "bayesian_model_average": "no stable independent family likelihood; forecast and price-action overlap is only 55/251",
+        "oof_stacking": "two-family complete TRAIN count below preregistered 30 in 16/32d and only 33 in 64d; base OOF overlap insufficient",
+        "pareto_mapie_abstain": "pymoo constrained front empty under margin evidence and MAPIE intervals have only 22 validation rows",
+        "regime_gated_mixture": "no independent point-in-time market-context family on the 251 cohort",
+        "rule_constraint_ensemble": "same missing execution/margin evidence makes a trade decision inadmissible"
+      }
+    }
+  },
+  "holdout_read": false,
+  "inventory": [
+    {
+      "artifact": "executed episode cohort",
+      "classification": "USED",
+      "consumer": "paired comparator only",
+      "family": "baseline",
+      "producer": "historical admission",
+      "reason": "explicit comparator, never an implicit fallback",
+      "stage": "selection",
+      "system_id": "all_trades"
+    },
+    {
+      "artifact": "data/forecast_history.jsonl",
+      "classification": "USED",
+      "consumer": "intent and trader gates",
+      "family": "statistical_ml",
+      "producer": "directional_forecaster",
+      "reason": "runtime consumers exist; causal episode coverage is partial",
+      "stage": "forecast_distribution",
+      "system_id": "forecast"
+    },
+    {
+      "artifact": "data/market_read_predictions.jsonl",
+      "classification": "DISCONNECTED",
+      "consumer": "execution link ledger",
+      "family": "market_context",
+      "producer": "hourly trader",
+      "reason": "5 predictions and no market_read_execution_links artifact in this repo snapshot",
+      "stage": "hypothesis_generation",
+      "system_id": "market_read"
+    },
+    {
+      "artifact": "gapless Dukascopy M5 features",
+      "classification": "GENERATED_ONLY",
+      "consumer": "research HGB",
+      "family": "technical",
+      "producer": "price-action admission",
+      "reason": "136/251 features, no runtime decision consumer",
+      "stage": "feature_cube",
+      "system_id": "price_action"
+    },
+    {
+      "artifact": "selection_predictions_v1.jsonl",
+      "classification": "GENERATED_ONLY",
+      "consumer": "research report",
+      "family": "statistical_ml",
+      "producer": "selection RCA",
+      "reason": "validation selection is post-hoc research only",
+      "stage": "forecast_distribution",
+      "system_id": "metadata_hgb"
+    },
+    {
+      "artifact": "gapless report prediction_rows",
+      "classification": "GENERATED_ONLY",
+      "consumer": "research report",
+      "family": "technical",
+      "producer": "price-action admission",
+      "reason": "no production or fusion consumer before this phase",
+      "stage": "forecast_distribution",
+      "system_id": "price_action_hgb"
+    },
+    {
+      "artifact": "loss-close paired shadow",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "consumer": "verdict",
+      "family": "risk_exit",
+      "producer": "paired replay",
+      "reason": "four hedge alternatives rejected; no complete decision-time leg/unwind contract",
+      "stage": "exit_unwind",
+      "system_id": "sl_hedge"
+    },
+    {
+      "artifact": "order intents / broker snapshot",
+      "classification": "USED",
+      "consumer": "risk/gateway",
+      "family": "portfolio",
+      "producer": "intent and gateway",
+      "reason": "runtime path exists but historical 251 point-in-time snapshots are absent",
+      "stage": "sizing_exposure",
+      "system_id": "exposure"
+    },
+    {
+      "artifact": "risk receipts",
+      "classification": "USED",
+      "consumer": "LiveOrderGateway",
+      "family": "risk_exit",
+      "producer": "RiskEngine",
+      "reason": "runtime gate exists; historical margin evidence only 14.85% in 64d validation",
+      "stage": "sizing_exposure",
+      "system_id": "risk"
+    },
+    {
+      "artifact": "execution ledger terminal events",
+      "classification": "USED",
+      "consumer": "feedback/audits",
+      "family": "risk_exit",
+      "producer": "position manager/gateway",
+      "reason": "realized outcome exists but decision-time unwind proof is not reconstructable",
+      "stage": "exit_unwind",
+      "system_id": "exit_unwind"
+    },
+    {
+      "artifact": "real_cube_sparse.json",
+      "classification": "GENERATED_ONLY",
+      "consumer": "adapter verifier",
+      "family": "infrastructure",
+      "producer": "research adapter",
+      "reason": "exact alignment check changed zero final decisions",
+      "stage": "feature_cube",
+      "system_id": "xarray"
+    },
+    {
+      "artifact": "real_adapter_report.json",
+      "classification": "DISCONNECTED",
+      "consumer": "adapter verifier",
+      "family": "infrastructure",
+      "producer": "research adapter",
+      "reason": "TRAIN sensitivity ranking never became a selection rule; rank reversed on validation",
+      "stage": "causal_refutation",
+      "system_id": "salib"
+    },
+    {
+      "artifact": "real_adapter_report.json",
+      "classification": "NULLIFIED_BY_FALLBACK",
+      "consumer": "adapter verifier",
+      "family": "infrastructure",
+      "producer": "research adapter",
+      "reason": "margin constraint emptied front; policy remained ALL_TRADES comparator",
+      "stage": "multi_objective_selection",
+      "system_id": "pymoo"
+    },
+    {
+      "artifact": "real_adapter_report.json",
+      "classification": "DISCONNECTED",
+      "consumer": "adapter verifier",
+      "family": "statistical_ml",
+      "producer": "research adapter",
+      "reason": "intervals were measured but never changed SKIP/size decisions",
+      "stage": "uncertainty_calibration",
+      "system_id": "mapie"
+    },
+    {
+      "artifact": "X handoff",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "consumer": "owner intake",
+      "family": "strategy_evidence",
+      "producer": "X research",
+      "reason": "negative validation expectancy and active-day shortage",
+      "stage": "hypothesis_generation",
+      "system_id": "x_lvn"
+    },
+    {
+      "artifact": "X handoff",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "consumer": "owner intake",
+      "family": "strategy_evidence",
+      "producer": "X research",
+      "reason": "negative validation expectancy and active-day shortage",
+      "stage": "hypothesis_generation",
+      "system_id": "x_session"
+    },
+    {
+      "artifact": "X handoff",
+      "classification": "DISCONNECTED",
+      "consumer": "queue only",
+      "family": "strategy_evidence",
+      "producer": "X research",
+      "reason": "not executed",
+      "stage": "hypothesis_generation",
+      "system_id": "x_mtf"
+    },
+    {
+      "artifact": "pair/context/currency/cross-asset/news reports",
+      "classification": "USED",
+      "consumer": "trader evidence packet",
+      "family": "market_context",
+      "producer": "CLI cycle",
+      "reason": "current-state consumers exist but no frozen point-in-time 251 history",
+      "stage": "hypothesis_generation",
+      "system_id": "runtime_context_bots"
+    },
+    {
+      "artifact": "data/verification_ledger.json",
+      "classification": "USED",
+      "consumer": "active boards/trader",
+      "family": "strategy_evidence",
+      "producer": "verification audit",
+      "reason": "runtime consumers exist but no explicit episode join for this cohort",
+      "stage": "causal_refutation",
+      "system_id": "verification_ledger"
+    },
+    {
+      "artifact": "data/entry_thesis_ledger.jsonl",
+      "classification": "INSUFFICIENT_EVIDENCE",
+      "consumer": "position/learning audits",
+      "family": "strategy_evidence",
+      "producer": "fill recorder",
+      "reason": "18/251 causal decision-time episodes",
+      "stage": "feedback",
+      "system_id": "entry_thesis"
+    },
+    {
+      "artifact": "~/.codex/automations/*/automation.toml",
+      "classification": "USED",
+      "consumer": "CLI/report workflows",
+      "family": "orchestration",
+      "producer": "Codex scheduler",
+      "reason": "automations call production CLIs; none calls research adapters or this fusion engine",
+      "stage": "feedback",
+      "system_id": "automations"
+    }
+  ],
+  "lineage": {
+    "entry_thesis_causal": 18,
+    "episodes": 251,
+    "filled_terminal_actual_after_cost": 251,
+    "forecast_causal": 138,
+    "full_forecast_technical_thesis_margin_chain": 1,
+    "margin_evidence_64d_validation": {
+      "coverage": 0.1485148514851485,
+      "known": 15,
+      "total": 101
+    },
+    "market_read_execution_link_artifact_present": false,
+    "price_action": 136
+  },
+  "live_paper_broker_order_deploy_touched": false,
+  "next_independent_fix": "persist point-in-time execution, fillability, margin and unwind evidence keyed by decision_id before fitting more ensemble parameters",
+  "profitability_increment_attributed_to_fusion_jpy": 0.0,
+  "research_shadow_64d_validation": {
+    "all_trades_net_jpy": 15144.4802,
+    "decisions_changed": 101,
+    "fused_net_jpy": 0.0,
+    "incremental_net_jpy": -15144.4802,
+    "interpretation": "research opportunity cost only; no live/Paper decision changed",
+    "paired_lcb_jpy": -382.1541792079208
+  },
+  "runtime_receipts": {
+    "adapter_runtime_consumers": 0,
+    "automation_toml_count": 54,
+    "entry_thesis_rows": 37,
+    "forecast_history_rows": 3006,
+    "market_read_prediction_rows": 5,
+    "projection_ledger_rows": 18518,
+    "swift_files_in_repo": 0
+  },
+  "validation_final_decision_counts": {
+    "SKIP": 22,
+    "WAIT": 79
+  },
+  "verdict": "HOLD_EVIDENCE_PIPELINE_BLOCKED"
+}

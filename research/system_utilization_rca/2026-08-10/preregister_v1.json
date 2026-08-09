@@ -1,0 +1,136 @@
+{
+  "contract": "FULL_INFERENCE_ENSEMBLE_V1",
+  "fused_decision_contract": "FUSED_DECISION_V1",
+  "created_at_utc": "2026-08-09T17:30:00Z",
+  "checkpoint_git_head": "7a6228efeb59110b01f1a97f1c8b27c09dd502a5",
+  "scope": "research-only system utilization RCA and decision-time fusion on the frozen 251 actual-after-cost episodes",
+  "permissions": {
+    "holdout_read": false,
+    "live": false,
+    "paper": false,
+    "broker_mutation": false,
+    "order": false,
+    "deploy": false,
+    "new_dependency_install": false
+  },
+  "frozen_sources": {
+    "episodes": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+    "selection_predictions": "research/historical_learning_selection_rca/selection_predictions_v1.jsonl",
+    "shadow_decisions": "research/historical_learning_selection_rca/shadow_decision_cohort_v1.jsonl",
+    "gapless_report": "research/historical_learning_gapless_truth/report_v2.json",
+    "real_shadow_payload": "research/python_ecosystem_audit/2026-08-10/real_shadow_payload.json",
+    "real_shadow_report": "research/python_ecosystem_audit/2026-08-10/real_shadow_report.json",
+    "x_handoff": "research/x_fx_methods/2026-08-09/hedge_task_handoff.json"
+  },
+  "outer_windows": {
+    "INITIAL_16D": {"train": 13, "validation": 12},
+    "DOUBLE_32D": {"train": 43, "validation": 31},
+    "QUADRUPLE_64D": {"train": 145, "validation": 101}
+  },
+  "split_contract": {
+    "outer_ratio": "60/40 chronological",
+    "embargo_seconds": 3600,
+    "train_only_selection": true,
+    "validation_single_evaluation": true,
+    "holdout": "unread and unused",
+    "meta_training": "expanding chronological out-of-fold predictions inside outer TRAIN only",
+    "validation_outcomes_forbidden_for_selection": true
+  },
+  "inference_row_required_columns": [
+    "episode_id", "source_sha", "decision_time", "split", "pair", "timeframe",
+    "horizon", "regime", "system_id", "model_version", "feature_set",
+    "parameter_set", "predicted_direction", "predicted_return_or_path",
+    "probability_or_score", "prediction_interval", "abstain_or_skip",
+    "assumptions", "missing_inputs", "input_lineage", "output_sha",
+    "runtime_ms", "memory_bytes"
+  ],
+  "outcome_boundary_columns": [
+    "episode_id", "actual_after_cost_net", "fill", "margin", "DD", "unwind",
+    "terminal_reason"
+  ],
+  "fused_decision_required_columns": [
+    "decision_id", "action", "pair", "side", "horizon", "entry_zone", "target_or_path",
+    "invalidation", "exit_or_unwind_policy", "size_cap", "confidence",
+    "prediction_interval", "expected_after_cost", "worst_case_dd_margin",
+    "supporting_families", "dissenting_families", "decisive_constraint",
+    "abstain_reason", "input_lineage", "output_sha"
+  ],
+  "families": {
+    "technical": "multi-timeframe/structure/price-action/indicator/volatility; edge evidence",
+    "market_context": "session/regime/currency-strength/cross-asset/macro/news; context evidence",
+    "statistical_ml": "forecast/HGB/probability/path/MAPIE; edge and uncertainty evidence",
+    "execution": "bid-ask/spread/slippage/fillability/financing; constraint only",
+    "portfolio": "exposure/correlation/concurrency/margin; constraint only",
+    "strategy_evidence": "historical expectancy/reproducible X candidate/operator precedent; edge prior",
+    "risk_exit": "invalidation/DD/ruin/TP-SL/hedge/unwind; constraint and geometry only"
+  },
+  "systems_to_inventory": [
+    "ALL_TRADES", "forecast", "market_read", "price_action_hgb", "metadata_hgb",
+    "sl_hedge", "exposure", "risk", "exit_unwind", "xarray", "salib", "pymoo",
+    "mapie", "x_lvn", "x_session", "x_mtf", "runtime_bots_ledgers_automations"
+  ],
+  "candidate_methods": [
+    "single_family", "rule_constraint_ensemble", "calibrated_weighted_vote",
+    "regime_gated_mixture", "oof_stacking", "bayesian_model_average",
+    "pareto_mapie_abstain"
+  ],
+  "bounded_search": {
+    "no_exhaustive_power_set": true,
+    "family_duplicate_normalization": true,
+    "correlated_system_family_grouping": true,
+    "sensitivity_axis_drop_train_only": true,
+    "max_candidate_rules_per_window": 32,
+    "max_meta_features": 7,
+    "fixed_random_seed": 20260810
+  },
+  "fusion_semantics": {
+    "one_answer_per_episode": true,
+    "actions": ["TRADE", "WAIT", "SKIP", "MANAGE"],
+    "risk_and_execution_create_no_edge": true,
+    "hard_blockers_separate_from_soft_evidence": true,
+    "dissent_is_preserved": true,
+    "missing_is_not_zero": true,
+    "all_trades_is_baseline_not_fallback": true,
+    "fallback_to_all_trades_is_a_defect": true
+  },
+  "primary_decision_rule": {
+    "name": "TRAIN_OOF_FAMILY_BALANCED_LOGISTIC_WITH_CONSTRAINTS",
+    "edge_families": ["technical", "market_context", "statistical_ml", "strategy_evidence"],
+    "constraint_families": ["execution", "portfolio", "risk_exit"],
+    "missing_edge_rule": "abstain when fewer than two independent edge families are available",
+    "hard_constraint_rule": "SKIP when executable bid/ask evidence, fill/unwind validity, or admissible margin evidence fails",
+    "score_rule": "OOF logistic probability calibrated inside TRAIN; TRADE only when TRAIN-fixed expected-after-cost LCB is positive",
+    "size_rule": "research shadow size_cap only; never changes historical actual units",
+    "validation_rule": "apply frozen coefficients, calibration, threshold, gates, and family normalization exactly once"
+  },
+  "ablations": [
+    "ALL_TRADES", "single_best_train", "single_family", "pairwise_family",
+    "all_family_fusion", "drop_one_family", "forbidden_oracle_negative_control"
+  ],
+  "metrics": [
+    "after_cost_net_jpy", "incremental_net_jpy", "paired_bootstrap_lcb_jpy",
+    "profit_factor", "max_drawdown_jpy", "margin_coverage", "turnover_units",
+    "fill_validity", "unwind_validity", "calibration", "sample_coverage",
+    "final_decisions_changed", "systems_contributing_to_final_decision"
+  ],
+  "acceptance": {
+    "validation_net_gt_all_trades": true,
+    "paired_lcb_gt_zero": true,
+    "profit_factor_gt_one": true,
+    "max_drawdown_not_worse_than_all_trades": true,
+    "margin_and_fill_unwind_constraints_satisfied": true,
+    "sign_stable_across_evaluable_windows_and_regimes": true,
+    "no_validation_tuning": true
+  },
+  "negative_control": {
+    "name": "FORBIDDEN_ORACLE_BEST_AFTER_OUTCOME",
+    "purpose": "quantify unattainable look-ahead ceiling only",
+    "eligible_for_adoption": false
+  },
+  "implementation_stages": [
+    "A_utilization_map_inventory", "B_common_251_inference_table",
+    "C_lineage_missing_duplicate_tests", "D_bounded_combination_sweep",
+    "E_train_fixed_meta_inference", "F_embargo_validation",
+    "G_paired_single_all_combined_comparison"
+  ]
+}

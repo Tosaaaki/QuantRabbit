@@ -1,0 +1,3957 @@
+{
+  "axes": {
+    "episode_id": [
+      "oanda:470259:ORDER_ACCEPTED:470259",
+      "oanda:470260:ORDER_ACCEPTED:470260",
+      "oanda:470265:ORDER_ACCEPTED:470265",
+      "oanda:470269:ORDER_ACCEPTED:470269",
+      "oanda:470275:ORDER_ACCEPTED:470275",
+      "oanda:470292:ORDER_ACCEPTED:470292",
+      "oanda:470296:ORDER_ACCEPTED:470296",
+      "oanda:470313:ORDER_ACCEPTED:470313",
+      "oanda:470317:ORDER_ACCEPTED:470317",
+      "oanda:470321:ORDER_ACCEPTED:470321",
+      "oanda:470325:ORDER_ACCEPTED:470325",
+      "oanda:470333:ORDER_ACCEPTED:470333",
+      "oanda:470337:ORDER_ACCEPTED:470337",
+      "oanda:470347:ORDER_ACCEPTED:470347",
+      "oanda:470352:ORDER_ACCEPTED:470352",
+      "oanda:470355:ORDER_ACCEPTED:470355",
+      "oanda:470358:ORDER_ACCEPTED:470358",
+      "oanda:470361:ORDER_ACCEPTED:470361",
+      "oanda:470364:ORDER_ACCEPTED:470364",
+      "oanda:470367:ORDER_ACCEPTED:470367",
+      "oanda:470394:ORDER_ACCEPTED:470394",
+      "oanda:470399:ORDER_ACCEPTED:470399",
+      "oanda:470402:ORDER_ACCEPTED:470402",
+      "oanda:470405:ORDER_ACCEPTED:470405",
+      "oanda:470414:ORDER_ACCEPTED:470414",
+      "oanda:470426:ORDER_ACCEPTED:470426",
+      "oanda:470429:ORDER_ACCEPTED:470429",
+      "oanda:470433:ORDER_ACCEPTED:470433",
+      "oanda:470436:ORDER_ACCEPTED:470436",
+      "oanda:470439:ORDER_ACCEPTED:470439",
+      "oanda:470442:ORDER_ACCEPTED:470442",
+      "oanda:470445:ORDER_ACCEPTED:470445",
+      "oanda:470452:ORDER_ACCEPTED:470452",
+      "oanda:470460:ORDER_ACCEPTED:470460",
+      "oanda:470463:ORDER_ACCEPTED:470463",
+      "oanda:470467:ORDER_ACCEPTED:470467",
+      "oanda:470493:ORDER_ACCEPTED:470493",
+      "oanda:470496:ORDER_ACCEPTED:470496",
+      "oanda:470499:ORDER_ACCEPTED:470499",
+      "oanda:470502:ORDER_ACCEPTED:470502",
+      "oanda:470518:ORDER_ACCEPTED:470518",
+      "oanda:470525:ORDER_ACCEPTED:470525",
+      "oanda:470528:ORDER_ACCEPTED:470528",
+      "oanda:470534:ORDER_ACCEPTED:470534",
+      "oanda:470537:ORDER_ACCEPTED:470537",
+      "oanda:470540:ORDER_ACCEPTED:470540",
+      "oanda:470562:ORDER_ACCEPTED:470562",
+      "oanda:470575:ORDER_ACCEPTED:470575",
+      "oanda:470605:ORDER_ACCEPTED:470605",
+      "oanda:470608:ORDER_ACCEPTED:470608",
+      "oanda:470619:ORDER_ACCEPTED:470619",
+      "oanda:470624:ORDER_ACCEPTED:470624",
+      "oanda:470643:ORDER_ACCEPTED:470643",
+      "oanda:470651:ORDER_ACCEPTED:470651",
+      "oanda:470654:ORDER_ACCEPTED:470654",
+      "oanda:470665:ORDER_ACCEPTED:470665",
+      "oanda:470668:ORDER_ACCEPTED:470668",
+      "oanda:470687:ORDER_ACCEPTED:470687",
+      "oanda:470690:ORDER_ACCEPTED:470690",
+      "oanda:470704:ORDER_ACCEPTED:470704",
+      "oanda:470712:ORDER_ACCEPTED:470712",
+      "oanda:470715:ORDER_ACCEPTED:470715",
+      "oanda:470718:ORDER_ACCEPTED:470718",
+      "oanda:470729:ORDER_ACCEPTED:470729",
+      "oanda:470732:ORDER_ACCEPTED:470732",
+      "oanda:470748:ORDER_ACCEPTED:470748",
+      "oanda:470751:ORDER_ACCEPTED:470751",
+      "oanda:470758:ORDER_ACCEPTED:470758",
+      "oanda:470761:ORDER_ACCEPTED:470761",
+      "oanda:470784:ORDER_ACCEPTED:470784",
+      "oanda:470787:ORDER_ACCEPTED:470787",
+      "oanda:470790:ORDER_ACCEPTED:470790",
+      "oanda:470793:ORDER_ACCEPTED:470793",
+      "oanda:470802:ORDER_ACCEPTED:470802",
+      "oanda:470805:ORDER_ACCEPTED:470805",
+      "oanda:470824:ORDER_ACCEPTED:470824",
+      "oanda:470833:ORDER_ACCEPTED:470833",
+      "oanda:470836:ORDER_ACCEPTED:470836",
+      "oanda:470853:ORDER_ACCEPTED:470853",
+      "oanda:470858:ORDER_ACCEPTED:470858",
+      "oanda:470867:ORDER_ACCEPTED:470867",
+      "oanda:470870:ORDER_ACCEPTED:470870",
+      "oanda:470873:ORDER_ACCEPTED:470873",
+      "oanda:470876:ORDER_ACCEPTED:470876",
+      "oanda:470897:ORDER_ACCEPTED:470897",
+      "oanda:470900:ORDER_ACCEPTED:470900",
+      "oanda:470903:ORDER_ACCEPTED:470903",
+      "oanda:470906:ORDER_ACCEPTED:470906",
+      "oanda:470944:ORDER_ACCEPTED:470944",
+      "oanda:470947:ORDER_ACCEPTED:470947",
+      "oanda:470950:ORDER_ACCEPTED:470950",
+      "oanda:470959:ORDER_ACCEPTED:470959",
+      "oanda:470970:ORDER_ACCEPTED:470970",
+      "oanda:470983:ORDER_ACCEPTED:470983",
+      "oanda:470991:ORDER_ACCEPTED:470991",
+      "oanda:470999:ORDER_ACCEPTED:470999",
+      "oanda:471007:ORDER_ACCEPTED:471007",
+      "oanda:471019:ORDER_ACCEPTED:471019",
+      "oanda:471022:ORDER_ACCEPTED:471022",
+      "oanda:471028:ORDER_ACCEPTED:471028",
+      "oanda:471043:ORDER_ACCEPTED:471043",
+      "oanda:471060:ORDER_ACCEPTED:471060",
+      "oanda:471076:ORDER_ACCEPTED:471076",
+      "oanda:471088:ORDER_ACCEPTED:471088",
+      "oanda:471111:ORDER_ACCEPTED:471111",
+      "oanda:471116:ORDER_ACCEPTED:471116",
+      "oanda:471167:ORDER_ACCEPTED:471167",
+      "oanda:471173:ORDER_ACCEPTED:471173",
+      "oanda:471190:ORDER_ACCEPTED:471190",
+      "oanda:471212:ORDER_ACCEPTED:471212",
+      "oanda:471215:ORDER_ACCEPTED:471215",
+      "oanda:471218:ORDER_ACCEPTED:471218",
+      "oanda:471231:ORDER_ACCEPTED:471231",
+      "oanda:471239:ORDER_ACCEPTED:471239",
+      "oanda:471254:ORDER_ACCEPTED:471254",
+      "oanda:471291:ORDER_ACCEPTED:471291",
+      "oanda:471297:ORDER_ACCEPTED:471297",
+      "oanda:471305:ORDER_ACCEPTED:471305",
+      "oanda:471308:ORDER_ACCEPTED:471308",
+      "oanda:471316:ORDER_ACCEPTED:471316",
+      "oanda:471327:ORDER_ACCEPTED:471327",
+      "oanda:471344:ORDER_ACCEPTED:471344",
+      "oanda:471361:ORDER_ACCEPTED:471361",
+      "oanda:471366:ORDER_ACCEPTED:471366",
+      "oanda:471369:ORDER_ACCEPTED:471369",
+      "oanda:471387:ORDER_ACCEPTED:471387",
+      "oanda:471399:ORDER_ACCEPTED:471399",
+      "oanda:471402:ORDER_ACCEPTED:471402",
+      "oanda:471413:ORDER_ACCEPTED:471413",
+      "oanda:471418:ORDER_ACCEPTED:471418",
+      "oanda:471436:ORDER_ACCEPTED:471436",
+      "oanda:471439:ORDER_ACCEPTED:471439",
+      "oanda:471443:ORDER_ACCEPTED:471443",
+      "oanda:471459:ORDER_ACCEPTED:471459",
+      "oanda:471466:ORDER_ACCEPTED:471466",
+      "oanda:471491:ORDER_ACCEPTED:471491",
+      "oanda:471494:ORDER_ACCEPTED:471494",
+      "oanda:471575:ORDER_ACCEPTED:471575",
+      "oanda:471578:ORDER_ACCEPTED:471578",
+      "oanda:471590:ORDER_ACCEPTED:471590",
+      "oanda:471619:ORDER_ACCEPTED:471619",
+      "oanda:471663:ORDER_ACCEPTED:471663",
+      "oanda:471710:ORDER_ACCEPTED:471710",
+      "oanda:471713:ORDER_ACCEPTED:471713",
+      "oanda:471716:ORDER_ACCEPTED:471716",
+      "oanda:471719:ORDER_ACCEPTED:471719",
+      "oanda:471724:ORDER_ACCEPTED:471724",
+      "oanda:471738:ORDER_ACCEPTED:471738",
+      "oanda:471754:ORDER_ACCEPTED:471754",
+      "oanda:471790:ORDER_ACCEPTED:471790",
+      "oanda:471816:ORDER_ACCEPTED:471816",
+      "oanda:471844:ORDER_ACCEPTED:471844",
+      "oanda:471859:ORDER_ACCEPTED:471859",
+      "oanda:471862:ORDER_ACCEPTED:471862",
+      "oanda:471873:ORDER_ACCEPTED:471873",
+      "oanda:471882:ORDER_ACCEPTED:471882",
+      "oanda:471885:ORDER_ACCEPTED:471885",
+      "oanda:471909:ORDER_ACCEPTED:471909",
+      "oanda:471914:ORDER_ACCEPTED:471914",
+      "oanda:471922:ORDER_ACCEPTED:471922",
+      "oanda:471933:ORDER_ACCEPTED:471933",
+      "oanda:471939:ORDER_ACCEPTED:471939",
+      "oanda:471947:ORDER_ACCEPTED:471947",
+      "oanda:471950:ORDER_ACCEPTED:471950",
+      "oanda:471968:ORDER_ACCEPTED:471968",
+      "oanda:471978:ORDER_ACCEPTED:471978",
+      "oanda:471982:ORDER_ACCEPTED:471982",
+      "oanda:472036:ORDER_ACCEPTED:472036",
+      "oanda:472043:ORDER_ACCEPTED:472043",
+      "oanda:472070:ORDER_ACCEPTED:472070",
+      "oanda:472074:ORDER_ACCEPTED:472074",
+      "oanda:472087:ORDER_ACCEPTED:472087",
+      "oanda:472093:ORDER_ACCEPTED:472093",
+      "oanda:472100:ORDER_ACCEPTED:472100",
+      "oanda:472108:ORDER_ACCEPTED:472108",
+      "oanda:472124:ORDER_ACCEPTED:472124",
+      "oanda:472132:ORDER_ACCEPTED:472132",
+      "oanda:472148:ORDER_ACCEPTED:472148",
+      "oanda:472153:ORDER_ACCEPTED:472153",
+      "oanda:472154:ORDER_ACCEPTED:472154",
+      "oanda:472155:ORDER_ACCEPTED:472155",
+      "oanda:472187:ORDER_ACCEPTED:472187",
+      "oanda:472189:ORDER_ACCEPTED:472189",
+      "oanda:472207:ORDER_ACCEPTED:472207",
+      "oanda:472211:ORDER_ACCEPTED:472211",
+      "oanda:472215:ORDER_ACCEPTED:472215",
+      "oanda:472226:ORDER_ACCEPTED:472226",
+      "oanda:472227:ORDER_ACCEPTED:472227",
+      "oanda:472250:ORDER_ACCEPTED:472250",
+      "oanda:472279:ORDER_ACCEPTED:472279",
+      "oanda:472287:ORDER_ACCEPTED:472287",
+      "oanda:472302:ORDER_ACCEPTED:472302",
+      "oanda:472311:ORDER_ACCEPTED:472311",
+      "oanda:472317:ORDER_ACCEPTED:472317",
+      "oanda:472321:ORDER_ACCEPTED:472321",
+      "oanda:472335:ORDER_ACCEPTED:472335",
+      "oanda:472339:ORDER_ACCEPTED:472339",
+      "oanda:472351:ORDER_ACCEPTED:472351",
+      "oanda:472379:ORDER_ACCEPTED:472379",
+      "oanda:472383:ORDER_ACCEPTED:472383",
+      "oanda:472404:ORDER_ACCEPTED:472404",
+      "oanda:472426:ORDER_ACCEPTED:472426",
+      "oanda:472444:ORDER_ACCEPTED:472444",
+      "oanda:472449:ORDER_ACCEPTED:472449",
+      "oanda:472457:ORDER_ACCEPTED:472457",
+      "oanda:472495:ORDER_ACCEPTED:472495",
+      "oanda:472529:ORDER_ACCEPTED:472529",
+      "oanda:472549:ORDER_ACCEPTED:472549",
+      "oanda:472589:ORDER_ACCEPTED:472589",
+      "oanda:472631:ORDER_ACCEPTED:472631",
+      "oanda:472654:ORDER_ACCEPTED:472654",
+      "oanda:472665:ORDER_ACCEPTED:472665",
+      "oanda:472681:ORDER_ACCEPTED:472681",
+      "oanda:472682:ORDER_ACCEPTED:472682",
+      "oanda:472715:ORDER_ACCEPTED:472715",
+      "oanda:472730:ORDER_ACCEPTED:472730",
+      "oanda:472736:ORDER_ACCEPTED:472736",
+      "oanda:472742:ORDER_ACCEPTED:472742",
+      "oanda:472754:ORDER_ACCEPTED:472754",
+      "oanda:472774:ORDER_ACCEPTED:472774",
+      "oanda:472791:ORDER_ACCEPTED:472791",
+      "oanda:472801:ORDER_ACCEPTED:472801",
+      "oanda:472818:ORDER_ACCEPTED:472818",
+      "oanda:472831:ORDER_ACCEPTED:472831",
+      "oanda:472832:ORDER_ACCEPTED:472832",
+      "oanda:472833:ORDER_ACCEPTED:472833",
+      "oanda:472847:ORDER_ACCEPTED:472847",
+      "oanda:472860:ORDER_ACCEPTED:472860",
+      "oanda:472875:ORDER_ACCEPTED:472875",
+      "oanda:472883:ORDER_ACCEPTED:472883",
+      "oanda:472888:ORDER_ACCEPTED:472888",
+      "oanda:472898:ORDER_ACCEPTED:472898",
+      "oanda:472899:ORDER_ACCEPTED:472899",
+      "oanda:472908:ORDER_ACCEPTED:472908",
+      "oanda:472912:ORDER_ACCEPTED:472912",
+      "oanda:472918:ORDER_ACCEPTED:472918",
+      "oanda:472924:ORDER_ACCEPTED:472924",
+      "oanda:472926:ORDER_ACCEPTED:472926",
+      "oanda:472930:ORDER_ACCEPTED:472930",
+      "oanda:472932:ORDER_ACCEPTED:472932",
+      "oanda:472943:ORDER_ACCEPTED:472943",
+      "oanda:472945:ORDER_ACCEPTED:472945",
+      "oanda:472951:ORDER_ACCEPTED:472951",
+      "oanda:472956:ORDER_ACCEPTED:472956",
+      "oanda:472958:ORDER_ACCEPTED:472958",
+      "oanda:472964:ORDER_ACCEPTED:472964",
+      "oanda:472967:ORDER_ACCEPTED:472967",
+      "oanda:472982:ORDER_ACCEPTED:472982",
+      "oanda:473002:ORDER_ACCEPTED:473002",
+      "oanda:473010:ORDER_ACCEPTED:473010",
+      "oanda:473016:ORDER_ACCEPTED:473016"
+    ],
+    "metric": [
+      "probability_or_score"
+    ],
+    "pair": [
+      "AUD_CAD",
+      "AUD_CHF",
+      "AUD_JPY",
+      "AUD_NZD",
+      "AUD_USD",
+      "CAD_JPY",
+      "CHF_JPY",
+      "EUR_AUD",
+      "EUR_CHF",
+      "EUR_GBP",
+      "EUR_JPY",
+      "EUR_USD",
+      "GBP_AUD",
+      "GBP_CHF",
+      "GBP_JPY",
+      "GBP_USD",
+      "NZD_CAD",
+      "NZD_CHF",
+      "NZD_USD",
+      "USD_CAD",
+      "USD_CHF",
+      "USD_JPY"
+    ],
+    "split": [
+      "EMBARGO",
+      "TRAIN",
+      "VALIDATION"
+    ],
+    "system_id": [
+      "all_trades",
+      "automations",
+      "entry_thesis",
+      "exit_unwind",
+      "exposure",
+      "forecast",
+      "mapie",
+      "market_read",
+      "metadata_hgb",
+      "price_action",
+      "price_action_hgb",
+      "pymoo",
+      "risk",
+      "runtime_context_bots",
+      "salib",
+      "sl_hedge",
+      "verification_ledger",
+      "x_lvn",
+      "x_mtf",
+      "x_session",
+      "xarray"
+    ],
+    "timeframe": [
+      "DECISION_METADATA_ONLY",
+      "M5"
+    ]
+  },
+  "cells": [
+    {
+      "episode_id": "oanda:470259:ORDER_ACCEPTED:470259",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470259:ORDER_ACCEPTED:470259",
+      "system_id": "price_action",
+      "value": -0.0002765579230465942
+    },
+    {
+      "episode_id": "oanda:470260:ORDER_ACCEPTED:470260",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470260:ORDER_ACCEPTED:470260",
+      "system_id": "price_action",
+      "value": 0.0004628895833513151
+    },
+    {
+      "episode_id": "oanda:470265:ORDER_ACCEPTED:470265",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470265:ORDER_ACCEPTED:470265",
+      "system_id": "price_action",
+      "value": -0.00020423700798066768
+    },
+    {
+      "episode_id": "oanda:470269:ORDER_ACCEPTED:470269",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470269:ORDER_ACCEPTED:470269",
+      "system_id": "price_action",
+      "value": 0.00020423700798066768
+    },
+    {
+      "episode_id": "oanda:470275:ORDER_ACCEPTED:470275",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470275:ORDER_ACCEPTED:470275",
+      "system_id": "price_action",
+      "value": 0.000585316647913133
+    },
+    {
+      "episode_id": "oanda:470292:ORDER_ACCEPTED:470292",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470296:ORDER_ACCEPTED:470296",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470296:ORDER_ACCEPTED:470296",
+      "system_id": "price_action",
+      "value": 0.00032696074712390555
+    },
+    {
+      "episode_id": "oanda:470313:ORDER_ACCEPTED:470313",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470313:ORDER_ACCEPTED:470313",
+      "system_id": "price_action",
+      "value": 0.0001560503177088964
+    },
+    {
+      "episode_id": "oanda:470317:ORDER_ACCEPTED:470317",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470317:ORDER_ACCEPTED:470317",
+      "system_id": "price_action",
+      "value": 0.00018157120468472362
+    },
+    {
+      "episode_id": "oanda:470321:ORDER_ACCEPTED:470321",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470321:ORDER_ACCEPTED:470321",
+      "system_id": "price_action",
+      "value": -0.00010760219919625502
+    },
+    {
+      "episode_id": "oanda:470325:ORDER_ACCEPTED:470325",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470333:ORDER_ACCEPTED:470333",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470333:ORDER_ACCEPTED:470333",
+      "system_id": "price_action",
+      "value": -6.519945298000263e-05
+    },
+    {
+      "episode_id": "oanda:470337:ORDER_ACCEPTED:470337",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470347:ORDER_ACCEPTED:470347",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470347:ORDER_ACCEPTED:470347",
+      "system_id": "price_action",
+      "value": 0.00028851133068423057
+    },
+    {
+      "episode_id": "oanda:470352:ORDER_ACCEPTED:470352",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470352:ORDER_ACCEPTED:470352",
+      "system_id": "price_action",
+      "value": 0.0004567117257595991
+    },
+    {
+      "episode_id": "oanda:470355:ORDER_ACCEPTED:470355",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470355:ORDER_ACCEPTED:470355",
+      "system_id": "price_action",
+      "value": 0.0009865348529377223
+    },
+    {
+      "episode_id": "oanda:470358:ORDER_ACCEPTED:470358",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470361:ORDER_ACCEPTED:470361",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470364:ORDER_ACCEPTED:470364",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470364:ORDER_ACCEPTED:470364",
+      "system_id": "price_action",
+      "value": 0.00083933701413752
+    },
+    {
+      "episode_id": "oanda:470367:ORDER_ACCEPTED:470367",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470394:ORDER_ACCEPTED:470394",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470394:ORDER_ACCEPTED:470394",
+      "system_id": "price_action",
+      "value": 0.00045289283341568937
+    },
+    {
+      "episode_id": "oanda:470399:ORDER_ACCEPTED:470399",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470399:ORDER_ACCEPTED:470399",
+      "system_id": "price_action",
+      "value": -2.274680370125311e-05
+    },
+    {
+      "episode_id": "oanda:470402:ORDER_ACCEPTED:470402",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470402:ORDER_ACCEPTED:470402",
+      "system_id": "price_action",
+      "value": -2.274680370125311e-05
+    },
+    {
+      "episode_id": "oanda:470405:ORDER_ACCEPTED:470405",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470405:ORDER_ACCEPTED:470405",
+      "system_id": "price_action",
+      "value": -2.274680370125311e-05
+    },
+    {
+      "episode_id": "oanda:470414:ORDER_ACCEPTED:470414",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470414:ORDER_ACCEPTED:470414",
+      "system_id": "price_action",
+      "value": 3.2680392647514246e-05
+    },
+    {
+      "episode_id": "oanda:470426:ORDER_ACCEPTED:470426",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470426:ORDER_ACCEPTED:470426",
+      "system_id": "price_action",
+      "value": -9.524091941455944e-05
+    },
+    {
+      "episode_id": "oanda:470429:ORDER_ACCEPTED:470429",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470433:ORDER_ACCEPTED:470433",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470433:ORDER_ACCEPTED:470433",
+      "system_id": "price_action",
+      "value": 0.000178988062884781
+    },
+    {
+      "episode_id": "oanda:470436:ORDER_ACCEPTED:470436",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470439:ORDER_ACCEPTED:470439",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470439:ORDER_ACCEPTED:470439",
+      "system_id": "price_action",
+      "value": 0.0005038908276264742
+    },
+    {
+      "episode_id": "oanda:470442:ORDER_ACCEPTED:470442",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470442:ORDER_ACCEPTED:470442",
+      "system_id": "price_action",
+      "value": 0.0007443065408093327
+    },
+    {
+      "episode_id": "oanda:470445:ORDER_ACCEPTED:470445",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470452:ORDER_ACCEPTED:470452",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470452:ORDER_ACCEPTED:470452",
+      "system_id": "price_action",
+      "value": 0.00031696863149788257
+    },
+    {
+      "episode_id": "oanda:470460:ORDER_ACCEPTED:470460",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470463:ORDER_ACCEPTED:470463",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470463:ORDER_ACCEPTED:470463",
+      "system_id": "price_action",
+      "value": 5.889587445787973e-05
+    },
+    {
+      "episode_id": "oanda:470467:ORDER_ACCEPTED:470467",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470467:ORDER_ACCEPTED:470467",
+      "system_id": "price_action",
+      "value": 0.000768026620258618
+    },
+    {
+      "episode_id": "oanda:470493:ORDER_ACCEPTED:470493",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470496:ORDER_ACCEPTED:470496",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470496:ORDER_ACCEPTED:470496",
+      "system_id": "price_action",
+      "value": 0.00021476379925478017
+    },
+    {
+      "episode_id": "oanda:470499:ORDER_ACCEPTED:470499",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470502:ORDER_ACCEPTED:470502",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470502:ORDER_ACCEPTED:470502",
+      "system_id": "price_action",
+      "value": 3.574326631069121e-05
+    },
+    {
+      "episode_id": "oanda:470518:ORDER_ACCEPTED:470518",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470518:ORDER_ACCEPTED:470518",
+      "system_id": "price_action",
+      "value": -0.0002086295251216471
+    },
+    {
+      "episode_id": "oanda:470525:ORDER_ACCEPTED:470525",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470525:ORDER_ACCEPTED:470525",
+      "system_id": "price_action",
+      "value": 0.00040077871508059637
+    },
+    {
+      "episode_id": "oanda:470528:ORDER_ACCEPTED:470528",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470534:ORDER_ACCEPTED:470534",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470534:ORDER_ACCEPTED:470534",
+      "system_id": "price_action",
+      "value": 0.0005999801299498841
+    },
+    {
+      "episode_id": "oanda:470537:ORDER_ACCEPTED:470537",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470540:ORDER_ACCEPTED:470540",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470540:ORDER_ACCEPTED:470540",
+      "system_id": "price_action",
+      "value": -2.7906887403543004e-06
+    },
+    {
+      "episode_id": "oanda:470562:ORDER_ACCEPTED:470562",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470562:ORDER_ACCEPTED:470562",
+      "system_id": "price_action",
+      "value": 0.00027197176842778487
+    },
+    {
+      "episode_id": "oanda:470575:ORDER_ACCEPTED:470575",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470575:ORDER_ACCEPTED:470575",
+      "system_id": "price_action",
+      "value": -0.00023063853064705006
+    },
+    {
+      "episode_id": "oanda:470605:ORDER_ACCEPTED:470605",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470608:ORDER_ACCEPTED:470608",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470619:ORDER_ACCEPTED:470619",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470624:ORDER_ACCEPTED:470624",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470643:ORDER_ACCEPTED:470643",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470643:ORDER_ACCEPTED:470643",
+      "system_id": "price_action",
+      "value": 0.0005964091231834834
+    },
+    {
+      "episode_id": "oanda:470651:ORDER_ACCEPTED:470651",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470651:ORDER_ACCEPTED:470651",
+      "system_id": "price_action",
+      "value": -9.339974781230609e-05
+    },
+    {
+      "episode_id": "oanda:470654:ORDER_ACCEPTED:470654",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470654:ORDER_ACCEPTED:470654",
+      "system_id": "price_action",
+      "value": 9.339974781230609e-05
+    },
+    {
+      "episode_id": "oanda:470665:ORDER_ACCEPTED:470665",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470665:ORDER_ACCEPTED:470665",
+      "system_id": "price_action",
+      "value": 0.0008588981275581276
+    },
+    {
+      "episode_id": "oanda:470668:ORDER_ACCEPTED:470668",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470668:ORDER_ACCEPTED:470668",
+      "system_id": "price_action",
+      "value": 0.0008588981275581276
+    },
+    {
+      "episode_id": "oanda:470687:ORDER_ACCEPTED:470687",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470687:ORDER_ACCEPTED:470687",
+      "system_id": "price_action",
+      "value": 0.0007100890462096535
+    },
+    {
+      "episode_id": "oanda:470690:ORDER_ACCEPTED:470690",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470704:ORDER_ACCEPTED:470704",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470704:ORDER_ACCEPTED:470704",
+      "system_id": "price_action",
+      "value": -0.00026622883531553693
+    },
+    {
+      "episode_id": "oanda:470712:ORDER_ACCEPTED:470712",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470712:ORDER_ACCEPTED:470712",
+      "system_id": "price_action",
+      "value": 9.182665331845345e-05
+    },
+    {
+      "episode_id": "oanda:470715:ORDER_ACCEPTED:470715",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470718:ORDER_ACCEPTED:470718",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470718:ORDER_ACCEPTED:470718",
+      "system_id": "price_action",
+      "value": 9.182665331845345e-05
+    },
+    {
+      "episode_id": "oanda:470729:ORDER_ACCEPTED:470729",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470729:ORDER_ACCEPTED:470729",
+      "system_id": "price_action",
+      "value": 0.001003743928227922
+    },
+    {
+      "episode_id": "oanda:470732:ORDER_ACCEPTED:470732",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470748:ORDER_ACCEPTED:470748",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470748:ORDER_ACCEPTED:470748",
+      "system_id": "price_action",
+      "value": -0.00010720582879667855
+    },
+    {
+      "episode_id": "oanda:470751:ORDER_ACCEPTED:470751",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470751:ORDER_ACCEPTED:470751",
+      "system_id": "price_action",
+      "value": -8.018655227681748e-05
+    },
+    {
+      "episode_id": "oanda:470758:ORDER_ACCEPTED:470758",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470758:ORDER_ACCEPTED:470758",
+      "system_id": "price_action",
+      "value": -0.0005341910189361846
+    },
+    {
+      "episode_id": "oanda:470761:ORDER_ACCEPTED:470761",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470784:ORDER_ACCEPTED:470784",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470784:ORDER_ACCEPTED:470784",
+      "system_id": "price_action",
+      "value": -7.06268078431993e-05
+    },
+    {
+      "episode_id": "oanda:470787:ORDER_ACCEPTED:470787",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470787:ORDER_ACCEPTED:470787",
+      "system_id": "price_action",
+      "value": 7.06268078431993e-05
+    },
+    {
+      "episode_id": "oanda:470790:ORDER_ACCEPTED:470790",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470790:ORDER_ACCEPTED:470790",
+      "system_id": "price_action",
+      "value": 7.06268078431993e-05
+    },
+    {
+      "episode_id": "oanda:470793:ORDER_ACCEPTED:470793",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470793:ORDER_ACCEPTED:470793",
+      "system_id": "price_action",
+      "value": 7.06268078431993e-05
+    },
+    {
+      "episode_id": "oanda:470802:ORDER_ACCEPTED:470802",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470802:ORDER_ACCEPTED:470802",
+      "system_id": "price_action",
+      "value": -0.00012872301608276201
+    },
+    {
+      "episode_id": "oanda:470805:ORDER_ACCEPTED:470805",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470805:ORDER_ACCEPTED:470805",
+      "system_id": "price_action",
+      "value": -0.00023623665916801725
+    },
+    {
+      "episode_id": "oanda:470824:ORDER_ACCEPTED:470824",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470824:ORDER_ACCEPTED:470824",
+      "system_id": "price_action",
+      "value": -0.00010468655741280308
+    },
+    {
+      "episode_id": "oanda:470833:ORDER_ACCEPTED:470833",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470833:ORDER_ACCEPTED:470833",
+      "system_id": "price_action",
+      "value": -0.0003368359821651623
+    },
+    {
+      "episode_id": "oanda:470836:ORDER_ACCEPTED:470836",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470853:ORDER_ACCEPTED:470853",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470858:ORDER_ACCEPTED:470858",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470858:ORDER_ACCEPTED:470858",
+      "system_id": "price_action",
+      "value": 0.00015577145635288966
+    },
+    {
+      "episode_id": "oanda:470867:ORDER_ACCEPTED:470867",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470867:ORDER_ACCEPTED:470867",
+      "system_id": "price_action",
+      "value": 0.0001768790077241178
+    },
+    {
+      "episode_id": "oanda:470870:ORDER_ACCEPTED:470870",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470870:ORDER_ACCEPTED:470870",
+      "system_id": "price_action",
+      "value": 0.0009236463281004914
+    },
+    {
+      "episode_id": "oanda:470873:ORDER_ACCEPTED:470873",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470876:ORDER_ACCEPTED:470876",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470876:ORDER_ACCEPTED:470876",
+      "system_id": "price_action",
+      "value": 0.0001768790077241178
+    },
+    {
+      "episode_id": "oanda:470897:ORDER_ACCEPTED:470897",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470897:ORDER_ACCEPTED:470897",
+      "system_id": "price_action",
+      "value": 0.0017292654891284398
+    },
+    {
+      "episode_id": "oanda:470900:ORDER_ACCEPTED:470900",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470900:ORDER_ACCEPTED:470900",
+      "system_id": "price_action",
+      "value": 0.0006549993658521899
+    },
+    {
+      "episode_id": "oanda:470903:ORDER_ACCEPTED:470903",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470903:ORDER_ACCEPTED:470903",
+      "system_id": "price_action",
+      "value": 0.00045385429440395847
+    },
+    {
+      "episode_id": "oanda:470906:ORDER_ACCEPTED:470906",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470944:ORDER_ACCEPTED:470944",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470944:ORDER_ACCEPTED:470944",
+      "system_id": "price_action",
+      "value": -0.00019649628154838616
+    },
+    {
+      "episode_id": "oanda:470947:ORDER_ACCEPTED:470947",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470947:ORDER_ACCEPTED:470947",
+      "system_id": "price_action",
+      "value": 0.00024685488358418734
+    },
+    {
+      "episode_id": "oanda:470950:ORDER_ACCEPTED:470950",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470950:ORDER_ACCEPTED:470950",
+      "system_id": "price_action",
+      "value": -0.00024779649726299385
+    },
+    {
+      "episode_id": "oanda:470959:ORDER_ACCEPTED:470959",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470959:ORDER_ACCEPTED:470959",
+      "system_id": "price_action",
+      "value": -0.00017082477416792882
+    },
+    {
+      "episode_id": "oanda:470970:ORDER_ACCEPTED:470970",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470970:ORDER_ACCEPTED:470970",
+      "system_id": "price_action",
+      "value": -0.00016103451977644845
+    },
+    {
+      "episode_id": "oanda:470983:ORDER_ACCEPTED:470983",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470983:ORDER_ACCEPTED:470983",
+      "system_id": "price_action",
+      "value": -0.0006791139140473282
+    },
+    {
+      "episode_id": "oanda:470991:ORDER_ACCEPTED:470991",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470991:ORDER_ACCEPTED:470991",
+      "system_id": "price_action",
+      "value": -0.0007127513379582654
+    },
+    {
+      "episode_id": "oanda:470999:ORDER_ACCEPTED:470999",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:470999:ORDER_ACCEPTED:470999",
+      "system_id": "price_action",
+      "value": 8.608244229657558e-06
+    },
+    {
+      "episode_id": "oanda:471007:ORDER_ACCEPTED:471007",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471019:ORDER_ACCEPTED:471019",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471019:ORDER_ACCEPTED:471019",
+      "system_id": "price_action",
+      "value": -0.00034618502562278053
+    },
+    {
+      "episode_id": "oanda:471022:ORDER_ACCEPTED:471022",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471022:ORDER_ACCEPTED:471022",
+      "system_id": "price_action",
+      "value": -0.0011566575905651948
+    },
+    {
+      "episode_id": "oanda:471028:ORDER_ACCEPTED:471028",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471043:ORDER_ACCEPTED:471043",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471043:ORDER_ACCEPTED:471043",
+      "system_id": "price_action",
+      "value": -0.0010260143357175473
+    },
+    {
+      "episode_id": "oanda:471060:ORDER_ACCEPTED:471060",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471060:ORDER_ACCEPTED:471060",
+      "system_id": "price_action",
+      "value": -0.00020100587246633475
+    },
+    {
+      "episode_id": "oanda:471076:ORDER_ACCEPTED:471076",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471076:ORDER_ACCEPTED:471076",
+      "system_id": "price_action",
+      "value": -3.516986549945145e-05
+    },
+    {
+      "episode_id": "oanda:471088:ORDER_ACCEPTED:471088",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471088:ORDER_ACCEPTED:471088",
+      "system_id": "price_action",
+      "value": 6.54678445478248e-05
+    },
+    {
+      "episode_id": "oanda:471111:ORDER_ACCEPTED:471111",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471111:ORDER_ACCEPTED:471111",
+      "system_id": "price_action",
+      "value": -0.0006899979798402622
+    },
+    {
+      "episode_id": "oanda:471116:ORDER_ACCEPTED:471116",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471116:ORDER_ACCEPTED:471116",
+      "system_id": "price_action",
+      "value": -0.0005503540000548757
+    },
+    {
+      "episode_id": "oanda:471167:ORDER_ACCEPTED:471167",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471167:ORDER_ACCEPTED:471167",
+      "system_id": "price_action",
+      "value": 0.0003461967562120953
+    },
+    {
+      "episode_id": "oanda:471173:ORDER_ACCEPTED:471173",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471173:ORDER_ACCEPTED:471173",
+      "system_id": "price_action",
+      "value": 9.99710742433102e-06
+    },
+    {
+      "episode_id": "oanda:471190:ORDER_ACCEPTED:471190",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471212:ORDER_ACCEPTED:471212",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471212:ORDER_ACCEPTED:471212",
+      "system_id": "price_action",
+      "value": -0.001646550266381867
+    },
+    {
+      "episode_id": "oanda:471215:ORDER_ACCEPTED:471215",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471218:ORDER_ACCEPTED:471218",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471231:ORDER_ACCEPTED:471231",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471231:ORDER_ACCEPTED:471231",
+      "system_id": "forecast",
+      "value": -0.729838508450851
+    },
+    {
+      "episode_id": "oanda:471231:ORDER_ACCEPTED:471231",
+      "system_id": "price_action",
+      "value": -0.0009634010302359922
+    },
+    {
+      "episode_id": "oanda:471239:ORDER_ACCEPTED:471239",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471239:ORDER_ACCEPTED:471239",
+      "system_id": "forecast",
+      "value": -0.729838508450851
+    },
+    {
+      "episode_id": "oanda:471239:ORDER_ACCEPTED:471239",
+      "system_id": "price_action",
+      "value": -0.0002855370283140572
+    },
+    {
+      "episode_id": "oanda:471254:ORDER_ACCEPTED:471254",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471254:ORDER_ACCEPTED:471254",
+      "system_id": "forecast",
+      "value": -0.8445344129554655
+    },
+    {
+      "episode_id": "oanda:471254:ORDER_ACCEPTED:471254",
+      "system_id": "price_action",
+      "value": -0.00034245222257937397
+    },
+    {
+      "episode_id": "oanda:471291:ORDER_ACCEPTED:471291",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471291:ORDER_ACCEPTED:471291",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471291:ORDER_ACCEPTED:471291",
+      "system_id": "price_action",
+      "value": -5.816833403985792e-06
+    },
+    {
+      "episode_id": "oanda:471297:ORDER_ACCEPTED:471297",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471297:ORDER_ACCEPTED:471297",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471297:ORDER_ACCEPTED:471297",
+      "system_id": "price_action",
+      "value": 0.000362000497790671
+    },
+    {
+      "episode_id": "oanda:471305:ORDER_ACCEPTED:471305",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471305:ORDER_ACCEPTED:471305",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471305:ORDER_ACCEPTED:471305",
+      "system_id": "price_action",
+      "value": -0.0001022170225811007
+    },
+    {
+      "episode_id": "oanda:471308:ORDER_ACCEPTED:471308",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471308:ORDER_ACCEPTED:471308",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471308:ORDER_ACCEPTED:471308",
+      "system_id": "price_action",
+      "value": -0.0001897938260517762
+    },
+    {
+      "episode_id": "oanda:471316:ORDER_ACCEPTED:471316",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471316:ORDER_ACCEPTED:471316",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471316:ORDER_ACCEPTED:471316",
+      "system_id": "price_action",
+      "value": -5.0385175728788013e-05
+    },
+    {
+      "episode_id": "oanda:471327:ORDER_ACCEPTED:471327",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471327:ORDER_ACCEPTED:471327",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471327:ORDER_ACCEPTED:471327",
+      "system_id": "price_action",
+      "value": -0.0010668616429772015
+    },
+    {
+      "episode_id": "oanda:471344:ORDER_ACCEPTED:471344",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471344:ORDER_ACCEPTED:471344",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471344:ORDER_ACCEPTED:471344",
+      "system_id": "price_action",
+      "value": 0.00015904008492547325
+    },
+    {
+      "episode_id": "oanda:471361:ORDER_ACCEPTED:471361",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471361:ORDER_ACCEPTED:471361",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471361:ORDER_ACCEPTED:471361",
+      "system_id": "price_action",
+      "value": 0.0003237793439632523
+    },
+    {
+      "episode_id": "oanda:471366:ORDER_ACCEPTED:471366",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471366:ORDER_ACCEPTED:471366",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471366:ORDER_ACCEPTED:471366",
+      "system_id": "price_action",
+      "value": -4.166281508888314e-05
+    },
+    {
+      "episode_id": "oanda:471369:ORDER_ACCEPTED:471369",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471369:ORDER_ACCEPTED:471369",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471369:ORDER_ACCEPTED:471369",
+      "system_id": "price_action",
+      "value": -0.00012476801864835796
+    },
+    {
+      "episode_id": "oanda:471387:ORDER_ACCEPTED:471387",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471387:ORDER_ACCEPTED:471387",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471387:ORDER_ACCEPTED:471387",
+      "system_id": "price_action",
+      "value": -0.0014704129815975204
+    },
+    {
+      "episode_id": "oanda:471399:ORDER_ACCEPTED:471399",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471399:ORDER_ACCEPTED:471399",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471399:ORDER_ACCEPTED:471399",
+      "system_id": "price_action",
+      "value": 0.001594786436054337
+    },
+    {
+      "episode_id": "oanda:471402:ORDER_ACCEPTED:471402",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471402:ORDER_ACCEPTED:471402",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471402:ORDER_ACCEPTED:471402",
+      "system_id": "price_action",
+      "value": 0.000617995178169776
+    },
+    {
+      "episode_id": "oanda:471413:ORDER_ACCEPTED:471413",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471413:ORDER_ACCEPTED:471413",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471418:ORDER_ACCEPTED:471418",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471418:ORDER_ACCEPTED:471418",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471418:ORDER_ACCEPTED:471418",
+      "system_id": "price_action",
+      "value": 4.157416665325394e-05
+    },
+    {
+      "episode_id": "oanda:471436:ORDER_ACCEPTED:471436",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471436:ORDER_ACCEPTED:471436",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471436:ORDER_ACCEPTED:471436",
+      "system_id": "price_action",
+      "value": 0.00016211265815816814
+    },
+    {
+      "episode_id": "oanda:471439:ORDER_ACCEPTED:471439",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471439:ORDER_ACCEPTED:471439",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471439:ORDER_ACCEPTED:471439",
+      "system_id": "price_action",
+      "value": 0.000209442619208929
+    },
+    {
+      "episode_id": "oanda:471443:ORDER_ACCEPTED:471443",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471443:ORDER_ACCEPTED:471443",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471443:ORDER_ACCEPTED:471443",
+      "system_id": "price_action",
+      "value": 0.000209442619208929
+    },
+    {
+      "episode_id": "oanda:471459:ORDER_ACCEPTED:471459",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471459:ORDER_ACCEPTED:471459",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471459:ORDER_ACCEPTED:471459",
+      "system_id": "price_action",
+      "value": -4.305082230867304e-05
+    },
+    {
+      "episode_id": "oanda:471466:ORDER_ACCEPTED:471466",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471466:ORDER_ACCEPTED:471466",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471466:ORDER_ACCEPTED:471466",
+      "system_id": "price_action",
+      "value": 0.00013770981346672428
+    },
+    {
+      "episode_id": "oanda:471491:ORDER_ACCEPTED:471491",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471491:ORDER_ACCEPTED:471491",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471491:ORDER_ACCEPTED:471491",
+      "system_id": "price_action",
+      "value": -0.00040679524372444487
+    },
+    {
+      "episode_id": "oanda:471494:ORDER_ACCEPTED:471494",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471494:ORDER_ACCEPTED:471494",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471494:ORDER_ACCEPTED:471494",
+      "system_id": "price_action",
+      "value": -4.744113532173522e-05
+    },
+    {
+      "episode_id": "oanda:471575:ORDER_ACCEPTED:471575",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471575:ORDER_ACCEPTED:471575",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471575:ORDER_ACCEPTED:471575",
+      "system_id": "price_action",
+      "value": -0.00031656681032872963
+    },
+    {
+      "episode_id": "oanda:471578:ORDER_ACCEPTED:471578",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471578:ORDER_ACCEPTED:471578",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471578:ORDER_ACCEPTED:471578",
+      "system_id": "price_action",
+      "value": -0.00038119098790626954
+    },
+    {
+      "episode_id": "oanda:471590:ORDER_ACCEPTED:471590",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471590:ORDER_ACCEPTED:471590",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471590:ORDER_ACCEPTED:471590",
+      "system_id": "price_action",
+      "value": -0.00016181752068285724
+    },
+    {
+      "episode_id": "oanda:471619:ORDER_ACCEPTED:471619",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471619:ORDER_ACCEPTED:471619",
+      "system_id": "forecast",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471619:ORDER_ACCEPTED:471619",
+      "system_id": "price_action",
+      "value": -0.0011179273807578143
+    },
+    {
+      "episode_id": "oanda:471663:ORDER_ACCEPTED:471663",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471663:ORDER_ACCEPTED:471663",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471663:ORDER_ACCEPTED:471663",
+      "system_id": "price_action",
+      "value": -0.0013230791849929702
+    },
+    {
+      "episode_id": "oanda:471710:ORDER_ACCEPTED:471710",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471710:ORDER_ACCEPTED:471710",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471713:ORDER_ACCEPTED:471713",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471713:ORDER_ACCEPTED:471713",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471716:ORDER_ACCEPTED:471716",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471716:ORDER_ACCEPTED:471716",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471719:ORDER_ACCEPTED:471719",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471719:ORDER_ACCEPTED:471719",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471724:ORDER_ACCEPTED:471724",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471724:ORDER_ACCEPTED:471724",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471724:ORDER_ACCEPTED:471724",
+      "system_id": "price_action",
+      "value": -0.0004864005531624767
+    },
+    {
+      "episode_id": "oanda:471738:ORDER_ACCEPTED:471738",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471738:ORDER_ACCEPTED:471738",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471738:ORDER_ACCEPTED:471738",
+      "system_id": "price_action",
+      "value": -0.0013719576965939655
+    },
+    {
+      "episode_id": "oanda:471754:ORDER_ACCEPTED:471754",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471754:ORDER_ACCEPTED:471754",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471754:ORDER_ACCEPTED:471754",
+      "system_id": "price_action",
+      "value": 7.43467923259485e-05
+    },
+    {
+      "episode_id": "oanda:471790:ORDER_ACCEPTED:471790",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471790:ORDER_ACCEPTED:471790",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471790:ORDER_ACCEPTED:471790",
+      "system_id": "price_action",
+      "value": 0.00013848840620141653
+    },
+    {
+      "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+      "system_id": "forecast",
+      "value": -0.23815543337073447
+    },
+    {
+      "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+      "system_id": "price_action",
+      "value": 0.00045584485377529277
+    },
+    {
+      "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+      "system_id": "metadata_hgb",
+      "value": 533.8411025752619
+    },
+    {
+      "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471844:ORDER_ACCEPTED:471844",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471844:ORDER_ACCEPTED:471844",
+      "system_id": "metadata_hgb",
+      "value": -921.0520844845428
+    },
+    {
+      "episode_id": "oanda:471844:ORDER_ACCEPTED:471844",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471859:ORDER_ACCEPTED:471859",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471859:ORDER_ACCEPTED:471859",
+      "system_id": "forecast",
+      "value": -0.23332562507122637
+    },
+    {
+      "episode_id": "oanda:471859:ORDER_ACCEPTED:471859",
+      "system_id": "price_action",
+      "value": 0.0010099307104045607
+    },
+    {
+      "episode_id": "oanda:471859:ORDER_ACCEPTED:471859",
+      "system_id": "metadata_hgb",
+      "value": 433.67217187124726
+    },
+    {
+      "episode_id": "oanda:471859:ORDER_ACCEPTED:471859",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471862:ORDER_ACCEPTED:471862",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471862:ORDER_ACCEPTED:471862",
+      "system_id": "forecast",
+      "value": -0.23332562507122637
+    },
+    {
+      "episode_id": "oanda:471862:ORDER_ACCEPTED:471862",
+      "system_id": "price_action",
+      "value": 0.00037395601121270605
+    },
+    {
+      "episode_id": "oanda:471862:ORDER_ACCEPTED:471862",
+      "system_id": "metadata_hgb",
+      "value": 574.2493454734623
+    },
+    {
+      "episode_id": "oanda:471862:ORDER_ACCEPTED:471862",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471873:ORDER_ACCEPTED:471873",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471873:ORDER_ACCEPTED:471873",
+      "system_id": "forecast",
+      "value": -0.45154407284504683
+    },
+    {
+      "episode_id": "oanda:471873:ORDER_ACCEPTED:471873",
+      "system_id": "metadata_hgb",
+      "value": -406.5351572758833
+    },
+    {
+      "episode_id": "oanda:471873:ORDER_ACCEPTED:471873",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471882:ORDER_ACCEPTED:471882",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471882:ORDER_ACCEPTED:471882",
+      "system_id": "forecast",
+      "value": -0.8342551256476162
+    },
+    {
+      "episode_id": "oanda:471882:ORDER_ACCEPTED:471882",
+      "system_id": "metadata_hgb",
+      "value": -530.978583746587
+    },
+    {
+      "episode_id": "oanda:471882:ORDER_ACCEPTED:471882",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471885:ORDER_ACCEPTED:471885",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471885:ORDER_ACCEPTED:471885",
+      "system_id": "forecast",
+      "value": -0.6706496976297175
+    },
+    {
+      "episode_id": "oanda:471885:ORDER_ACCEPTED:471885",
+      "system_id": "price_action",
+      "value": -0.001031763104610654
+    },
+    {
+      "episode_id": "oanda:471885:ORDER_ACCEPTED:471885",
+      "system_id": "metadata_hgb",
+      "value": -71.55976407043659
+    },
+    {
+      "episode_id": "oanda:471885:ORDER_ACCEPTED:471885",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471909:ORDER_ACCEPTED:471909",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471909:ORDER_ACCEPTED:471909",
+      "system_id": "forecast",
+      "value": -0.5093494075340097
+    },
+    {
+      "episode_id": "oanda:471909:ORDER_ACCEPTED:471909",
+      "system_id": "metadata_hgb",
+      "value": -74.46599065526512
+    },
+    {
+      "episode_id": "oanda:471909:ORDER_ACCEPTED:471909",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471914:ORDER_ACCEPTED:471914",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471914:ORDER_ACCEPTED:471914",
+      "system_id": "forecast",
+      "value": -0.4736113669186873
+    },
+    {
+      "episode_id": "oanda:471914:ORDER_ACCEPTED:471914",
+      "system_id": "price_action",
+      "value": 0.00011321684945190628
+    },
+    {
+      "episode_id": "oanda:471914:ORDER_ACCEPTED:471914",
+      "system_id": "metadata_hgb",
+      "value": 133.60270004077867
+    },
+    {
+      "episode_id": "oanda:471914:ORDER_ACCEPTED:471914",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:471922:ORDER_ACCEPTED:471922",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471922:ORDER_ACCEPTED:471922",
+      "system_id": "forecast",
+      "value": -0.42149167021316547
+    },
+    {
+      "episode_id": "oanda:471922:ORDER_ACCEPTED:471922",
+      "system_id": "metadata_hgb",
+      "value": 155.08876824053675
+    },
+    {
+      "episode_id": "oanda:471922:ORDER_ACCEPTED:471922",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471933:ORDER_ACCEPTED:471933",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471933:ORDER_ACCEPTED:471933",
+      "system_id": "forecast",
+      "value": -0.8342551256476162
+    },
+    {
+      "episode_id": "oanda:471933:ORDER_ACCEPTED:471933",
+      "system_id": "metadata_hgb",
+      "value": -289.5013165963823
+    },
+    {
+      "episode_id": "oanda:471933:ORDER_ACCEPTED:471933",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471939:ORDER_ACCEPTED:471939",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471939:ORDER_ACCEPTED:471939",
+      "system_id": "forecast",
+      "value": -0.21880346151725003
+    },
+    {
+      "episode_id": "oanda:471939:ORDER_ACCEPTED:471939",
+      "system_id": "metadata_hgb",
+      "value": 37.138459562644364
+    },
+    {
+      "episode_id": "oanda:471939:ORDER_ACCEPTED:471939",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471947:ORDER_ACCEPTED:471947",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471947:ORDER_ACCEPTED:471947",
+      "system_id": "forecast",
+      "value": -0.21880346151725003
+    },
+    {
+      "episode_id": "oanda:471947:ORDER_ACCEPTED:471947",
+      "system_id": "metadata_hgb",
+      "value": -667.8932675016077
+    },
+    {
+      "episode_id": "oanda:471947:ORDER_ACCEPTED:471947",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471950:ORDER_ACCEPTED:471950",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471950:ORDER_ACCEPTED:471950",
+      "system_id": "forecast",
+      "value": -0.21880346151725003
+    },
+    {
+      "episode_id": "oanda:471950:ORDER_ACCEPTED:471950",
+      "system_id": "metadata_hgb",
+      "value": -768.2490546067878
+    },
+    {
+      "episode_id": "oanda:471950:ORDER_ACCEPTED:471950",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471968:ORDER_ACCEPTED:471968",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471968:ORDER_ACCEPTED:471968",
+      "system_id": "forecast",
+      "value": -0.5897236703696653
+    },
+    {
+      "episode_id": "oanda:471968:ORDER_ACCEPTED:471968",
+      "system_id": "metadata_hgb",
+      "value": -2065.384794674635
+    },
+    {
+      "episode_id": "oanda:471968:ORDER_ACCEPTED:471968",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471978:ORDER_ACCEPTED:471978",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471978:ORDER_ACCEPTED:471978",
+      "system_id": "forecast",
+      "value": -0.21880346151725003
+    },
+    {
+      "episode_id": "oanda:471978:ORDER_ACCEPTED:471978",
+      "system_id": "metadata_hgb",
+      "value": 606.2580951960736
+    },
+    {
+      "episode_id": "oanda:471978:ORDER_ACCEPTED:471978",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471982:ORDER_ACCEPTED:471982",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:471982:ORDER_ACCEPTED:471982",
+      "system_id": "forecast",
+      "value": -0.42149167021316547
+    },
+    {
+      "episode_id": "oanda:471982:ORDER_ACCEPTED:471982",
+      "system_id": "metadata_hgb",
+      "value": -33.78342127246908
+    },
+    {
+      "episode_id": "oanda:471982:ORDER_ACCEPTED:471982",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472036:ORDER_ACCEPTED:472036",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472036:ORDER_ACCEPTED:472036",
+      "system_id": "forecast",
+      "value": -0.21639151713104735
+    },
+    {
+      "episode_id": "oanda:472036:ORDER_ACCEPTED:472036",
+      "system_id": "metadata_hgb",
+      "value": 103.0195989831718
+    },
+    {
+      "episode_id": "oanda:472036:ORDER_ACCEPTED:472036",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472043:ORDER_ACCEPTED:472043",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472043:ORDER_ACCEPTED:472043",
+      "system_id": "forecast",
+      "value": -0.5897236703696653
+    },
+    {
+      "episode_id": "oanda:472043:ORDER_ACCEPTED:472043",
+      "system_id": "metadata_hgb",
+      "value": 220.25205799693452
+    },
+    {
+      "episode_id": "oanda:472043:ORDER_ACCEPTED:472043",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472070:ORDER_ACCEPTED:472070",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472070:ORDER_ACCEPTED:472070",
+      "system_id": "forecast",
+      "value": -0.5897236703696653
+    },
+    {
+      "episode_id": "oanda:472070:ORDER_ACCEPTED:472070",
+      "system_id": "metadata_hgb",
+      "value": 48.24585662623762
+    },
+    {
+      "episode_id": "oanda:472070:ORDER_ACCEPTED:472070",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+      "system_id": "forecast",
+      "value": -0.23332562507122637
+    },
+    {
+      "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+      "system_id": "price_action",
+      "value": -3.7366884264478095e-05
+    },
+    {
+      "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+      "system_id": "metadata_hgb",
+      "value": 135.08716861715752
+    },
+    {
+      "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472087:ORDER_ACCEPTED:472087",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472087:ORDER_ACCEPTED:472087",
+      "system_id": "forecast",
+      "value": -0.6338973810806492
+    },
+    {
+      "episode_id": "oanda:472087:ORDER_ACCEPTED:472087",
+      "system_id": "metadata_hgb",
+      "value": -99.68074036084224
+    },
+    {
+      "episode_id": "oanda:472087:ORDER_ACCEPTED:472087",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472093:ORDER_ACCEPTED:472093",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472093:ORDER_ACCEPTED:472093",
+      "system_id": "forecast",
+      "value": -0.6528327378956216
+    },
+    {
+      "episode_id": "oanda:472093:ORDER_ACCEPTED:472093",
+      "system_id": "price_action",
+      "value": -0.0022673074387658345
+    },
+    {
+      "episode_id": "oanda:472093:ORDER_ACCEPTED:472093",
+      "system_id": "metadata_hgb",
+      "value": -155.29358713886663
+    },
+    {
+      "episode_id": "oanda:472093:ORDER_ACCEPTED:472093",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472100:ORDER_ACCEPTED:472100",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472100:ORDER_ACCEPTED:472100",
+      "system_id": "forecast",
+      "value": -0.2235363720028445
+    },
+    {
+      "episode_id": "oanda:472100:ORDER_ACCEPTED:472100",
+      "system_id": "metadata_hgb",
+      "value": -542.9198067753559
+    },
+    {
+      "episode_id": "oanda:472100:ORDER_ACCEPTED:472100",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472108:ORDER_ACCEPTED:472108",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472108:ORDER_ACCEPTED:472108",
+      "system_id": "forecast",
+      "value": -0.45242396640781324
+    },
+    {
+      "episode_id": "oanda:472108:ORDER_ACCEPTED:472108",
+      "system_id": "metadata_hgb",
+      "value": -515.828333040491
+    },
+    {
+      "episode_id": "oanda:472108:ORDER_ACCEPTED:472108",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472124:ORDER_ACCEPTED:472124",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472124:ORDER_ACCEPTED:472124",
+      "system_id": "forecast",
+      "value": -0.3076105827430042
+    },
+    {
+      "episode_id": "oanda:472124:ORDER_ACCEPTED:472124",
+      "system_id": "metadata_hgb",
+      "value": -592.8090300872018
+    },
+    {
+      "episode_id": "oanda:472124:ORDER_ACCEPTED:472124",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+      "system_id": "forecast",
+      "value": -0.3753760242251543
+    },
+    {
+      "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+      "system_id": "price_action",
+      "value": 0.00019919049386688906
+    },
+    {
+      "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+      "system_id": "metadata_hgb",
+      "value": 109.48515430583764
+    },
+    {
+      "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472148:ORDER_ACCEPTED:472148",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472148:ORDER_ACCEPTED:472148",
+      "system_id": "forecast",
+      "value": -0.15382135870393174
+    },
+    {
+      "episode_id": "oanda:472148:ORDER_ACCEPTED:472148",
+      "system_id": "metadata_hgb",
+      "value": 295.88001354570065
+    },
+    {
+      "episode_id": "oanda:472148:ORDER_ACCEPTED:472148",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472153:ORDER_ACCEPTED:472153",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472153:ORDER_ACCEPTED:472153",
+      "system_id": "forecast",
+      "value": -0.40738801028003746
+    },
+    {
+      "episode_id": "oanda:472153:ORDER_ACCEPTED:472153",
+      "system_id": "price_action",
+      "value": 0.0003459337444916555
+    },
+    {
+      "episode_id": "oanda:472153:ORDER_ACCEPTED:472153",
+      "system_id": "metadata_hgb",
+      "value": -911.6547330087734
+    },
+    {
+      "episode_id": "oanda:472153:ORDER_ACCEPTED:472153",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472154:ORDER_ACCEPTED:472154",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472154:ORDER_ACCEPTED:472154",
+      "system_id": "forecast",
+      "value": -0.463486622086865
+    },
+    {
+      "episode_id": "oanda:472154:ORDER_ACCEPTED:472154",
+      "system_id": "metadata_hgb",
+      "value": -1984.4763237552888
+    },
+    {
+      "episode_id": "oanda:472154:ORDER_ACCEPTED:472154",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472155:ORDER_ACCEPTED:472155",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472155:ORDER_ACCEPTED:472155",
+      "system_id": "forecast",
+      "value": -0.0610587455733777
+    },
+    {
+      "episode_id": "oanda:472155:ORDER_ACCEPTED:472155",
+      "system_id": "metadata_hgb",
+      "value": -312.01260271103706
+    },
+    {
+      "episode_id": "oanda:472155:ORDER_ACCEPTED:472155",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472187:ORDER_ACCEPTED:472187",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472187:ORDER_ACCEPTED:472187",
+      "system_id": "forecast",
+      "value": -0.5009701131542855
+    },
+    {
+      "episode_id": "oanda:472187:ORDER_ACCEPTED:472187",
+      "system_id": "metadata_hgb",
+      "value": -604.848155577407
+    },
+    {
+      "episode_id": "oanda:472187:ORDER_ACCEPTED:472187",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472189:ORDER_ACCEPTED:472189",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472189:ORDER_ACCEPTED:472189",
+      "system_id": "forecast",
+      "value": -0.15382135870393174
+    },
+    {
+      "episode_id": "oanda:472189:ORDER_ACCEPTED:472189",
+      "system_id": "metadata_hgb",
+      "value": 449.04635887090797
+    },
+    {
+      "episode_id": "oanda:472189:ORDER_ACCEPTED:472189",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472207:ORDER_ACCEPTED:472207",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472207:ORDER_ACCEPTED:472207",
+      "system_id": "forecast",
+      "value": -0.15382135870393174
+    },
+    {
+      "episode_id": "oanda:472207:ORDER_ACCEPTED:472207",
+      "system_id": "metadata_hgb",
+      "value": 563.9970785810075
+    },
+    {
+      "episode_id": "oanda:472207:ORDER_ACCEPTED:472207",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472211:ORDER_ACCEPTED:472211",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472211:ORDER_ACCEPTED:472211",
+      "system_id": "forecast",
+      "value": -0.5009701131542855
+    },
+    {
+      "episode_id": "oanda:472211:ORDER_ACCEPTED:472211",
+      "system_id": "metadata_hgb",
+      "value": -131.58093618594452
+    },
+    {
+      "episode_id": "oanda:472211:ORDER_ACCEPTED:472211",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472215:ORDER_ACCEPTED:472215",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472215:ORDER_ACCEPTED:472215",
+      "system_id": "forecast",
+      "value": -0.5009701131542855
+    },
+    {
+      "episode_id": "oanda:472215:ORDER_ACCEPTED:472215",
+      "system_id": "metadata_hgb",
+      "value": -374.7274464856307
+    },
+    {
+      "episode_id": "oanda:472215:ORDER_ACCEPTED:472215",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472226:ORDER_ACCEPTED:472226",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472226:ORDER_ACCEPTED:472226",
+      "system_id": "forecast",
+      "value": -0.3913659226202221
+    },
+    {
+      "episode_id": "oanda:472226:ORDER_ACCEPTED:472226",
+      "system_id": "metadata_hgb",
+      "value": -1107.5970033271788
+    },
+    {
+      "episode_id": "oanda:472226:ORDER_ACCEPTED:472226",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472227:ORDER_ACCEPTED:472227",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472227:ORDER_ACCEPTED:472227",
+      "system_id": "forecast",
+      "value": -0.35626347756898646
+    },
+    {
+      "episode_id": "oanda:472227:ORDER_ACCEPTED:472227",
+      "system_id": "metadata_hgb",
+      "value": -1107.5970033271788
+    },
+    {
+      "episode_id": "oanda:472227:ORDER_ACCEPTED:472227",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472250:ORDER_ACCEPTED:472250",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472250:ORDER_ACCEPTED:472250",
+      "system_id": "forecast",
+      "value": -0.0610587455733777
+    },
+    {
+      "episode_id": "oanda:472250:ORDER_ACCEPTED:472250",
+      "system_id": "metadata_hgb",
+      "value": -679.3435600046134
+    },
+    {
+      "episode_id": "oanda:472250:ORDER_ACCEPTED:472250",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472279:ORDER_ACCEPTED:472279",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472279:ORDER_ACCEPTED:472279",
+      "system_id": "forecast",
+      "value": -0.5166100780027608
+    },
+    {
+      "episode_id": "oanda:472279:ORDER_ACCEPTED:472279",
+      "system_id": "price_action",
+      "value": 0.000534164029255287
+    },
+    {
+      "episode_id": "oanda:472279:ORDER_ACCEPTED:472279",
+      "system_id": "metadata_hgb",
+      "value": -1557.124136070697
+    },
+    {
+      "episode_id": "oanda:472279:ORDER_ACCEPTED:472279",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472287:ORDER_ACCEPTED:472287",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472287:ORDER_ACCEPTED:472287",
+      "system_id": "forecast",
+      "value": -0.4700981121526024
+    },
+    {
+      "episode_id": "oanda:472287:ORDER_ACCEPTED:472287",
+      "system_id": "metadata_hgb",
+      "value": 114.26839322078459
+    },
+    {
+      "episode_id": "oanda:472287:ORDER_ACCEPTED:472287",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472302:ORDER_ACCEPTED:472302",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472302:ORDER_ACCEPTED:472302",
+      "system_id": "forecast",
+      "value": -0.463486622086865
+    },
+    {
+      "episode_id": "oanda:472302:ORDER_ACCEPTED:472302",
+      "system_id": "metadata_hgb",
+      "value": -259.9048103086719
+    },
+    {
+      "episode_id": "oanda:472302:ORDER_ACCEPTED:472302",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472311:ORDER_ACCEPTED:472311",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472311:ORDER_ACCEPTED:472311",
+      "system_id": "forecast",
+      "value": -0.3518616685229791
+    },
+    {
+      "episode_id": "oanda:472311:ORDER_ACCEPTED:472311",
+      "system_id": "metadata_hgb",
+      "value": 68.4865996987929
+    },
+    {
+      "episode_id": "oanda:472311:ORDER_ACCEPTED:472311",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472317:ORDER_ACCEPTED:472317",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472317:ORDER_ACCEPTED:472317",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472317:ORDER_ACCEPTED:472317",
+      "system_id": "metadata_hgb",
+      "value": 475.99297408113114
+    },
+    {
+      "episode_id": "oanda:472317:ORDER_ACCEPTED:472317",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472321:ORDER_ACCEPTED:472321",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472321:ORDER_ACCEPTED:472321",
+      "system_id": "forecast",
+      "value": -0.0610587455733777
+    },
+    {
+      "episode_id": "oanda:472321:ORDER_ACCEPTED:472321",
+      "system_id": "metadata_hgb",
+      "value": 672.5660180187391
+    },
+    {
+      "episode_id": "oanda:472321:ORDER_ACCEPTED:472321",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472335:ORDER_ACCEPTED:472335",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472335:ORDER_ACCEPTED:472335",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472335:ORDER_ACCEPTED:472335",
+      "system_id": "metadata_hgb",
+      "value": -10.940844591719573
+    },
+    {
+      "episode_id": "oanda:472335:ORDER_ACCEPTED:472335",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472339:ORDER_ACCEPTED:472339",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472339:ORDER_ACCEPTED:472339",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472339:ORDER_ACCEPTED:472339",
+      "system_id": "metadata_hgb",
+      "value": -244.95031431967308
+    },
+    {
+      "episode_id": "oanda:472339:ORDER_ACCEPTED:472339",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472351:ORDER_ACCEPTED:472351",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472351:ORDER_ACCEPTED:472351",
+      "system_id": "forecast",
+      "value": -0.4700981121526024
+    },
+    {
+      "episode_id": "oanda:472351:ORDER_ACCEPTED:472351",
+      "system_id": "metadata_hgb",
+      "value": -730.889962899054
+    },
+    {
+      "episode_id": "oanda:472351:ORDER_ACCEPTED:472351",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472379:ORDER_ACCEPTED:472379",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472379:ORDER_ACCEPTED:472379",
+      "system_id": "forecast",
+      "value": -0.3518616685229791
+    },
+    {
+      "episode_id": "oanda:472379:ORDER_ACCEPTED:472379",
+      "system_id": "metadata_hgb",
+      "value": -412.5948742839343
+    },
+    {
+      "episode_id": "oanda:472379:ORDER_ACCEPTED:472379",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472383:ORDER_ACCEPTED:472383",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472383:ORDER_ACCEPTED:472383",
+      "system_id": "forecast",
+      "value": -0.3518616685229791
+    },
+    {
+      "episode_id": "oanda:472383:ORDER_ACCEPTED:472383",
+      "system_id": "metadata_hgb",
+      "value": -349.76291958344564
+    },
+    {
+      "episode_id": "oanda:472383:ORDER_ACCEPTED:472383",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472404:ORDER_ACCEPTED:472404",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472404:ORDER_ACCEPTED:472404",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472404:ORDER_ACCEPTED:472404",
+      "system_id": "metadata_hgb",
+      "value": -1158.432977903826
+    },
+    {
+      "episode_id": "oanda:472404:ORDER_ACCEPTED:472404",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472426:ORDER_ACCEPTED:472426",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472426:ORDER_ACCEPTED:472426",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472426:ORDER_ACCEPTED:472426",
+      "system_id": "metadata_hgb",
+      "value": -1167.570018475559
+    },
+    {
+      "episode_id": "oanda:472426:ORDER_ACCEPTED:472426",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472444:ORDER_ACCEPTED:472444",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472444:ORDER_ACCEPTED:472444",
+      "system_id": "forecast",
+      "value": -0.0610587455733777
+    },
+    {
+      "episode_id": "oanda:472444:ORDER_ACCEPTED:472444",
+      "system_id": "metadata_hgb",
+      "value": 729.9539437381173
+    },
+    {
+      "episode_id": "oanda:472444:ORDER_ACCEPTED:472444",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472449:ORDER_ACCEPTED:472449",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472449:ORDER_ACCEPTED:472449",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472449:ORDER_ACCEPTED:472449",
+      "system_id": "metadata_hgb",
+      "value": 230.11058702973875
+    },
+    {
+      "episode_id": "oanda:472449:ORDER_ACCEPTED:472449",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472457:ORDER_ACCEPTED:472457",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472457:ORDER_ACCEPTED:472457",
+      "system_id": "forecast",
+      "value": -0.7615586308118845
+    },
+    {
+      "episode_id": "oanda:472457:ORDER_ACCEPTED:472457",
+      "system_id": "metadata_hgb",
+      "value": -884.4760264785361
+    },
+    {
+      "episode_id": "oanda:472457:ORDER_ACCEPTED:472457",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472495:ORDER_ACCEPTED:472495",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472495:ORDER_ACCEPTED:472495",
+      "system_id": "forecast",
+      "value": -0.7150878878913576
+    },
+    {
+      "episode_id": "oanda:472495:ORDER_ACCEPTED:472495",
+      "system_id": "metadata_hgb",
+      "value": -721.6126943915094
+    },
+    {
+      "episode_id": "oanda:472495:ORDER_ACCEPTED:472495",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472529:ORDER_ACCEPTED:472529",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472529:ORDER_ACCEPTED:472529",
+      "system_id": "forecast",
+      "value": -0.785
+    },
+    {
+      "episode_id": "oanda:472529:ORDER_ACCEPTED:472529",
+      "system_id": "metadata_hgb",
+      "value": 14.325460047049075
+    },
+    {
+      "episode_id": "oanda:472529:ORDER_ACCEPTED:472529",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472549:ORDER_ACCEPTED:472549",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472549:ORDER_ACCEPTED:472549",
+      "system_id": "forecast",
+      "value": -0.7195833333333334
+    },
+    {
+      "episode_id": "oanda:472549:ORDER_ACCEPTED:472549",
+      "system_id": "metadata_hgb",
+      "value": 76.93960358635402
+    },
+    {
+      "episode_id": "oanda:472549:ORDER_ACCEPTED:472549",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472589:ORDER_ACCEPTED:472589",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472589:ORDER_ACCEPTED:472589",
+      "system_id": "forecast",
+      "value": -0.7749546727694498
+    },
+    {
+      "episode_id": "oanda:472589:ORDER_ACCEPTED:472589",
+      "system_id": "metadata_hgb",
+      "value": -185.23605678859772
+    },
+    {
+      "episode_id": "oanda:472589:ORDER_ACCEPTED:472589",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472631:ORDER_ACCEPTED:472631",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472631:ORDER_ACCEPTED:472631",
+      "system_id": "forecast",
+      "value": -0.3769333333333334
+    },
+    {
+      "episode_id": "oanda:472631:ORDER_ACCEPTED:472631",
+      "system_id": "metadata_hgb",
+      "value": -1105.8629017904586
+    },
+    {
+      "episode_id": "oanda:472631:ORDER_ACCEPTED:472631",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472654:ORDER_ACCEPTED:472654",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472654:ORDER_ACCEPTED:472654",
+      "system_id": "forecast",
+      "value": -0.3769333333333334
+    },
+    {
+      "episode_id": "oanda:472654:ORDER_ACCEPTED:472654",
+      "system_id": "metadata_hgb",
+      "value": 72.28020112873708
+    },
+    {
+      "episode_id": "oanda:472654:ORDER_ACCEPTED:472654",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472665:ORDER_ACCEPTED:472665",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472665:ORDER_ACCEPTED:472665",
+      "system_id": "forecast",
+      "value": -0.4515844197240058
+    },
+    {
+      "episode_id": "oanda:472665:ORDER_ACCEPTED:472665",
+      "system_id": "metadata_hgb",
+      "value": 786.589629492554
+    },
+    {
+      "episode_id": "oanda:472665:ORDER_ACCEPTED:472665",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472681:ORDER_ACCEPTED:472681",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472681:ORDER_ACCEPTED:472681",
+      "system_id": "forecast",
+      "value": -0.3769333333333334
+    },
+    {
+      "episode_id": "oanda:472681:ORDER_ACCEPTED:472681",
+      "system_id": "metadata_hgb",
+      "value": -210.5142676702775
+    },
+    {
+      "episode_id": "oanda:472681:ORDER_ACCEPTED:472681",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472682:ORDER_ACCEPTED:472682",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472682:ORDER_ACCEPTED:472682",
+      "system_id": "forecast",
+      "value": -0.574
+    },
+    {
+      "episode_id": "oanda:472682:ORDER_ACCEPTED:472682",
+      "system_id": "metadata_hgb",
+      "value": -437.00006483016404
+    },
+    {
+      "episode_id": "oanda:472682:ORDER_ACCEPTED:472682",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472715:ORDER_ACCEPTED:472715",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472715:ORDER_ACCEPTED:472715",
+      "system_id": "forecast",
+      "value": -0.3769333333333334
+    },
+    {
+      "episode_id": "oanda:472715:ORDER_ACCEPTED:472715",
+      "system_id": "metadata_hgb",
+      "value": -813.3772926047
+    },
+    {
+      "episode_id": "oanda:472715:ORDER_ACCEPTED:472715",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+      "system_id": "forecast",
+      "value": -0.34745625
+    },
+    {
+      "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+      "system_id": "price_action",
+      "value": -0.00040666120799640976
+    },
+    {
+      "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+      "system_id": "metadata_hgb",
+      "value": 83.87174289512735
+    },
+    {
+      "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472736:ORDER_ACCEPTED:472736",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472736:ORDER_ACCEPTED:472736",
+      "system_id": "forecast",
+      "value": -0.4356695628772272
+    },
+    {
+      "episode_id": "oanda:472736:ORDER_ACCEPTED:472736",
+      "system_id": "price_action",
+      "value": 0.000965853918575954
+    },
+    {
+      "episode_id": "oanda:472736:ORDER_ACCEPTED:472736",
+      "system_id": "metadata_hgb",
+      "value": -101.85219462151558
+    },
+    {
+      "episode_id": "oanda:472736:ORDER_ACCEPTED:472736",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472742:ORDER_ACCEPTED:472742",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472742:ORDER_ACCEPTED:472742",
+      "system_id": "forecast",
+      "value": -0.4788666666666667
+    },
+    {
+      "episode_id": "oanda:472742:ORDER_ACCEPTED:472742",
+      "system_id": "metadata_hgb",
+      "value": -969.5270544690549
+    },
+    {
+      "episode_id": "oanda:472742:ORDER_ACCEPTED:472742",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472754:ORDER_ACCEPTED:472754",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472754:ORDER_ACCEPTED:472754",
+      "system_id": "forecast",
+      "value": -0.516973132372215
+    },
+    {
+      "episode_id": "oanda:472754:ORDER_ACCEPTED:472754",
+      "system_id": "metadata_hgb",
+      "value": -394.5248371046093
+    },
+    {
+      "episode_id": "oanda:472754:ORDER_ACCEPTED:472754",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472774:ORDER_ACCEPTED:472774",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472774:ORDER_ACCEPTED:472774",
+      "system_id": "forecast",
+      "value": -0.4252250000000001
+    },
+    {
+      "episode_id": "oanda:472774:ORDER_ACCEPTED:472774",
+      "system_id": "metadata_hgb",
+      "value": 229.6301487579861
+    },
+    {
+      "episode_id": "oanda:472774:ORDER_ACCEPTED:472774",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472791:ORDER_ACCEPTED:472791",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472791:ORDER_ACCEPTED:472791",
+      "system_id": "forecast",
+      "value": -0.4252250000000001
+    },
+    {
+      "episode_id": "oanda:472791:ORDER_ACCEPTED:472791",
+      "system_id": "metadata_hgb",
+      "value": 190.5693411435782
+    },
+    {
+      "episode_id": "oanda:472791:ORDER_ACCEPTED:472791",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+      "system_id": "forecast",
+      "value": -0.7484148809896044
+    },
+    {
+      "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+      "system_id": "price_action",
+      "value": -0.00032805170041150244
+    },
+    {
+      "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+      "system_id": "metadata_hgb",
+      "value": -1440.6777588919304
+    },
+    {
+      "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+      "system_id": "forecast",
+      "value": -0.758462769384927
+    },
+    {
+      "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+      "system_id": "price_action",
+      "value": -0.0004419829965918535
+    },
+    {
+      "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+      "system_id": "metadata_hgb",
+      "value": 172.8591744214612
+    },
+    {
+      "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472831:ORDER_ACCEPTED:472831",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472831:ORDER_ACCEPTED:472831",
+      "system_id": "forecast",
+      "value": -0.300542926747162
+    },
+    {
+      "episode_id": "oanda:472831:ORDER_ACCEPTED:472831",
+      "system_id": "metadata_hgb",
+      "value": -1024.9104965423535
+    },
+    {
+      "episode_id": "oanda:472831:ORDER_ACCEPTED:472831",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472832:ORDER_ACCEPTED:472832",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472832:ORDER_ACCEPTED:472832",
+      "system_id": "forecast",
+      "value": -0.806
+    },
+    {
+      "episode_id": "oanda:472832:ORDER_ACCEPTED:472832",
+      "system_id": "metadata_hgb",
+      "value": -2018.4686011677152
+    },
+    {
+      "episode_id": "oanda:472832:ORDER_ACCEPTED:472832",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472833:ORDER_ACCEPTED:472833",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472833:ORDER_ACCEPTED:472833",
+      "system_id": "forecast",
+      "value": -0.5227262086669202
+    },
+    {
+      "episode_id": "oanda:472833:ORDER_ACCEPTED:472833",
+      "system_id": "metadata_hgb",
+      "value": -1101.504089696852
+    },
+    {
+      "episode_id": "oanda:472833:ORDER_ACCEPTED:472833",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472847:ORDER_ACCEPTED:472847",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472847:ORDER_ACCEPTED:472847",
+      "system_id": "forecast",
+      "value": -0.38640070921985814
+    },
+    {
+      "episode_id": "oanda:472847:ORDER_ACCEPTED:472847",
+      "system_id": "price_action",
+      "value": -0.00103834769924116
+    },
+    {
+      "episode_id": "oanda:472847:ORDER_ACCEPTED:472847",
+      "system_id": "metadata_hgb",
+      "value": -860.6353809983068
+    },
+    {
+      "episode_id": "oanda:472847:ORDER_ACCEPTED:472847",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472860:ORDER_ACCEPTED:472860",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472860:ORDER_ACCEPTED:472860",
+      "system_id": "forecast",
+      "value": -0.806
+    },
+    {
+      "episode_id": "oanda:472860:ORDER_ACCEPTED:472860",
+      "system_id": "metadata_hgb",
+      "value": -666.6809843802515
+    },
+    {
+      "episode_id": "oanda:472860:ORDER_ACCEPTED:472860",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472875:ORDER_ACCEPTED:472875",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472875:ORDER_ACCEPTED:472875",
+      "system_id": "forecast",
+      "value": -0.602
+    },
+    {
+      "episode_id": "oanda:472875:ORDER_ACCEPTED:472875",
+      "system_id": "price_action",
+      "value": -0.00048239903894871833
+    },
+    {
+      "episode_id": "oanda:472875:ORDER_ACCEPTED:472875",
+      "system_id": "metadata_hgb",
+      "value": -485.25299148330583
+    },
+    {
+      "episode_id": "oanda:472875:ORDER_ACCEPTED:472875",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+      "system_id": "forecast",
+      "value": -0.777
+    },
+    {
+      "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+      "system_id": "price_action",
+      "value": 0.0017028917600763933
+    },
+    {
+      "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+      "system_id": "metadata_hgb",
+      "value": 400.4253452787885
+    },
+    {
+      "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472888:ORDER_ACCEPTED:472888",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472888:ORDER_ACCEPTED:472888",
+      "system_id": "forecast",
+      "value": -0.777
+    },
+    {
+      "episode_id": "oanda:472888:ORDER_ACCEPTED:472888",
+      "system_id": "metadata_hgb",
+      "value": -1103.0891865510262
+    },
+    {
+      "episode_id": "oanda:472888:ORDER_ACCEPTED:472888",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472898:ORDER_ACCEPTED:472898",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472898:ORDER_ACCEPTED:472898",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472898:ORDER_ACCEPTED:472898",
+      "system_id": "metadata_hgb",
+      "value": -386.1669685363198
+    },
+    {
+      "episode_id": "oanda:472898:ORDER_ACCEPTED:472898",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472899:ORDER_ACCEPTED:472899",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472899:ORDER_ACCEPTED:472899",
+      "system_id": "forecast",
+      "value": -0.602
+    },
+    {
+      "episode_id": "oanda:472899:ORDER_ACCEPTED:472899",
+      "system_id": "price_action",
+      "value": -0.0002827173723410903
+    },
+    {
+      "episode_id": "oanda:472899:ORDER_ACCEPTED:472899",
+      "system_id": "metadata_hgb",
+      "value": -308.09197600397
+    },
+    {
+      "episode_id": "oanda:472899:ORDER_ACCEPTED:472899",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+      "system_id": "metadata_hgb",
+      "value": -943.2943771942013
+    },
+    {
+      "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472912:ORDER_ACCEPTED:472912",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472912:ORDER_ACCEPTED:472912",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472912:ORDER_ACCEPTED:472912",
+      "system_id": "metadata_hgb",
+      "value": 34.13877186508766
+    },
+    {
+      "episode_id": "oanda:472912:ORDER_ACCEPTED:472912",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+      "system_id": "forecast",
+      "value": -0.777
+    },
+    {
+      "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+      "system_id": "price_action",
+      "value": 0.00014729638352876476
+    },
+    {
+      "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+      "system_id": "metadata_hgb",
+      "value": -723.5348804634021
+    },
+    {
+      "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472924:ORDER_ACCEPTED:472924",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472924:ORDER_ACCEPTED:472924",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472924:ORDER_ACCEPTED:472924",
+      "system_id": "metadata_hgb",
+      "value": 122.54275215389629
+    },
+    {
+      "episode_id": "oanda:472924:ORDER_ACCEPTED:472924",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472926:ORDER_ACCEPTED:472926",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472926:ORDER_ACCEPTED:472926",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472926:ORDER_ACCEPTED:472926",
+      "system_id": "metadata_hgb",
+      "value": 122.54275215389629
+    },
+    {
+      "episode_id": "oanda:472926:ORDER_ACCEPTED:472926",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472930:ORDER_ACCEPTED:472930",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472930:ORDER_ACCEPTED:472930",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472930:ORDER_ACCEPTED:472930",
+      "system_id": "metadata_hgb",
+      "value": 122.54275215389629
+    },
+    {
+      "episode_id": "oanda:472930:ORDER_ACCEPTED:472930",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472932:ORDER_ACCEPTED:472932",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472932:ORDER_ACCEPTED:472932",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472932:ORDER_ACCEPTED:472932",
+      "system_id": "metadata_hgb",
+      "value": -642.8757217647852
+    },
+    {
+      "episode_id": "oanda:472932:ORDER_ACCEPTED:472932",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472943:ORDER_ACCEPTED:472943",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472943:ORDER_ACCEPTED:472943",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472943:ORDER_ACCEPTED:472943",
+      "system_id": "metadata_hgb",
+      "value": 370.83568406999177
+    },
+    {
+      "episode_id": "oanda:472943:ORDER_ACCEPTED:472943",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472945:ORDER_ACCEPTED:472945",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472945:ORDER_ACCEPTED:472945",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472945:ORDER_ACCEPTED:472945",
+      "system_id": "metadata_hgb",
+      "value": 122.54275215389629
+    },
+    {
+      "episode_id": "oanda:472945:ORDER_ACCEPTED:472945",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472951:ORDER_ACCEPTED:472951",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472951:ORDER_ACCEPTED:472951",
+      "system_id": "forecast",
+      "value": -0.2279140697729743
+    },
+    {
+      "episode_id": "oanda:472951:ORDER_ACCEPTED:472951",
+      "system_id": "metadata_hgb",
+      "value": -2005.9607151570076
+    },
+    {
+      "episode_id": "oanda:472951:ORDER_ACCEPTED:472951",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472956:ORDER_ACCEPTED:472956",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472956:ORDER_ACCEPTED:472956",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472956:ORDER_ACCEPTED:472956",
+      "system_id": "metadata_hgb",
+      "value": 68.59837247943071
+    },
+    {
+      "episode_id": "oanda:472956:ORDER_ACCEPTED:472956",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472958:ORDER_ACCEPTED:472958",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472958:ORDER_ACCEPTED:472958",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472958:ORDER_ACCEPTED:472958",
+      "system_id": "metadata_hgb",
+      "value": 68.59837247943071
+    },
+    {
+      "episode_id": "oanda:472958:ORDER_ACCEPTED:472958",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+      "system_id": "forecast",
+      "value": -0.2279140697729743
+    },
+    {
+      "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+      "system_id": "metadata_hgb",
+      "value": -1.796387288269516
+    },
+    {
+      "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472967:ORDER_ACCEPTED:472967",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472967:ORDER_ACCEPTED:472967",
+      "system_id": "forecast",
+      "value": -0.5676
+    },
+    {
+      "episode_id": "oanda:472967:ORDER_ACCEPTED:472967",
+      "system_id": "metadata_hgb",
+      "value": -714.7088746741427
+    },
+    {
+      "episode_id": "oanda:472967:ORDER_ACCEPTED:472967",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+      "system_id": "forecast",
+      "value": -0.6624750000000001
+    },
+    {
+      "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+      "system_id": "metadata_hgb",
+      "value": -986.9670552545435
+    },
+    {
+      "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+      "system_id": "forecast",
+      "value": -0.563
+    },
+    {
+      "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+      "system_id": "price_action",
+      "value": -7.289090447985351e-05
+    },
+    {
+      "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+      "system_id": "metadata_hgb",
+      "value": 8.6317182615047
+    },
+    {
+      "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+      "system_id": "forecast",
+      "value": -0.563
+    },
+    {
+      "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+      "system_id": "price_action",
+      "value": 2.6266412403848822e-05
+    },
+    {
+      "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+      "system_id": "metadata_hgb",
+      "value": -1596.1390655074795
+    },
+    {
+      "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+      "system_id": "price_action_hgb",
+      "value": -1.0
+    },
+    {
+      "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+      "system_id": "all_trades",
+      "value": 1.0
+    },
+    {
+      "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+      "system_id": "forecast",
+      "value": -0.563
+    },
+    {
+      "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+      "system_id": "price_action",
+      "value": 0.0003122316890649864
+    },
+    {
+      "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+      "system_id": "metadata_hgb",
+      "value": -459.8180186109769
+    },
+    {
+      "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+      "system_id": "price_action_hgb",
+      "value": 1.0
+    }
+  ],
+  "contract": "FULL_INFERENCE_ENSEMBLE_V1_SPARSE_CUBE",
+  "missing_cells": 4544,
+  "missing_representation": "absent sparse cell / null, never zero",
+  "source_table_sha": "af1156c004336970727baf8376eedbc864adce2107d5b541cca4b4765dfabc46"
+}

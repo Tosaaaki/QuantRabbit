@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "64d_validation_sum_checkpoint": true,
+    "full_251_sum_checkpoint": true,
+    "fused_251": true,
+    "hashes_match": true,
+    "holdout_unread": true,
+    "no_all_trades_fallback": true,
+    "no_profit_attribution": true,
+    "no_trade_without_constraints": true,
+    "outcomes_251": true,
+    "separate_outcome_boundary": true,
+    "unique_decisions": true
+  },
+  "ok": true,
+  "passed": 11,
+  "total": 11
+}

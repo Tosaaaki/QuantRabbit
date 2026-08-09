@@ -1,0 +1,12 @@
+{
+  "contract": "FULL_INFERENCE_ENSEMBLE_V1_RUN",
+  "holdout_read": false,
+  "outputs": {
+    "fused_decisions_v1.jsonl": "a0bc0ab7ff8457d931eafc759001d21c5e54e3d34525bbbbea30ba53df23b551",
+    "inference_cube_sparse_v1.json": "5a260edde5902a4a7a1a409c1b307e9ab8e73c76ea8f6ed1b5cb063fce1a1175",
+    "inference_table_v1.jsonl": "419ee684b9298869ab89046f9e852f99689f4b4bcdf63a2bb26b59c19518b2f3",
+    "outcome_table_v1.jsonl": "9272bdf5e7ae0fd50a92e9c7e1c518f070dc4bf7cccef48c2c1f944b64a73da1",
+    "utilization_report_v1.json": "3eb9a953068f15764c8a4b2967619ecd4737b338a61fff00fabee98f6a1022b8"
+  },
+  "preregister_sha256": "3c0b878114af93081fc9b191a24ae94e32becf980f1908a73296a500b441ca69"
+}
