@@ -1,0 +1,38 @@
+{
+  "dry_run": false,
+  "errors": [],
+  "generated_at_utc": "2026-08-09T12:44:48.688203Z",
+  "granularities": [
+    "S5"
+  ],
+  "max_candles_per_request": 4500,
+  "output_dir": "research/loss_close_paired_robustness/s5_cache/20260809T124448Z",
+  "pairs": [
+    "USD_JPY"
+  ],
+  "price": "BA",
+  "tasks": [
+    {
+      "compressed": true,
+      "dry_run": false,
+      "errors": [],
+      "from": "2026-06-29T11:00:00Z",
+      "granularity": "S5",
+      "pair": "USD_JPY",
+      "partial_path": null,
+      "path": "research/loss_close_paired_robustness/s5_cache/20260809T124448Z/USD_JPY/USD_JPY_S5_BA_20260629T110000Z_20260629T150000Z.jsonl.gz",
+      "price": "BA",
+      "published": true,
+      "requests": 1,
+      "rows": 2755,
+      "to": "2026-06-29T15:00:00Z",
+      "windows": 1
+    }
+  ],
+  "total_requests": 1,
+  "total_rows": 2755,
+  "window": {
+    "from": "2026-06-29T11:00:00Z",
+    "to": "2026-06-29T15:00:00Z"
+  }
+}

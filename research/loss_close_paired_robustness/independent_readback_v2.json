@@ -1,0 +1,6 @@
+{
+  "checks": 30,
+  "contract": "loss_close_robustness_independent_readback_v1",
+  "failed": 0,
+  "passed": true
+}

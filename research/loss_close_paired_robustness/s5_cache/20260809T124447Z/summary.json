@@ -1,0 +1,38 @@
+{
+  "dry_run": false,
+  "errors": [],
+  "generated_at_utc": "2026-08-09T12:44:47.753450Z",
+  "granularities": [
+    "S5"
+  ],
+  "max_candles_per_request": 4500,
+  "output_dir": "research/loss_close_paired_robustness/s5_cache/20260809T124447Z",
+  "pairs": [
+    "GBP_USD"
+  ],
+  "price": "BA",
+  "tasks": [
+    {
+      "compressed": true,
+      "dry_run": false,
+      "errors": [],
+      "from": "2026-06-25T14:00:00Z",
+      "granularity": "S5",
+      "pair": "GBP_USD",
+      "partial_path": null,
+      "path": "research/loss_close_paired_robustness/s5_cache/20260809T124447Z/GBP_USD/GBP_USD_S5_BA_20260625T140000Z_20260625T180000Z.jsonl.gz",
+      "price": "BA",
+      "published": true,
+      "requests": 1,
+      "rows": 2809,
+      "to": "2026-06-25T18:00:00Z",
+      "windows": 1
+    }
+  ],
+  "total_requests": 1,
+  "total_rows": 2809,
+  "window": {
+    "from": "2026-06-25T14:00:00Z",
+    "to": "2026-06-25T18:00:00Z"
+  }
+}

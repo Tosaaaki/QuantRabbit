@@ -1,0 +1,61 @@
+{
+  "contract": "historical_learning_admission_preregister_v1",
+  "frozen_at_utc": "2026-08-09T13:02:00Z",
+  "git_head": "f6dc4e808f0e7bf8055c02d97c3ded8fb15f5a6c",
+  "question": "Can causal historical features improve a trade/skip policy after actual execution costs without opening the forward holdout?",
+  "source_bindings": {
+    "execution_ledger_sha256": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+    "forecast_history_sha256": "771c4fce9c2f8782fe51c8068198fdc1870b22eceddf58157b01f66218fffe05",
+    "projection_ledger_sha256": "9b6f7582f44850e94238eadfc1d54f5ec7eb9743de2c685a746a323844423b0a",
+    "entry_thesis_ledger_sha256": "2ccbe49b00de30849cad3f5d8e8f1a61fae8d84d8b1d89b4d4a13c9de4ae5651"
+  },
+  "anchor_utc": "2026-07-09T07:46:03.151624347Z",
+  "windows": [
+    {"id": "INITIAL_16D", "from_utc": "2026-06-23T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "DOUBLE_32D", "from_utc": "2026-06-07T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "QUADRUPLE_64D", "from_utc": "2026-05-06T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"}
+  ],
+  "episode_contract": {
+    "feature_timestamp": "ORDER_ACCEPTED.ts_utc, or ORDER_REJECTED.ts_utc when no acceptance exists",
+    "executed_outcomes": ["TAKE_PROFIT_ORDER", "STOP_LOSS_ORDER", "MARKET_ORDER_TRADE_CLOSE", "MARKET_ORDER_MARGIN_CLOSEOUT", "OPEN_OR_UNRESOLVED"],
+    "nonexecuted_outcomes": ["CANCELED_UNFILLED", "REJECTED", "SKIP_NOT_LEDGERED"],
+    "future_label": "realized_pl_jpy + financing_jpy from a strictly later TRADE_CLOSED event",
+    "cost_interpretation": "actual realized label includes broker bid/ask spread and fill slippage; financing is explicit; explicit fee is zero; opportunity-cost and counterfactual skip labels are unavailable",
+    "no_fabrication": ["no M1 substitution", "no interpolation", "no label for unfilled/rejected/skip without complete executable intent and exact BA path"]
+  },
+  "causal_features": {
+    "categorical": ["pair", "side", "lane_id", "forecast_direction"],
+    "numeric": ["log_units", "tp_distance_bps", "sl_distance_bps", "hour_sin", "hour_cos", "weekday", "forecast_confidence", "forecast_age_min", "forecast_horizon_min", "forecast_alignment"],
+    "forecast_join": "latest same-pair forecast with timestamp_utc <= feature_timestamp; future forecasts forbidden",
+    "excluded": ["close price", "exit reason", "realized P/L", "financing", "projection resolution", "future candles", "post-entry thesis"]
+  },
+  "split": {
+    "method": "chronological 60/40 within each window on labeled executed episodes",
+    "purge": "remove TRAIN rows whose label close time reaches VALIDATION start minus embargo",
+    "embargo_seconds": 3600,
+    "holdout": "events strictly after anchor_utc; sealed for this run"
+  },
+  "models": {
+    "ALL_TRADES": "existing executed-cohort baseline",
+    "RULE_FORECAST": "trade only when confidence >= 0.60 and direction aligns with side",
+    "LOGISTIC": "LogisticRegression C=1.0 class_weight=balanced max_iter=2000; TRAIN class means convert probability to expected JPY",
+    "RIDGE": "Ridge alpha=1.0 predicts net JPY",
+    "HIST_GRADIENT_BOOSTING": "HistGradientBoostingRegressor learning_rate=0.05 max_iter=100 max_depth=3 min_samples_leaf=10 l2_regularization=1.0 random_state=20260809",
+    "selection_threshold": "predicted future net JPY > 0; no threshold tuning",
+    "hyperparameter_search": "none; Optuna forbidden in this admission run"
+  },
+  "acceptance": {
+    "minimum_labeled_train": 30,
+    "minimum_labeled_validation": 30,
+    "validation_net_jpy": "> 0",
+    "validation_profit_factor": "> 1",
+    "paired_bootstrap_lcb_jpy": "> 0 versus ALL_TRADES",
+    "max_drawdown": "<= 2% of initial-equity proxy",
+    "margin": "<= 92% gross utilization with no 50% closeout proxy",
+    "stability": "positive net in both sides, at least two pairs, and at least two independently observed volatility regimes",
+    "calibration": "Brier score reported for LOGISTIC; no accuracy-based adoption",
+    "all_entry_admission": "counterfactual labels must cover executed, unfilled, rejected, and skip episodes before any policy may be adopted"
+  },
+  "bootstrap": {"samples": 10000, "seed": 20260809},
+  "permissions": {"read_only": true, "holdout_used": false, "paper": false, "live": false, "broker_order": false, "deploy": false}
+}

@@ -1,0 +1,6 @@
+{
+  "checks": 12,
+  "contract": "historical_learning_independent_oracle_v1",
+  "failed": 0,
+  "passed": true
+}

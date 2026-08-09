@@ -1,0 +1,2556 @@
+{
+  "account_contract": {
+    "currency": "JPY",
+    "hedging_enabled": true,
+    "margin_rate": 0.04
+  },
+  "contract": "loss_close_paired_robustness_result_v1",
+  "events": [
+    {
+      "arms": {},
+      "baseline_sl_trigger_utc": "2026-05-06T21:05:00Z",
+      "blockers": [
+        "UNWIND_S5_CANDLE_MISSING"
+      ],
+      "close_at_utc": "2026-05-06T21:05:04.976191771Z",
+      "fill_at_utc": "2026-05-06T17:25:15.850070092Z",
+      "pair": "AUD_JPY",
+      "side": "LONG",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_JPY/AUD_JPY_S5_BA_20260506T160000Z_20260507T020000Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470261",
+      "units": 1000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "baseline_sl_trigger_utc": "2026-05-06T17:42:45Z",
+      "blockers": [
+        "UNWIND_S5_CANDLE_MISSING"
+      ],
+      "close_at_utc": "2026-05-06T17:44:04.096680205Z",
+      "fill_at_utc": "2026-05-06T17:30:04.056720774Z",
+      "pair": "EUR_USD",
+      "side": "LONG",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/EUR_USD/EUR_USD_S5_BA_20260506T160000Z_20260506T200000Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470270",
+      "units": 1000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "baseline_sl_trigger_utc": "2026-05-06T21:05:00Z",
+      "blockers": [
+        "UNWIND_S5_CANDLE_MISSING"
+      ],
+      "close_at_utc": "2026-05-06T21:05:04.976191771Z",
+      "fill_at_utc": "2026-05-06T17:30:07.918109073Z",
+      "pair": "AUD_JPY",
+      "side": "LONG",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_JPY/AUD_JPY_S5_BA_20260506T160000Z_20260507T020000Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470276",
+      "units": 1000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "baseline_sl_trigger_utc": "2026-05-07T00:11:45Z",
+      "blockers": [
+        "ENTRY_S5_CANDLE_MISSING"
+      ],
+      "close_at_utc": "2026-05-07T00:11:48.346351904Z",
+      "fill_at_utc": "2026-05-06T23:28:00.313903454Z",
+      "pair": "AUD_JPY",
+      "side": "LONG",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_JPY/AUD_JPY_S5_BA_20260506T160000Z_20260507T020000Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470297",
+      "units": 1000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "blockers": [
+        "NO_S5_PROTECTION_FIRST_TOUCH"
+      ],
+      "close_at_utc": "2026-05-13T02:03:35.578962238Z",
+      "fill_at_utc": "2026-05-13T01:57:31.833779245Z",
+      "pair": "AUD_JPY",
+      "side": "SHORT",
+      "source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470984",
+      "units": 13000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "blockers": [
+        "NO_S5_PROTECTION_FIRST_TOUCH"
+      ],
+      "close_at_utc": "2026-05-13T02:19:25.063604296Z",
+      "fill_at_utc": "2026-05-13T02:04:11.058323658Z",
+      "pair": "AUD_JPY",
+      "side": "SHORT",
+      "source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "470992",
+      "units": 13000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {},
+      "blockers": [
+        "NO_S5_PROTECTION_FIRST_TOUCH"
+      ],
+      "close_at_utc": "2026-05-13T03:16:24.384717922Z",
+      "fill_at_utc": "2026-05-13T02:20:08.198573576Z",
+      "pair": "EUR_USD",
+      "side": "LONG",
+      "source": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "status": "BLOCKED",
+      "trade_id": "471000",
+      "units": 8000,
+      "window_splits": {
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 41.85000000000798,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 8722.592999999999,
+          "mean_reversion_failure": true,
+          "net_jpy": -314.5500000000077,
+          "paired_delta_jpy": -33.750000000007674,
+          "partial_fill_net_jpy": {
+            "0.5": -297.6750000000038,
+            "0.75": -306.11250000000575,
+            "1.0": -314.5500000000077
+          },
+          "path_gap_count": 103,
+          "peak_broker_margin_jpy": 34890.371999999996,
+          "peak_double_gross_margin_jpy": 43622.955,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 58.590000000011166,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 12211.630199999998,
+          "mean_reversion_failure": true,
+          "net_jpy": -328.05000000001075,
+          "paired_delta_jpy": -47.25000000001074,
+          "partial_fill_net_jpy": {
+            "0.5": -304.42500000000535,
+            "0.75": -316.2375000000081,
+            "1.0": -328.05000000001075
+          },
+          "path_gap_count": 103,
+          "peak_broker_margin_jpy": 34890.371999999996,
+          "peak_double_gross_margin_jpy": 47112.7914,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 156.60000000013383,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 11914.802017502669,
+          "mean_reversion_failure": false,
+          "net_jpy": -156.60000000017436,
+          "paired_delta_jpy": 124.19999999982565,
+          "partial_fill_net_jpy": {
+            "0.5": -218.7000000000872,
+            "0.75": -187.65000000013077,
+            "1.0": -156.60000000017436
+          },
+          "path_gap_count": 28,
+          "peak_broker_margin_jpy": 34890.371999999996,
+          "peak_double_gross_margin_jpy": 69780.74399999999,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 243.00000000008595,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 34890.371999999996,
+          "mean_reversion_failure": false,
+          "net_jpy": -356.4000000000135,
+          "paired_delta_jpy": -75.6000000000135,
+          "partial_fill_net_jpy": {
+            "0.5": -288.89999999999816,
+            "0.75": -322.65000000000583,
+            "1.0": -356.4000000000135
+          },
+          "path_gap_count": 103,
+          "peak_broker_margin_jpy": 34890.371999999996,
+          "peak_double_gross_margin_jpy": 69780.74399999999,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 11914.802017502669,
+          "mean_reversion_failure": false,
+          "net_jpy": -280.8,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -280.8
+          },
+          "path_gap_count": 103,
+          "peak_broker_margin_jpy": 34890.371999999996,
+          "peak_double_gross_margin_jpy": 34890.371999999996,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-22T02:09:05Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-22T02:14:53.203731570Z",
+      "fill_at_utc": "2026-06-22T01:54:23.830560478Z",
+      "fixed_unwind_utc": "2026-06-22T03:09:05Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "s5_gap_count_entry_to_unwind": 103,
+      "side": "SHORT",
+      "source": "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472775",
+      "units": 5400,
+      "window_splits": {
+        "DOUBLE_32D": "TRAIN",
+        "QUADRUPLE_64D": "TRAIN"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 40.95000000001647,
+            "slippage_stress": 3.1500000000150408
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 10186.722000000002,
+          "mean_reversion_failure": true,
+          "net_jpy": -359.10000000004544,
+          "paired_delta_jpy": -18.900000000045452,
+          "partial_fill_net_jpy": {
+            "0.5": -349.6500000000227,
+            "0.75": -354.3750000000341,
+            "1.0": -359.10000000004544
+          },
+          "path_gap_count": 53,
+          "peak_broker_margin_jpy": 40746.888000000006,
+          "peak_double_gross_margin_jpy": 50948.41500000001,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 57.330000000023055,
+            "slippage_stress": 4.410000000021057
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 14261.410800000001,
+          "mean_reversion_failure": true,
+          "net_jpy": -366.6600000000637,
+          "paired_delta_jpy": -26.4600000000637,
+          "partial_fill_net_jpy": {
+            "0.5": -353.4300000000318,
+            "0.75": -360.04500000004776,
+            "1.0": -366.6600000000637
+          },
+          "path_gap_count": 53,
+          "peak_broker_margin_jpy": 40746.888000000006,
+          "peak_double_gross_margin_jpy": 55024.28820000001,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 176.399999999947,
+            "slippage_stress": 12.600000000060163
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 31152.006862884187,
+          "mean_reversion_failure": false,
+          "net_jpy": -182.69999999996418,
+          "paired_delta_jpy": 157.5000000000358,
+          "partial_fill_net_jpy": {
+            "0.5": -261.4499999999821,
+            "0.75": -222.07499999997313,
+            "1.0": -182.69999999996418
+          },
+          "path_gap_count": 25,
+          "peak_broker_margin_jpy": 40746.888000000006,
+          "peak_double_gross_margin_jpy": 81493.77600000001,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 252.00000000012892,
+            "slippage_stress": 18.900000000090245
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 40746.888000000006,
+          "mean_reversion_failure": false,
+          "net_jpy": -447.30000000016616,
+          "paired_delta_jpy": -107.10000000016618,
+          "partial_fill_net_jpy": {
+            "0.5": -409.5000000000752,
+            "0.75": -428.40000000012066,
+            "1.0": -447.30000000016616
+          },
+          "path_gap_count": 53,
+          "peak_broker_margin_jpy": 40746.888000000006,
+          "peak_double_gross_margin_jpy": 81493.77600000001,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 6.3000000000300815
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 31152.006862884187,
+          "mean_reversion_failure": false,
+          "net_jpy": -340.2,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -340.2
+          },
+          "path_gap_count": 53,
+          "peak_broker_margin_jpy": 40746.888000000006,
+          "peak_double_gross_margin_jpy": 40746.888000000006,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-22T07:23:55Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-22T07:23:59.208384537Z",
+      "fill_at_utc": "2026-06-22T06:38:06.919063840Z",
+      "fixed_unwind_utc": "2026-06-22T08:23:55Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "s5_gap_count_entry_to_unwind": 53,
+      "side": "SHORT",
+      "source": "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472792",
+      "units": 6300,
+      "window_splits": {
+        "DOUBLE_32D": "TRAIN",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 98.40425769230458,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 10077.17912403415,
+          "mean_reversion_failure": true,
+          "net_jpy": -1986.3081645299312,
+          "paired_delta_jpy": -280.6343645299312,
+          "partial_fill_net_jpy": {
+            "0.5": -1845.9909822649656,
+            "0.75": -1916.1495733974484,
+            "1.0": -1986.3081645299312
+          },
+          "path_gap_count": 63,
+          "peak_broker_margin_jpy": 40308.7164961366,
+          "peak_double_gross_margin_jpy": 50466.44132739297,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 137.7659607692264,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 14108.050773647808,
+          "mean_reversion_failure": true,
+          "net_jpy": -2098.5619103419035,
+          "paired_delta_jpy": -392.8881103419035,
+          "partial_fill_net_jpy": {
+            "0.5": -1902.1178551709518,
+            "0.75": -2000.3398827564276,
+            "1.0": -2098.5619103419035
+          },
+          "path_gap_count": 63,
+          "peak_broker_margin_jpy": 40308.7164961366,
+          "peak_double_gross_margin_jpy": 54503.75663358441,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 393.61703076921833,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 28369.09808421209,
+          "mean_reversion_failure": false,
+          "net_jpy": -335.30339658128787,
+          "paired_delta_jpy": 1370.3704034187122,
+          "partial_fill_net_jpy": {
+            "0.5": -1020.488598290644,
+            "0.75": -677.8959974359659,
+            "1.0": -335.30339658128787
+          },
+          "path_gap_count": 21,
+          "peak_broker_margin_jpy": 40308.7164961366,
+          "peak_double_gross_margin_jpy": 80617.4329922732,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 597.7147504273795,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 40308.7164961366,
+          "mean_reversion_failure": false,
+          "net_jpy": -1909.7715196581612,
+          "paired_delta_jpy": -204.09771965816117,
+          "partial_fill_net_jpy": {
+            "0.5": -1348.5027905982988,
+            "0.75": -1629.13715512823,
+            "1.0": -1909.7715196581612
+          },
+          "path_gap_count": 63,
+          "peak_broker_margin_jpy": 40308.7164961366,
+          "peak_double_gross_margin_jpy": 80617.4329922732,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 28369.09808421209,
+          "mean_reversion_failure": false,
+          "net_jpy": -1705.6738,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -1705.6738
+          },
+          "path_gap_count": 63,
+          "peak_broker_margin_jpy": 40308.7164961366,
+          "peak_double_gross_margin_jpy": 40308.7164961366,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-25T16:03:05Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-25T16:03:07.875325616Z",
+      "fill_at_utc": "2026-06-25T15:20:54.211096958Z",
+      "fixed_unwind_utc": "2026-06-25T17:03:05Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 161.98231718898325,
+      "s5_gap_count_entry_to_unwind": 63,
+      "side": "SHORT",
+      "source": "logs/replay/oanda_prediction_truth/20260715T121546Z/AUD_USD/AUD_USD_S5_BA_20260625T000000Z_20260625T235505Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472834",
+      "units": 9000,
+      "window_splits": {
+        "DOUBLE_32D": "TRAIN",
+        "INITIAL_16D": "TRAIN",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 87.47856756756232,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 11554.825293581664,
+          "mean_reversion_failure": true,
+          "net_jpy": -1371.2265466216413,
+          "paired_delta_jpy": -400.2144466216413,
+          "partial_fill_net_jpy": {
+            "0.5": -1171.1193233108206,
+            "0.75": -1271.172934966231,
+            "1.0": -1371.2265466216413
+          },
+          "path_gap_count": 33,
+          "peak_broker_margin_jpy": 46219.301174326654,
+          "peak_double_gross_margin_jpy": 57815.897483921835,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 122.46999459458726,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 16176.755411014328,
+          "mean_reversion_failure": true,
+          "net_jpy": -1531.3123252702978,
+          "paired_delta_jpy": -560.3002252702978,
+          "partial_fill_net_jpy": {
+            "0.5": -1251.162212635149,
+            "0.75": -1391.2372689527233,
+            "1.0": -1531.3123252702978
+          },
+          "path_gap_count": 33,
+          "peak_broker_margin_jpy": 46219.301174326654,
+          "peak_double_gross_margin_jpy": 62441.16928263559,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 297.4271297297508,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 47154.75277896514,
+          "mean_reversion_failure": false,
+          "net_jpy": -236.19213243243757,
+          "paired_delta_jpy": 734.8199675675625,
+          "partial_fill_net_jpy": {
+            "0.5": -603.6021162162187,
+            "0.75": -419.89712432432816,
+            "1.0": -236.19213243243757
+          },
+          "path_gap_count": 11,
+          "peak_broker_margin_jpy": 46219.301174326654,
+          "peak_double_gross_margin_jpy": 92438.60234865331,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 524.8714054053739,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 46219.301174326654,
+          "mean_reversion_failure": false,
+          "net_jpy": -1145.9692351351248,
+          "paired_delta_jpy": -174.95713513512476,
+          "partial_fill_net_jpy": {
+            "0.5": -345.54034189184205,
+            "0.75": -745.7547885134834,
+            "1.0": -1145.9692351351248
+          },
+          "path_gap_count": 33,
+          "peak_broker_margin_jpy": 46219.301174326654,
+          "peak_double_gross_margin_jpy": 92438.60234865331,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 0.0
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 47154.75277896514,
+          "mean_reversion_failure": false,
+          "net_jpy": -971.0121,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -971.0121
+          },
+          "path_gap_count": 33,
+          "peak_broker_margin_jpy": 46219.301174326654,
+          "peak_double_gross_margin_jpy": 46219.301174326654,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-25T16:23:20Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-25T16:23:25.111589668Z",
+      "fill_at_utc": "2026-06-25T15:22:12.249696813Z",
+      "fixed_unwind_utc": "2026-06-25T17:23:20Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 161.9973473473555,
+      "s5_gap_count_entry_to_unwind": 33,
+      "side": "SHORT",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T124447Z/GBP_USD/GBP_USD_S5_BA_20260625T140000Z_20260625T180000Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472837",
+      "units": 5400,
+      "window_splits": {
+        "DOUBLE_32D": "TRAIN",
+        "INITIAL_16D": "TRAIN",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 60.00000000005912,
+            "slippage_stress": 4.000000000019099
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 12950.960000000001,
+          "mean_reversion_failure": true,
+          "net_jpy": -570.0000000000514,
+          "paired_delta_jpy": -106.00000000005139,
+          "partial_fill_net_jpy": {
+            "0.5": -517.0000000000257,
+            "0.75": -543.5000000000385,
+            "1.0": -570.0000000000514
+          },
+          "path_gap_count": 52,
+          "peak_broker_margin_jpy": 51803.840000000004,
+          "peak_double_gross_margin_jpy": 64773.8,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 84.00000000008276,
+            "slippage_stress": 5.600000000026739
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 18131.344,
+          "mean_reversion_failure": true,
+          "net_jpy": -612.4000000000719,
+          "paired_delta_jpy": -148.40000000007194,
+          "partial_fill_net_jpy": {
+            "0.5": -538.200000000036,
+            "0.75": -575.300000000054,
+            "1.0": -612.4000000000719
+          },
+          "path_gap_count": 52,
+          "peak_broker_margin_jpy": 51803.840000000004,
+          "peak_double_gross_margin_jpy": 69955.70400000001,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 248.0000000000473,
+            "slippage_stress": 16.000000000076398
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 60090.388894559466,
+          "mean_reversion_failure": false,
+          "net_jpy": -232.0000000000291,
+          "paired_delta_jpy": 231.9999999999709,
+          "partial_fill_net_jpy": {
+            "0.5": -348.00000000001455,
+            "0.75": -290.0000000000218,
+            "1.0": -232.0000000000291
+          },
+          "path_gap_count": 41,
+          "peak_broker_margin_jpy": 51803.840000000004,
+          "peak_double_gross_margin_jpy": 103607.68000000001,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 344.0000000002783,
+            "slippage_stress": 24.000000000114596
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 51803.840000000004,
+          "mean_reversion_failure": false,
+          "net_jpy": -592.0000000003256,
+          "paired_delta_jpy": -128.0000000003256,
+          "partial_fill_net_jpy": {
+            "0.5": -380.0000000002228,
+            "0.75": -486.0000000002742,
+            "1.0": -592.0000000003256
+          },
+          "path_gap_count": 52,
+          "peak_broker_margin_jpy": 51803.840000000004,
+          "peak_double_gross_margin_jpy": 103607.68000000001,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 8.000000000038199
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 60090.388894559466,
+          "mean_reversion_failure": false,
+          "net_jpy": -464.0,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -464.0
+          },
+          "path_gap_count": 52,
+          "peak_broker_margin_jpy": 51803.840000000004,
+          "peak_double_gross_margin_jpy": 51803.840000000004,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-29T13:24:10Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-29T13:36:19.304951345Z",
+      "fill_at_utc": "2026-06-29T12:26:43.448489820Z",
+      "fixed_unwind_utc": "2026-06-29T14:24:10Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "s5_gap_count_entry_to_unwind": 52,
+      "side": "SHORT",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T124448Z/USD_JPY/USD_JPY_S5_BA_20260629T110000Z_20260629T150000Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472900",
+      "units": 8000,
+      "window_splits": {
+        "DOUBLE_32D": "VALIDATION",
+        "INITIAL_16D": "TRAIN",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 77.17500000001039,
+            "slippage_stress": 12.599999999970635
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 11633.3595,
+          "mean_reversion_failure": false,
+          "net_jpy": -629.999999999962,
+          "paired_delta_jpy": 214.20000000003802,
+          "partial_fill_net_jpy": {
+            "0.5": -737.099999999981,
+            "0.75": -683.5499999999715,
+            "1.0": -629.999999999962
+          },
+          "path_gap_count": 2,
+          "peak_broker_margin_jpy": 46533.438,
+          "peak_double_gross_margin_jpy": 58200.030000000006,
+          "trend_continuation": true
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 108.04500000001454,
+            "slippage_stress": 17.63999999995889
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 16286.7033,
+          "mean_reversion_failure": false,
+          "net_jpy": -544.319999999947,
+          "paired_delta_jpy": 299.8800000000531,
+          "partial_fill_net_jpy": {
+            "0.5": -694.2599999999735,
+            "0.75": -619.2899999999603,
+            "1.0": -544.319999999947
+          },
+          "path_gap_count": 2,
+          "peak_broker_margin_jpy": 46533.438,
+          "peak_double_gross_margin_jpy": 62856.03240000001,
+          "trend_continuation": true
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 315.0000000000716,
+            "slippage_stress": 50.39999999988254
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 25338.223487205545,
+          "mean_reversion_failure": false,
+          "net_jpy": -270.8999999999485,
+          "paired_delta_jpy": 573.3000000000516,
+          "partial_fill_net_jpy": {
+            "0.5": -557.5499999999743,
+            "0.75": -414.22499999996137,
+            "1.0": -270.8999999999485
+          },
+          "path_gap_count": 0,
+          "peak_broker_margin_jpy": 46533.438,
+          "peak_double_gross_margin_jpy": 93066.876,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 453.6000000000172,
+            "slippage_stress": 75.59999999982381
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 46533.438,
+          "mean_reversion_failure": false,
+          "net_jpy": -1064.699999999712,
+          "paired_delta_jpy": -220.49999999971192,
+          "partial_fill_net_jpy": {
+            "0.5": -1493.099999999788,
+            "0.75": -1278.89999999975,
+            "1.0": -1064.699999999712
+          },
+          "path_gap_count": 2,
+          "peak_broker_margin_jpy": 46533.438,
+          "peak_double_gross_margin_jpy": 93066.876,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 25.19999999994127
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 25338.223487205545,
+          "mean_reversion_failure": false,
+          "net_jpy": -844.2,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -844.2
+          },
+          "path_gap_count": 2,
+          "peak_broker_margin_jpy": 46533.438,
+          "peak_double_gross_margin_jpy": 46533.438,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-06-29T13:56:40Z",
+      "blockers": [],
+      "close_at_utc": "2026-06-29T13:56:50.160731599Z",
+      "fill_at_utc": "2026-06-29T13:24:09.901432536Z",
+      "fixed_unwind_utc": "2026-06-29T14:56:40Z",
+      "pair": "EUR_JPY",
+      "quote_to_jpy": 1.0,
+      "s5_gap_count_entry_to_unwind": 2,
+      "side": "SHORT",
+      "source": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472903",
+      "units": 6300,
+      "window_splits": {
+        "DOUBLE_32D": "VALIDATION",
+        "INITIAL_16D": "EMBARGO",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    },
+    {
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 153.9169722457638,
+            "slippage_stress": 34.2037716101416
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 15724.955972631908,
+          "mean_reversion_failure": true,
+          "net_jpy": -3175.2501311440315,
+          "paired_delta_jpy": -484.5534311440315,
+          "partial_fill_net_jpy": {
+            "0.5": -2932.9734155720157,
+            "0.75": -3054.1117733580236,
+            "1.0": -3175.2501311440315
+          },
+          "path_gap_count": 2304,
+          "peak_broker_margin_jpy": 62899.82389052763,
+          "peak_double_gross_margin_jpy": 78506.20678824426,
+          "trend_continuation": false
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 215.48376114406932,
+            "slippage_stress": 47.885280254198236
+          },
+          "dual_unwind_status": "SINGLE_REVERSE_LEG",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_CLOSE_AND_REVERSE_OPEN",
+          "incremental_margin_hours_jpy": 22014.938361684668,
+          "mean_reversion_failure": true,
+          "net_jpy": -3369.071503601644,
+          "paired_delta_jpy": -678.3748036016441,
+          "partial_fill_net_jpy": {
+            "0.5": -3029.8841018008216,
+            "0.75": -3199.4778027012326,
+            "1.0": -3369.071503601644
+          },
+          "path_gap_count": 2304,
+          "peak_broker_margin_jpy": 62899.82389052763,
+          "peak_double_gross_margin_jpy": 84786.70333130381,
+          "trend_continuation": false
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": false,
+            "intrinsic_spread_estimate": 638.4704033897318,
+            "slippage_stress": 136.8150864405664
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "SIMULTANEOUS_INITIAL_HEDGE_ENTRY_S5_UNRESOLVED",
+          "incremental_margin_hours_jpy": 368126.75801572215,
+          "mean_reversion_failure": false,
+          "net_jpy": -729.6804610166917,
+          "paired_delta_jpy": 1961.0162389833083,
+          "partial_fill_net_jpy": {
+            "0.5": -1710.188580508346,
+            "0.75": -1219.9345207625188,
+            "1.0": -729.6804610166917
+          },
+          "path_gap_count": 2203,
+          "peak_broker_margin_jpy": 62899.82389052763,
+          "peak_double_gross_margin_jpy": 125799.64778105526,
+          "trend_continuation": false
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 889.2980618644411,
+            "slippage_stress": 205.2226296608496
+          },
+          "dual_unwind_status": "UNRESOLVED_SAME_S5_DUAL_UNWIND",
+          "fill_order_status": "UNRESOLVED_SAME_S5_SL_TRIGGER_AND_HEDGE_OPEN",
+          "incremental_margin_hours_jpy": 62899.82389052763,
+          "mean_reversion_failure": false,
+          "net_jpy": -3169.5495025422356,
+          "paired_delta_jpy": -478.8528025422356,
+          "partial_fill_net_jpy": {
+            "0.5": -2200.442640254173,
+            "0.75": -2684.996071398204,
+            "1.0": -3169.5495025422356
+          },
+          "path_gap_count": 2304,
+          "peak_broker_margin_jpy": 62899.82389052763,
+          "peak_double_gross_margin_jpy": 125799.64778105526,
+          "trend_continuation": false
+        },
+        "CONTROL_CURRENT_SL": {
+          "cost_breakdown_jpy": {
+            "explicit_fee": 0.0,
+            "financing_known": true,
+            "intrinsic_spread_estimate": 0.0,
+            "slippage_stress": 68.4075432202832
+          },
+          "dual_unwind_status": "NOT_APPLICABLE",
+          "fill_order_status": "ACTUAL_LEDGER_FILL",
+          "incremental_margin_hours_jpy": 368126.75801572215,
+          "mean_reversion_failure": false,
+          "net_jpy": -2690.6967,
+          "paired_delta_jpy": 0.0,
+          "partial_fill_net_jpy": {
+            "1.0": -2690.6967
+          },
+          "path_gap_count": 2304,
+          "peak_broker_margin_jpy": 62899.82389052763,
+          "peak_double_gross_margin_jpy": 62899.82389052763,
+          "trend_continuation": false
+        }
+      },
+      "baseline_sl_trigger_utc": "2026-07-02T00:02:15Z",
+      "blockers": [],
+      "close_at_utc": "2026-07-02T00:02:17.030648499Z",
+      "fill_at_utc": "2026-07-01T18:11:07.713647263Z",
+      "fixed_unwind_utc": "2026-07-02T01:02:15Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 162.8751029055747,
+      "s5_gap_count_entry_to_unwind": 2304,
+      "side": "LONG",
+      "source": "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_USD/AUD_USD_S5_BA_20260701T170000Z_20260702T020000Z.jsonl.gz",
+      "status": "CALCULATED_DIAGNOSTIC",
+      "trade_id": "472952",
+      "units": 14000,
+      "window_splits": {
+        "DOUBLE_32D": "VALIDATION",
+        "INITIAL_16D": "VALIDATION",
+        "QUADRUPLE_64D": "VALIDATION"
+      }
+    }
+  ],
+  "final_decisions": {
+    "A_SL_REVERSE_STOP_025": "REJECT",
+    "A_SL_REVERSE_STOP_035": "REJECT",
+    "B_INITIAL_EQUAL_HEDGE": "REJECT",
+    "B_SL_EQUAL_HEDGE": "REJECT"
+  },
+  "holdout_used": false,
+  "ledger_sha256": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+  "overall_decision": "REJECT",
+  "permissions": {
+    "broker_order": false,
+    "deploy": false,
+    "live": false,
+    "paper": false,
+    "read_only": true
+  },
+  "preregister_sha256": "1de5eb95b73fb6141e3f1be5c907577a90c78a40ce6be903e6d735ea939fa4c6",
+  "proof_limitations": [
+    "STOP-loss-trigger cohort does not establish entry-strategy profitability",
+    "S5 cannot resolve ordering of same-candle close/open or dual-unwind fills",
+    "missing OANDA S5 intervals are not interpolated and make drawdown proof incomplete",
+    "ruin is a deterministic floor proxy, not an estimated probability"
+  ],
+  "source_hashes": {
+    "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz": "c46612964813f1b5fdd8235b8703e0d70e1be784412479edbc7126c5484d8f81",
+    "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz": "222e0b7c39dc6fa101654268be19393a41ebbbad2c8c7c54315844aa461ba8f6",
+    "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz": "26af73c453465260c98205b88d8100a18dbde3e088626a412d0860d8eeb08dac",
+    "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz": "b634f396889a2b41ae13f5e0957ea705639dad0c16e1c2b3be08ba3ebc98d5ed",
+    "logs/replay/oanda_prediction_truth/20260715T121546Z/AUD_USD/AUD_USD_S5_BA_20260625T000000Z_20260625T235505Z.jsonl.gz": "5a800c3b2f0d8d91f7e6edea0a8fae616e98edfe3c2e213f2d446e4ec1602423",
+    "research/loss_close_paired_robustness/s5_cache/20260809T124447Z/GBP_USD/GBP_USD_S5_BA_20260625T140000Z_20260625T180000Z.jsonl.gz": "be00b8d02da16beb014dfef3d0d11d70b1494ba7427e228875f2998cc3df8d62",
+    "research/loss_close_paired_robustness/s5_cache/20260809T124448Z/USD_JPY/USD_JPY_S5_BA_20260629T110000Z_20260629T150000Z.jsonl.gz": "b8ce319861a5cef6a1e25f9c15d73f1de70cc9986672ce016873cf962ae6da49",
+    "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_JPY/AUD_JPY_S5_BA_20260506T160000Z_20260507T020000Z.jsonl.gz": "d43a55ee3288ea8748f51f80b211c131951a882282dfb10a9146c04d087e83f9",
+    "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/AUD_USD/AUD_USD_S5_BA_20260701T170000Z_20260702T020000Z.jsonl.gz": "03b79c913279a5b0e80af67390bd1a5b7258d31dcc771c050f63eee014170347",
+    "research/loss_close_paired_robustness/s5_cache/20260809T125525Z/EUR_USD/EUR_USD_S5_BA_20260506T160000Z_20260506T200000Z.jsonl.gz": "d510c428eed080e72b88e9e7010e3bc32684175c943a4e02cf6082e392c454d9"
+  },
+  "windows": [
+    {
+      "arm_decisions": {
+        "A_SL_REVERSE_STOP_025": "REJECT",
+        "A_SL_REVERSE_STOP_035": "REJECT",
+        "B_INITIAL_EQUAL_HEDGE": "REJECT",
+        "B_SL_EQUAL_HEDGE": "REJECT"
+      },
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 245.88282525992602,
+              "slippage_stress": 4.000000000019099
+            },
+            "coverage": 0.6,
+            "expectancy_jpy": -1309.1782370505414,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.26650456800113,
+            "initial_equity_proxy_jpy": 115119.64444444445,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3927.534711151624,
+            "mean_reversion_failure_count": 3,
+            "net_jpy": -3927.534711151624,
+            "paired_bootstrap_95pct_ci": [
+              -400.2144466216413,
+              -106.00000000005139
+            ],
+            "paired_delta_mean_jpy": -262.2829370505413,
+            "paired_lcb_jpy": -400.2144466216413,
+            "peak_broker_margin_jpy": 51803.840000000004,
+            "peak_double_gross_margin_jpy": 64773.8,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 3,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 153.9169722457638,
+              "slippage_stress": 34.2037716101416
+            },
+            "coverage": 0.2,
+            "expectancy_jpy": -3175.2501311440315,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.16517005865591,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3175.2501311440315,
+            "mean_reversion_failure_count": 1,
+            "net_jpy": -3175.2501311440315,
+            "paired_bootstrap_95pct_ci": [
+              -484.5534311440315,
+              -484.5534311440315
+            ],
+            "paired_delta_mean_jpy": -484.5534311440315,
+            "paired_lcb_jpy": -484.5534311440315,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 78506.20678824426,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 1,
+            "trend_continuation_count": 0
+          }
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 344.23595536389644,
+              "slippage_stress": 5.600000000026739
+            },
+            "coverage": 0.6,
+            "expectancy_jpy": -1414.0914118707578,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.76782493344123,
+            "initial_equity_proxy_jpy": 115119.64444444445,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4242.274235612273,
+            "mean_reversion_failure_count": 3,
+            "net_jpy": -4242.2742356122735,
+            "paired_bootstrap_95pct_ci": [
+              -560.3002252702978,
+              -148.40000000007194
+            ],
+            "paired_delta_mean_jpy": -367.19611187075776,
+            "paired_lcb_jpy": -560.3002252702978,
+            "peak_broker_margin_jpy": 51803.840000000004,
+            "peak_double_gross_margin_jpy": 69955.70400000001,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 3,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 215.48376114406932,
+              "slippage_stress": 47.885280254198236
+            },
+            "coverage": 0.2,
+            "expectancy_jpy": -3369.071503601644,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.658383663348395,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3369.071503601644,
+            "mean_reversion_failure_count": 1,
+            "net_jpy": -3369.071503601644,
+            "paired_bootstrap_95pct_ci": [
+              -678.3748036016441,
+              -678.3748036016441
+            ],
+            "paired_delta_mean_jpy": -678.3748036016441,
+            "paired_lcb_jpy": -678.3748036016441,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 84786.70333130381,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 1,
+            "trend_continuation_count": 0
+          }
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 939.0441604990165,
+              "slippage_stress": 16.000000000076398
+            },
+            "coverage": 0.6,
+            "expectancy_jpy": -267.83184300458487,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 115119.64444444445,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 803.4955290137545,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -803.4955290137545,
+            "paired_bootstrap_95pct_ci": [
+              231.9999999999709,
+              1370.3704034187122
+            ],
+            "paired_delta_mean_jpy": 779.0634569954152,
+            "paired_lcb_jpy": 231.9999999999709,
+            "peak_broker_margin_jpy": 51803.840000000004,
+            "peak_double_gross_margin_jpy": 103607.68000000001,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 3,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 638.4704033897318,
+              "slippage_stress": 136.8150864405664
+            },
+            "coverage": 0.2,
+            "expectancy_jpy": -729.6804610166917,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": false,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 729.6804610166917,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -729.6804610166917,
+            "paired_bootstrap_95pct_ci": [
+              1961.0162389833083,
+              1961.0162389833083
+            ],
+            "paired_delta_mean_jpy": 1961.0162389833083,
+            "paired_lcb_jpy": 1961.0162389833083,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 1,
+            "trend_continuation_count": 0
+          }
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 1466.5861558330316,
+              "slippage_stress": 24.000000000114596
+            },
+            "coverage": 0.6,
+            "expectancy_jpy": -1215.9135849312038,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 115119.64444444445,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3647.740754793612,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3647.740754793612,
+            "paired_bootstrap_95pct_ci": [
+              -204.09771965816117,
+              -128.0000000003256
+            ],
+            "paired_delta_mean_jpy": -169.01828493120385,
+            "paired_lcb_jpy": -204.09771965816117,
+            "peak_broker_margin_jpy": 51803.840000000004,
+            "peak_double_gross_margin_jpy": 103607.68000000001,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 3,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 889.2980618644411,
+              "slippage_stress": 205.2226296608496
+            },
+            "coverage": 0.2,
+            "expectancy_jpy": -3169.5495025422356,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3169.5495025422356,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3169.5495025422356,
+            "paired_bootstrap_95pct_ci": [
+              -478.8528025422356,
+              -478.8528025422356
+            ],
+            "paired_delta_mean_jpy": -478.8528025422356,
+            "paired_lcb_jpy": -478.8528025422356,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 1,
+            "trend_continuation_count": 0
+          }
+        },
+        "CONTROL_CURRENT_SL": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 8.000000000038199
+            },
+            "coverage": 0.6,
+            "expectancy_jpy": -1046.8953000000001,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 115119.64444444445,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3140.6859,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3140.6859,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 51803.840000000004,
+            "peak_double_gross_margin_jpy": 51803.840000000004,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 3,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 68.4075432202832
+            },
+            "coverage": 0.2,
+            "expectancy_jpy": -2690.6967,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 2690.6967,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -2690.6967,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 62899.82389052763,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 1,
+            "trend_continuation_count": 0
+          }
+        }
+      },
+      "blocked_events": 0,
+      "calculated_events": 5,
+      "cohort_events": 5,
+      "from_utc": "2026-06-23T07:46:03.151624347Z",
+      "id": "INITIAL_16D",
+      "split_counts": {
+        "EMBARGO": 1,
+        "TRAIN": 3,
+        "VALIDATION": 1
+      },
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    },
+    {
+      "arm_decisions": {
+        "A_SL_REVERSE_STOP_025": "REJECT",
+        "A_SL_REVERSE_STOP_035": "REJECT",
+        "B_INITIAL_EQUAL_HEDGE": "REJECT",
+        "B_SL_EQUAL_HEDGE": "REJECT"
+      },
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 268.6828252598914,
+              "slippage_stress": 3.1500000000150408
+            },
+            "coverage": 0.5714285714285714,
+            "expectancy_jpy": -1007.7961777879065,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.29066906406738,
+            "initial_equity_proxy_jpy": 102709.55816517034,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4031.1847111516254,
+            "mean_reversion_failure_count": 4,
+            "net_jpy": -4031.184711151626,
+            "paired_bootstrap_95pct_ci": [
+              -340.42440557578624,
+              -26.325000000026563
+            ],
+            "paired_delta_mean_jpy": -183.37470278790641,
+            "paired_lcb_jpy": -340.42440557578624,
+            "peak_broker_margin_jpy": 46219.301174326654,
+            "peak_double_gross_margin_jpy": 57815.897483921835,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 4,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 291.0919722458333,
+              "slippage_stress": 50.803771610131335
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1458.4167103813484,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.16517005865591,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4375.250131144045,
+            "mean_reversion_failure_count": 2,
+            "net_jpy": -4375.250131144045,
+            "paired_bootstrap_95pct_ci": [
+              -484.5534311440315,
+              214.20000000003802
+            ],
+            "paired_delta_mean_jpy": -125.45114371468162,
+            "paired_lcb_jpy": -484.5534311440315,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 78506.20678824426,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 3,
+            "trend_continuation_count": 1
+          }
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 376.1559553638479,
+              "slippage_stress": 4.410000000021057
+            },
+            "coverage": 0.5714285714285714,
+            "expectancy_jpy": -1081.146058903069,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.79392258919278,
+            "initial_equity_proxy_jpy": 102709.55816517034,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4324.584235612276,
+            "mean_reversion_failure_count": 4,
+            "net_jpy": -4324.584235612276,
+            "paired_bootstrap_95pct_ci": [
+              -476.59416780610064,
+              -36.85500000003722
+            ],
+            "paired_delta_mean_jpy": -256.72458390306895,
+            "paired_lcb_jpy": -476.59416780610064,
+            "peak_broker_margin_jpy": 46219.301174326654,
+            "peak_double_gross_margin_jpy": 62441.16928263559,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 4,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 407.52876114416665,
+              "slippage_stress": 71.12528025418386
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1508.597167867221,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.658383663348395,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4525.791503601663,
+            "mean_reversion_failure_count": 2,
+            "net_jpy": -4525.791503601663,
+            "paired_bootstrap_95pct_ci": [
+              -678.3748036016441,
+              299.8800000000531
+            ],
+            "paired_delta_mean_jpy": -175.63160120055431,
+            "paired_lcb_jpy": -678.3748036016441,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 84786.70333130381,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 3,
+            "trend_continuation_count": 1
+          }
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 1024.04416049905,
+              "slippage_stress": 12.600000000060163
+            },
+            "coverage": 0.5714285714285714,
+            "expectancy_jpy": -227.698882253466,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 102709.55816517034,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 910.795529013864,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -910.795529013864,
+            "paired_bootstrap_95pct_ci": [
+              140.84999999993073,
+              1067.152802564043
+            ],
+            "paired_delta_mean_jpy": 596.722592746534,
+            "paired_lcb_jpy": 140.84999999993073,
+            "peak_broker_margin_jpy": 46219.301174326654,
+            "peak_double_gross_margin_jpy": 92438.60234865331,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 4,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 1201.4704033898506,
+              "slippage_stress": 203.21508644052534
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -410.8601536722231,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": false,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 1232.5804610166692,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -1232.5804610166692,
+            "paired_bootstrap_95pct_ci": [
+              231.9999999999709,
+              1961.0162389833083
+            ],
+            "paired_delta_mean_jpy": 922.1054129944436,
+            "paired_lcb_jpy": 231.9999999999709,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 3,
+            "trend_continuation_count": 0
+          }
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 1617.5861558329684,
+              "slippage_stress": 18.900000000090245
+            },
+            "coverage": 0.5714285714285714,
+            "expectancy_jpy": -964.8601886983664,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 102709.55816517034,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3859.440754793466,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3859.4407547934657,
+            "paired_bootstrap_95pct_ci": [
+              -189.52742739664296,
+              -91.35000000008984
+            ],
+            "paired_delta_mean_jpy": -140.4387136983664,
+            "paired_lcb_jpy": -189.52742739664296,
+            "peak_broker_margin_jpy": 46219.301174326654,
+            "peak_double_gross_margin_jpy": 92438.60234865331,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 4,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 1686.8980618647365,
+              "slippage_stress": 304.82262966078804
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1608.7498341807577,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 4826.249502542273,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -4826.249502542273,
+            "paired_bootstrap_95pct_ci": [
+              -478.8528025422356,
+              -128.0000000003256
+            ],
+            "paired_delta_mean_jpy": -275.784267514091,
+            "paired_lcb_jpy": -478.8528025422356,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 3,
+            "trend_continuation_count": 0
+          }
+        },
+        "CONTROL_CURRENT_SL": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 6.3000000000300815
+            },
+            "coverage": 0.5714285714285714,
+            "expectancy_jpy": -824.421475,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 102709.55816517034,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3297.6859,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3297.6859,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 46219.301174326654,
+            "peak_double_gross_margin_jpy": 46219.301174326654,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 4,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 101.60754322026267
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1332.9655666666667,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 3998.8967000000002,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -3998.8967000000002,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 62899.82389052763,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 3,
+            "trend_continuation_count": 0
+          }
+        }
+      },
+      "blocked_events": 0,
+      "calculated_events": 7,
+      "cohort_events": 7,
+      "from_utc": "2026-06-07T07:46:03.151624347Z",
+      "id": "DOUBLE_32D",
+      "split_counts": {
+        "EMBARGO": 0,
+        "TRAIN": 4,
+        "VALIDATION": 3
+      },
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    },
+    {
+      "arm_decisions": {
+        "A_SL_REVERSE_STOP_025": "REJECT",
+        "A_SL_REVERSE_STOP_035": "REJECT",
+        "B_INITIAL_EQUAL_HEDGE": "REJECT",
+        "B_SL_EQUAL_HEDGE": "REJECT"
+      },
+      "arms": {
+        "A_SL_REVERSE_STOP_025": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 41.85000000000798,
+              "slippage_stress": 0.0
+            },
+            "coverage": 0.07142857142857142,
+            "expectancy_jpy": -314.5500000000077,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.26288464336237,
+            "initial_equity_proxy_jpy": 77534.15999999999,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 314.5500000000077,
+            "mean_reversion_failure_count": 1,
+            "net_jpy": -314.5500000000077,
+            "paired_bootstrap_95pct_ci": [
+              -33.750000000007674,
+              -33.750000000007674
+            ],
+            "paired_delta_mean_jpy": -33.750000000007674,
+            "paired_lcb_jpy": -33.750000000007674,
+            "peak_broker_margin_jpy": 34890.371999999996,
+            "peak_double_gross_margin_jpy": 43622.955,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 1,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_025",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 517.9247975057167,
+              "slippage_stress": 53.953771610146376
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1348.6474737159438,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 56.16517005865591,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 8091.8848422956635,
+            "mean_reversion_failure_count": 5,
+            "net_jpy": -8091.884842295663,
+            "paired_bootstrap_95pct_ci": [
+              -364.77503369217203,
+              10.405211823367702
+            ],
+            "paired_delta_mean_jpy": -179.3503737159438,
+            "paired_lcb_jpy": -364.77503369217203,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 78506.20678824426,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 6,
+            "trend_continuation_count": 1
+          }
+        },
+        "A_SL_REVERSE_STOP_035": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 58.590000000011166,
+              "slippage_stress": 0.0
+            },
+            "coverage": 0.07142857142857142,
+            "expectancy_jpy": -328.05000000001075,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.76391541483137,
+            "initial_equity_proxy_jpy": 77534.15999999999,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 328.05000000001075,
+            "mean_reversion_failure_count": 1,
+            "net_jpy": -328.05000000001075,
+            "paired_bootstrap_95pct_ci": [
+              -47.25000000001074,
+              -47.25000000001074
+            ],
+            "paired_delta_mean_jpy": -47.25000000001074,
+            "paired_lcb_jpy": -47.25000000001074,
+            "peak_broker_margin_jpy": 34890.371999999996,
+            "peak_double_gross_margin_jpy": 47112.7914,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 1,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "A_SL_REVERSE_STOP_035",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 725.0947165080033,
+              "slippage_stress": 75.53528025420492
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1420.3876232023213,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 60.658383663348395,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 8522.325739213928,
+            "mean_reversion_failure_count": 5,
+            "net_jpy": -8522.325739213928,
+            "paired_bootstrap_95pct_ci": [
+              -510.6850471690409,
+              14.567296552714765
+            ],
+            "paired_delta_mean_jpy": -251.09052320232132,
+            "paired_lcb_jpy": -510.6850471690409,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 84786.70333130381,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 6,
+            "trend_continuation_count": 1
+          }
+        },
+        "B_INITIAL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 156.60000000013383,
+              "slippage_stress": 0.0
+            },
+            "coverage": 0.07142857142857142,
+            "expectancy_jpy": -156.60000000017436,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 77534.15999999999,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 156.60000000017436,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -156.60000000017436,
+            "paired_bootstrap_95pct_ci": [
+              124.19999999982565,
+              124.19999999982565
+            ],
+            "paired_delta_mean_jpy": 124.19999999982565,
+            "paired_lcb_jpy": 124.19999999982565,
+            "peak_broker_margin_jpy": 34890.371999999996,
+            "peak_double_gross_margin_jpy": 69780.74399999999,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 1,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_INITIAL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 2068.9145638887667,
+              "slippage_stress": 215.8150864405855
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -331.1293316717265,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": false,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": true,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 1986.7759900303588,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -1986.7759900303588,
+            "paired_bootstrap_95pct_ci": [
+              360.26999459459375,
+              1370.0398479893618
+            ],
+            "paired_delta_mean_jpy": 838.1677683282735,
+            "paired_lcb_jpy": 360.26999459459375,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 6,
+            "trend_continuation_count": 0
+          }
+        },
+        "B_SL_EQUAL_HEDGE": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 243.00000000008595,
+              "slippage_stress": 0.0
+            },
+            "coverage": 0.07142857142857142,
+            "expectancy_jpy": -356.4000000000135,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 77534.15999999999,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 356.4000000000135,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -356.4000000000135,
+            "paired_bootstrap_95pct_ci": [
+              -75.6000000000135,
+              -75.6000000000135
+            ],
+            "paired_delta_mean_jpy": -75.6000000000135,
+            "paired_lcb_jpy": -75.6000000000135,
+            "peak_broker_margin_jpy": 34890.371999999996,
+            "peak_double_gross_margin_jpy": 69780.74399999999,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 1,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "B_SL_EQUAL_HEDGE",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 3061.484217697619,
+              "slippage_stress": 323.7226296608783
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1388.2150428892876,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": false,
+              "fill_order_resolved": false,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 90.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 8329.290257335724,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -8329.290257335726,
+            "paired_bootstrap_95pct_ci": [
+              -330.7764012710495,
+              -140.79285585594346
+            ],
+            "paired_delta_mean_jpy": -218.91794288928753,
+            "paired_lcb_jpy": -330.7764012710495,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 125799.64778105526,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 6,
+            "trend_continuation_count": 0
+          }
+        },
+        "CONTROL_CURRENT_SL": {
+          "TRAIN": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 0.0
+            },
+            "coverage": 0.07142857142857142,
+            "expectancy_jpy": -280.8,
+            "gates": {
+              "drawdown_within_daily_risk": true,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 77534.15999999999,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 280.8,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -280.8,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 34890.371999999996,
+            "peak_double_gross_margin_jpy": 34890.371999999996,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "TRAIN",
+            "trades": 1,
+            "trend_continuation_count": 0
+          },
+          "VALIDATION": {
+            "accepted": false,
+            "arm": "CONTROL_CURRENT_SL",
+            "cost_breakdown_jpy": {
+              "explicit_fee": 0.0,
+              "intrinsic_spread_estimate": 0.0,
+              "slippage_stress": 107.90754322029275
+            },
+            "coverage": 0.42857142857142855,
+            "expectancy_jpy": -1169.2971,
+            "gates": {
+              "drawdown_within_daily_risk": false,
+              "dual_unwind_complete": true,
+              "fill_order_resolved": true,
+              "financing_complete": true,
+              "margin_within_cap": true,
+              "minimum_events": false,
+              "net_positive": false,
+              "no_margin_closeout_proxy": true,
+              "no_ruin_floor_breach_proxy": true,
+              "paired_lcb_positive": false,
+              "partial_fill_stress_positive": false,
+              "path_complete": false,
+              "profit_factor_above_one": false
+            },
+            "gross_margin_utilization_pct": 45.0,
+            "initial_equity_proxy_jpy": 139777.38642339472,
+            "margin_closeout_proxy": false,
+            "max_drawdown_jpy": 7015.7826000000005,
+            "mean_reversion_failure_count": 0,
+            "net_jpy": -7015.7826000000005,
+            "paired_bootstrap_95pct_ci": [
+              0.0,
+              0.0
+            ],
+            "paired_delta_mean_jpy": 0.0,
+            "paired_lcb_jpy": 0.0,
+            "peak_broker_margin_jpy": 62899.82389052763,
+            "peak_double_gross_margin_jpy": 62899.82389052763,
+            "profit_factor": 0.0,
+            "ruin_floor_breach_proxy": false,
+            "split": "VALIDATION",
+            "trades": 6,
+            "trend_continuation_count": 0
+          }
+        }
+      },
+      "blocked_events": 7,
+      "calculated_events": 7,
+      "cohort_events": 14,
+      "from_utc": "2026-05-06T07:46:03.151624347Z",
+      "id": "QUADRUPLE_64D",
+      "split_counts": {
+        "EMBARGO": 0,
+        "TRAIN": 8,
+        "VALIDATION": 6
+      },
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    }
+  ]
+}

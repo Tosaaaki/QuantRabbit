@@ -1,0 +1,169 @@
+{
+  "contract": "loss_close_paired_robustness_preregister_v1",
+  "preregistered_at_jst": "2026-08-09 21:42:29 JST",
+  "repository": "/Users/tossaki/App/QuantRabbit",
+  "git_commit": "f6dc4e808f0e7bf8055c02d97c3ded8fb15f5a6c",
+  "source_bindings": {
+    "execution_ledger_path": "data/execution_ledger.db",
+    "execution_ledger_sha256": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+    "stage1_report_path": "research/loss_close_price_action_sweep/preholdout_stage1_report.json",
+    "stage1_report_sha256": "4567a3205a092a509bd4ae8a247c624c5e3d1d02c00537703cd4c3794186c64d",
+    "checkpoint_tests": 41
+  },
+  "claim_boundary": {
+    "claim": "paired read-only comparison of current SL close against separately defined hedge/reverse-stop alternatives",
+    "always_profit_claim_allowed": false,
+    "profit_until_positive_tuning_allowed": false,
+    "single_positive_window_adoption_allowed": false,
+    "live_or_paper_permission": false,
+    "broker_order_or_deploy_permission": false
+  },
+  "cohort": {
+    "source": "execution_ledger ORDER_FILLED joined to the frozen ORDER_ACCEPTED TP/SL and a resolved TRADE_CLOSED STOP_LOSS_ORDER",
+    "same_entry_tp_sl_required": true,
+    "outcome_conditioning_note": "This is the SL-trigger diagnostic cohort. It is not an entry-strategy profitability cohort.",
+    "anchor_rule": "maximum fill_at among every resolved ledger trade with frozen accepted TP and SL, without filtering on outcome",
+    "anchor_utc": "2026-07-09T07:46:03.151624347Z",
+    "windows": [
+      {
+        "id": "INITIAL_16D",
+        "from_utc": "2026-06-23T07:46:03.151624347Z",
+        "to_utc": "2026-07-09T07:46:03.151624347Z"
+      },
+      {
+        "id": "DOUBLE_32D",
+        "from_utc": "2026-06-07T07:46:03.151624347Z",
+        "to_utc": "2026-07-09T07:46:03.151624347Z"
+      },
+      {
+        "id": "QUADRUPLE_64D",
+        "from_utc": "2026-05-06T07:46:03.151624347Z",
+        "to_utc": "2026-07-09T07:46:03.151624347Z"
+      }
+    ],
+    "split_rule": "chronological first 60 percent TRAIN and final 40 percent VALIDATION; events in the 3600-second boundary embargo are excluded",
+    "minimum_events_per_split": 30,
+    "holdout": "sealed forward-only events strictly after anchor_utc; may be opened once only after every preregistered TRAIN and VALIDATION gate passes"
+  },
+  "arms": [
+    {
+      "id": "CONTROL_CURRENT_SL",
+      "definition": "original position closes at the frozen SL; actual ledger fill is the economic control"
+    },
+    {
+      "id": "A_SL_REVERSE_STOP_025",
+      "definition": "close original at SL and open opposite 0.25 units at the same SL trigger; fixed 3600-second unwind"
+    },
+    {
+      "id": "A_SL_REVERSE_STOP_035",
+      "definition": "close original at SL and open opposite 0.35 units at the same SL trigger; fixed 3600-second unwind"
+    },
+    {
+      "id": "B_INITIAL_EQUAL_HEDGE",
+      "definition": "retain original and open equal opposite units at initial entry; dual unwind at the control close",
+      "structural_null": "price P/L is locked; before non-spread cost the maximum is zero only under zero spread"
+    },
+    {
+      "id": "B_SL_EQUAL_HEDGE",
+      "definition": "retain original and open equal opposite units at the SL trigger; fixed 3600-second dual unwind",
+      "structural_null": "loss is locked at the trigger and cannot recover while both equal legs remain; later changes are costs only"
+    }
+  ],
+  "data_contract": {
+    "price_truth": "OANDA S5 bid/ask complete candles or approved historical tick only",
+    "read_only_history_allowed": true,
+    "m1_substitution_allowed": false,
+    "interpolation_or_synthetic_gap_fill_allowed": false,
+    "missing_s5": "record as missing; endpoint economics may be diagnostic only when executable endpoint exists, but any path gap makes DD/fill-order proof incomplete and blocks adoption",
+    "first_touch": "must be an unambiguous executable-side SL touch; same-candle TP and SL blocks the event",
+    "entry_and_unwind": "must bind to observed executable bid/ask ranges; no best-price selection",
+    "partial_fill_stress_ratios": [1.0, 0.75, 0.5],
+    "same_s5_fill_order": "conservative adverse ordering; unresolved ordering blocks adoption",
+    "max_run_owned_bytes": 1073741824
+  },
+  "cost_contract": {
+    "spread": "intrinsic executable bid/ask on every leg",
+    "fee_jpy": 0.0,
+    "fee_reason": "current OANDA FX account cost surface is spread-based; any nonzero broker fee discovered later is additive and cannot improve an arm",
+    "slippage": "event-specific observed adverse control SL slippage is charged per unit to each counterfactual entry/unwind leg; zero or favorable observed slippage is floored at zero",
+    "financing": "ledger financing is included in control; counterfactual rollover financing must be known or bounded non-favorably, otherwise adoption is blocked",
+    "opportunity_cost": "report peak incremental gross margin and margin-hours; no unverified positive benefit is credited",
+    "margin_rate": 0.04,
+    "margin_rate_source": "fresh read-only OANDA account summary",
+    "hedging_enabled": true,
+    "max_margin_utilization_pct": 92.0,
+    "margin_stress": "report both broker longest-leg margin and double-gross-leg margin"
+  },
+  "metrics": [
+    "trades",
+    "coverage",
+    "net_jpy",
+    "profit_factor",
+    "expectancy_jpy",
+    "max_drawdown_jpy",
+    "peak_broker_margin_jpy",
+    "peak_double_gross_margin_jpy",
+    "ruin_floor_breach_proxy",
+    "margin_closeout_proxy",
+    "cost_breakdown",
+    "paired_delta_mean_jpy",
+    "paired_bootstrap_95pct_ci",
+    "paired_lcb_jpy",
+    "trend_continuation_count",
+    "mean_reversion_failure_count",
+    "partial_fill_and_fill_order_status",
+    "dual_unwind_status"
+  ],
+  "statistics": {
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 20260809,
+    "unit": "trade-level paired net JPY delta against CONTROL_CURRENT_SL",
+    "small_sample_rule": "metrics are diagnostic and LCB cannot support adoption below 30 events in either split"
+  },
+  "risk_proxies": {
+    "initial_equity_proxy_jpy": "window peak CONTROL_CURRENT_SL broker margin divided by the existing 45 percent same-pair margin concentration cap",
+    "drawdown_limit_jpy": "2 percent of initial_equity_proxy_jpy, matching the RiskPolicy daily_risk_pct default",
+    "ruin_floor_jpy": "10 percent of initial_equity_proxy_jpy",
+    "margin_closeout": "equity at or below 50 percent of the arm peak broker margin",
+    "gross_margin_utilization": "peak_double_gross_margin_jpy divided by initial_equity_proxy_jpy; must be at most 92 percent",
+    "interpretation": "deterministic stress proxies only; no ruin probability is estimated"
+  },
+  "acceptance": {
+    "required_in_every_validation_window": [
+      "after_cost_net_jpy > 0",
+      "profit_factor > 1",
+      "paired_lcb_jpy > 0",
+      "minimum_events_per_split satisfied",
+      "complete cost inputs",
+      "no unresolved fill order or partial-fill failure",
+      "no incomplete dual unwind",
+      "no S5/tick path gap for DD",
+      "max_drawdown_jpy no worse than control",
+      "no ruin or margin-closeout proxy breach",
+      "margin constraints satisfied"
+    ],
+    "decision": "ACCEPT only if all arms claimed for adoption pass all applicable gates; otherwise REJECT the failing arm without hiding positive subwindows"
+  },
+  "refinement": [
+    {
+      "attempt": 1,
+      "applies_to": "A_SL_REVERSE_STOP_025 and A_SL_REVERSE_STOP_035 only",
+      "single_changed_variable": "require the already-frozen price-action-against-inventory gate",
+      "frozen_gate": {
+        "frames_seconds": [60],
+        "structure_bars": 12,
+        "regime_bars": 24,
+        "breakout_bars": 4,
+        "acceptance_bars": 2,
+        "attack_tolerance_ratio": 0.08
+      }
+    },
+    {
+      "attempt": 2,
+      "applies_to": "attempt-1 survivors only",
+      "single_changed_variable": "fixed unwind seconds changes from 3600 to 1800",
+      "all_other_variables_frozen": true
+    }
+  ],
+  "independent_recalculation": "a separate standard-library calculator must recompute aggregate net, PF, expectancy, DD and paired CI from the sealed per-event rows before final decision"
+}
