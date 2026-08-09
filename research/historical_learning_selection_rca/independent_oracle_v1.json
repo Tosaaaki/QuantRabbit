@@ -1,0 +1,6 @@
+{
+  "checks": 24,
+  "contract": "selection_rca_independent_oracle_v1",
+  "failed": [],
+  "passed": 24
+}

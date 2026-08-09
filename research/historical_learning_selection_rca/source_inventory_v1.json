@@ -1,0 +1,161 @@
+{
+  "entry_thesis_to_anchor": {
+    "assessment": "trade_id join exists, but timestamp causality is checked per episode; post-feature rows are not features",
+    "rows": 37
+  },
+  "execution_events_to_anchor": {
+    "GATEWAY_ORDER_BLOCKED": {
+      "count": 1,
+      "max_utc": "2026-05-06T11:43:48.372457+00:00",
+      "min_utc": "2026-05-06T11:43:48.372457+00:00"
+    },
+    "GATEWAY_ORDER_NO_ACTION": {
+      "count": 2,
+      "max_utc": "2026-07-02T04:05:19.735859+00:00",
+      "min_utc": "2026-07-02T03:57:37.458543+00:00"
+    },
+    "GATEWAY_ORDER_STAGED": {
+      "count": 1,
+      "max_utc": "2026-06-22T01:22:45.557072+00:00",
+      "min_utc": "2026-06-22T01:22:45.557072+00:00"
+    },
+    "GATEWAY_POSITION_NO_ACTION": {
+      "count": 6,
+      "max_utc": "2026-05-17T23:03:50.691645+00:00",
+      "min_utc": "2026-05-06T16:28:26.214156+00:00"
+    },
+    "GATEWAY_TRADE_CLOSE_RECONCILED": {
+      "count": 101,
+      "max_utc": "2026-07-09T03:33:35.634212633Z",
+      "min_utc": "2026-05-07T01:47:20.094363596Z"
+    },
+    "GATEWAY_TRADE_CLOSE_SENT": {
+      "count": 1,
+      "max_utc": "2026-06-08T16:38:25.784636+00:00",
+      "min_utc": "2026-06-08T16:38:25.784636+00:00"
+    },
+    "OANDA_TRANSACTION": {
+      "count": 61,
+      "max_utc": "2026-07-08T21:00:00.000000000Z",
+      "min_utc": "2026-05-06T21:00:00.000000000Z"
+    },
+    "ORDER_ACCEPTED": {
+      "count": 526,
+      "max_utc": "2026-07-09T07:13:03.089238274Z",
+      "min_utc": "2026-05-06T17:25:14.059575882Z"
+    },
+    "ORDER_CANCELED": {
+      "count": 837,
+      "max_utc": "2026-07-09T05:11:37.196310598Z",
+      "min_utc": "2026-05-06T16:52:01.517044439Z"
+    },
+    "ORDER_FILLED": {
+      "count": 252,
+      "max_utc": "2026-07-09T07:46:03.151624347Z",
+      "min_utc": "2026-05-06T17:25:15.850070092Z"
+    },
+    "ORDER_REJECTED": {
+      "count": 23,
+      "max_utc": "2026-06-19T04:58:22.501723692Z",
+      "min_utc": "2026-05-07T00:35:10.282128669Z"
+    },
+    "PROTECTION_CREATED": {
+      "count": 814,
+      "max_utc": "2026-07-09T07:46:03.151624347Z",
+      "min_utc": "2026-05-06T17:25:15.850070092Z"
+    },
+    "TRADE_CLOSED": {
+      "count": 255,
+      "max_utc": "2026-07-09T05:11:37.196310598Z",
+      "min_utc": "2026-05-06T16:52:01.517044439Z"
+    },
+    "TRADE_REDUCED": {
+      "count": 2,
+      "max_utc": "2026-05-14T05:37:54.542972759Z",
+      "min_utc": "2026-05-14T04:55:17.573916217Z"
+    }
+  },
+  "forecast_history_to_anchor": {
+    "first_utc": "2026-05-14T15:15:47.094834Z",
+    "last_utc": "2026-07-08T14:16:34.338658Z",
+    "rows": 2791
+  },
+  "gateway_receipts_to_anchor": {
+    "assessment": "sparse receipts are admissible evidence but not a complete decision opportunity stream",
+    "count": 8,
+    "episode_ids_joined_by_explicit_order_id": 14,
+    "explicit_no_action_count": 4,
+    "status_counts": {
+      "ACCEPTED": 1,
+      "BLOCKED": 1,
+      "NO_ACTION": 4,
+      "SENT": 1,
+      "STAGED": 1
+    }
+  },
+  "mutable_snapshots": [
+    {
+      "append_only": false,
+      "generated_at_utc": "2026-07-09T17:23:29.209414+00:00",
+      "historical_cohort_usable": false,
+      "path": "data/order_intents.json",
+      "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+      "sha256": "a82c550a98aa0646f4ac1751412bbf0c27749564a1c011039f507f321cab9c12"
+    },
+    {
+      "append_only": false,
+      "generated_at_utc": "2026-05-04T03:51:00.814127+00:00",
+      "historical_cohort_usable": true,
+      "path": "data/candidate_intents.json",
+      "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+      "sha256": "ba752a374b1f63be0c98bc8d669f13798cbba5dc4ce4638ffac69cced095545f"
+    },
+    {
+      "append_only": false,
+      "generated_at_utc": "2026-07-02T04:06:23.927041+00:00",
+      "historical_cohort_usable": true,
+      "path": "data/trader_decision.json",
+      "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+      "sha256": "ed98a573ff4dfe2c65d57b562ea0ad649c0bd7ea7225804c20c3689ddc6647ac"
+    },
+    {
+      "append_only": false,
+      "generated_at_utc": "2026-07-09T17:32:08.446559+00:00",
+      "historical_cohort_usable": false,
+      "path": "data/gpt_trader_decision.json",
+      "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+      "sha256": "b733d9fa96d312d9e990441e7127e01e18e21dbade94e0de6a8ae60f8a884920"
+    },
+    {
+      "append_only": false,
+      "generated_at_utc": "2026-07-06T15:07:56Z",
+      "historical_cohort_usable": true,
+      "path": "data/scout_execution_receipt.json",
+      "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+      "sha256": "e78768c94a610c07da641bba667596863a2720fcb06464b1cb8c0421b4a85457"
+    }
+  ],
+  "projection_ledger_to_anchor": {
+    "episode_join_status": "NO_STABLE_ORDER_OR_EPISODE_ID; not joined to the 549 cohort",
+    "first_utc": "2026-05-14T06:18:35.933790Z",
+    "forbidden_post_outcome_fields": [
+      "resolution_status",
+      "resolved_at_utc",
+      "resolution_evidence"
+    ],
+    "last_utc": "2026-07-08T14:16:34.338658Z",
+    "rows": 17991,
+    "usable_feature_fields": [
+      "pair",
+      "signal_name",
+      "direction",
+      "lead_time_min",
+      "confidence",
+      "entry_price",
+      "predicted_target_price",
+      "predicted_invalidation_price",
+      "regime_at_emission"
+    ]
+  },
+  "skip_ledger_status": "MISSING_APPEND_ONLY_COMPLETE_DECISION_LEDGER"
+}

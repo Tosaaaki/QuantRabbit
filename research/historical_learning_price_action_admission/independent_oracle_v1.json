@@ -1,0 +1,6 @@
+{
+  "checks": 15,
+  "contract": "price_action_admission_independent_oracle_v1",
+  "failed": [],
+  "passed": 15
+}

@@ -1,0 +1,2569 @@
+{
+  "candidate_stability": {
+    "A_COVERAGE_BINDING": {
+      "all_evaluable_accepted": false,
+      "evaluable_windows": 2,
+      "final_decision": "REJECT",
+      "positive_incremental_windows": 0,
+      "positive_lcb_windows": 0
+    },
+    "B_COST_AWARE_ABSTAIN": {
+      "all_evaluable_accepted": false,
+      "evaluable_windows": 2,
+      "final_decision": "REJECT",
+      "positive_incremental_windows": 0,
+      "positive_lcb_windows": 0
+    },
+    "C_PAIR_SIDE_CALIBRATION": {
+      "all_evaluable_accepted": false,
+      "evaluable_windows": 2,
+      "final_decision": "REJECT",
+      "positive_incremental_windows": 0,
+      "positive_lcb_windows": 0
+    }
+  },
+  "contract": "historical_learning_selection_rca_result_v1",
+  "frozen_bindings_verified": {
+    "data/entry_thesis_ledger.jsonl": "2ccbe49b00de30849cad3f5d8e8f1a61fae8d84d8b1d89b4d4a13c9de4ae5651",
+    "data/execution_ledger.db": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+    "data/forecast_history.jsonl": "771c4fce9c2f8782fe51c8068198fdc1870b22eceddf58157b01f66218fffe05",
+    "data/projection_ledger.jsonl": "9b6f7582f44850e94238eadfc1d54f5ec7eb9743de2c685a746a323844423b0a",
+    "research/historical_learning_admission/admission_report_v1.json": "5a5ddaca413b3b1db6352e9f35afcece417e996cf58feede0c2356c5f857264a",
+    "research/historical_learning_admission/all_entry_episodes_v1.jsonl": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "research/historical_learning_admission/preregister_v1.json": "39da302c5a74c0f429f7d128577af97c6c5ff381cd4046a2db4c73e1cb70cf0c"
+  },
+  "holdout_used": false,
+  "missingness": {
+    "categorical_associations": {
+      "episode_status": {
+        "categories": {
+          "ACCEPTED_UNRESOLVED": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 107
+          },
+          "CANCELED_UNFILLED": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 167
+          },
+          "EXECUTED_LABELED": {
+            "availability_rate": 1.0,
+            "available": 251,
+            "missing": 0
+          },
+          "EXECUTED_OPEN_OR_INVALID": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 1
+          },
+          "REJECTED": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 23
+          }
+        },
+        "chi_square": 549.0,
+        "cramers_v_bias_corrected": 0.997253999392984,
+        "p_value": 1.6837837766229073e-117
+      },
+      "forecast_present": {
+        "categories": {
+          "False": {
+            "availability_rate": 0.553921568627451,
+            "available": 113,
+            "missing": 91
+          },
+          "True": {
+            "availability_rate": 0.4,
+            "available": 138,
+            "missing": 207
+          }
+        },
+        "chi_square": 11.626193448369623,
+        "cramers_v_bias_corrected": 0.13923935707195645,
+        "p_value": 0.0006502950172650061
+      },
+      "hour_utc": {
+        "categories": {
+          "00": {
+            "availability_rate": 0.4482758620689655,
+            "available": 13,
+            "missing": 16
+          },
+          "01": {
+            "availability_rate": 0.3333333333333333,
+            "available": 11,
+            "missing": 22
+          },
+          "02": {
+            "availability_rate": 0.6296296296296297,
+            "available": 17,
+            "missing": 10
+          },
+          "03": {
+            "availability_rate": 0.5625,
+            "available": 9,
+            "missing": 7
+          },
+          "04": {
+            "availability_rate": 0.4666666666666667,
+            "available": 7,
+            "missing": 8
+          },
+          "05": {
+            "availability_rate": 0.6923076923076923,
+            "available": 9,
+            "missing": 4
+          },
+          "06": {
+            "availability_rate": 0.5925925925925926,
+            "available": 16,
+            "missing": 11
+          },
+          "07": {
+            "availability_rate": 0.5666666666666667,
+            "available": 17,
+            "missing": 13
+          },
+          "08": {
+            "availability_rate": 0.6086956521739131,
+            "available": 14,
+            "missing": 9
+          },
+          "09": {
+            "availability_rate": 0.631578947368421,
+            "available": 12,
+            "missing": 7
+          },
+          "10": {
+            "availability_rate": 0.15789473684210525,
+            "available": 3,
+            "missing": 16
+          },
+          "11": {
+            "availability_rate": 0.35,
+            "available": 7,
+            "missing": 13
+          },
+          "12": {
+            "availability_rate": 0.5142857142857142,
+            "available": 18,
+            "missing": 17
+          },
+          "13": {
+            "availability_rate": 0.3548387096774194,
+            "available": 11,
+            "missing": 20
+          },
+          "14": {
+            "availability_rate": 0.5,
+            "available": 12,
+            "missing": 12
+          },
+          "15": {
+            "availability_rate": 0.5405405405405406,
+            "available": 20,
+            "missing": 17
+          },
+          "16": {
+            "availability_rate": 0.3,
+            "available": 9,
+            "missing": 21
+          },
+          "17": {
+            "availability_rate": 0.5833333333333334,
+            "available": 14,
+            "missing": 10
+          },
+          "18": {
+            "availability_rate": 0.4666666666666667,
+            "available": 7,
+            "missing": 8
+          },
+          "19": {
+            "availability_rate": 0.4166666666666667,
+            "available": 5,
+            "missing": 7
+          },
+          "20": {
+            "availability_rate": 0.2,
+            "available": 4,
+            "missing": 16
+          },
+          "21": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 6
+          },
+          "22": {
+            "availability_rate": 0.2,
+            "available": 4,
+            "missing": 16
+          },
+          "23": {
+            "availability_rate": 0.5,
+            "available": 12,
+            "missing": 12
+          }
+        },
+        "chi_square": 48.06831493772053,
+        "cramers_v_bias_corrected": 0.21370227717473472,
+        "p_value": 0.0016397369908402396
+      },
+      "intended_price_present": {
+        "categories": {
+          "False": {
+            "availability_rate": 0.5368421052631579,
+            "available": 153,
+            "missing": 132
+          },
+          "True": {
+            "availability_rate": 0.3712121212121212,
+            "available": 98,
+            "missing": 166
+          }
+        },
+        "chi_square": 14.489814626804748,
+        "cramers_v_bias_corrected": 0.15688595236952205,
+        "p_value": 0.00014091943257937638
+      },
+      "lane_family": {
+        "categories": {
+          "MISSING": {
+            "availability_rate": 0.12,
+            "available": 18,
+            "missing": 132
+          },
+          "failure_trader": {
+            "availability_rate": 0.8187134502923976,
+            "available": 140,
+            "missing": 31
+          },
+          "range_trader": {
+            "availability_rate": 0.358974358974359,
+            "available": 56,
+            "missing": 100
+          },
+          "trend_trader": {
+            "availability_rate": 0.5138888888888888,
+            "available": 37,
+            "missing": 35
+          }
+        },
+        "chi_square": 165.77665948953148,
+        "cramers_v_bias_corrected": 0.5450033935810606,
+        "p_value": 1.0383744308975611e-35
+      },
+      "pair": {
+        "categories": {
+          "AUD_CAD": {
+            "availability_rate": 0.38461538461538464,
+            "available": 5,
+            "missing": 8
+          },
+          "AUD_CHF": {
+            "availability_rate": 0.3333333333333333,
+            "available": 4,
+            "missing": 8
+          },
+          "AUD_JPY": {
+            "availability_rate": 0.5686274509803921,
+            "available": 29,
+            "missing": 22
+          },
+          "AUD_NZD": {
+            "availability_rate": 0.3076923076923077,
+            "available": 4,
+            "missing": 9
+          },
+          "AUD_USD": {
+            "availability_rate": 1.0,
+            "available": 4,
+            "missing": 0
+          },
+          "CAD_CHF": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 5
+          },
+          "CAD_JPY": {
+            "availability_rate": 0.3333333333333333,
+            "available": 2,
+            "missing": 4
+          },
+          "CHF_JPY": {
+            "availability_rate": 0.16666666666666666,
+            "available": 1,
+            "missing": 5
+          },
+          "EUR_AUD": {
+            "availability_rate": 0.14285714285714285,
+            "available": 1,
+            "missing": 6
+          },
+          "EUR_CAD": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 4
+          },
+          "EUR_CHF": {
+            "availability_rate": 0.3333333333333333,
+            "available": 5,
+            "missing": 10
+          },
+          "EUR_GBP": {
+            "availability_rate": 0.38461538461538464,
+            "available": 5,
+            "missing": 8
+          },
+          "EUR_JPY": {
+            "availability_rate": 0.47619047619047616,
+            "available": 10,
+            "missing": 11
+          },
+          "EUR_USD": {
+            "availability_rate": 0.5721925133689839,
+            "available": 107,
+            "missing": 80
+          },
+          "GBP_AUD": {
+            "availability_rate": 0.25,
+            "available": 1,
+            "missing": 3
+          },
+          "GBP_CAD": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 4
+          },
+          "GBP_CHF": {
+            "availability_rate": 0.17391304347826086,
+            "available": 4,
+            "missing": 19
+          },
+          "GBP_JPY": {
+            "availability_rate": 0.2857142857142857,
+            "available": 2,
+            "missing": 5
+          },
+          "GBP_NZD": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 4
+          },
+          "GBP_USD": {
+            "availability_rate": 0.5818181818181818,
+            "available": 32,
+            "missing": 23
+          },
+          "NZD_CAD": {
+            "availability_rate": 0.36363636363636365,
+            "available": 4,
+            "missing": 7
+          },
+          "NZD_CHF": {
+            "availability_rate": 0.14285714285714285,
+            "available": 1,
+            "missing": 6
+          },
+          "NZD_JPY": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 4
+          },
+          "NZD_USD": {
+            "availability_rate": 0.5,
+            "available": 2,
+            "missing": 2
+          },
+          "None": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 23
+          },
+          "USD_CAD": {
+            "availability_rate": 0.4,
+            "available": 8,
+            "missing": 12
+          },
+          "USD_CHF": {
+            "availability_rate": 0.5,
+            "available": 2,
+            "missing": 2
+          },
+          "USD_JPY": {
+            "availability_rate": 0.8181818181818182,
+            "available": 18,
+            "missing": 4
+          }
+        },
+        "chi_square": 90.39786097338315,
+        "cramers_v_bias_corrected": 0.34000000496270316,
+        "p_value": 9.167280619159216e-09
+      },
+      "side": {
+        "categories": {
+          "LONG": {
+            "availability_rate": 0.5232558139534884,
+            "available": 135,
+            "missing": 123
+          },
+          "None": {
+            "availability_rate": 0.0,
+            "available": 0,
+            "missing": 23
+          },
+          "SHORT": {
+            "availability_rate": 0.43283582089552236,
+            "available": 116,
+            "missing": 152
+          }
+        },
+        "chi_square": 24.550212130287008,
+        "cramers_v_bias_corrected": 0.20283860387947586,
+        "p_value": 4.666477445913196e-06
+      },
+      "weekday_utc": {
+        "categories": {
+          "0": {
+            "availability_rate": 0.5432098765432098,
+            "available": 44,
+            "missing": 37
+          },
+          "1": {
+            "availability_rate": 0.40298507462686567,
+            "available": 27,
+            "missing": 40
+          },
+          "2": {
+            "availability_rate": 0.525,
+            "available": 42,
+            "missing": 38
+          },
+          "3": {
+            "availability_rate": 0.4186046511627907,
+            "available": 72,
+            "missing": 100
+          },
+          "4": {
+            "availability_rate": 0.4305555555555556,
+            "available": 62,
+            "missing": 82
+          },
+          "6": {
+            "availability_rate": 0.8,
+            "available": 4,
+            "missing": 1
+          }
+        },
+        "chi_square": 8.501875376131641,
+        "cramers_v_bias_corrected": 0.07983517371573733,
+        "p_value": 0.130659659575689
+      }
+    },
+    "causal_forecast_coverage_all_episodes": 0.6284153005464481,
+    "causal_forecast_coverage_labeled": 0.549800796812749,
+    "decision_time_thesis_coverage_labeled": 0.07171314741035857,
+    "episodes": 549,
+    "label_coverage": 0.45719489981785066,
+    "labeled": 251,
+    "mnar_conclusion": "MCAR_REJECTABLE_IF_ASSOCIATIONS_OR_PREDICTABILITY_ARE_SIGNIFICANT; MNAR_NOT_IDENTIFIABLE_WITHOUT_MISSING_COUNTERFACTUAL_RETURNS",
+    "observed_labeled_net_associations": {
+      "decision_time_thesis_present": {
+        "bootstrap_95pct_ci_jpy": [
+          601.3524170958513,
+          2291.431472460658
+        ],
+        "mann_whitney_p": 0.000200539348514054,
+        "mann_whitney_u": 3201.0,
+        "mean_difference_present_minus_missing_jpy": 1329.434952241297,
+        "missing_mean_jpy": -167.2096244635193,
+        "missing_n": 233,
+        "missing_net_jpy": -38959.8425,
+        "missing_win_rate": 0.5965665236051502,
+        "present_mean_jpy": 1162.2253277777777,
+        "present_n": 18,
+        "present_net_jpy": 20920.0559,
+        "present_win_rate": 1.0
+      },
+      "forecast_present": {
+        "bootstrap_95pct_ci_jpy": [
+          37.10437917147621,
+          775.3484136142106
+        ],
+        "mann_whitney_p": 0.035610914390387334,
+        "mann_whitney_u": 9000.0,
+        "mean_difference_present_minus_missing_jpy": 382.86969474798,
+        "missing_mean_jpy": -282.3737230088496,
+        "missing_n": 113,
+        "missing_net_jpy": -31908.2307,
+        "missing_win_rate": 0.5221238938053098,
+        "present_mean_jpy": 100.49597173913043,
+        "present_n": 138,
+        "present_net_jpy": 13868.444099999999,
+        "present_win_rate": 0.7101449275362319
+      },
+      "thesis_record_present": {
+        "bootstrap_95pct_ci_jpy": [
+          155.1704206847545,
+          1271.2122884496123
+        ],
+        "mann_whitney_p": 0.009576209650791413,
+        "mann_whitney_u": 4915.0,
+        "mean_difference_present_minus_missing_jpy": 676.7464902842378,
+        "missing_mean_jpy": -168.93490139534885,
+        "missing_n": 215,
+        "missing_net_jpy": -36321.0038,
+        "missing_win_rate": 0.6046511627906976,
+        "present_mean_jpy": 507.8115888888889,
+        "present_n": 36,
+        "present_net_jpy": 18281.2172,
+        "present_win_rate": 0.75
+      }
+    },
+    "post_feature_only_thesis_records_labeled": 18,
+    "predictability": {
+      "features": "same causal/static feature contract as frozen admission; administrative episode_status excluded",
+      "permutation_auc_mean": 0.49981946314749975,
+      "permutation_p_value_one_sided": 0.001998001998001998,
+      "status": "OK",
+      "train_n": 329,
+      "validation_auc": 0.6328216177394739,
+      "validation_n": 220
+    },
+    "thesis_record_coverage_labeled": 0.14342629482071714
+  },
+  "overall_decision": "REJECT_MODEL_SELECTION_CHANGES",
+  "permissions": {
+    "broker_order": false,
+    "deploy": false,
+    "holdout_used": false,
+    "live": false,
+    "paper": false,
+    "read_only_inputs": true
+  },
+  "policy_admission": "BLOCKED_ALL_ENTRY_COUNTERFACTUAL_AND_MARGIN_COVERAGE_INCOMPLETE",
+  "preregister_sha256": "fc23c257bb96084c806f6b280fbe8b27742414637aeec74b2cac481d4891816f",
+  "shadow_cohort": {
+    "grade_counts": {
+      "EXECUTED_LABELED_CAUSAL_FORECAST": 138,
+      "EXECUTED_LABELED_FEATURE_PARTIAL": 113,
+      "OBSERVED_DECISION_OR_ORDER_NO_COUNTERFACTUAL_LABEL": 297,
+      "UNRESOLVED": 1
+    },
+    "rows": 549,
+    "skip_rows_inferred": 0,
+    "status_counts": {
+      "ACCEPTED_UNRESOLVED": 107,
+      "CANCELED_UNFILLED": 167,
+      "EXECUTED_LABELED": 251,
+      "EXECUTED_OPEN_OR_INVALID": 1,
+      "REJECTED": 23
+    }
+  },
+  "source_inventory": {
+    "entry_thesis_to_anchor": {
+      "assessment": "trade_id join exists, but timestamp causality is checked per episode; post-feature rows are not features",
+      "rows": 37
+    },
+    "execution_events_to_anchor": {
+      "GATEWAY_ORDER_BLOCKED": {
+        "count": 1,
+        "max_utc": "2026-05-06T11:43:48.372457+00:00",
+        "min_utc": "2026-05-06T11:43:48.372457+00:00"
+      },
+      "GATEWAY_ORDER_NO_ACTION": {
+        "count": 2,
+        "max_utc": "2026-07-02T04:05:19.735859+00:00",
+        "min_utc": "2026-07-02T03:57:37.458543+00:00"
+      },
+      "GATEWAY_ORDER_STAGED": {
+        "count": 1,
+        "max_utc": "2026-06-22T01:22:45.557072+00:00",
+        "min_utc": "2026-06-22T01:22:45.557072+00:00"
+      },
+      "GATEWAY_POSITION_NO_ACTION": {
+        "count": 6,
+        "max_utc": "2026-05-17T23:03:50.691645+00:00",
+        "min_utc": "2026-05-06T16:28:26.214156+00:00"
+      },
+      "GATEWAY_TRADE_CLOSE_RECONCILED": {
+        "count": 101,
+        "max_utc": "2026-07-09T03:33:35.634212633Z",
+        "min_utc": "2026-05-07T01:47:20.094363596Z"
+      },
+      "GATEWAY_TRADE_CLOSE_SENT": {
+        "count": 1,
+        "max_utc": "2026-06-08T16:38:25.784636+00:00",
+        "min_utc": "2026-06-08T16:38:25.784636+00:00"
+      },
+      "OANDA_TRANSACTION": {
+        "count": 61,
+        "max_utc": "2026-07-08T21:00:00.000000000Z",
+        "min_utc": "2026-05-06T21:00:00.000000000Z"
+      },
+      "ORDER_ACCEPTED": {
+        "count": 526,
+        "max_utc": "2026-07-09T07:13:03.089238274Z",
+        "min_utc": "2026-05-06T17:25:14.059575882Z"
+      },
+      "ORDER_CANCELED": {
+        "count": 837,
+        "max_utc": "2026-07-09T05:11:37.196310598Z",
+        "min_utc": "2026-05-06T16:52:01.517044439Z"
+      },
+      "ORDER_FILLED": {
+        "count": 252,
+        "max_utc": "2026-07-09T07:46:03.151624347Z",
+        "min_utc": "2026-05-06T17:25:15.850070092Z"
+      },
+      "ORDER_REJECTED": {
+        "count": 23,
+        "max_utc": "2026-06-19T04:58:22.501723692Z",
+        "min_utc": "2026-05-07T00:35:10.282128669Z"
+      },
+      "PROTECTION_CREATED": {
+        "count": 814,
+        "max_utc": "2026-07-09T07:46:03.151624347Z",
+        "min_utc": "2026-05-06T17:25:15.850070092Z"
+      },
+      "TRADE_CLOSED": {
+        "count": 255,
+        "max_utc": "2026-07-09T05:11:37.196310598Z",
+        "min_utc": "2026-05-06T16:52:01.517044439Z"
+      },
+      "TRADE_REDUCED": {
+        "count": 2,
+        "max_utc": "2026-05-14T05:37:54.542972759Z",
+        "min_utc": "2026-05-14T04:55:17.573916217Z"
+      }
+    },
+    "forecast_history_to_anchor": {
+      "first_utc": "2026-05-14T15:15:47.094834Z",
+      "last_utc": "2026-07-08T14:16:34.338658Z",
+      "rows": 2791
+    },
+    "gateway_receipts_to_anchor": {
+      "assessment": "sparse receipts are admissible evidence but not a complete decision opportunity stream",
+      "count": 8,
+      "episode_ids_joined_by_explicit_order_id": 14,
+      "explicit_no_action_count": 4,
+      "status_counts": {
+        "ACCEPTED": 1,
+        "BLOCKED": 1,
+        "NO_ACTION": 4,
+        "SENT": 1,
+        "STAGED": 1
+      }
+    },
+    "mutable_snapshots": [
+      {
+        "append_only": false,
+        "generated_at_utc": "2026-07-09T17:23:29.209414+00:00",
+        "historical_cohort_usable": false,
+        "path": "data/order_intents.json",
+        "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+        "sha256": "a82c550a98aa0646f4ac1751412bbf0c27749564a1c011039f507f321cab9c12"
+      },
+      {
+        "append_only": false,
+        "generated_at_utc": "2026-05-04T03:51:00.814127+00:00",
+        "historical_cohort_usable": true,
+        "path": "data/candidate_intents.json",
+        "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+        "sha256": "ba752a374b1f63be0c98bc8d669f13798cbba5dc4ce4638ffac69cced095545f"
+      },
+      {
+        "append_only": false,
+        "generated_at_utc": "2026-07-02T04:06:23.927041+00:00",
+        "historical_cohort_usable": true,
+        "path": "data/trader_decision.json",
+        "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+        "sha256": "ed98a573ff4dfe2c65d57b562ea0ad649c0bd7ea7225804c20c3689ddc6647ac"
+      },
+      {
+        "append_only": false,
+        "generated_at_utc": "2026-07-09T17:32:08.446559+00:00",
+        "historical_cohort_usable": false,
+        "path": "data/gpt_trader_decision.json",
+        "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+        "sha256": "b733d9fa96d312d9e990441e7127e01e18e21dbade94e0de6a8ae60f8a884920"
+      },
+      {
+        "append_only": false,
+        "generated_at_utc": "2026-07-06T15:07:56Z",
+        "historical_cohort_usable": true,
+        "path": "data/scout_execution_receipt.json",
+        "reason": "single mutable snapshot; does not establish a complete historical skip ledger",
+        "sha256": "e78768c94a610c07da641bba667596863a2720fcb06464b1cb8c0421b4a85457"
+      }
+    ],
+    "projection_ledger_to_anchor": {
+      "episode_join_status": "NO_STABLE_ORDER_OR_EPISODE_ID; not joined to the 549 cohort",
+      "first_utc": "2026-05-14T06:18:35.933790Z",
+      "forbidden_post_outcome_fields": [
+        "resolution_status",
+        "resolved_at_utc",
+        "resolution_evidence"
+      ],
+      "last_utc": "2026-07-08T14:16:34.338658Z",
+      "rows": 17991,
+      "usable_feature_fields": [
+        "pair",
+        "signal_name",
+        "direction",
+        "lead_time_min",
+        "confidence",
+        "entry_price",
+        "predicted_target_price",
+        "predicted_invalidation_price",
+        "regime_at_emission"
+      ]
+    },
+    "skip_ledger_status": "MISSING_APPEND_ONLY_COMPLETE_DECISION_LEDGER"
+  },
+  "windows": [
+    {
+      "ALL_TRADES": {
+        "baseline_net_jpy": 10579.5043,
+        "cost_breakdown": {
+          "fee": "zero-account contract",
+          "fill_slippage": "implicit in actual broker realized P/L",
+          "financing_jpy": 0.0,
+          "opportunity_cost": "missing",
+          "spread": "implicit in actual broker realized P/L"
+        },
+        "expectancy_per_available_episode_jpy": 881.6253583333333,
+        "financing_jpy_explicit": 0.0,
+        "incremental_expectancy_jpy": 0.0,
+        "incremental_net_jpy": 0.0,
+        "margin_coverage": 0.0,
+        "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+        "max_drawdown_jpy": 2690.6967,
+        "net_jpy": 10579.5043,
+        "paired_bootstrap_95pct_ci_jpy": [
+          0.0,
+          0.0
+        ],
+        "paired_lcb_jpy": 0.0,
+        "peak_margin_jpy_known_jpy_pairs_only": null,
+        "profit_factor": 4.9318828837155815,
+        "retention_ratio": 1.0,
+        "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+        "selected_episode_ids": [
+          "oanda:472932:ORDER_ACCEPTED:472932",
+          "oanda:472943:ORDER_ACCEPTED:472943",
+          "oanda:472945:ORDER_ACCEPTED:472945",
+          "oanda:472951:ORDER_ACCEPTED:472951",
+          "oanda:472956:ORDER_ACCEPTED:472956",
+          "oanda:472958:ORDER_ACCEPTED:472958",
+          "oanda:472964:ORDER_ACCEPTED:472964",
+          "oanda:472967:ORDER_ACCEPTED:472967",
+          "oanda:472982:ORDER_ACCEPTED:472982",
+          "oanda:473002:ORDER_ACCEPTED:473002",
+          "oanda:473010:ORDER_ACCEPTED:473010",
+          "oanda:473016:ORDER_ACCEPTED:473016"
+        ],
+        "trades_available": 12,
+        "trades_selected": 12
+      },
+      "candidates": {
+        "A_COVERAGE_BINDING": {
+          "accepted": false,
+          "status": "NOT_FIT_MINIMUM_SAMPLE_GATE"
+        },
+        "B_COST_AWARE_ABSTAIN": {
+          "accepted": false,
+          "status": "NOT_FIT_MINIMUM_SAMPLE_GATE"
+        },
+        "C_PAIR_SIDE_CALIBRATION": {
+          "accepted": false,
+          "status": "NOT_FIT_MINIMUM_SAMPLE_GATE"
+        },
+        "FROZEN_HGB": {
+          "accepted": false,
+          "status": "NOT_FIT_MINIMUM_SAMPLE_GATE"
+        }
+      },
+      "id": "INITIAL_16D",
+      "labeled_events": 30,
+      "purged_train_events": 5,
+      "status": "NOT_FIT_MINIMUM_SAMPLE_GATE",
+      "train_events": 13,
+      "validation_events": 12
+    },
+    {
+      "ALL_TRADES": {
+        "baseline_net_jpy": 18764.564599999998,
+        "cost_breakdown": {
+          "fee": "zero-account contract",
+          "fill_slippage": "implicit in actual broker realized P/L",
+          "financing_jpy": 0.0,
+          "opportunity_cost": "missing",
+          "spread": "implicit in actual broker realized P/L"
+        },
+        "expectancy_per_available_episode_jpy": 605.308535483871,
+        "financing_jpy_explicit": 0.0,
+        "incremental_expectancy_jpy": 0.0,
+        "incremental_net_jpy": 0.0,
+        "margin_coverage": 0.22580645161290322,
+        "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+        "max_drawdown_jpy": 2690.6967000000004,
+        "net_jpy": 18764.564599999998,
+        "paired_bootstrap_95pct_ci_jpy": [
+          0.0,
+          0.0
+        ],
+        "paired_lcb_jpy": 0.0,
+        "peak_margin_jpy_known_jpy_pairs_only": 51802.880000000005,
+        "profit_factor": 3.6746217307246662,
+        "retention_ratio": 1.0,
+        "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+        "selected_episode_ids": [
+          "oanda:472791:ORDER_ACCEPTED:472791",
+          "oanda:472801:ORDER_ACCEPTED:472801",
+          "oanda:472818:ORDER_ACCEPTED:472818",
+          "oanda:472831:ORDER_ACCEPTED:472831",
+          "oanda:472832:ORDER_ACCEPTED:472832",
+          "oanda:472833:ORDER_ACCEPTED:472833",
+          "oanda:472847:ORDER_ACCEPTED:472847",
+          "oanda:472860:ORDER_ACCEPTED:472860",
+          "oanda:472875:ORDER_ACCEPTED:472875",
+          "oanda:472883:ORDER_ACCEPTED:472883",
+          "oanda:472888:ORDER_ACCEPTED:472888",
+          "oanda:472898:ORDER_ACCEPTED:472898",
+          "oanda:472899:ORDER_ACCEPTED:472899",
+          "oanda:472908:ORDER_ACCEPTED:472908",
+          "oanda:472912:ORDER_ACCEPTED:472912",
+          "oanda:472918:ORDER_ACCEPTED:472918",
+          "oanda:472924:ORDER_ACCEPTED:472924",
+          "oanda:472926:ORDER_ACCEPTED:472926",
+          "oanda:472930:ORDER_ACCEPTED:472930",
+          "oanda:472932:ORDER_ACCEPTED:472932",
+          "oanda:472943:ORDER_ACCEPTED:472943",
+          "oanda:472945:ORDER_ACCEPTED:472945",
+          "oanda:472951:ORDER_ACCEPTED:472951",
+          "oanda:472956:ORDER_ACCEPTED:472956",
+          "oanda:472958:ORDER_ACCEPTED:472958",
+          "oanda:472964:ORDER_ACCEPTED:472964",
+          "oanda:472967:ORDER_ACCEPTED:472967",
+          "oanda:472982:ORDER_ACCEPTED:472982",
+          "oanda:473002:ORDER_ACCEPTED:473002",
+          "oanda:473010:ORDER_ACCEPTED:473010",
+          "oanda:473016:ORDER_ACCEPTED:473016"
+        ],
+        "trades_available": 31,
+        "trades_selected": 31
+      },
+      "candidates": {
+        "A_COVERAGE_BINDING": {
+          "accepted": false,
+          "baseline_net_jpy": 18764.564599999998,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 53.154054838709676,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -552.1544806451612,
+          "incremental_net_jpy": -17116.7889,
+          "margin_coverage": 0.0,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 0.0,
+          "net_jpy": 1647.7757,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -1213.2177,
+            -19.29619999999999
+          ],
+          "paired_lcb_jpy": -1213.2177,
+          "peak_margin_jpy_known_jpy_pairs_only": null,
+          "profit_factor": "Infinity",
+          "retention_ratio": 0.16129032258064516,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:472888:ORDER_ACCEPTED:472888",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472918:ORDER_ACCEPTED:472918",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958"
+          ],
+          "trades_available": 31,
+          "trades_selected": 5
+        },
+        "B_COST_AWARE_ABSTAIN": {
+          "accepted": false,
+          "baseline_net_jpy": 18764.564599999998,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 605.308535483871,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": true,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": 0.0,
+          "incremental_net_jpy": 0.0,
+          "margin_coverage": 0.22580645161290322,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 2690.6967000000004,
+          "net_jpy": 18764.564599999998,
+          "paired_bootstrap_95pct_ci_jpy": [
+            0.0,
+            0.0
+          ],
+          "paired_lcb_jpy": 0.0,
+          "peak_margin_jpy_known_jpy_pairs_only": 51802.880000000005,
+          "profit_factor": 3.6746217307246662,
+          "retention_ratio": 1.0,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:472791:ORDER_ACCEPTED:472791",
+            "oanda:472801:ORDER_ACCEPTED:472801",
+            "oanda:472818:ORDER_ACCEPTED:472818",
+            "oanda:472831:ORDER_ACCEPTED:472831",
+            "oanda:472832:ORDER_ACCEPTED:472832",
+            "oanda:472833:ORDER_ACCEPTED:472833",
+            "oanda:472847:ORDER_ACCEPTED:472847",
+            "oanda:472860:ORDER_ACCEPTED:472860",
+            "oanda:472875:ORDER_ACCEPTED:472875",
+            "oanda:472883:ORDER_ACCEPTED:472883",
+            "oanda:472888:ORDER_ACCEPTED:472888",
+            "oanda:472898:ORDER_ACCEPTED:472898",
+            "oanda:472899:ORDER_ACCEPTED:472899",
+            "oanda:472908:ORDER_ACCEPTED:472908",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472918:ORDER_ACCEPTED:472918",
+            "oanda:472924:ORDER_ACCEPTED:472924",
+            "oanda:472926:ORDER_ACCEPTED:472926",
+            "oanda:472930:ORDER_ACCEPTED:472930",
+            "oanda:472932:ORDER_ACCEPTED:472932",
+            "oanda:472943:ORDER_ACCEPTED:472943",
+            "oanda:472945:ORDER_ACCEPTED:472945",
+            "oanda:472951:ORDER_ACCEPTED:472951",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958",
+            "oanda:472964:ORDER_ACCEPTED:472964",
+            "oanda:472967:ORDER_ACCEPTED:472967",
+            "oanda:472982:ORDER_ACCEPTED:472982",
+            "oanda:473002:ORDER_ACCEPTED:473002",
+            "oanda:473010:ORDER_ACCEPTED:473010",
+            "oanda:473016:ORDER_ACCEPTED:473016"
+          ],
+          "trades_available": 31,
+          "trades_selected": 31,
+          "train_only_threshold": {
+            "oof_n": 13,
+            "status": "FALLBACK_ALL_TRADES_INSUFFICIENT_OOF",
+            "threshold_jpy": null
+          },
+          "validation_labels_used_for_threshold": false
+        },
+        "C_PAIR_SIDE_CALIBRATION": {
+          "accepted": false,
+          "baseline_net_jpy": 18764.564599999998,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 2.863948387096774,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -602.4445870967742,
+          "incremental_net_jpy": -18675.782199999998,
+          "margin_coverage": 0.0,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 0.0,
+          "net_jpy": 88.7824,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -1248.646035483871,
+            -67.09941612903226
+          ],
+          "paired_lcb_jpy": -1248.646035483871,
+          "peak_margin_jpy_known_jpy_pairs_only": null,
+          "profit_factor": "Infinity",
+          "retention_ratio": 0.03225806451612903,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:472888:ORDER_ACCEPTED:472888"
+          ],
+          "trades_available": 31,
+          "trades_selected": 1,
+          "train_only_calibration": {
+            "global": -162.2423924946954,
+            "group_counts": {
+              "AUD_CAD|SHORT": 1,
+              "AUD_NZD|LONG": 1,
+              "AUD_NZD|SHORT": 2,
+              "CAD_JPY|LONG": 2,
+              "CHF_JPY|SHORT": 1,
+              "EUR_JPY|LONG": 1,
+              "GBP_CHF|LONG": 1,
+              "NZD_CHF|LONG": 1,
+              "NZD_USD|LONG": 1,
+              "USD_JPY|SHORT": 2
+            },
+            "groups": {},
+            "oof_n": 13,
+            "status": "TRAIN_OOF_RESIDUALS"
+          },
+          "validation_labels_used_for_calibration": false
+        },
+        "FROZEN_HGB": {
+          "accepted": false,
+          "attribution": {
+            "avoided_loser_magnitude_jpy": 7015.7826000000005,
+            "avoided_losers": 6,
+            "calibration_deciles": [
+              {
+                "actual_net_jpy": 8343.9258,
+                "actual_win_rate": 0.75,
+                "mean_actual_net_jpy": 2085.98145,
+                "mean_predicted_net_jpy": -330.6468217101817,
+                "n": 4,
+                "prediction_decile_low_to_high": 1
+              },
+              {
+                "actual_net_jpy": 1578.9098999999999,
+                "actual_win_rate": 0.6666666666666666,
+                "mean_actual_net_jpy": 526.3032999999999,
+                "mean_predicted_net_jpy": -249.50005714335384,
+                "n": 3,
+                "prediction_decile_low_to_high": 2
+              },
+              {
+                "actual_net_jpy": -1263.6456,
+                "actual_win_rate": 0.6666666666666666,
+                "mean_actual_net_jpy": -421.21520000000004,
+                "mean_predicted_net_jpy": -213.48693468712074,
+                "n": 3,
+                "prediction_decile_low_to_high": 3
+              },
+              {
+                "actual_net_jpy": 958.1793,
+                "actual_win_rate": 0.6666666666666666,
+                "mean_actual_net_jpy": 319.3931,
+                "mean_predicted_net_jpy": -180.91093887737668,
+                "n": 3,
+                "prediction_decile_low_to_high": 4
+              },
+              {
+                "actual_net_jpy": -867.2,
+                "actual_win_rate": 0.3333333333333333,
+                "mean_actual_net_jpy": -289.06666666666666,
+                "mean_predicted_net_jpy": -121.47327737995342,
+                "n": 3,
+                "prediction_decile_low_to_high": 5
+              },
+              {
+                "actual_net_jpy": 3111.6195,
+                "actual_win_rate": 1.0,
+                "mean_actual_net_jpy": 1037.2065,
+                "mean_predicted_net_jpy": -73.7187986020149,
+                "n": 3,
+                "prediction_decile_low_to_high": 6
+              },
+              {
+                "actual_net_jpy": 506.0,
+                "actual_win_rate": 1.0,
+                "mean_actual_net_jpy": 168.66666666666666,
+                "mean_predicted_net_jpy": -23.321632149319743,
+                "n": 3,
+                "prediction_decile_low_to_high": 7
+              },
+              {
+                "actual_net_jpy": 969.0,
+                "actual_win_rate": 1.0,
+                "mean_actual_net_jpy": 323.0,
+                "mean_predicted_net_jpy": -23.321632149319743,
+                "n": 3,
+                "prediction_decile_low_to_high": 8
+              },
+              {
+                "actual_net_jpy": 4894.0,
+                "actual_win_rate": 1.0,
+                "mean_actual_net_jpy": 1631.3333333333333,
+                "mean_predicted_net_jpy": 16.632250089858275,
+                "n": 3,
+                "prediction_decile_low_to_high": 9
+              },
+              {
+                "actual_net_jpy": 533.7756999999999,
+                "actual_win_rate": 1.0,
+                "mean_actual_net_jpy": 177.9252333333333,
+                "mean_predicted_net_jpy": 94.99706706272616,
+                "n": 3,
+                "prediction_decile_low_to_high": 10
+              }
+            ],
+            "excluded_actual_net_jpy": 17116.7889,
+            "false_negative_winner_jpy": 24132.571500000005,
+            "false_negative_winners": 20,
+            "false_positive_loser_jpy": 0.0,
+            "false_positive_losers": 0,
+            "incremental_identity_jpy": -17116.788900000007,
+            "selected_net_jpy": 1647.7757000000001,
+            "spearman_p_value": 0.6666972595002298,
+            "spearman_prediction_actual": -0.0805370928457752,
+            "top_kept_losers": [],
+            "top_missed_winners": [
+              {
+                "actual_net_jpy": 7280.0,
+                "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+                "predicted_net_jpy": -329.7536392056717
+              },
+              {
+                "actual_net_jpy": 3780.0,
+                "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+                "predicted_net_jpy": -8.73661746416104
+              },
+              {
+                "actual_net_jpy": 2842.4062,
+                "episode_id": "oanda:472883:ORDER_ACCEPTED:472883",
+                "predicted_net_jpy": -257.17803471161375
+              },
+              {
+                "actual_net_jpy": 1709.9361,
+                "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+                "predicted_net_jpy": -82.94500222930589
+              },
+              {
+                "actual_net_jpy": 1621.9379,
+                "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+                "predicted_net_jpy": -376.61757311687506
+              },
+              {
+                "actual_net_jpy": 1427.2004,
+                "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+                "predicted_net_jpy": -233.74031415595806
+              },
+              {
+                "actual_net_jpy": 1251.6834,
+                "episode_id": "oanda:473002:ORDER_ACCEPTED:473002",
+                "predicted_net_jpy": -114.88976142741906
+              },
+              {
+                "actual_net_jpy": 866.3793,
+                "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+                "predicted_net_jpy": -190.99035447960063
+              },
+              {
+                "actual_net_jpy": 460.0,
+                "episode_id": "oanda:472926:ORDER_ACCEPTED:472926",
+                "predicted_net_jpy": -23.321632149319747
+              },
+              {
+                "actual_net_jpy": 453.0,
+                "episode_id": "oanda:472930:ORDER_ACCEPTED:472930",
+                "predicted_net_jpy": -23.321632149319747
+              }
+            ]
+          },
+          "baseline_net_jpy": 18764.564599999998,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 53.154054838709676,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -552.1544806451612,
+          "incremental_net_jpy": -17116.7889,
+          "margin_coverage": 0.0,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 0.0,
+          "net_jpy": 1647.7757,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -1213.2177,
+            -19.29619999999999
+          ],
+          "paired_lcb_jpy": -1213.2177,
+          "peak_margin_jpy_known_jpy_pairs_only": null,
+          "profit_factor": "Infinity",
+          "retention_ratio": 0.16129032258064516,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:472888:ORDER_ACCEPTED:472888",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472918:ORDER_ACCEPTED:472918",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958"
+          ],
+          "trades_available": 31,
+          "trades_selected": 5
+        }
+      },
+      "id": "DOUBLE_32D",
+      "labeled_events": 76,
+      "purged_train_events": 2,
+      "status": "EVALUATED",
+      "train_events": 43,
+      "validation_events": 31
+    },
+    {
+      "ALL_TRADES": {
+        "baseline_net_jpy": 15144.4802,
+        "cost_breakdown": {
+          "fee": "zero-account contract",
+          "fill_slippage": "implicit in actual broker realized P/L",
+          "financing_jpy": 0.0,
+          "opportunity_cost": "missing",
+          "spread": "implicit in actual broker realized P/L"
+        },
+        "expectancy_per_available_episode_jpy": 149.94534851485147,
+        "financing_jpy_explicit": 0.0,
+        "incremental_expectancy_jpy": 0.0,
+        "incremental_net_jpy": 0.0,
+        "margin_coverage": 0.1485148514851485,
+        "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+        "max_drawdown_jpy": 6794.7768000000015,
+        "net_jpy": 15144.4802,
+        "paired_bootstrap_95pct_ci_jpy": [
+          0.0,
+          0.0
+        ],
+        "paired_lcb_jpy": 0.0,
+        "peak_margin_jpy_known_jpy_pairs_only": 51802.880000000005,
+        "profit_factor": 1.5852461375462732,
+        "retention_ratio": 1.0,
+        "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+        "selected_episode_ids": [
+          "oanda:471816:ORDER_ACCEPTED:471816",
+          "oanda:471844:ORDER_ACCEPTED:471844",
+          "oanda:471859:ORDER_ACCEPTED:471859",
+          "oanda:471862:ORDER_ACCEPTED:471862",
+          "oanda:471873:ORDER_ACCEPTED:471873",
+          "oanda:471882:ORDER_ACCEPTED:471882",
+          "oanda:471885:ORDER_ACCEPTED:471885",
+          "oanda:471909:ORDER_ACCEPTED:471909",
+          "oanda:471914:ORDER_ACCEPTED:471914",
+          "oanda:471922:ORDER_ACCEPTED:471922",
+          "oanda:471933:ORDER_ACCEPTED:471933",
+          "oanda:471939:ORDER_ACCEPTED:471939",
+          "oanda:471947:ORDER_ACCEPTED:471947",
+          "oanda:471950:ORDER_ACCEPTED:471950",
+          "oanda:471968:ORDER_ACCEPTED:471968",
+          "oanda:471978:ORDER_ACCEPTED:471978",
+          "oanda:471982:ORDER_ACCEPTED:471982",
+          "oanda:472036:ORDER_ACCEPTED:472036",
+          "oanda:472043:ORDER_ACCEPTED:472043",
+          "oanda:472070:ORDER_ACCEPTED:472070",
+          "oanda:472074:ORDER_ACCEPTED:472074",
+          "oanda:472087:ORDER_ACCEPTED:472087",
+          "oanda:472093:ORDER_ACCEPTED:472093",
+          "oanda:472100:ORDER_ACCEPTED:472100",
+          "oanda:472108:ORDER_ACCEPTED:472108",
+          "oanda:472124:ORDER_ACCEPTED:472124",
+          "oanda:472132:ORDER_ACCEPTED:472132",
+          "oanda:472148:ORDER_ACCEPTED:472148",
+          "oanda:472153:ORDER_ACCEPTED:472153",
+          "oanda:472154:ORDER_ACCEPTED:472154",
+          "oanda:472155:ORDER_ACCEPTED:472155",
+          "oanda:472187:ORDER_ACCEPTED:472187",
+          "oanda:472189:ORDER_ACCEPTED:472189",
+          "oanda:472207:ORDER_ACCEPTED:472207",
+          "oanda:472211:ORDER_ACCEPTED:472211",
+          "oanda:472215:ORDER_ACCEPTED:472215",
+          "oanda:472226:ORDER_ACCEPTED:472226",
+          "oanda:472227:ORDER_ACCEPTED:472227",
+          "oanda:472250:ORDER_ACCEPTED:472250",
+          "oanda:472279:ORDER_ACCEPTED:472279",
+          "oanda:472287:ORDER_ACCEPTED:472287",
+          "oanda:472302:ORDER_ACCEPTED:472302",
+          "oanda:472311:ORDER_ACCEPTED:472311",
+          "oanda:472317:ORDER_ACCEPTED:472317",
+          "oanda:472321:ORDER_ACCEPTED:472321",
+          "oanda:472335:ORDER_ACCEPTED:472335",
+          "oanda:472339:ORDER_ACCEPTED:472339",
+          "oanda:472351:ORDER_ACCEPTED:472351",
+          "oanda:472379:ORDER_ACCEPTED:472379",
+          "oanda:472383:ORDER_ACCEPTED:472383",
+          "oanda:472404:ORDER_ACCEPTED:472404",
+          "oanda:472426:ORDER_ACCEPTED:472426",
+          "oanda:472444:ORDER_ACCEPTED:472444",
+          "oanda:472449:ORDER_ACCEPTED:472449",
+          "oanda:472457:ORDER_ACCEPTED:472457",
+          "oanda:472495:ORDER_ACCEPTED:472495",
+          "oanda:472529:ORDER_ACCEPTED:472529",
+          "oanda:472549:ORDER_ACCEPTED:472549",
+          "oanda:472589:ORDER_ACCEPTED:472589",
+          "oanda:472631:ORDER_ACCEPTED:472631",
+          "oanda:472654:ORDER_ACCEPTED:472654",
+          "oanda:472665:ORDER_ACCEPTED:472665",
+          "oanda:472681:ORDER_ACCEPTED:472681",
+          "oanda:472682:ORDER_ACCEPTED:472682",
+          "oanda:472715:ORDER_ACCEPTED:472715",
+          "oanda:472730:ORDER_ACCEPTED:472730",
+          "oanda:472736:ORDER_ACCEPTED:472736",
+          "oanda:472742:ORDER_ACCEPTED:472742",
+          "oanda:472754:ORDER_ACCEPTED:472754",
+          "oanda:472774:ORDER_ACCEPTED:472774",
+          "oanda:472791:ORDER_ACCEPTED:472791",
+          "oanda:472801:ORDER_ACCEPTED:472801",
+          "oanda:472818:ORDER_ACCEPTED:472818",
+          "oanda:472831:ORDER_ACCEPTED:472831",
+          "oanda:472832:ORDER_ACCEPTED:472832",
+          "oanda:472833:ORDER_ACCEPTED:472833",
+          "oanda:472847:ORDER_ACCEPTED:472847",
+          "oanda:472860:ORDER_ACCEPTED:472860",
+          "oanda:472875:ORDER_ACCEPTED:472875",
+          "oanda:472883:ORDER_ACCEPTED:472883",
+          "oanda:472888:ORDER_ACCEPTED:472888",
+          "oanda:472898:ORDER_ACCEPTED:472898",
+          "oanda:472899:ORDER_ACCEPTED:472899",
+          "oanda:472908:ORDER_ACCEPTED:472908",
+          "oanda:472912:ORDER_ACCEPTED:472912",
+          "oanda:472918:ORDER_ACCEPTED:472918",
+          "oanda:472924:ORDER_ACCEPTED:472924",
+          "oanda:472926:ORDER_ACCEPTED:472926",
+          "oanda:472930:ORDER_ACCEPTED:472930",
+          "oanda:472932:ORDER_ACCEPTED:472932",
+          "oanda:472943:ORDER_ACCEPTED:472943",
+          "oanda:472945:ORDER_ACCEPTED:472945",
+          "oanda:472951:ORDER_ACCEPTED:472951",
+          "oanda:472956:ORDER_ACCEPTED:472956",
+          "oanda:472958:ORDER_ACCEPTED:472958",
+          "oanda:472964:ORDER_ACCEPTED:472964",
+          "oanda:472967:ORDER_ACCEPTED:472967",
+          "oanda:472982:ORDER_ACCEPTED:472982",
+          "oanda:473002:ORDER_ACCEPTED:473002",
+          "oanda:473010:ORDER_ACCEPTED:473010",
+          "oanda:473016:ORDER_ACCEPTED:473016"
+        ],
+        "trades_available": 101,
+        "trades_selected": 101
+      },
+      "candidates": {
+        "A_COVERAGE_BINDING": {
+          "accepted": false,
+          "baseline_net_jpy": 15144.4802,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 19.516730693069306,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -130.42861782178218,
+          "incremental_net_jpy": -13173.2904,
+          "margin_coverage": 0.075,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 5317.656499999999,
+          "net_jpy": 1971.1897999999999,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -335.4388475247525,
+            42.35694455445545
+          ],
+          "paired_lcb_jpy": -335.4388475247525,
+          "peak_margin_jpy_known_jpy_pairs_only": 40746.132000000005,
+          "profit_factor": 1.1693929924698787,
+          "retention_ratio": 0.39603960396039606,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:471816:ORDER_ACCEPTED:471816",
+            "oanda:471844:ORDER_ACCEPTED:471844",
+            "oanda:471859:ORDER_ACCEPTED:471859",
+            "oanda:471862:ORDER_ACCEPTED:471862",
+            "oanda:471914:ORDER_ACCEPTED:471914",
+            "oanda:471922:ORDER_ACCEPTED:471922",
+            "oanda:471939:ORDER_ACCEPTED:471939",
+            "oanda:471978:ORDER_ACCEPTED:471978",
+            "oanda:472036:ORDER_ACCEPTED:472036",
+            "oanda:472043:ORDER_ACCEPTED:472043",
+            "oanda:472070:ORDER_ACCEPTED:472070",
+            "oanda:472074:ORDER_ACCEPTED:472074",
+            "oanda:472132:ORDER_ACCEPTED:472132",
+            "oanda:472148:ORDER_ACCEPTED:472148",
+            "oanda:472189:ORDER_ACCEPTED:472189",
+            "oanda:472207:ORDER_ACCEPTED:472207",
+            "oanda:472287:ORDER_ACCEPTED:472287",
+            "oanda:472311:ORDER_ACCEPTED:472311",
+            "oanda:472317:ORDER_ACCEPTED:472317",
+            "oanda:472321:ORDER_ACCEPTED:472321",
+            "oanda:472444:ORDER_ACCEPTED:472444",
+            "oanda:472449:ORDER_ACCEPTED:472449",
+            "oanda:472529:ORDER_ACCEPTED:472529",
+            "oanda:472549:ORDER_ACCEPTED:472549",
+            "oanda:472654:ORDER_ACCEPTED:472654",
+            "oanda:472665:ORDER_ACCEPTED:472665",
+            "oanda:472730:ORDER_ACCEPTED:472730",
+            "oanda:472774:ORDER_ACCEPTED:472774",
+            "oanda:472791:ORDER_ACCEPTED:472791",
+            "oanda:472818:ORDER_ACCEPTED:472818",
+            "oanda:472883:ORDER_ACCEPTED:472883",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472924:ORDER_ACCEPTED:472924",
+            "oanda:472926:ORDER_ACCEPTED:472926",
+            "oanda:472930:ORDER_ACCEPTED:472930",
+            "oanda:472943:ORDER_ACCEPTED:472943",
+            "oanda:472945:ORDER_ACCEPTED:472945",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958",
+            "oanda:473002:ORDER_ACCEPTED:473002"
+          ],
+          "trades_available": 101,
+          "trades_selected": 40
+        },
+        "B_COST_AWARE_ABSTAIN": {
+          "accepted": false,
+          "baseline_net_jpy": 15144.4802,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 149.94534851485147,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": true,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": 0.0,
+          "incremental_net_jpy": 0.0,
+          "margin_coverage": 0.1485148514851485,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 6794.7768000000015,
+          "net_jpy": 15144.4802,
+          "paired_bootstrap_95pct_ci_jpy": [
+            0.0,
+            0.0
+          ],
+          "paired_lcb_jpy": 0.0,
+          "peak_margin_jpy_known_jpy_pairs_only": 51802.880000000005,
+          "profit_factor": 1.5852461375462732,
+          "retention_ratio": 1.0,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:471816:ORDER_ACCEPTED:471816",
+            "oanda:471844:ORDER_ACCEPTED:471844",
+            "oanda:471859:ORDER_ACCEPTED:471859",
+            "oanda:471862:ORDER_ACCEPTED:471862",
+            "oanda:471873:ORDER_ACCEPTED:471873",
+            "oanda:471882:ORDER_ACCEPTED:471882",
+            "oanda:471885:ORDER_ACCEPTED:471885",
+            "oanda:471909:ORDER_ACCEPTED:471909",
+            "oanda:471914:ORDER_ACCEPTED:471914",
+            "oanda:471922:ORDER_ACCEPTED:471922",
+            "oanda:471933:ORDER_ACCEPTED:471933",
+            "oanda:471939:ORDER_ACCEPTED:471939",
+            "oanda:471947:ORDER_ACCEPTED:471947",
+            "oanda:471950:ORDER_ACCEPTED:471950",
+            "oanda:471968:ORDER_ACCEPTED:471968",
+            "oanda:471978:ORDER_ACCEPTED:471978",
+            "oanda:471982:ORDER_ACCEPTED:471982",
+            "oanda:472036:ORDER_ACCEPTED:472036",
+            "oanda:472043:ORDER_ACCEPTED:472043",
+            "oanda:472070:ORDER_ACCEPTED:472070",
+            "oanda:472074:ORDER_ACCEPTED:472074",
+            "oanda:472087:ORDER_ACCEPTED:472087",
+            "oanda:472093:ORDER_ACCEPTED:472093",
+            "oanda:472100:ORDER_ACCEPTED:472100",
+            "oanda:472108:ORDER_ACCEPTED:472108",
+            "oanda:472124:ORDER_ACCEPTED:472124",
+            "oanda:472132:ORDER_ACCEPTED:472132",
+            "oanda:472148:ORDER_ACCEPTED:472148",
+            "oanda:472153:ORDER_ACCEPTED:472153",
+            "oanda:472154:ORDER_ACCEPTED:472154",
+            "oanda:472155:ORDER_ACCEPTED:472155",
+            "oanda:472187:ORDER_ACCEPTED:472187",
+            "oanda:472189:ORDER_ACCEPTED:472189",
+            "oanda:472207:ORDER_ACCEPTED:472207",
+            "oanda:472211:ORDER_ACCEPTED:472211",
+            "oanda:472215:ORDER_ACCEPTED:472215",
+            "oanda:472226:ORDER_ACCEPTED:472226",
+            "oanda:472227:ORDER_ACCEPTED:472227",
+            "oanda:472250:ORDER_ACCEPTED:472250",
+            "oanda:472279:ORDER_ACCEPTED:472279",
+            "oanda:472287:ORDER_ACCEPTED:472287",
+            "oanda:472302:ORDER_ACCEPTED:472302",
+            "oanda:472311:ORDER_ACCEPTED:472311",
+            "oanda:472317:ORDER_ACCEPTED:472317",
+            "oanda:472321:ORDER_ACCEPTED:472321",
+            "oanda:472335:ORDER_ACCEPTED:472335",
+            "oanda:472339:ORDER_ACCEPTED:472339",
+            "oanda:472351:ORDER_ACCEPTED:472351",
+            "oanda:472379:ORDER_ACCEPTED:472379",
+            "oanda:472383:ORDER_ACCEPTED:472383",
+            "oanda:472404:ORDER_ACCEPTED:472404",
+            "oanda:472426:ORDER_ACCEPTED:472426",
+            "oanda:472444:ORDER_ACCEPTED:472444",
+            "oanda:472449:ORDER_ACCEPTED:472449",
+            "oanda:472457:ORDER_ACCEPTED:472457",
+            "oanda:472495:ORDER_ACCEPTED:472495",
+            "oanda:472529:ORDER_ACCEPTED:472529",
+            "oanda:472549:ORDER_ACCEPTED:472549",
+            "oanda:472589:ORDER_ACCEPTED:472589",
+            "oanda:472631:ORDER_ACCEPTED:472631",
+            "oanda:472654:ORDER_ACCEPTED:472654",
+            "oanda:472665:ORDER_ACCEPTED:472665",
+            "oanda:472681:ORDER_ACCEPTED:472681",
+            "oanda:472682:ORDER_ACCEPTED:472682",
+            "oanda:472715:ORDER_ACCEPTED:472715",
+            "oanda:472730:ORDER_ACCEPTED:472730",
+            "oanda:472736:ORDER_ACCEPTED:472736",
+            "oanda:472742:ORDER_ACCEPTED:472742",
+            "oanda:472754:ORDER_ACCEPTED:472754",
+            "oanda:472774:ORDER_ACCEPTED:472774",
+            "oanda:472791:ORDER_ACCEPTED:472791",
+            "oanda:472801:ORDER_ACCEPTED:472801",
+            "oanda:472818:ORDER_ACCEPTED:472818",
+            "oanda:472831:ORDER_ACCEPTED:472831",
+            "oanda:472832:ORDER_ACCEPTED:472832",
+            "oanda:472833:ORDER_ACCEPTED:472833",
+            "oanda:472847:ORDER_ACCEPTED:472847",
+            "oanda:472860:ORDER_ACCEPTED:472860",
+            "oanda:472875:ORDER_ACCEPTED:472875",
+            "oanda:472883:ORDER_ACCEPTED:472883",
+            "oanda:472888:ORDER_ACCEPTED:472888",
+            "oanda:472898:ORDER_ACCEPTED:472898",
+            "oanda:472899:ORDER_ACCEPTED:472899",
+            "oanda:472908:ORDER_ACCEPTED:472908",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472918:ORDER_ACCEPTED:472918",
+            "oanda:472924:ORDER_ACCEPTED:472924",
+            "oanda:472926:ORDER_ACCEPTED:472926",
+            "oanda:472930:ORDER_ACCEPTED:472930",
+            "oanda:472932:ORDER_ACCEPTED:472932",
+            "oanda:472943:ORDER_ACCEPTED:472943",
+            "oanda:472945:ORDER_ACCEPTED:472945",
+            "oanda:472951:ORDER_ACCEPTED:472951",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958",
+            "oanda:472964:ORDER_ACCEPTED:472964",
+            "oanda:472967:ORDER_ACCEPTED:472967",
+            "oanda:472982:ORDER_ACCEPTED:472982",
+            "oanda:473002:ORDER_ACCEPTED:473002",
+            "oanda:473010:ORDER_ACCEPTED:473010",
+            "oanda:473016:ORDER_ACCEPTED:473016"
+          ],
+          "trades_available": 101,
+          "trades_selected": 101,
+          "train_only_threshold": {
+            "grid": [
+              {
+                "metrics": {
+                  "baseline_net_jpy": -32009.7268,
+                  "cost_breakdown": {
+                    "fee": "zero-account contract",
+                    "fill_slippage": "implicit in actual broker realized P/L",
+                    "financing_jpy": 0.0,
+                    "opportunity_cost": "missing",
+                    "spread": "implicit in actual broker realized P/L"
+                  },
+                  "expectancy_per_available_episode_jpy": -350.10406666666665,
+                  "financing_jpy_explicit": 0.0,
+                  "incremental_expectancy_jpy": 17.823827586206896,
+                  "incremental_net_jpy": 1550.6729999999998,
+                  "margin_coverage": 0.03571428571428571,
+                  "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+                  "max_drawdown_jpy": 43104.596699999995,
+                  "net_jpy": -30459.0538,
+                  "paired_bootstrap_95pct_ci_jpy": [
+                    -15.57243448275862,
+                    61.276817241379305
+                  ],
+                  "paired_lcb_jpy": -15.57243448275862,
+                  "peak_margin_jpy_known_jpy_pairs_only": 31827.04,
+                  "profit_factor": 0.4327453895596511,
+                  "retention_ratio": 0.9655172413793104,
+                  "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+                  "selected_episode_ids": [
+                    "oanda:470690:ORDER_ACCEPTED:470690",
+                    "oanda:470715:ORDER_ACCEPTED:470715",
+                    "oanda:470729:ORDER_ACCEPTED:470729",
+                    "oanda:470732:ORDER_ACCEPTED:470732",
+                    "oanda:470748:ORDER_ACCEPTED:470748",
+                    "oanda:470751:ORDER_ACCEPTED:470751",
+                    "oanda:470758:ORDER_ACCEPTED:470758",
+                    "oanda:470761:ORDER_ACCEPTED:470761",
+                    "oanda:470784:ORDER_ACCEPTED:470784",
+                    "oanda:470787:ORDER_ACCEPTED:470787",
+                    "oanda:470790:ORDER_ACCEPTED:470790",
+                    "oanda:470793:ORDER_ACCEPTED:470793",
+                    "oanda:470802:ORDER_ACCEPTED:470802",
+                    "oanda:470805:ORDER_ACCEPTED:470805",
+                    "oanda:470824:ORDER_ACCEPTED:470824",
+                    "oanda:470833:ORDER_ACCEPTED:470833",
+                    "oanda:470836:ORDER_ACCEPTED:470836",
+                    "oanda:470853:ORDER_ACCEPTED:470853",
+                    "oanda:470858:ORDER_ACCEPTED:470858",
+                    "oanda:470867:ORDER_ACCEPTED:470867",
+                    "oanda:470870:ORDER_ACCEPTED:470870",
+                    "oanda:470873:ORDER_ACCEPTED:470873",
+                    "oanda:470876:ORDER_ACCEPTED:470876",
+                    "oanda:470897:ORDER_ACCEPTED:470897",
+                    "oanda:470900:ORDER_ACCEPTED:470900",
+                    "oanda:470903:ORDER_ACCEPTED:470903",
+                    "oanda:470906:ORDER_ACCEPTED:470906",
+                    "oanda:470944:ORDER_ACCEPTED:470944",
+                    "oanda:470947:ORDER_ACCEPTED:470947",
+                    "oanda:470950:ORDER_ACCEPTED:470950",
+                    "oanda:470959:ORDER_ACCEPTED:470959",
+                    "oanda:470970:ORDER_ACCEPTED:470970",
+                    "oanda:470983:ORDER_ACCEPTED:470983",
+                    "oanda:470991:ORDER_ACCEPTED:470991",
+                    "oanda:470999:ORDER_ACCEPTED:470999",
+                    "oanda:471007:ORDER_ACCEPTED:471007",
+                    "oanda:471019:ORDER_ACCEPTED:471019",
+                    "oanda:471022:ORDER_ACCEPTED:471022",
+                    "oanda:471028:ORDER_ACCEPTED:471028",
+                    "oanda:471043:ORDER_ACCEPTED:471043",
+                    "oanda:471060:ORDER_ACCEPTED:471060",
+                    "oanda:471076:ORDER_ACCEPTED:471076",
+                    "oanda:471088:ORDER_ACCEPTED:471088",
+                    "oanda:471111:ORDER_ACCEPTED:471111",
+                    "oanda:471116:ORDER_ACCEPTED:471116",
+                    "oanda:471167:ORDER_ACCEPTED:471167",
+                    "oanda:471173:ORDER_ACCEPTED:471173",
+                    "oanda:471190:ORDER_ACCEPTED:471190",
+                    "oanda:471212:ORDER_ACCEPTED:471212",
+                    "oanda:471215:ORDER_ACCEPTED:471215",
+                    "oanda:471218:ORDER_ACCEPTED:471218",
+                    "oanda:471231:ORDER_ACCEPTED:471231",
+                    "oanda:471239:ORDER_ACCEPTED:471239",
+                    "oanda:471254:ORDER_ACCEPTED:471254",
+                    "oanda:471291:ORDER_ACCEPTED:471291",
+                    "oanda:471297:ORDER_ACCEPTED:471297",
+                    "oanda:471305:ORDER_ACCEPTED:471305",
+                    "oanda:471308:ORDER_ACCEPTED:471308",
+                    "oanda:471316:ORDER_ACCEPTED:471316",
+                    "oanda:471327:ORDER_ACCEPTED:471327",
+                    "oanda:471344:ORDER_ACCEPTED:471344",
+                    "oanda:471361:ORDER_ACCEPTED:471361",
+                    "oanda:471366:ORDER_ACCEPTED:471366",
+                    "oanda:471369:ORDER_ACCEPTED:471369",
+                    "oanda:471387:ORDER_ACCEPTED:471387",
+                    "oanda:471399:ORDER_ACCEPTED:471399",
+                    "oanda:471402:ORDER_ACCEPTED:471402",
+                    "oanda:471418:ORDER_ACCEPTED:471418",
+                    "oanda:471436:ORDER_ACCEPTED:471436",
+                    "oanda:471439:ORDER_ACCEPTED:471439",
+                    "oanda:471443:ORDER_ACCEPTED:471443",
+                    "oanda:471459:ORDER_ACCEPTED:471459",
+                    "oanda:471466:ORDER_ACCEPTED:471466",
+                    "oanda:471491:ORDER_ACCEPTED:471491",
+                    "oanda:471494:ORDER_ACCEPTED:471494",
+                    "oanda:471575:ORDER_ACCEPTED:471575",
+                    "oanda:471578:ORDER_ACCEPTED:471578",
+                    "oanda:471590:ORDER_ACCEPTED:471590",
+                    "oanda:471619:ORDER_ACCEPTED:471619",
+                    "oanda:471663:ORDER_ACCEPTED:471663",
+                    "oanda:471724:ORDER_ACCEPTED:471724",
+                    "oanda:471738:ORDER_ACCEPTED:471738",
+                    "oanda:471754:ORDER_ACCEPTED:471754",
+                    "oanda:471790:ORDER_ACCEPTED:471790"
+                  ],
+                  "trades_available": 87,
+                  "trades_selected": 84
+                },
+                "qualifies": false,
+                "quantile": 0.0,
+                "threshold_jpy": -1137.5202017958427
+              },
+              {
+                "metrics": {
+                  "baseline_net_jpy": -32009.7268,
+                  "cost_breakdown": {
+                    "fee": "zero-account contract",
+                    "fill_slippage": "implicit in actual broker realized P/L",
+                    "financing_jpy": 0.0,
+                    "opportunity_cost": "missing",
+                    "spread": "implicit in actual broker realized P/L"
+                  },
+                  "expectancy_per_available_episode_jpy": -357.8078735632184,
+                  "financing_jpy_explicit": 0.0,
+                  "incremental_expectancy_jpy": 10.12002068965517,
+                  "incremental_net_jpy": 880.4418,
+                  "margin_coverage": 0.037037037037037035,
+                  "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+                  "max_drawdown_jpy": 43104.596699999995,
+                  "net_jpy": -31129.285,
+                  "paired_bootstrap_95pct_ci_jpy": [
+                    -24.996236781609195,
+                    54.34680689655172
+                  ],
+                  "paired_lcb_jpy": -24.996236781609195,
+                  "peak_margin_jpy_known_jpy_pairs_only": 31827.04,
+                  "profit_factor": 0.42026332952070894,
+                  "retention_ratio": 0.9310344827586207,
+                  "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+                  "selected_episode_ids": [
+                    "oanda:470690:ORDER_ACCEPTED:470690",
+                    "oanda:470715:ORDER_ACCEPTED:470715",
+                    "oanda:470729:ORDER_ACCEPTED:470729",
+                    "oanda:470732:ORDER_ACCEPTED:470732",
+                    "oanda:470748:ORDER_ACCEPTED:470748",
+                    "oanda:470751:ORDER_ACCEPTED:470751",
+                    "oanda:470758:ORDER_ACCEPTED:470758",
+                    "oanda:470761:ORDER_ACCEPTED:470761",
+                    "oanda:470784:ORDER_ACCEPTED:470784",
+                    "oanda:470787:ORDER_ACCEPTED:470787",
+                    "oanda:470790:ORDER_ACCEPTED:470790",
+                    "oanda:470793:ORDER_ACCEPTED:470793",
+                    "oanda:470802:ORDER_ACCEPTED:470802",
+                    "oanda:470805:ORDER_ACCEPTED:470805",
+                    "oanda:470824:ORDER_ACCEPTED:470824",
+                    "oanda:470833:ORDER_ACCEPTED:470833",
+                    "oanda:470836:ORDER_ACCEPTED:470836",
+                    "oanda:470853:ORDER_ACCEPTED:470853",
+                    "oanda:470858:ORDER_ACCEPTED:470858",
+                    "oanda:470867:ORDER_ACCEPTED:470867",
+                    "oanda:470870:ORDER_ACCEPTED:470870",
+                    "oanda:470873:ORDER_ACCEPTED:470873",
+                    "oanda:470876:ORDER_ACCEPTED:470876",
+                    "oanda:470897:ORDER_ACCEPTED:470897",
+                    "oanda:470900:ORDER_ACCEPTED:470900",
+                    "oanda:470903:ORDER_ACCEPTED:470903",
+                    "oanda:470906:ORDER_ACCEPTED:470906",
+                    "oanda:470944:ORDER_ACCEPTED:470944",
+                    "oanda:470947:ORDER_ACCEPTED:470947",
+                    "oanda:470950:ORDER_ACCEPTED:470950",
+                    "oanda:470959:ORDER_ACCEPTED:470959",
+                    "oanda:470970:ORDER_ACCEPTED:470970",
+                    "oanda:470983:ORDER_ACCEPTED:470983",
+                    "oanda:470991:ORDER_ACCEPTED:470991",
+                    "oanda:470999:ORDER_ACCEPTED:470999",
+                    "oanda:471007:ORDER_ACCEPTED:471007",
+                    "oanda:471019:ORDER_ACCEPTED:471019",
+                    "oanda:471022:ORDER_ACCEPTED:471022",
+                    "oanda:471028:ORDER_ACCEPTED:471028",
+                    "oanda:471043:ORDER_ACCEPTED:471043",
+                    "oanda:471060:ORDER_ACCEPTED:471060",
+                    "oanda:471076:ORDER_ACCEPTED:471076",
+                    "oanda:471088:ORDER_ACCEPTED:471088",
+                    "oanda:471111:ORDER_ACCEPTED:471111",
+                    "oanda:471116:ORDER_ACCEPTED:471116",
+                    "oanda:471167:ORDER_ACCEPTED:471167",
+                    "oanda:471173:ORDER_ACCEPTED:471173",
+                    "oanda:471190:ORDER_ACCEPTED:471190",
+                    "oanda:471212:ORDER_ACCEPTED:471212",
+                    "oanda:471215:ORDER_ACCEPTED:471215",
+                    "oanda:471218:ORDER_ACCEPTED:471218",
+                    "oanda:471231:ORDER_ACCEPTED:471231",
+                    "oanda:471239:ORDER_ACCEPTED:471239",
+                    "oanda:471254:ORDER_ACCEPTED:471254",
+                    "oanda:471291:ORDER_ACCEPTED:471291",
+                    "oanda:471297:ORDER_ACCEPTED:471297",
+                    "oanda:471305:ORDER_ACCEPTED:471305",
+                    "oanda:471327:ORDER_ACCEPTED:471327",
+                    "oanda:471344:ORDER_ACCEPTED:471344",
+                    "oanda:471361:ORDER_ACCEPTED:471361",
+                    "oanda:471366:ORDER_ACCEPTED:471366",
+                    "oanda:471369:ORDER_ACCEPTED:471369",
+                    "oanda:471387:ORDER_ACCEPTED:471387",
+                    "oanda:471399:ORDER_ACCEPTED:471399",
+                    "oanda:471402:ORDER_ACCEPTED:471402",
+                    "oanda:471418:ORDER_ACCEPTED:471418",
+                    "oanda:471436:ORDER_ACCEPTED:471436",
+                    "oanda:471439:ORDER_ACCEPTED:471439",
+                    "oanda:471443:ORDER_ACCEPTED:471443",
+                    "oanda:471459:ORDER_ACCEPTED:471459",
+                    "oanda:471466:ORDER_ACCEPTED:471466",
+                    "oanda:471491:ORDER_ACCEPTED:471491",
+                    "oanda:471494:ORDER_ACCEPTED:471494",
+                    "oanda:471575:ORDER_ACCEPTED:471575",
+                    "oanda:471578:ORDER_ACCEPTED:471578",
+                    "oanda:471619:ORDER_ACCEPTED:471619",
+                    "oanda:471663:ORDER_ACCEPTED:471663",
+                    "oanda:471724:ORDER_ACCEPTED:471724",
+                    "oanda:471738:ORDER_ACCEPTED:471738",
+                    "oanda:471754:ORDER_ACCEPTED:471754",
+                    "oanda:471790:ORDER_ACCEPTED:471790"
+                  ],
+                  "trades_available": 87,
+                  "trades_selected": 81
+                },
+                "qualifies": false,
+                "quantile": 0.05,
+                "threshold_jpy": -838.4111365219085
+              },
+              {
+                "metrics": {
+                  "baseline_net_jpy": -32009.7268,
+                  "cost_breakdown": {
+                    "fee": "zero-account contract",
+                    "fill_slippage": "implicit in actual broker realized P/L",
+                    "financing_jpy": 0.0,
+                    "opportunity_cost": "missing",
+                    "spread": "implicit in actual broker realized P/L"
+                  },
+                  "expectancy_per_available_episode_jpy": -325.4630091954023,
+                  "financing_jpy_explicit": 0.0,
+                  "incremental_expectancy_jpy": 42.464885057471264,
+                  "incremental_net_jpy": 3694.445,
+                  "margin_coverage": 0.038461538461538464,
+                  "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+                  "max_drawdown_jpy": 40290.593499999995,
+                  "net_jpy": -28315.2818,
+                  "paired_bootstrap_95pct_ci_jpy": [
+                    -12.169495402298852,
+                    114.45262183908046
+                  ],
+                  "paired_lcb_jpy": -12.169495402298852,
+                  "peak_margin_jpy_known_jpy_pairs_only": 31827.04,
+                  "profit_factor": 0.4435059823690731,
+                  "retention_ratio": 0.896551724137931,
+                  "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+                  "selected_episode_ids": [
+                    "oanda:470690:ORDER_ACCEPTED:470690",
+                    "oanda:470715:ORDER_ACCEPTED:470715",
+                    "oanda:470729:ORDER_ACCEPTED:470729",
+                    "oanda:470732:ORDER_ACCEPTED:470732",
+                    "oanda:470748:ORDER_ACCEPTED:470748",
+                    "oanda:470751:ORDER_ACCEPTED:470751",
+                    "oanda:470758:ORDER_ACCEPTED:470758",
+                    "oanda:470761:ORDER_ACCEPTED:470761",
+                    "oanda:470784:ORDER_ACCEPTED:470784",
+                    "oanda:470787:ORDER_ACCEPTED:470787",
+                    "oanda:470790:ORDER_ACCEPTED:470790",
+                    "oanda:470793:ORDER_ACCEPTED:470793",
+                    "oanda:470802:ORDER_ACCEPTED:470802",
+                    "oanda:470805:ORDER_ACCEPTED:470805",
+                    "oanda:470824:ORDER_ACCEPTED:470824",
+                    "oanda:470833:ORDER_ACCEPTED:470833",
+                    "oanda:470836:ORDER_ACCEPTED:470836",
+                    "oanda:470853:ORDER_ACCEPTED:470853",
+                    "oanda:470858:ORDER_ACCEPTED:470858",
+                    "oanda:470867:ORDER_ACCEPTED:470867",
+                    "oanda:470870:ORDER_ACCEPTED:470870",
+                    "oanda:470873:ORDER_ACCEPTED:470873",
+                    "oanda:470876:ORDER_ACCEPTED:470876",
+                    "oanda:470897:ORDER_ACCEPTED:470897",
+                    "oanda:470900:ORDER_ACCEPTED:470900",
+                    "oanda:470903:ORDER_ACCEPTED:470903",
+                    "oanda:470906:ORDER_ACCEPTED:470906",
+                    "oanda:470944:ORDER_ACCEPTED:470944",
+                    "oanda:470947:ORDER_ACCEPTED:470947",
+                    "oanda:470950:ORDER_ACCEPTED:470950",
+                    "oanda:470959:ORDER_ACCEPTED:470959",
+                    "oanda:470970:ORDER_ACCEPTED:470970",
+                    "oanda:470999:ORDER_ACCEPTED:470999",
+                    "oanda:471007:ORDER_ACCEPTED:471007",
+                    "oanda:471019:ORDER_ACCEPTED:471019",
+                    "oanda:471022:ORDER_ACCEPTED:471022",
+                    "oanda:471028:ORDER_ACCEPTED:471028",
+                    "oanda:471043:ORDER_ACCEPTED:471043",
+                    "oanda:471060:ORDER_ACCEPTED:471060",
+                    "oanda:471076:ORDER_ACCEPTED:471076",
+                    "oanda:471111:ORDER_ACCEPTED:471111",
+                    "oanda:471116:ORDER_ACCEPTED:471116",
+                    "oanda:471167:ORDER_ACCEPTED:471167",
+                    "oanda:471173:ORDER_ACCEPTED:471173",
+                    "oanda:471190:ORDER_ACCEPTED:471190",
+                    "oanda:471212:ORDER_ACCEPTED:471212",
+                    "oanda:471215:ORDER_ACCEPTED:471215",
+                    "oanda:471218:ORDER_ACCEPTED:471218",
+                    "oanda:471231:ORDER_ACCEPTED:471231",
+                    "oanda:471239:ORDER_ACCEPTED:471239",
+                    "oanda:471254:ORDER_ACCEPTED:471254",
+                    "oanda:471291:ORDER_ACCEPTED:471291",
+                    "oanda:471297:ORDER_ACCEPTED:471297",
+                    "oanda:471305:ORDER_ACCEPTED:471305",
+                    "oanda:471327:ORDER_ACCEPTED:471327",
+                    "oanda:471344:ORDER_ACCEPTED:471344",
+                    "oanda:471361:ORDER_ACCEPTED:471361",
+                    "oanda:471366:ORDER_ACCEPTED:471366",
+                    "oanda:471369:ORDER_ACCEPTED:471369",
+                    "oanda:471387:ORDER_ACCEPTED:471387",
+                    "oanda:471399:ORDER_ACCEPTED:471399",
+                    "oanda:471402:ORDER_ACCEPTED:471402",
+                    "oanda:471418:ORDER_ACCEPTED:471418",
+                    "oanda:471436:ORDER_ACCEPTED:471436",
+                    "oanda:471439:ORDER_ACCEPTED:471439",
+                    "oanda:471443:ORDER_ACCEPTED:471443",
+                    "oanda:471459:ORDER_ACCEPTED:471459",
+                    "oanda:471466:ORDER_ACCEPTED:471466",
+                    "oanda:471491:ORDER_ACCEPTED:471491",
+                    "oanda:471494:ORDER_ACCEPTED:471494",
+                    "oanda:471575:ORDER_ACCEPTED:471575",
+                    "oanda:471578:ORDER_ACCEPTED:471578",
+                    "oanda:471619:ORDER_ACCEPTED:471619",
+                    "oanda:471663:ORDER_ACCEPTED:471663",
+                    "oanda:471724:ORDER_ACCEPTED:471724",
+                    "oanda:471738:ORDER_ACCEPTED:471738",
+                    "oanda:471754:ORDER_ACCEPTED:471754",
+                    "oanda:471790:ORDER_ACCEPTED:471790"
+                  ],
+                  "trades_available": 87,
+                  "trades_selected": 78
+                },
+                "qualifies": false,
+                "quantile": 0.1,
+                "threshold_jpy": -681.3912681859589
+              },
+              {
+                "metrics": {
+                  "baseline_net_jpy": -32009.7268,
+                  "cost_breakdown": {
+                    "fee": "zero-account contract",
+                    "fill_slippage": "implicit in actual broker realized P/L",
+                    "financing_jpy": 0.0,
+                    "opportunity_cost": "missing",
+                    "spread": "implicit in actual broker realized P/L"
+                  },
+                  "expectancy_per_available_episode_jpy": -350.8279103448276,
+                  "financing_jpy_explicit": 0.0,
+                  "incremental_expectancy_jpy": 17.099983908045978,
+                  "incremental_net_jpy": 1487.6986,
+                  "margin_coverage": 0.02702702702702703,
+                  "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+                  "max_drawdown_jpy": 41055.593499999995,
+                  "net_jpy": -30522.0282,
+                  "paired_bootstrap_95pct_ci_jpy": [
+                    -125.72985172413793,
+                    151.0076367816092
+                  ],
+                  "paired_lcb_jpy": -125.72985172413793,
+                  "peak_margin_jpy_known_jpy_pairs_only": 4554.72,
+                  "profit_factor": 0.36026677450303896,
+                  "retention_ratio": 0.8505747126436781,
+                  "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+                  "selected_episode_ids": [
+                    "oanda:470690:ORDER_ACCEPTED:470690",
+                    "oanda:470729:ORDER_ACCEPTED:470729",
+                    "oanda:470732:ORDER_ACCEPTED:470732",
+                    "oanda:470748:ORDER_ACCEPTED:470748",
+                    "oanda:470751:ORDER_ACCEPTED:470751",
+                    "oanda:470758:ORDER_ACCEPTED:470758",
+                    "oanda:470761:ORDER_ACCEPTED:470761",
+                    "oanda:470784:ORDER_ACCEPTED:470784",
+                    "oanda:470787:ORDER_ACCEPTED:470787",
+                    "oanda:470790:ORDER_ACCEPTED:470790",
+                    "oanda:470793:ORDER_ACCEPTED:470793",
+                    "oanda:470802:ORDER_ACCEPTED:470802",
+                    "oanda:470805:ORDER_ACCEPTED:470805",
+                    "oanda:470824:ORDER_ACCEPTED:470824",
+                    "oanda:470833:ORDER_ACCEPTED:470833",
+                    "oanda:470836:ORDER_ACCEPTED:470836",
+                    "oanda:470853:ORDER_ACCEPTED:470853",
+                    "oanda:470858:ORDER_ACCEPTED:470858",
+                    "oanda:470870:ORDER_ACCEPTED:470870",
+                    "oanda:470873:ORDER_ACCEPTED:470873",
+                    "oanda:470876:ORDER_ACCEPTED:470876",
+                    "oanda:470900:ORDER_ACCEPTED:470900",
+                    "oanda:470903:ORDER_ACCEPTED:470903",
+                    "oanda:470906:ORDER_ACCEPTED:470906",
+                    "oanda:470944:ORDER_ACCEPTED:470944",
+                    "oanda:470947:ORDER_ACCEPTED:470947",
+                    "oanda:470950:ORDER_ACCEPTED:470950",
+                    "oanda:470959:ORDER_ACCEPTED:470959",
+                    "oanda:470970:ORDER_ACCEPTED:470970",
+                    "oanda:470999:ORDER_ACCEPTED:470999",
+                    "oanda:471007:ORDER_ACCEPTED:471007",
+                    "oanda:471019:ORDER_ACCEPTED:471019",
+                    "oanda:471022:ORDER_ACCEPTED:471022",
+                    "oanda:471028:ORDER_ACCEPTED:471028",
+                    "oanda:471043:ORDER_ACCEPTED:471043",
+                    "oanda:471060:ORDER_ACCEPTED:471060",
+                    "oanda:471076:ORDER_ACCEPTED:471076",
+                    "oanda:471111:ORDER_ACCEPTED:471111",
+                    "oanda:471116:ORDER_ACCEPTED:471116",
+                    "oanda:471167:ORDER_ACCEPTED:471167",
+                    "oanda:471173:ORDER_ACCEPTED:471173",
+                    "oanda:471190:ORDER_ACCEPTED:471190",
+                    "oanda:471212:ORDER_ACCEPTED:471212",
+                    "oanda:471215:ORDER_ACCEPTED:471215",
+                    "oanda:471218:ORDER_ACCEPTED:471218",
+                    "oanda:471231:ORDER_ACCEPTED:471231",
+                    "oanda:471239:ORDER_ACCEPTED:471239",
+                    "oanda:471254:ORDER_ACCEPTED:471254",
+                    "oanda:471291:ORDER_ACCEPTED:471291",
+                    "oanda:471305:ORDER_ACCEPTED:471305",
+                    "oanda:471327:ORDER_ACCEPTED:471327",
+                    "oanda:471344:ORDER_ACCEPTED:471344",
+                    "oanda:471361:ORDER_ACCEPTED:471361",
+                    "oanda:471366:ORDER_ACCEPTED:471366",
+                    "oanda:471369:ORDER_ACCEPTED:471369",
+                    "oanda:471387:ORDER_ACCEPTED:471387",
+                    "oanda:471399:ORDER_ACCEPTED:471399",
+                    "oanda:471402:ORDER_ACCEPTED:471402",
+                    "oanda:471418:ORDER_ACCEPTED:471418",
+                    "oanda:471436:ORDER_ACCEPTED:471436",
+                    "oanda:471439:ORDER_ACCEPTED:471439",
+                    "oanda:471443:ORDER_ACCEPTED:471443",
+                    "oanda:471459:ORDER_ACCEPTED:471459",
+                    "oanda:471466:ORDER_ACCEPTED:471466",
+                    "oanda:471491:ORDER_ACCEPTED:471491",
+                    "oanda:471494:ORDER_ACCEPTED:471494",
+                    "oanda:471575:ORDER_ACCEPTED:471575",
+                    "oanda:471578:ORDER_ACCEPTED:471578",
+                    "oanda:471619:ORDER_ACCEPTED:471619",
+                    "oanda:471663:ORDER_ACCEPTED:471663",
+                    "oanda:471724:ORDER_ACCEPTED:471724",
+                    "oanda:471738:ORDER_ACCEPTED:471738",
+                    "oanda:471754:ORDER_ACCEPTED:471754",
+                    "oanda:471790:ORDER_ACCEPTED:471790"
+                  ],
+                  "trades_available": 87,
+                  "trades_selected": 74
+                },
+                "qualifies": false,
+                "quantile": 0.15,
+                "threshold_jpy": -521.2431157992378
+              },
+              {
+                "metrics": {
+                  "baseline_net_jpy": -32009.7268,
+                  "cost_breakdown": {
+                    "fee": "zero-account contract",
+                    "fill_slippage": "implicit in actual broker realized P/L",
+                    "financing_jpy": 0.0,
+                    "opportunity_cost": "missing",
+                    "spread": "implicit in actual broker realized P/L"
+                  },
+                  "expectancy_per_available_episode_jpy": -327.6681505747126,
+                  "financing_jpy_explicit": 0.0,
+                  "incremental_expectancy_jpy": 40.259743678160916,
+                  "incremental_net_jpy": 3502.5977,
+                  "margin_coverage": 0.028985507246376812,
+                  "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+                  "max_drawdown_jpy": 37923.74349999999,
+                  "net_jpy": -28507.129100000002,
+                  "paired_bootstrap_95pct_ci_jpy": [
+                    -112.2841172413793,
+                    183.2989724137931
+                  ],
+                  "paired_lcb_jpy": -112.2841172413793,
+                  "peak_margin_jpy_known_jpy_pairs_only": 4554.72,
+                  "profit_factor": 0.36052139377350484,
+                  "retention_ratio": 0.7931034482758621,
+                  "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+                  "selected_episode_ids": [
+                    "oanda:470690:ORDER_ACCEPTED:470690",
+                    "oanda:470729:ORDER_ACCEPTED:470729",
+                    "oanda:470732:ORDER_ACCEPTED:470732",
+                    "oanda:470751:ORDER_ACCEPTED:470751",
+                    "oanda:470758:ORDER_ACCEPTED:470758",
+                    "oanda:470761:ORDER_ACCEPTED:470761",
+                    "oanda:470784:ORDER_ACCEPTED:470784",
+                    "oanda:470787:ORDER_ACCEPTED:470787",
+                    "oanda:470790:ORDER_ACCEPTED:470790",
+                    "oanda:470793:ORDER_ACCEPTED:470793",
+                    "oanda:470802:ORDER_ACCEPTED:470802",
+                    "oanda:470805:ORDER_ACCEPTED:470805",
+                    "oanda:470824:ORDER_ACCEPTED:470824",
+                    "oanda:470833:ORDER_ACCEPTED:470833",
+                    "oanda:470836:ORDER_ACCEPTED:470836",
+                    "oanda:470853:ORDER_ACCEPTED:470853",
+                    "oanda:470858:ORDER_ACCEPTED:470858",
+                    "oanda:470870:ORDER_ACCEPTED:470870",
+                    "oanda:470873:ORDER_ACCEPTED:470873",
+                    "oanda:470876:ORDER_ACCEPTED:470876",
+                    "oanda:470900:ORDER_ACCEPTED:470900",
+                    "oanda:470903:ORDER_ACCEPTED:470903",
+                    "oanda:470906:ORDER_ACCEPTED:470906",
+                    "oanda:470944:ORDER_ACCEPTED:470944",
+                    "oanda:470947:ORDER_ACCEPTED:470947",
+                    "oanda:470950:ORDER_ACCEPTED:470950",
+                    "oanda:470959:ORDER_ACCEPTED:470959",
+                    "oanda:470999:ORDER_ACCEPTED:470999",
+                    "oanda:471007:ORDER_ACCEPTED:471007",
+                    "oanda:471022:ORDER_ACCEPTED:471022",
+                    "oanda:471028:ORDER_ACCEPTED:471028",
+                    "oanda:471043:ORDER_ACCEPTED:471043",
+                    "oanda:471060:ORDER_ACCEPTED:471060",
+                    "oanda:471076:ORDER_ACCEPTED:471076",
+                    "oanda:471111:ORDER_ACCEPTED:471111",
+                    "oanda:471116:ORDER_ACCEPTED:471116",
+                    "oanda:471167:ORDER_ACCEPTED:471167",
+                    "oanda:471173:ORDER_ACCEPTED:471173",
+                    "oanda:471190:ORDER_ACCEPTED:471190",
+                    "oanda:471212:ORDER_ACCEPTED:471212",
+                    "oanda:471215:ORDER_ACCEPTED:471215",
+                    "oanda:471218:ORDER_ACCEPTED:471218",
+                    "oanda:471231:ORDER_ACCEPTED:471231",
+                    "oanda:471239:ORDER_ACCEPTED:471239",
+                    "oanda:471254:ORDER_ACCEPTED:471254",
+                    "oanda:471291:ORDER_ACCEPTED:471291",
+                    "oanda:471305:ORDER_ACCEPTED:471305",
+                    "oanda:471344:ORDER_ACCEPTED:471344",
+                    "oanda:471361:ORDER_ACCEPTED:471361",
+                    "oanda:471366:ORDER_ACCEPTED:471366",
+                    "oanda:471369:ORDER_ACCEPTED:471369",
+                    "oanda:471387:ORDER_ACCEPTED:471387",
+                    "oanda:471399:ORDER_ACCEPTED:471399",
+                    "oanda:471418:ORDER_ACCEPTED:471418",
+                    "oanda:471436:ORDER_ACCEPTED:471436",
+                    "oanda:471439:ORDER_ACCEPTED:471439",
+                    "oanda:471443:ORDER_ACCEPTED:471443",
+                    "oanda:471459:ORDER_ACCEPTED:471459",
+                    "oanda:471466:ORDER_ACCEPTED:471466",
+                    "oanda:471491:ORDER_ACCEPTED:471491",
+                    "oanda:471494:ORDER_ACCEPTED:471494",
+                    "oanda:471575:ORDER_ACCEPTED:471575",
+                    "oanda:471578:ORDER_ACCEPTED:471578",
+                    "oanda:471619:ORDER_ACCEPTED:471619",
+                    "oanda:471663:ORDER_ACCEPTED:471663",
+                    "oanda:471724:ORDER_ACCEPTED:471724",
+                    "oanda:471738:ORDER_ACCEPTED:471738",
+                    "oanda:471754:ORDER_ACCEPTED:471754",
+                    "oanda:471790:ORDER_ACCEPTED:471790"
+                  ],
+                  "trades_available": 87,
+                  "trades_selected": 69
+                },
+                "qualifies": false,
+                "quantile": 0.2,
+                "threshold_jpy": -493.4980627537016
+              }
+            ],
+            "oof_n": 87,
+            "status": "FALLBACK_ALL_TRADES_NO_TRAIN_QUALIFYING_THRESHOLD",
+            "threshold_jpy": null
+          },
+          "validation_labels_used_for_threshold": false
+        },
+        "C_PAIR_SIDE_CALIBRATION": {
+          "accepted": false,
+          "baseline_net_jpy": 15144.4802,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 6.748142574257422,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -143.19720594059405,
+          "incremental_net_jpy": -14462.9178,
+          "margin_coverage": 0.05,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 3432.8734000000004,
+          "net_jpy": 681.5623999999996,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -364.2897475247525,
+            53.60388514851485
+          ],
+          "paired_lcb_jpy": -364.2897475247525,
+          "peak_margin_jpy_known_jpy_pairs_only": 34889.4,
+          "profit_factor": 1.1131754914185379,
+          "retention_ratio": 0.19801980198019803,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:471816:ORDER_ACCEPTED:471816",
+            "oanda:471859:ORDER_ACCEPTED:471859",
+            "oanda:471862:ORDER_ACCEPTED:471862",
+            "oanda:471978:ORDER_ACCEPTED:471978",
+            "oanda:472043:ORDER_ACCEPTED:472043",
+            "oanda:472074:ORDER_ACCEPTED:472074",
+            "oanda:472132:ORDER_ACCEPTED:472132",
+            "oanda:472148:ORDER_ACCEPTED:472148",
+            "oanda:472189:ORDER_ACCEPTED:472189",
+            "oanda:472207:ORDER_ACCEPTED:472207",
+            "oanda:472317:ORDER_ACCEPTED:472317",
+            "oanda:472321:ORDER_ACCEPTED:472321",
+            "oanda:472444:ORDER_ACCEPTED:472444",
+            "oanda:472449:ORDER_ACCEPTED:472449",
+            "oanda:472665:ORDER_ACCEPTED:472665",
+            "oanda:472730:ORDER_ACCEPTED:472730",
+            "oanda:472774:ORDER_ACCEPTED:472774",
+            "oanda:472818:ORDER_ACCEPTED:472818",
+            "oanda:472883:ORDER_ACCEPTED:472883",
+            "oanda:472943:ORDER_ACCEPTED:472943"
+          ],
+          "trades_available": 101,
+          "trades_selected": 20,
+          "train_only_calibration": {
+            "global": -191.0361730109099,
+            "group_counts": {
+              "AUD_JPY|LONG": 1,
+              "AUD_JPY|SHORT": 15,
+              "EUR_JPY|SHORT": 4,
+              "EUR_USD|LONG": 14,
+              "EUR_USD|SHORT": 40,
+              "GBP_USD|LONG": 11,
+              "GBP_USD|SHORT": 2
+            },
+            "groups": {
+              "EUR_USD|SHORT": 506.4461652372422
+            },
+            "oof_n": 87,
+            "status": "TRAIN_OOF_RESIDUALS"
+          },
+          "validation_labels_used_for_calibration": false
+        },
+        "FROZEN_HGB": {
+          "accepted": false,
+          "attribution": {
+            "avoided_loser_magnitude_jpy": 14240.327800000001,
+            "avoided_losers": 22,
+            "calibration_deciles": [
+              {
+                "actual_net_jpy": 1109.9256999999998,
+                "actual_win_rate": 0.5454545454545454,
+                "mean_actual_net_jpy": 100.90233636363634,
+                "mean_predicted_net_jpy": -1564.4934907507725,
+                "n": 11,
+                "prediction_decile_low_to_high": 1
+              },
+              {
+                "actual_net_jpy": 7754.221699999999,
+                "actual_win_rate": 0.5,
+                "mean_actual_net_jpy": 775.4221699999999,
+                "mean_predicted_net_jpy": -995.2338005470343,
+                "n": 10,
+                "prediction_decile_low_to_high": 2
+              },
+              {
+                "actual_net_jpy": 2310.6919000000003,
+                "actual_win_rate": 0.8,
+                "mean_actual_net_jpy": 231.06919000000002,
+                "mean_predicted_net_jpy": -734.6925952524374,
+                "n": 10,
+                "prediction_decile_low_to_high": 3
+              },
+              {
+                "actual_net_jpy": 508.0536000000002,
+                "actual_win_rate": 0.6,
+                "mean_actual_net_jpy": 50.80536000000002,
+                "mean_predicted_net_jpy": -522.4925580200209,
+                "n": 10,
+                "prediction_decile_low_to_high": 4
+              },
+              {
+                "actual_net_jpy": -420.9636999999999,
+                "actual_win_rate": 0.6,
+                "mean_actual_net_jpy": -42.09636999999999,
+                "mean_predicted_net_jpy": -332.6178348925623,
+                "n": 10,
+                "prediction_decile_low_to_high": 5
+              },
+              {
+                "actual_net_jpy": 584.3088,
+                "actual_win_rate": 0.8,
+                "mean_actual_net_jpy": 58.43088,
+                "mean_predicted_net_jpy": -107.49078033559344,
+                "n": 10,
+                "prediction_decile_low_to_high": 6
+              },
+              {
+                "actual_net_jpy": -111.56650000000056,
+                "actual_win_rate": 0.7,
+                "mean_actual_net_jpy": -11.156650000000056,
+                "mean_predicted_net_jpy": 41.86474248606453,
+                "n": 10,
+                "prediction_decile_low_to_high": 7
+              },
+              {
+                "actual_net_jpy": 4769.018599999999,
+                "actual_win_rate": 0.9,
+                "mean_actual_net_jpy": 476.90185999999994,
+                "mean_predicted_net_jpy": 111.13582016476394,
+                "n": 10,
+                "prediction_decile_low_to_high": 8
+              },
+              {
+                "actual_net_jpy": 3616.2466,
+                "actual_win_rate": 0.6,
+                "mean_actual_net_jpy": 361.62466,
+                "mean_predicted_net_jpy": 240.0738289101874,
+                "n": 10,
+                "prediction_decile_low_to_high": 9
+              },
+              {
+                "actual_net_jpy": -4975.4565,
+                "actual_win_rate": 0.5,
+                "mean_actual_net_jpy": -497.54565,
+                "mean_predicted_net_jpy": 582.6166717898502,
+                "n": 10,
+                "prediction_decile_low_to_high": 10
+              }
+            ],
+            "excluded_actual_net_jpy": 13468.1759,
+            "false_negative_winner_jpy": 27708.5037,
+            "false_negative_winners": 40,
+            "false_positive_loser_jpy": -11636.784800000001,
+            "false_positive_losers": 13,
+            "incremental_identity_jpy": -13468.1759,
+            "selected_net_jpy": 1676.3042999999998,
+            "spearman_p_value": 0.46190561733980895,
+            "spearman_prediction_actual": -0.07402704816569491,
+            "top_kept_losers": [
+              {
+                "actual_net_jpy": -2981.8961,
+                "episode_id": "oanda:472070:ORDER_ACCEPTED:472070",
+                "predicted_net_jpy": 48.24585662623762
+              },
+              {
+                "actual_net_jpy": -2333.8215,
+                "episode_id": "oanda:471816:ORDER_ACCEPTED:471816",
+                "predicted_net_jpy": 533.8411025752619
+              },
+              {
+                "actual_net_jpy": -1495.5275,
+                "episode_id": "oanda:472311:ORDER_ACCEPTED:472311",
+                "predicted_net_jpy": 68.4865996987929
+              },
+              {
+                "actual_net_jpy": -1215.4046,
+                "episode_id": "oanda:471978:ORDER_ACCEPTED:471978",
+                "predicted_net_jpy": 606.2580951960736
+              },
+              {
+                "actual_net_jpy": -1019.7829,
+                "episode_id": "oanda:472444:ORDER_ACCEPTED:472444",
+                "predicted_net_jpy": 729.9539437381173
+              },
+              {
+                "actual_net_jpy": -891.0833,
+                "episode_id": "oanda:472207:ORDER_ACCEPTED:472207",
+                "predicted_net_jpy": 563.9970785810075
+              },
+              {
+                "actual_net_jpy": -462.3796,
+                "episode_id": "oanda:472036:ORDER_ACCEPTED:472036",
+                "predicted_net_jpy": 103.0195989831718
+              },
+              {
+                "actual_net_jpy": -340.2,
+                "episode_id": "oanda:472791:ORDER_ACCEPTED:472791",
+                "predicted_net_jpy": 190.5693411435782
+              },
+              {
+                "actual_net_jpy": -280.8,
+                "episode_id": "oanda:472774:ORDER_ACCEPTED:472774",
+                "predicted_net_jpy": 229.6301487579861
+              },
+              {
+                "actual_net_jpy": -238.0,
+                "episode_id": "oanda:471922:ORDER_ACCEPTED:471922",
+                "predicted_net_jpy": 155.08876824053675
+              }
+            ],
+            "top_missed_winners": [
+              {
+                "actual_net_jpy": 7280.0,
+                "episode_id": "oanda:472982:ORDER_ACCEPTED:472982",
+                "predicted_net_jpy": -986.9670552545435
+              },
+              {
+                "actual_net_jpy": 3780.0,
+                "episode_id": "oanda:472908:ORDER_ACCEPTED:472908",
+                "predicted_net_jpy": -943.2943771942013
+              },
+              {
+                "actual_net_jpy": 1709.9361,
+                "episode_id": "oanda:472801:ORDER_ACCEPTED:472801",
+                "predicted_net_jpy": -1440.6777588919304
+              },
+              {
+                "actual_net_jpy": 1621.9379,
+                "episode_id": "oanda:472964:ORDER_ACCEPTED:472964",
+                "predicted_net_jpy": -1.796387288269516
+              },
+              {
+                "actual_net_jpy": 1427.2004,
+                "episode_id": "oanda:473016:ORDER_ACCEPTED:473016",
+                "predicted_net_jpy": -459.8180186109769
+              },
+              {
+                "actual_net_jpy": 866.8938,
+                "episode_id": "oanda:472351:ORDER_ACCEPTED:472351",
+                "predicted_net_jpy": -730.889962899054
+              },
+              {
+                "actual_net_jpy": 866.3793,
+                "episode_id": "oanda:473010:ORDER_ACCEPTED:473010",
+                "predicted_net_jpy": -1596.1390655074795
+              },
+              {
+                "actual_net_jpy": 777.6196,
+                "episode_id": "oanda:472457:ORDER_ACCEPTED:472457",
+                "predicted_net_jpy": -884.4760264785361
+              },
+              {
+                "actual_net_jpy": 697.7244,
+                "episode_id": "oanda:471968:ORDER_ACCEPTED:471968",
+                "predicted_net_jpy": -2065.384794674635
+              },
+              {
+                "actual_net_jpy": 658.9368,
+                "episode_id": "oanda:472404:ORDER_ACCEPTED:472404",
+                "predicted_net_jpy": -1158.432977903826
+              }
+            ]
+          },
+          "baseline_net_jpy": 15144.4802,
+          "cost_breakdown": {
+            "fee": "zero-account contract",
+            "fill_slippage": "implicit in actual broker realized P/L",
+            "financing_jpy": 0.0,
+            "opportunity_cost": "missing",
+            "spread": "implicit in actual broker realized P/L"
+          },
+          "expectancy_per_available_episode_jpy": 16.59707227722772,
+          "financing_jpy_explicit": 0.0,
+          "gates": {
+            "margin_complete": false,
+            "minimum_retention": false,
+            "minimum_validation_events": true,
+            "net_strictly_above_all_trades": false,
+            "paired_lcb_positive": false,
+            "profit_factor_above_one": true
+          },
+          "incremental_expectancy_jpy": -133.34827623762376,
+          "incremental_net_jpy": -13468.1759,
+          "margin_coverage": 0.07692307692307693,
+          "margin_status": "INCOMPLETE_DECISION_TIME_CROSS_CURRENCY_CONVERSION",
+          "max_drawdown_jpy": 5612.5419999999995,
+          "net_jpy": 1676.3042999999998,
+          "paired_bootstrap_95pct_ci_jpy": [
+            -338.0989396039604,
+            39.45752574257426
+          ],
+          "paired_lcb_jpy": -338.0989396039604,
+          "peak_margin_jpy_known_jpy_pairs_only": 40746.132000000005,
+          "profit_factor": 1.144052186992407,
+          "retention_ratio": 0.38613861386138615,
+          "ruin_proxy": "UNPROVEN_WITHOUT_COMPLETE_MARGIN_AND_INITIAL_EQUITY_SNAPSHOT",
+          "selected_episode_ids": [
+            "oanda:471816:ORDER_ACCEPTED:471816",
+            "oanda:471859:ORDER_ACCEPTED:471859",
+            "oanda:471862:ORDER_ACCEPTED:471862",
+            "oanda:471914:ORDER_ACCEPTED:471914",
+            "oanda:471922:ORDER_ACCEPTED:471922",
+            "oanda:471939:ORDER_ACCEPTED:471939",
+            "oanda:471978:ORDER_ACCEPTED:471978",
+            "oanda:472036:ORDER_ACCEPTED:472036",
+            "oanda:472043:ORDER_ACCEPTED:472043",
+            "oanda:472070:ORDER_ACCEPTED:472070",
+            "oanda:472074:ORDER_ACCEPTED:472074",
+            "oanda:472132:ORDER_ACCEPTED:472132",
+            "oanda:472148:ORDER_ACCEPTED:472148",
+            "oanda:472189:ORDER_ACCEPTED:472189",
+            "oanda:472207:ORDER_ACCEPTED:472207",
+            "oanda:472287:ORDER_ACCEPTED:472287",
+            "oanda:472311:ORDER_ACCEPTED:472311",
+            "oanda:472317:ORDER_ACCEPTED:472317",
+            "oanda:472321:ORDER_ACCEPTED:472321",
+            "oanda:472444:ORDER_ACCEPTED:472444",
+            "oanda:472449:ORDER_ACCEPTED:472449",
+            "oanda:472529:ORDER_ACCEPTED:472529",
+            "oanda:472549:ORDER_ACCEPTED:472549",
+            "oanda:472654:ORDER_ACCEPTED:472654",
+            "oanda:472665:ORDER_ACCEPTED:472665",
+            "oanda:472730:ORDER_ACCEPTED:472730",
+            "oanda:472774:ORDER_ACCEPTED:472774",
+            "oanda:472791:ORDER_ACCEPTED:472791",
+            "oanda:472818:ORDER_ACCEPTED:472818",
+            "oanda:472883:ORDER_ACCEPTED:472883",
+            "oanda:472912:ORDER_ACCEPTED:472912",
+            "oanda:472924:ORDER_ACCEPTED:472924",
+            "oanda:472926:ORDER_ACCEPTED:472926",
+            "oanda:472930:ORDER_ACCEPTED:472930",
+            "oanda:472943:ORDER_ACCEPTED:472943",
+            "oanda:472945:ORDER_ACCEPTED:472945",
+            "oanda:472956:ORDER_ACCEPTED:472956",
+            "oanda:472958:ORDER_ACCEPTED:472958",
+            "oanda:473002:ORDER_ACCEPTED:473002"
+          ],
+          "trades_available": 101,
+          "trades_selected": 39
+        }
+      },
+      "id": "QUADRUPLE_64D",
+      "labeled_events": 251,
+      "purged_train_events": 5,
+      "status": "EVALUATED",
+      "train_events": 145,
+      "validation_events": 101
+    }
+  ],
+  "x_contract": {
+    "admitted": false,
+    "audited": [
+      {
+        "contract_id": "Q-XFX-LVN-001",
+        "current_status": "INSUFFICIENT_EVIDENCE_NEGATIVE_POINT_ESTIMATE",
+        "field_complete": true,
+        "source_status_url": "https://x.com/mmmm30080/status/2086281289460506945",
+        "standalone_executable": false
+      },
+      {
+        "contract_id": "Q-XFX-SESSION-001",
+        "current_status": "READY_NEXT_RUN; NOT_EXECUTED_IN_THIS_CHECKPOINT",
+        "field_complete": true,
+        "source_status_url": "https://x.com/L2WTrades/status/2068758028946386994",
+        "standalone_executable": false
+      },
+      {
+        "contract_id": "Q-XFX-MTF-001",
+        "current_status": "READY_AFTER_SESSION_CONTRACT_TERMINATES",
+        "field_complete": true,
+        "source_status_url": "https://x.com/koganenezumi/status/2085925500120416676",
+        "standalone_executable": false
+      }
+    ],
+    "files_read_only": [
+      "research/x_fx_methods/2026-08-09/validation_queue.json",
+      "research/x_fx_methods/2026-08-09/ledger.json"
+    ],
+    "reason": "The visible X task is active; existing queue items inherit baseline entry/exit/invalidation or leave a source exit non-unique, so no standalone D variable is inferred.",
+    "status": "NOT_ADMITTED_NO_STANDALONE_COMPLETE_CONTRACT"
+  }
+}

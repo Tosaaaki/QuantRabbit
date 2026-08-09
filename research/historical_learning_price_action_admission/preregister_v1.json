@@ -1,0 +1,57 @@
+{
+  "contract": "historical_learning_price_action_admission_preregister_v1",
+  "registered_at_utc": "2026-08-09T15:20:00Z",
+  "parent_git_head": "f35e8c176b86f3eee7a660ae74abb2aeff06d0a6",
+  "independent_hypothesis": "The frozen selector lacks causal multi-bar price action. Adding a fixed multi-horizon S5-derived structure vector may improve incremental after-cost net versus all-trades.",
+  "anchor_utc": "2026-07-09T07:46:03.151624347Z",
+  "holdout": "Events after anchor_utc are sealed and unread.",
+  "frozen_episode_input": {
+    "path": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+    "sha256": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e"
+  },
+  "s5_bidask_inputs": [
+    {"pair": "AUD_JPY", "path": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "222e0b7c39dc6fa101654268be19393a41ebbbad2c8c7c54315844aa461ba8f6"},
+    {"pair": "EUR_JPY", "path": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "26af73c453465260c98205b88d8100a18dbde3e088626a412d0860d8eeb08dac"},
+    {"pair": "EUR_USD", "path": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "b634f396889a2b41ae13f5e0957ea705639dad0c16e1c2b3be08ba3ebc98d5ed"}
+  ],
+  "truth_contract": {
+    "price": "observed bid/ask S5 only; mid is used for pre-entry features, never as an executable fill",
+    "bar": "causal completed M5 bars aggregated only from complete S5 records",
+    "gap_gate": "each M5 bar requires exactly 60 unique S5 timestamps and every adjacent lookback M5 bar must be 300 seconds apart",
+    "lookback": "48 completed M5 bars ending strictly before ORDER_ACCEPTED feature_at",
+    "prohibitions": ["M1 substitution", "M5 source substitution", "interpolation", "forward fill", "future bar", "post-fill feature"]
+  },
+  "fixed_price_action_features": [
+    "mid returns over 1, 3, 12 and 48 completed M5 bars",
+    "range position within prior 12 and 48 bars",
+    "trend efficiency over 12 and 48 bars",
+    "distance from prior 12 and 48 bar high and low",
+    "median spread bps over prior 12 and 48 bars",
+    "range expansion: last 3-bar high-low divided by prior 12-bar high-low"
+  ],
+  "model": {
+    "single_change": "append the fixed price-action vector to the frozen metadata/forecast feature vector",
+    "estimator": "same frozen HistGradientBoostingRegressor parameters as f35e8c176",
+    "selection": "predicted future net JPY > 0; S5-feature-missing episodes pass through as TRADE",
+    "hyperparameter_search": "none",
+    "multidimensional_sweep": "deferred; no dimension is swept until this fixed admission test proves incremental signal"
+  },
+  "windows": [
+    {"id": "INITIAL_16D", "from_utc": "2026-06-23T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "DOUBLE_32D", "from_utc": "2026-06-07T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "QUADRUPLE_64D", "from_utc": "2026-05-06T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"}
+  ],
+  "split": "same chronological 60/40, one-hour embargo and close-time purge as frozen admission; fit rows require causal S5 features; validation missing-feature rows pass through",
+  "acceptance": {
+    "minimum_train_feature_rows": 30,
+    "minimum_validation_events": 30,
+    "minimum_validation_feature_coverage": 0.50,
+    "net_jpy": "strictly greater than all-trades on the identical full validation cohort",
+    "paired_lcb_jpy": "> 0",
+    "profit_factor": "> 1",
+    "retention": ">= 0.80",
+    "stability": "positive incremental net and LCB on both 32d and 64d evaluable windows; 16d minimum gate is reported",
+    "policy_admission": "still blocked until all-entry counterfactual and decision-time margin coverage are complete"
+  },
+  "permissions": {"read_only_inputs": true, "holdout_used": false, "paper": false, "live": false, "broker_order": false, "deploy": false}
+}
