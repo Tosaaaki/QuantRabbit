@@ -1,0 +1,855 @@
+{
+  "cohort": {
+    "context_ready_events": 7,
+    "economic_score_blocker": "ALL_CONTEXT_EVENTS_HAVE_AT_LEAST_ONE_ENTRY_TO_UNWIND_S5_GAP",
+    "ledger_stop_loss_events_with_local_pair_family": 12,
+    "minimum_required_per_split": 30,
+    "strict_s5_economic_score_ready_events": 0,
+    "train_context_events": 4,
+    "validation_context_events": 3
+  },
+  "contract": "loss_close_price_action_stage1_real_cohort_scan_v1",
+  "cost_and_risk_contract": {
+    "fee": "REQUIRED_NON_SPREAD_INPUT_NOT_ESTIMATED_IN_CONTEXT_ONLY_SCAN",
+    "fill_order": "ANY_MISSING_S5_IS_FATAL",
+    "financing": "LEDGER_VALUE_PRESENT_BUT_NOT_SCORED_WITHOUT_STRICT_S5_PATH",
+    "margin": "LONGEST_LEG_INCREMENT_PROXY_REQUIRED_BEFORE_OUTCOME_ADOPTION",
+    "maximum_drawdown": "REQUIRED_BEFORE_OUTCOME_ADOPTION",
+    "ruin": "DETERMINISTIC_FLOOR_ONLY; PROBABILITY_NOT_ESTIMATED",
+    "slippage": "REQUIRED_NON_SPREAD_INPUT_NOT_ESTIMATED_IN_CONTEXT_ONLY_SCAN",
+    "spread": "INTRINSIC_EXECUTABLE_BID_ASK",
+    "trend_continuation": "REQUIRED_BEFORE_OUTCOME_ADOPTION",
+    "unwind": "FIXED_60_MINUTES; MUST BE COMPLETE"
+  },
+  "events": [
+    {
+      "baseline_sl_trigger_utc": "2026-05-06T21:05:00Z",
+      "close_at_utc": "2026-05-06T21:05:04.976191771Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-05-06T21:04:55Z",
+      "event_uid": "oanda:470288:TRADE_CLOSED:closed:470261",
+      "fill_at_utc": "2026-05-06T17:25:15.850070092Z",
+      "pair": "AUD_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 608,
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "LONG",
+      "split": "TRAIN",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "470261"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-05-06T17:42:45Z",
+      "close_at_utc": "2026-05-06T17:44:04.096680205Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-05-06T17:42:40Z",
+      "event_uid": "oanda:470285:TRADE_CLOSED:closed:470270",
+      "fill_at_utc": "2026-05-06T17:30:04.056720774Z",
+      "pair": "EUR_USD",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 75,
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "LONG",
+      "split": "TRAIN",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "470270"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-05-06T21:05:00Z",
+      "close_at_utc": "2026-05-06T21:05:04.976191771Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-05-06T21:04:55Z",
+      "event_uid": "oanda:470290:TRADE_CLOSED:closed:470276",
+      "fill_at_utc": "2026-05-06T17:30:07.918109073Z",
+      "pair": "AUD_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 605,
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "LONG",
+      "split": "TRAIN",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "470276"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-05-07T00:11:45Z",
+      "close_at_utc": "2026-05-07T00:11:48.346351904Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-05-07T00:11:40Z",
+      "event_uid": "oanda:470300:TRADE_CLOSED:closed:470297",
+      "fill_at_utc": "2026-05-06T23:28:00.313903454Z",
+      "pair": "AUD_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 80,
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "LONG",
+      "split": "TRAIN",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "470297"
+    },
+    {
+      "close_at_utc": "2026-05-13T02:03:35.578962238Z",
+      "context_status": "BLOCKED_NO_UNAMBIGUOUS_S5_SL_FIRST_TOUCH",
+      "event_uid": "oanda:470989:TRADE_CLOSED:closed:470984",
+      "fill_at_utc": "2026-05-13T01:57:31.833779245Z",
+      "first_touch": null,
+      "pair": "AUD_JPY",
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "SHORT",
+      "strict_economic_score_eligible": false,
+      "trade_id": "470984"
+    },
+    {
+      "close_at_utc": "2026-05-13T02:19:25.063604296Z",
+      "context_status": "BLOCKED_NO_UNAMBIGUOUS_S5_SL_FIRST_TOUCH",
+      "event_uid": "oanda:470997:TRADE_CLOSED:closed:470992",
+      "fill_at_utc": "2026-05-13T02:04:11.058323658Z",
+      "first_touch": null,
+      "pair": "AUD_JPY",
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "SHORT",
+      "strict_economic_score_eligible": false,
+      "trade_id": "470992"
+    },
+    {
+      "close_at_utc": "2026-05-13T03:16:24.384717922Z",
+      "context_status": "BLOCKED_NO_UNAMBIGUOUS_S5_SL_FIRST_TOUCH",
+      "event_uid": "oanda:471005:TRADE_CLOSED:closed:471000",
+      "fill_at_utc": "2026-05-13T02:20:08.198573576Z",
+      "first_touch": null,
+      "pair": "EUR_USD",
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "LONG",
+      "strict_economic_score_eligible": false,
+      "trade_id": "471000"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-06-22T02:09:05Z",
+      "close_at_utc": "2026-06-22T02:14:53.203731570Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-06-22T02:09:00Z",
+      "event_uid": "oanda:472780:TRADE_CLOSED:closed:472775",
+      "fill_at_utc": "2026-06-22T01:54:23.830560478Z",
+      "pair": "USD_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 103,
+      "s5_source": "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz",
+      "side": "SHORT",
+      "split": "VALIDATION",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "472775"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-06-22T07:23:55Z",
+      "close_at_utc": "2026-06-22T07:23:59.208384537Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-06-22T07:23:50Z",
+      "event_uid": "oanda:472795:TRADE_CLOSED:closed:472792",
+      "fill_at_utc": "2026-06-22T06:38:06.919063840Z",
+      "pair": "USD_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 53,
+      "s5_source": "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz",
+      "side": "SHORT",
+      "split": "VALIDATION",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "472792"
+    },
+    {
+      "close_at_utc": "2026-06-25T16:23:25.111589668Z",
+      "context_status": "BLOCKED_NO_LOCAL_S5_COVERAGE",
+      "event_uid": "oanda:472853:TRADE_CLOSED:closed:472837",
+      "fill_at_utc": "2026-06-25T15:22:12.249696813Z",
+      "pair": "GBP_USD",
+      "s5_source": null,
+      "side": "SHORT",
+      "strict_economic_score_eligible": false,
+      "trade_id": "472837"
+    },
+    {
+      "close_at_utc": "2026-06-29T13:36:19.304951345Z",
+      "context_status": "BLOCKED_NO_LOCAL_S5_COVERAGE",
+      "event_uid": "oanda:472906:TRADE_CLOSED:closed:472900",
+      "fill_at_utc": "2026-06-29T12:26:43.448489820Z",
+      "pair": "USD_JPY",
+      "s5_source": null,
+      "side": "SHORT",
+      "strict_economic_score_eligible": false,
+      "trade_id": "472900"
+    },
+    {
+      "baseline_sl_trigger_utc": "2026-06-29T13:56:40Z",
+      "close_at_utc": "2026-06-29T13:56:50.160731599Z",
+      "context_status": "CALCULATED",
+      "decision_timestamp_utc": "2026-06-29T13:56:35Z",
+      "event_uid": "oanda:472910:TRADE_CLOSED:closed:472903",
+      "fill_at_utc": "2026-06-29T13:24:09.901432536Z",
+      "pair": "EUR_JPY",
+      "s5_gap_count_entry_to_fixed_60m_unwind": 2,
+      "s5_source": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "side": "SHORT",
+      "split": "VALIDATION",
+      "strict_economic_score_eligible": false,
+      "strict_ineligibility_reason": "S5_TRUTH_GAP_FILL_ORDER_UNRESOLVED",
+      "trade_id": "472903"
+    }
+  ],
+  "generated_at_utc": "2026-08-09T12:05:15.872955+00:00",
+  "permissions": {
+    "broker": false,
+    "deploy": false,
+    "holdout": false,
+    "live": false,
+    "order": false,
+    "paper": false,
+    "read_only": true
+  },
+  "scope": {
+    "baseline_event": "unambiguous STOP_LOSS_ORDER and first S5 protection touch SL",
+    "embargo_seconds": 3600,
+    "entry_source": "execution_ledger ORDER_FILLED with frozen accepted TP/SL",
+    "holdout_used": false,
+    "max_unwind_seconds": 3600,
+    "price_source": "local OANDA S5 bid/ask JSONL only",
+    "splits": [
+      "TRAIN",
+      "VALIDATION"
+    ]
+  },
+  "stage1": {
+    "config_diagnostics": [
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "a60161e2062ba0e1",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 1
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 6
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "eb11877a00552deb",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "18cf39cf66b260f7",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "978c7463f64d2b1d",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 4
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 7
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "20224bcedd2ec49a",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 2,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 2
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 5
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "1431da0455251b13",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 4
+        },
+        "price_action_against_inventory_count": 7,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "56e96fdb8b0cc670",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 3
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 4
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "e3480af516952a06",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 3
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 4
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 3,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "0d287f62671c638a",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 3
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 4
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "84f88ffbd2621cd2",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_BOTTOM_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 4
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "0c89a1f7f7f27f35",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "e0897c198aadbd2b",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "72d0d120f563e2a3",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 2
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "25ff3b8448f264b7",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 2,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 2
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "f98934fc6572f1a7",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 1,
+          "NONE": 6
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 1
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "7abc2579c5cce1c5",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 1
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 5
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "551ab832a191bd0a",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 3,
+          "DOUBLE_TOP_CANDIDATE": 1,
+          "NONE": 3
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 6,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "6341af1dd317e31c",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 2,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 2
+        },
+        "price_action_against_inventory_count": 5,
+        "setup_gate_count": 4
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "399a2f6a31eab979",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_BOTTOM_CANDIDATE": 4,
+          "DOUBLE_TOP_CANDIDATE": 4,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "4f933abc519381ab",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 10
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 1
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 18,
+          "structure_bars": 6
+        },
+        "config_id": "d02d27cc859161a8",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DESCENDING_TRIANGLE_CANDIDATE": 1,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 10
+        },
+        "price_action_against_inventory_count": 4,
+        "setup_gate_count": 1
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "06e80b11a7dde9c5",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 6,
+          "DOUBLE_TOP_CANDIDATE": 6,
+          "NONE": 2
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "b34b2037001598d2",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 4,
+          "DOUBLE_TOP_CANDIDATE": 3,
+          "NONE": 7
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 24,
+          "structure_bars": 12
+        },
+        "config_id": "c5010f720d21788b",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 2,
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 10
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 1
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 4,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "ff5e76bf574030e1",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 6,
+          "DOUBLE_TOP_CANDIDATE": 4,
+          "NONE": 4
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 2,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 8,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "4fd318d25229cdbc",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 6,
+          "DOUBLE_TOP_CANDIDATE": 2,
+          "NONE": 6
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 3
+      },
+      {
+        "blocker_counts": {},
+        "candle_against_inventory_count": 2,
+        "config": {
+          "acceptance_bars": 3,
+          "attack_tolerance_ratio": 0.08,
+          "breakout_bars": 12,
+          "frames_seconds": [
+            60,
+            300
+          ],
+          "regime_bars": 48,
+          "structure_bars": 24
+        },
+        "config_id": "668f3ad8432748aa",
+        "context_calculated": 7,
+        "pattern_counts": {
+          "DOUBLE_BOTTOM_CANDIDATE": 5,
+          "DOUBLE_TOP_CANDIDATE": 4,
+          "NONE": 5
+        },
+        "price_action_against_inventory_count": 3,
+        "setup_gate_count": 3
+      }
+    ],
+    "full_cartesian_search_used": false,
+    "grid_cell_count": 27,
+    "outcome_selection_performed": false,
+    "reason": "No strict S5 paired economic cohort; feature counts are diagnostic only.",
+    "single_best_cell_adoption_allowed": false
+  },
+  "status": "BLOCKED_INSUFFICIENT_STRICT_S5_COHORT"
+}
