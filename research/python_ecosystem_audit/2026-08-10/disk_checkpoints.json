@@ -1,0 +1,67 @@
+{
+  "active_db_wal_in_canonical_repo": false,
+  "checkpoints": [
+    {
+      "candidate": "xarray",
+      "free_after_bytes": 73253576704,
+      "free_before_bytes": 73431810048,
+      "free_decrease_bytes": 178233344,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    },
+    {
+      "candidate": "salib",
+      "free_after_bytes": 72843853824,
+      "free_before_bytes": 73256226816,
+      "free_decrease_bytes": 412372992,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    },
+    {
+      "candidate": "pymoo",
+      "free_after_bytes": 72536956928,
+      "free_before_bytes": 72843735040,
+      "free_decrease_bytes": 306778112,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    },
+    {
+      "candidate": "dowhy",
+      "free_after_bytes": 71520575488,
+      "free_before_bytes": 72536743936,
+      "free_decrease_bytes": 1016168448,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    },
+    {
+      "candidate": "mapie",
+      "free_after_bytes": 71272865792,
+      "free_before_bytes": 71523958784,
+      "free_decrease_bytes": 251092992,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    },
+    {
+      "candidate": "river",
+      "free_after_bytes": 71053701120,
+      "free_before_bytes": 71270965248,
+      "free_decrease_bytes": 217264128,
+      "hard_stop_lt_5gib": false,
+      "soft_pause_ge_1gib_decrease": false,
+      "soft_pause_lt_8gib": false
+    }
+  ],
+  "free_final_bytes": 71037087744,
+  "other_worktree_db_wal_untouched": true,
+  "output_cap_bytes": 5368709120,
+  "output_cap_exceeded": false,
+  "outside_status_changed": false,
+  "outside_status_sha_all_installs": "e7a32f2f60ec8457ef0bded1ab91cf5c44b50bfed3e97a257fd507ab61378fd4",
+  "run_owned_env_bytes": 1705131134,
+  "run_owned_wheelhouse_bytes": 505841923
+}

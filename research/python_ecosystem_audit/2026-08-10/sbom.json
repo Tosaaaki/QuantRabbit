@@ -1,17 +1,16 @@
 {
-  "format": "research-audit-sbom-v1",
-  "generated_from": "research/historical_learning_admission/requirements.lock",
-  "environment": {"python":"3.12.8","architecture":"arm64","installation_performed":false},
-  "components": [
-    {"name":"numpy","version":"2.5.1","license":"BSD-3-Clause","source":"PyPI/official"},
-    {"name":"scipy","version":"1.18.0","license":"BSD-3-Clause","source":"PyPI/official"},
-    {"name":"scikit-learn","version":"1.9.0","license":"BSD-3-Clause","source":"PyPI/official"},
-    {"name":"hypothesis","version":"6.165.2","license":"MPL-2.0","source":"PyPI/official"},
-    {"name":"joblib","version":"1.5.3","license":"BSD-3-Clause","source":"PyPI/official transitive"},
-    {"name":"narwhals","version":"2.24.0","license":"MIT","source":"PyPI/official transitive"},
-    {"name":"sortedcontainers","version":"2.4.0","license":"Apache-2.0","source":"PyPI/official transitive"},
-    {"name":"threadpoolctl","version":"3.6.0","license":"BSD-3-Clause","source":"PyPI/official transitive"}
+  "format": "research-audit-sbom-v2",
+  "baseline": "research/historical_learning_admission/requirements.lock",
+  "environment": {"python":"3.12.8","architecture":"arm64","runtime_lock_changed":false},
+  "isolated_candidates": [
+    {"name":"xarray","version":"2026.7.0","license":"Apache-2.0","status":"ADOPT_RESEARCH_ADAPTER"},
+    {"name":"SALib","version":"1.5.2","license":"MIT","status":"ADOPT_RESEARCH_ADAPTER"},
+    {"name":"pymoo","version":"0.6.2","license":"Apache-2.0","status":"ADOPT_RESEARCH_ADAPTER"},
+    {"name":"DoWhy","version":"0.14","license":"MIT","status":"HOLD_ISOLATED_DIAGNOSTIC"},
+    {"name":"MAPIE","version":"1.5.0","license":"BSD-3-Clause","status":"ADOPT_RESEARCH_ADAPTER"},
+    {"name":"River","version":"0.25.0","license":"BSD-3-Clause","status":"HOLD_NO_DRIFT_SIGNAL_IN_FIXTURE"}
   ],
-  "optional_candidates_not_installed": ["xarray","Polars","PyArrow","DuckDB","Numba","Optuna","pymoo","SALib","DoWhy","EconML","PyMC","MAPIE","River","ruptures","hmmlearn","SymPy","vectorbt","backtesting.py","Backtrader","empyrical","quantstats"],
-  "security_note": "No setup.py, GitHub Action, binary, secret, or network-enabled package installer was executed. Candidate source/release metadata was read-only."
+  "transitive_inventory": "adapter_sbom.json",
+  "wheel_hash_inventory": "adapter_wheel_manifest.json",
+  "security_note": "Only PyPI binary wheels were downloaded into the run-owned wheelhouse and installed offline into candidate-specific venvs. No Git checkout, setup.py source build, GitHub Action, secret access, or package-triggered external write was used."
 }

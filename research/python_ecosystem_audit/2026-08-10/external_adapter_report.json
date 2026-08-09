@@ -1,0 +1,269 @@
+{
+  "dowhy": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.479007542016916,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 641583,
+      "result": {
+        "causal_assumptions_are_not_proven": true,
+        "complete_rows": 251,
+        "effect": 0.600165562914,
+        "effect_abs_diff": 2.1094237467877974e-15,
+        "manual_ols_effect": 0.600165562914,
+        "missing_outcomes_excluded_not_zero": 1,
+        "placebo_new_effect": -0.003288753543,
+        "placebo_p_value": 0.495985305924
+      }
+    },
+    "candidate": "dowhy",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "HOLD_ISOLATED_DIAGNOSTIC",
+      "license": "MIT",
+      "version": "0.14"
+    }
+  },
+  "mapie": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.0027063749730587006,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 15255,
+      "result": {
+        "chronological_split": true,
+        "conformal_count": 64,
+        "fit_count": 64,
+        "holdout_read": false,
+        "manual_bound_max_abs_diff": 0.0,
+        "mean_interval_width": 10.389477190416104,
+        "missing_validation_excluded_not_zero": 1,
+        "validation_count": 123,
+        "validation_coverage": 0.9512195121951219
+      }
+    },
+    "candidate": "mapie",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "ADOPT_RESEARCH_ADAPTER",
+      "license": "BSD-3-Clause",
+      "version": "1.5.0"
+    }
+  },
+  "pymoo": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.0003024169709533453,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 16200,
+      "result": {
+        "custom_front": [
+          "VALIDATION|M15|EUR_USD|TREND|cube_shadow|observed_bid_ask|margin_cap_92|TIMEOUT"
+        ],
+        "external_front": [
+          "VALIDATION|M15|EUR_USD|TREND|cube_shadow|observed_bid_ask|margin_cap_92|TIMEOUT"
+        ],
+        "feasible_candidates": 15,
+        "front_exact_match": true,
+        "missing_candidates_excluded_not_zero": 0,
+        "validation_only": true
+      }
+    },
+    "candidate": "pymoo",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "ADOPT_RESEARCH_ADAPTER",
+      "license": "Apache-2.0",
+      "version": "0.6.2"
+    }
+  },
+  "river": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.00010883307550102472,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 1264,
+      "result": {
+        "change_indexes": [],
+        "event_order_fixed": true,
+        "holdout_read": false,
+        "mean_abs_diff": 0.0,
+        "missing_outcomes_skipped_not_zero": 1,
+        "online_mean": 4.625498007968128,
+        "stdlib_mean": 4.625498007968128
+      }
+    },
+    "candidate": "river",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "HOLD_NO_DRIFT_SIGNAL_IN_FIXTURE",
+      "license": "BSD-3-Clause",
+      "version": "0.25.0"
+    }
+  },
+  "salib": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.03937574999872595,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 958688,
+      "result": {
+        "factorial_lookup_max_abs_diff": 0.0,
+        "first_order": {
+          "cost": 0.041358936484,
+          "exit": 0.000844059928,
+          "method": 0.000211014982,
+          "regime": 0.947246254484,
+          "risk": 0.0
+        },
+        "missing_outcomes_excluded_not_zero": 1,
+        "sample_count": 1536,
+        "second_order": {
+          "cost:exit": -0.0,
+          "cost:risk": 0.0,
+          "method:cost": -0.0,
+          "method:exit": -0.0,
+          "method:risk": -0.0,
+          "regime:cost": -0.0,
+          "regime:exit": -0.0,
+          "regime:method": 0.010339734121,
+          "regime:risk": 0.0,
+          "risk:exit": -0.0
+        },
+        "total_order": {
+          "cost": 0.041358936484,
+          "exit": 0.000844059928,
+          "method": 0.010550749103,
+          "regime": 0.957585988605,
+          "risk": 0.0
+        },
+        "training_only": true
+      }
+    },
+    "candidate": "salib",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "ADOPT_RESEARCH_ADAPTER",
+      "license": "MIT",
+      "version": "1.5.2"
+    }
+  },
+  "xarray": {
+    "adapter": {
+      "deterministic_repeat": true,
+      "median_seconds": 0.41503174998797476,
+      "memory_scope": "tracemalloc Python allocations only; native allocator RSS excluded",
+      "peak_python_bytes": 209893,
+      "result": {
+        "after_cost_sum_diff": 0.0,
+        "dense_nan_count": 1737,
+        "dims": [
+          "split",
+          "timeframe",
+          "pair",
+          "regime",
+          "method",
+          "cost",
+          "risk",
+          "exit",
+          "metric"
+        ],
+        "known_absent_is_nan": true,
+        "lcb_sum_diff": 0.0,
+        "numeric_max_abs_diff": 0.0,
+        "observed_non_null_count": 567
+      }
+    },
+    "candidate": "xarray",
+    "financial_oracle_after": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_before": {
+      "after_cost_sum": 1161.0,
+      "lcb_sum": 128.85514153440164,
+      "null_values": 0,
+      "sha256": "9de74af70d0fc26bf58ca757a39596b953e4641c5d0d320a7d10af1b83b096b0"
+    },
+    "financial_oracle_unchanged": true,
+    "fixture_records": 252,
+    "long_rows": 567,
+    "selection": {
+      "decision": "ADOPT_RESEARCH_ADAPTER",
+      "license": "Apache-2.0",
+      "version": "2026.7.0"
+    }
+  }
+}

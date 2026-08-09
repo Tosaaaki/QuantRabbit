@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+.adapter_envs/
+.wheelhouse/

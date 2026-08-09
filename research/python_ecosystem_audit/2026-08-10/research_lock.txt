@@ -1,6 +1,10 @@
-# No new package was installed for this audit.
-# The baseline research environment is pinned by:
-# research/historical_learning_admission/requirements.lock
-# Python: 3.12.8 arm64 (existing isolated environment)
-# Optional adapters are import-time only and must fail closed when absent.
-
+# Baseline remains pinned by research/historical_learning_admission/requirements.lock.
+# Optional adapters live only in ignored, candidate-specific Python 3.12 arm64
+# venvs.  Installation is offline from the corresponding unique wheelhouse;
+# adapter_wheel_manifest.json pins every transitive wheel by SHA-256.
+xarray==2026.7.0 --hash=sha256:bf9dd130b93806dc78e90c1b7ac24851b31557b888674c53622235691cf21824
+SALib==1.5.2 --hash=sha256:6f4b6bebc1eeed1d081c8f951fa8c2ad7b0cd8a7159d206af48ef137cc806c43
+pymoo==0.6.2 --hash=sha256:d9b8b59d2bd21c8a04fc014ce197c464375c3bbc90324477086ace056eb68caf
+dowhy==0.14 --hash=sha256:9c5855d80601e0feb2d0d232c19e7b660db4cd0ea04ace2ebaefcdb3599ab9db
+MAPIE==1.5.0 --hash=sha256:dfc74fc62d5276ec8ab9aa2d9e53cfeb9901fe1df27f8785e724939b6a512483
+river==0.25.0 --hash=sha256:2a354c163c25aa00ad20c55b6a5e050ac9e47fae8f57fb00e11cf9bfc1043f01

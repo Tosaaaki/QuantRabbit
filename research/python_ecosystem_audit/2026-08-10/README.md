@@ -32,20 +32,51 @@ the same cost model is `REJECT` or `HOLD`, never an adopted truth source.
 
 ## Reproduce
 
-Use the already pinned admission environment. No package installation is
-required or performed by this audit (the host has less than 1 GiB free space).
+The baseline audit remains in the existing admission environment. Optional
+packages are isolated from it in one ignored venv per candidate. Every wheel,
+including transitives, is recorded in `adapter_wheel_manifest.json`; the full
+installed distribution/license inventory is in `adapter_sbom.json`.
 
 ```bash
 research/historical_learning_admission/.venv/bin/python \
   research/python_ecosystem_audit/2026-08-10/build_audit.py
 research/historical_learning_admission/.venv/bin/python \
   -m unittest discover -s research/python_ecosystem_audit/2026-08-10 -p 'test_*.py'
+python3 research/python_ecosystem_audit/2026-08-10/run_external_adapters.py
 ```
 
-`build_audit.py` writes only this directory's generated JSON/JSONL artifacts.
-The optional adapters record `not_installed` rather than silently falling back
-to an external default. Rollback is deleting this research path or reverting
-its dedicated commit; no runtime path imports it.
+The last command is verify-only by default: it re-executes all probes and
+fails if the wheelhouse/SBOM differs, without rewriting captured benchmarks.
+Use `--capture` only when intentionally refreshing the dated evidence.
+
+`build_audit.py` and `run_external_adapters.py` write only this research
+directory. Rollback for one candidate is removal of only
+`.adapter_envs/<candidate>` and `.wheelhouse/<candidate>`; rollback of the
+tracked evidence is reverting the dedicated research commit. No runtime path
+imports these adapters.
+
+## External adapter result
+
+- xarray 2026.7.0: adopted for research cube representation. All 567 populated
+  values matched exactly, after-cost/LCB sums were unchanged, and the known
+  absent cell stayed NaN.
+- SALib 1.5.2: adopted for TRAIN-only sensitivity. The 32-cell QR lookup was
+  reproduced with zero error; the missing outcome was excluded, not imputed.
+- pymoo 0.6.2: adopted for research Pareto filtering. Its nondominated front
+  exactly matched the QR oracle under the same five constraints.
+- MAPIE 1.5.0: adopted for research uncertainty intervals. Chronological
+  fit/conformal/validation partitions were preserved and manual finite-sample
+  quantile bounds matched exactly.
+- DoWhy 0.14: held as an isolated diagnostic. It matched manual OLS and the
+  placebo refuter behaved as expected, but causal assumptions are unproven and
+  its isolated dependency set is large and conflicts with the baseline SciPy
+  pin.
+- River 0.25.0: held until a real drift signal exists. Ordered online mean
+  matched exactly, but ADWIN detected no change in this bounded fixture.
+
+Raw adapter latency and peak Python allocation are recorded in
+`external_adapter_report.json`. They are not presented as speedups because the
+external operations do not all have semantically identical custom baselines.
 
 ## Intake policy
 
@@ -54,4 +85,3 @@ metadata, not popularity. The ledger records license, Python/Apple-Silicon
 compatibility, maintenance/CI evidence, deterministic behavior, dependencies,
 security/operational concerns, and the exact failure mode at QuantRabbit's
 truth boundary. No GitHub code is copied.
-
