@@ -1,0 +1,29 @@
+{
+  "activation": "future research cohorts only; no retroactive admission of the frozen 251",
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_FORWARD_ACQUISITION_V1",
+  "fail_closed": [
+    "missing margin is never zero or sufficient",
+    "post-decision receipts never backfill pre-decision inputs",
+    "Dukascopy remains feature-only",
+    "no mid fill, interpolation, M1 substitution, or hindsight exit"
+  ],
+  "key": "decision_id",
+  "live_permission": false,
+  "mode": "append-only research evidence capture before any candidate order",
+  "required_post_decision_receipts_evaluation_only": [
+    "accept/reject/partial/no-fill",
+    "fill bid/ask/fullVWAP/slippage/fees/initial margin",
+    "all exit or dual-unwind legs in broker transaction order",
+    "realized financing and after-cost outcome"
+  ],
+  "required_pre_decision_receipts": [
+    "OANDA pricing snapshot with bid/ask/depth/source timestamp",
+    "normal-spread baseline source window and watermark",
+    "candidate order intent with order type/entry/units/TP/SL",
+    "versioned slippage bound, fee schedule, and financing schedule",
+    "account margin available/used/rate and candidate margin requirement",
+    "open trades, pair/theme/currency exposure, and concurrency",
+    "explicit exit/unwind policy including dual-leg ordering when applicable",
+    "input SHA set and causal cutoff"
+  ]
+}

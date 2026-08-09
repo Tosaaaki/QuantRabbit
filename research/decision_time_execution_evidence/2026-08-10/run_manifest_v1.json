@@ -1,0 +1,19 @@
+{
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_LEDGER_V1",
+  "holdout_read": false,
+  "live_paper_broker_order_deploy_touched": false,
+  "outputs": {
+    "coverage_report_v1.json": "ee84f61dd89a6069155c4e2bdc4e8200460bb9be2d0a361857e1e10eb0da25b1",
+    "evidence_ledger_v1.jsonl": "8077eb90c86cd25aa583bd54c19e393602928fe853d102ca2e8568a234ad139f",
+    "forward_acquisition_contract_v1.json": "d164807dfc14833fabb4e9999c8eb2a2411a933561713add182f2ba6f6c0e2ad",
+    "fused_decisions_rerun_v1.jsonl": "6ba52be5a5e650bac8f7a784c906685d67d06ca1da218d639127f449544991d1",
+    "preregister_v1.json": "e67063122f12f76aa82cff96b8a3e9be0525253ab046f52e7ac94af50b1744d8"
+  },
+  "source_sha256": {
+    "data/execution_ledger.db:logical_event_snapshot": "88e0a44931258d8d2445ccac8b63c3b65a5ddd91a2b90be9df1fae827d998f1a",
+    "research/historical_learning_admission/all_entry_episodes_v1.jsonl": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "research/python_ecosystem_audit/2026-08-10/real_shadow_payload.json": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814",
+    "research/system_utilization_rca/2026-08-10/fused_decisions_v1.jsonl": "a0bc0ab7ff8457d931eafc759001d21c5e54e3d34525bbbbea30ba53df23b551",
+    "research/system_utilization_rca/2026-08-10/utilization_report_v1.json": "3eb9a953068f15764c8a4b2967619ecd4737b338a61fff00fabee98f6a1022b8"
+  }
+}

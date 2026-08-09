@@ -1,0 +1,20 @@
+{
+  "checks": {
+    "bid_ask": true,
+    "candidate_251": true,
+    "cost_complete_zero": true,
+    "fillability_153": true,
+    "holdout_unread": true,
+    "margin_complete_zero": true,
+    "no_future": true,
+    "no_trade": true,
+    "pricing_154": true,
+    "strict_zero": true,
+    "unique_251": true,
+    "unwind_complete_zero": true
+  },
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_LEDGER_V1_INDEPENDENT_ORACLE",
+  "ledger_sha256": "8077eb90c86cd25aa583bd54c19e393602928fe853d102ca2e8568a234ad139f",
+  "passed": 12,
+  "total": 12
+}

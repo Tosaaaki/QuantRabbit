@@ -1,0 +1,346 @@
+{
+  "by_window_split": {
+    "DOUBLE_32D": {
+      "OUTSIDE_OR_EMBARGO": {
+        "episodes": 177,
+        "stages": {
+          "candidate_order": 177,
+          "exit_unwind": 0,
+          "fillability": 126,
+          "margin_exposure_concurrency": 0,
+          "pricing": 135,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "TRAIN": {
+        "episodes": 43,
+        "stages": {
+          "candidate_order": 43,
+          "exit_unwind": 0,
+          "fillability": 10,
+          "margin_exposure_concurrency": 0,
+          "pricing": 6,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "VALIDATION": {
+        "episodes": 31,
+        "stages": {
+          "candidate_order": 31,
+          "exit_unwind": 0,
+          "fillability": 17,
+          "margin_exposure_concurrency": 0,
+          "pricing": 13,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      }
+    },
+    "INITIAL_16D": {
+      "OUTSIDE_OR_EMBARGO": {
+        "episodes": 226,
+        "stages": {
+          "candidate_order": 226,
+          "exit_unwind": 0,
+          "fillability": 141,
+          "margin_exposure_concurrency": 0,
+          "pricing": 142,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "TRAIN": {
+        "episodes": 13,
+        "stages": {
+          "candidate_order": 13,
+          "exit_unwind": 0,
+          "fillability": 4,
+          "margin_exposure_concurrency": 0,
+          "pricing": 11,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "VALIDATION": {
+        "episodes": 12,
+        "stages": {
+          "candidate_order": 12,
+          "exit_unwind": 0,
+          "fillability": 8,
+          "margin_exposure_concurrency": 0,
+          "pricing": 1,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      }
+    },
+    "QUADRUPLE_64D": {
+      "OUTSIDE_OR_EMBARGO": {
+        "episodes": 5,
+        "stages": {
+          "candidate_order": 5,
+          "exit_unwind": 0,
+          "fillability": 1,
+          "margin_exposure_concurrency": 0,
+          "pricing": 5,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "TRAIN": {
+        "episodes": 145,
+        "stages": {
+          "candidate_order": 145,
+          "exit_unwind": 0,
+          "fillability": 113,
+          "margin_exposure_concurrency": 0,
+          "pricing": 116,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      },
+      "VALIDATION": {
+        "episodes": 101,
+        "stages": {
+          "candidate_order": 101,
+          "exit_unwind": 0,
+          "fillability": 39,
+          "margin_exposure_concurrency": 0,
+          "pricing": 33,
+          "slippage_fee_financing": 0
+        },
+        "strict_eligible": 0
+      }
+    }
+  },
+  "causal_diagnosis": {
+    "edge": "no TRAIN-fixed weighted-fusion lower bound is positive in the 64-day validation prediction cohort",
+    "pipeline": "zero episodes have complete decision-time cost, margin, and executable-unwind evidence",
+    "separation": "edge insufficiency is established only on modeled two-family rows; pipeline insufficiency prevents strict executable evaluation on the full validation cohort"
+  },
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_LEDGER_V1",
+  "coverage_selection_bias_diagnostic": {
+    "count_fraction": 0.6135458167330677,
+    "full_count": 251,
+    "full_net_jpy": -18039.786599999985,
+    "net_per_episode_full": -71.87165976095612,
+    "net_per_episode_pricing_and_order": -70.90495454545457,
+    "pricing_and_order_count": 154,
+    "pricing_and_order_net_jpy": -10919.363000000005,
+    "warning": "outcomes are used only to diagnose selection bias, never to admit evidence or tune rules"
+  },
+  "episode_count": 251,
+  "evaluation": {
+    "DOUBLE_32D": {
+      "all_trades_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "edge_positive_blocked_by_execution_evidence": 0,
+      "fusion_edge_positive_before_execution_gate": 0,
+      "fusion_edge_positive_ids": [],
+      "fusion_prediction_coverage": 0,
+      "fusion_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "single_statistical_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "status": "NOT_EVALUABLE_NO_STRICT_ELIGIBLE_EPISODES",
+      "strict_eligible": 0,
+      "validation_total": 31
+    },
+    "INITIAL_16D": {
+      "all_trades_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "edge_positive_blocked_by_execution_evidence": 0,
+      "fusion_edge_positive_before_execution_gate": 0,
+      "fusion_edge_positive_ids": [],
+      "fusion_prediction_coverage": 0,
+      "fusion_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "single_statistical_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "status": "NOT_EVALUABLE_NO_STRICT_ELIGIBLE_EPISODES",
+      "strict_eligible": 0,
+      "validation_total": 12
+    },
+    "QUADRUPLE_64D": {
+      "all_trades_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "edge_positive_blocked_by_execution_evidence": 0,
+      "fusion_edge_positive_before_execution_gate": 0,
+      "fusion_edge_positive_ids": [],
+      "fusion_prediction_coverage": 22,
+      "fusion_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "single_statistical_same_eligible_cohort": {
+        "after_cost_net_jpy": null,
+        "all_trades_max_drawdown_jpy": null,
+        "all_trades_net_jpy": null,
+        "available": 0,
+        "decisions_changed_vs_all_trades": 0,
+        "fill_validity": null,
+        "incremental_net_jpy": null,
+        "margin_coverage": null,
+        "max_drawdown_jpy": null,
+        "paired_bootstrap_lcb_jpy": null,
+        "profit_factor": null,
+        "sample_coverage": null,
+        "selected": 0,
+        "unwind_validity": null
+      },
+      "status": "NOT_EVALUABLE_NO_STRICT_ELIGIBLE_EPISODES",
+      "strict_eligible": 0,
+      "validation_total": 101
+    }
+  },
+  "fused_decision_rerun": {
+    "action_changes_vs_prior_fused": 33,
+    "change_explanation": "the prior renderer marked two-family non-validation rows SKIP despite having no validation prediction; the rerun makes them WAIT and does not use this correction as profitability evidence",
+    "counts": {
+      "SKIP": 22,
+      "WAIT": 229
+    },
+    "evidence_driven_action_changes": 0,
+    "prior_nonvalidation_false_skip_corrections": 33,
+    "trade_count": 0,
+    "validation_counts": {
+      "SKIP": 22,
+      "WAIT": 79
+    }
+  },
+  "holdout_read": false,
+  "live_paper_broker_order_deploy_touched": false,
+  "observed_execution_boundary": {
+    "closes": 251,
+    "fills": 251,
+    "never_used_as_decision_input": true
+  },
+  "overall_stage_coverage": {
+    "candidate_order": 251,
+    "exit_unwind": 0,
+    "fillability": 153,
+    "margin_exposure_concurrency": 0,
+    "pricing": 154,
+    "slippage_fee_financing": 0
+  },
+  "strict_eligible": 0,
+  "strict_ineligibility_reason_counts": {
+    "exit_unwind": 251,
+    "fillability": 98,
+    "margin_exposure_concurrency": 251,
+    "pricing": 97,
+    "slippage_fee_financing": 251
+  }
+}

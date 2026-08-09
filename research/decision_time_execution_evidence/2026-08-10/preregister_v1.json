@@ -1,0 +1,122 @@
+{
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_LEDGER_V1",
+  "rerun_contract": "FUSED_DECISION_V1",
+  "created_at_utc": "2026-08-09T18:45:00Z",
+  "checkpoint_git_head": "56467eeabf66bd41b523aeafdc4a377b71a331fc",
+  "scope": "research-only exact-key causal execution evidence reconstruction for the frozen 251 actual-after-cost episodes",
+  "permissions": {
+    "holdout_read": false,
+    "live": false,
+    "paper": false,
+    "broker_mutation": false,
+    "order": false,
+    "deploy": false,
+    "external_history_fetch": false
+  },
+  "frozen_sources": {
+    "episodes": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+    "prior_inference": "research/system_utilization_rca/2026-08-10/inference_table_v1.jsonl",
+    "prior_outcomes": "research/system_utilization_rca/2026-08-10/outcome_table_v1.jsonl",
+    "prior_fusion": "research/system_utilization_rca/2026-08-10/fused_decisions_v1.jsonl",
+    "prior_report": "research/system_utilization_rca/2026-08-10/utilization_report_v1.json",
+    "execution_ledger": "data/execution_ledger.db",
+    "oanda_s5_manifest": "logs/replay/oanda_history/20260709T003937Z/summary.json",
+    "oanda_s5_root": "logs/replay/oanda_history",
+    "gateway_receipts": "data/execution_ledger.db:gateway_receipts"
+  },
+  "evidence_kinds": [
+    "ACTUAL",
+    "RECONSTRUCTED_CAUSAL",
+    "CONSERVATIVE_BOUND",
+    "MISSING"
+  ],
+  "causal_rules": {
+    "decision_cutoff": "event or quote watermark must be <= decision_time",
+    "order_join": "exact order_id and ORDER_ACCEPTED timestamp equal decision_time",
+    "price_precedence": [
+      "ACTUAL OANDA fullPrice snapshot with timestamp <= decision_time from the exact transaction",
+      "RECONSTRUCTED_CAUSAL latest complete OANDA S5 bid/ask candle whose interval end <= decision_time",
+      "MISSING"
+    ],
+    "spread_baseline": "median close ask-minus-bid over up to 12 prior complete OANDA S5 candles ending by decision_time; minimum 6 observations",
+    "pricing_freshness": "latest completed causal S5 candle must end no more than 15 seconds before decision_time",
+    "overlapping_oanda_files": "choose the shortest non-partial official OANDA S5 file containing the decision; ties resolve by lexical path and the selected file remains one source boundary",
+    "portfolio_reconstruction": "ledger events strictly at or before decision_time; never use later close/fill information",
+    "observed_execution_boundary": "post-decision fills, closes, realized financing, and exit quotes are evaluation-only and never fusion inputs",
+    "dukascopy_boundary": "feature-only; never accepted as OANDA financial, fill, margin, or unwind truth"
+  },
+  "forbidden": [
+    "derive decision evidence from realized outcome or future quotes",
+    "treat unavailable margin as zero or sufficient",
+    "mid-price fills",
+    "interpolation, forward-fill, or M1 substitution",
+    "best-hindsight exit",
+    "invent evidence absent from raw ledger or receipt"
+  ],
+  "required_stages": [
+    "pricing",
+    "candidate_order",
+    "fillability",
+    "slippage_fee_financing",
+    "margin_exposure_concurrency",
+    "exit_unwind"
+  ],
+  "strict_eligibility": {
+    "pricing": "bid and ask causally available from OANDA",
+    "candidate_order": "exact actual accepted order intent",
+    "fillability": "causal top-of-book/depth evidence or a preregistered conservative bound",
+    "costs": "causal slippage bound, fee evidence, and financing schedule or conservative bound",
+    "margin": "decision-time available/used/rate and required-margin evidence; required margin alone is insufficient",
+    "exit_unwind": "decision-time invalidation/exit policy plus executable unwind evidence",
+    "missing_rule": "any required stage MISSING makes the episode strict-ineligible"
+  },
+  "split_contract": {
+    "outer_windows": {
+      "INITIAL_16D": {"train": 13, "validation": 12},
+      "DOUBLE_32D": {"train": 43, "validation": 31},
+      "QUADRUPLE_64D": {"train": 145, "validation": 101}
+    },
+    "outer_ratio": "60/40 chronological",
+    "embargo_seconds": 3600,
+    "train_only_selection": true,
+    "validation_single_evaluation": true,
+    "holdout": "unread and unused"
+  },
+  "comparison": {
+    "cohort": "same strict-eligible episode ids for ALL_TRADES, prior single statistical family, and frozen prior fusion",
+    "single": "prior frozen statistical_ml decision, no refit",
+    "fusion": "prior TRAIN-fixed FUSED_DECISION_V1 outputs with only the new evidence gate applied",
+    "no_rule_relaxation": true,
+    "selection_bias": "report strict-eligible versus full cohort pair/side/time/net distributions diagnostically; never tune on validation outcomes"
+  },
+  "metrics": [
+    "episode_count",
+    "stage_coverage",
+    "action_change_count",
+    "after_cost_net_jpy",
+    "incremental_net_jpy",
+    "paired_lcb_jpy",
+    "profit_factor",
+    "max_drawdown_jpy",
+    "margin_coverage",
+    "fill_validity",
+    "unwind_validity"
+  ],
+  "tests": [
+    "exact 251 decision ids and one ledger row each",
+    "source hashes and deterministic output",
+    "no future watermark in decision evidence",
+    "long buys at ask and shorts sell at bid when a causal quote exists",
+    "mid is descriptive only and never a fill",
+    "financing outcome is isolated from decision-time schedule evidence",
+    "margin missing remains missing",
+    "dual-leg unwind missing is not inferred from single-leg close",
+    "financial metric oracle agrees with independent implementation",
+    "strict fusion never trades an ineligible episode"
+  ],
+  "capacity_gates": {
+    "soft_pause_free_gib": 8,
+    "hard_stop_free_gib": 5,
+    "run_owned_output_cap_gib": 1
+  }
+}

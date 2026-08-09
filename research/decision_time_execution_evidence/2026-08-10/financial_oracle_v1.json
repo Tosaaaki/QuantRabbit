@@ -1,0 +1,29 @@
+{
+  "checks": {
+    "strict_available_zero": true,
+    "strict_lcb_unknown_not_zero": true,
+    "strict_pf_unknown_not_zero": true,
+    "validation_count_101": true,
+    "validation_dd_matches_prior": true,
+    "validation_net_matches_prior": true
+  },
+  "contract": "DECISION_TIME_EXECUTION_EVIDENCE_FINANCIAL_ORACLE_V1",
+  "coverage_report_sha256": "ee84f61dd89a6069155c4e2bdc4e8200460bb9be2d0a361857e1e10eb0da25b1",
+  "passed": 6,
+  "quadruple_64d_validation_all_trades": {
+    "max_drawdown_jpy": 6794.7768000000015,
+    "net_jpy": 15144.4802,
+    "profit_factor": 1.5852461375462732,
+    "trades": 101
+  },
+  "strict_eligible": {
+    "margin_coverage": null,
+    "max_drawdown_jpy": null,
+    "net_jpy": null,
+    "paired_lcb_jpy": null,
+    "profit_factor": null,
+    "status": "NOT_EVALUABLE",
+    "trades": 0
+  },
+  "total": 6
+}
