@@ -1,0 +1,8 @@
+{
+  "checks": 33,
+  "contract": "python_ecosystem_real_shadow_independent_oracle_v1",
+  "failed": [],
+  "holdout_read": false,
+  "passed": 33,
+  "stdlib_only": true
+}

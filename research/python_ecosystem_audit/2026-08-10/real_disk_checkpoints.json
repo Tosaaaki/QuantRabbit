@@ -1,0 +1,13 @@
+{
+  "active_db_wal_touched": false,
+  "free_after_bytes": 71018745856,
+  "free_before_bytes": 71021649920,
+  "free_decrease_bytes": 2904064,
+  "hard_stop_free_lt_5gib": false,
+  "new_package_install": false,
+  "run_owned_cap_bytes": 5368709120,
+  "run_owned_cap_exceeded": false,
+  "run_owned_env_and_wheel_bytes": 2210973057,
+  "soft_pause_decrease_ge_1gib": false,
+  "soft_pause_free_lt_8gib": false
+}

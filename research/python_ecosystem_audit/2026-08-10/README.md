@@ -85,3 +85,11 @@ metadata, not popularity. The ledger records license, Python/Apple-Silicon
 compatibility, maintenance/CI evidence, deterministic behavior, dependencies,
 security/operational concerns, and the exact failure mode at QuantRabbit's
 truth boundary. No GitHub code is copied.
+
+## Real-cohort continuation
+
+`verdict_real_shadow.md` applies only xarray, SALib, pymoo and MAPIE to the
+frozen 16/32/64-day TRAIN/embargoed-VALIDATION cohort. The derived canonical
+table adds the `window` coordinate and retains the named split, timeframe,
+pair, regime, method, cost, risk and exit axes. DoWhy and River remain held
+and are not executed by `run_real_shadow.py`.

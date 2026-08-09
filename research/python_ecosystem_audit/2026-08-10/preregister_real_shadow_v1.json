@@ -1,0 +1,78 @@
+{
+  "contract": "python_ecosystem_real_cohort_shadow_preregister_v1",
+  "registered_at_utc": "2026-08-09T16:30:00Z",
+  "checkpoint_git_head": "797a20d5a330ee726f5931691797a7bbd687d791",
+  "question": "Do the adopted research adapters reproduce and clarify the frozen real TRAIN/embargoed VALIDATION evidence without changing QuantRabbit financial truth or strategy selection?",
+  "frozen_inputs": {
+    "episodes_path": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+    "episodes_sha256": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "selection_preregister_path": "research/historical_learning_selection_rca/preregister_v1.json",
+    "selection_preregister_sha256": "fc23c257bb96084c806f6b280fbe8b27742414637aeec74b2cac481d4891816f",
+    "selection_report_path": "research/historical_learning_selection_rca/selection_rca_report_v1.json",
+    "selection_report_sha256": "ca666943d3b206935d3eef7525ec1713f227d4ddbff09e8829e568b874c05fe5",
+    "selection_predictions_path": "research/historical_learning_selection_rca/selection_predictions_v1.jsonl",
+    "selection_predictions_sha256": "fe17aae2ea119dbe7af9c7e2dd671f7d566a9f3f2f3da41aa31b8ae020a306a5",
+    "gapless_report_path": "research/historical_learning_gapless_truth/report_v2.json",
+    "gapless_report_sha256": "12087b6e66c54ef9d307e27aa22943511a6cca9d289683d50022e6be2507fb43",
+    "gapless_coverage_path": "research/historical_learning_gapless_truth/episode_coverage_v2.jsonl",
+    "gapless_coverage_sha256": "5873ab0367c468111de8392f499280c0edf6c9d508abd742004a04fa9e61f56f",
+    "wheel_manifest_path": "research/python_ecosystem_audit/2026-08-10/adapter_wheel_manifest.json",
+    "sbom_path": "research/python_ecosystem_audit/2026-08-10/adapter_sbom.json"
+  },
+  "adapters": {
+    "xarray": "2026.7.0",
+    "salib": "1.5.2",
+    "pymoo": "0.6.2",
+    "mapie": "1.5.0"
+  },
+  "held_adapters": ["dowhy", "river"],
+  "windows": [
+    {"id": "INITIAL_16D", "from_utc": "2026-06-23T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "DOUBLE_32D", "from_utc": "2026-06-07T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"},
+    {"id": "QUADRUPLE_64D", "from_utc": "2026-05-06T07:46:03.151624347Z", "to_utc": "2026-07-09T07:46:03.151624347Z"}
+  ],
+  "split": {
+    "method": "frozen chronological 60/40 within each window",
+    "outer_embargo_seconds": 3600,
+    "purge": "TRAIN labels must close before VALIDATION start minus embargo",
+    "mapie_inner_split": "chronological 60/40 inside outer TRAIN; fit labels purged before conformal start minus one hour",
+    "validation_is_evaluation_only": true,
+    "holdout": "events after 2026-07-09T07:46:03.151624347Z remain unread"
+  },
+  "truth_boundary": {
+    "financial_oracle": "OANDA actual realized P/L with actual spread and fill slippage implicit and financing explicit",
+    "feature_source": "Dukascopy official bid/ask tick-derived completed M5 features only",
+    "cross_source_fill_substitution": false,
+    "opportunity_cost": "missing and reported missing",
+    "margin": "incomplete decision-time cross-currency conversion remains an admission blocker"
+  },
+  "adapter_contracts": {
+    "xarray": "Reindex the canonical real long table by named dimensions; populated values must be exact and absent/null cells must remain NaN.",
+    "salib": "Compute fixed-seed TRAIN-only delta sensitivity on available causal Dukascopy features; VALIDATION may assess the frozen ranking but may not change it.",
+    "pymoo": "Recompute constrained and diagnostic nondominated fronts for already-frozen candidate policies; no scalar objective and no validation-driven policy change.",
+    "mapie": "Fit and conformalize only within outer TRAIN, then measure interval coverage on VALIDATION; missing price features are excluded, never zero-filled."
+  },
+  "acceptance": {
+    "adapter_numeric_parity": "exact where algorithms are equivalent; otherwise explicit numeric/rank difference",
+    "missing_preservation": true,
+    "deterministic_repeat": true,
+    "financial_oracle_unchanged": true,
+    "strategy_profitability": "no adapter is credited with incremental profit unless a separately preregistered TRAIN-fixed trading rule beats ALL_TRADES on VALIDATION with paired LCB above zero",
+    "admission_constraints": ["after-cost net", "paired LCB", "profit factor", "drawdown", "complete margin evidence", "fill/unwind validity", "sample coverage"]
+  },
+  "capacity": {
+    "soft_pause_free_lt_bytes": 8589934592,
+    "soft_pause_decrease_ge_bytes_per_60s": 1073741824,
+    "hard_stop_free_lt_bytes": 5368709120,
+    "run_owned_cap_bytes": 5368709120,
+    "new_package_install": false
+  },
+  "permissions": {
+    "read_only_inputs": true,
+    "holdout_used": false,
+    "paper": false,
+    "live": false,
+    "broker_order": false,
+    "deploy": false
+  }
+}
