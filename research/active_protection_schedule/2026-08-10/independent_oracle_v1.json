@@ -1,0 +1,24 @@
+{
+  "checks": {
+    "duplicate_raw_protection_order_ids_zero": true,
+    "episodes_251": true,
+    "normalized_mismatch_matches": true,
+    "per_trade_cancel_counts_match": true,
+    "per_trade_close_present": true,
+    "per_trade_create_counts_match": true,
+    "replacement_bad_links_zero": true,
+    "replacement_count_matches": true,
+    "source_cancel_count_matches": true,
+    "source_create_count_matches": true,
+    "source_hash_db_matches_preregister": true,
+    "source_hash_episodes_matches_preregister": true,
+    "summary_trade_identity_exact": true
+  },
+  "contract": "ACTIVE_PROTECTION_SCHEDULE_INDEPENDENT_ORACLE_V1",
+  "normalized_create_order_id_mismatch": 456,
+  "passed": 13,
+  "replacement_links_bad": 0,
+  "replacement_links_ok": 456,
+  "status": "PASS",
+  "total": 13
+}

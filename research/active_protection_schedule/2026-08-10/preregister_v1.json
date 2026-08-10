@@ -1,0 +1,86 @@
+{
+  "contract": "ACTIVE_PROTECTION_SCHEDULE_V1",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "purpose": "Reconstruct the broker-causal TP/SL order schedule for the frozen 251 ACTUAL_AFTER_COST episodes before any exit counterfactual is evaluated.",
+  "frozen_inputs": {
+    "execution_ledger": {
+      "path": "data/execution_ledger.db",
+      "sha256": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+      "access": "SQLITE_MODE_RO"
+    },
+    "episodes": {
+      "path": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+      "sha256": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+      "filter": "label_status == ACTUAL_AFTER_COST"
+    },
+    "owner_checkpoint": {
+      "path": "research/continuous_thesis_monitor/2026-08-10/owner_exit_target_audit_v1.md",
+      "sha256": "a8f8620429df0aa7050c7b101b043c7fb6b05eb552f40a462ad54d44d7047ac7"
+    }
+  },
+  "identity_contract": {
+    "protection_order_id": "raw_json.id",
+    "trade_id": "raw_json.tradeID",
+    "replacement_old_order_id": "raw_json.replacesOrderID",
+    "replacement_new_order_id": "ORDER_CANCEL.raw_json.replacedByOrderID",
+    "replacement_cancel_transaction_id": "PROTECTION_CREATED.raw_json.cancellingTransactionID",
+    "cancelled_order_id": "ORDER_CANCEL.raw_json.orderID",
+    "terminal_order_id": "TRADE_CLOSED.raw_json.orderID",
+    "normalized_order_id_rule": "AUDIT_ONLY_BECAUSE_REPLACEMENT_ROWS_STORE_THE_OLD_ORDER_ID"
+  },
+  "ordering_contract": {
+    "primary": "ts_utc ascending",
+    "tie_break": "numeric OANDA transaction id ascending",
+    "replacement": "cancel transaction must precede its replacement create transaction",
+    "terminal": "state immediately before TRADE_CLOSED is the executable protection state; LINKED_TRADE_CLOSED cancels at or after terminal do not alter that pre-terminal state"
+  },
+  "windows": [
+    {
+      "id": "INITIAL_16D",
+      "from_utc": "2026-06-23T07:46:03.151624347Z",
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    },
+    {
+      "id": "DOUBLE_32D",
+      "from_utc": "2026-06-07T07:46:03.151624347Z",
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    },
+    {
+      "id": "QUADRUPLE_64D",
+      "from_utc": "2026-05-06T07:46:03.151624347Z",
+      "to_utc": "2026-07-09T07:46:03.151624347Z"
+    }
+  ],
+  "split": "feature_at_utc chronological 60/40, floor cut, close-time purge, one-hour embargo; schedule reconstruction never reads outcome values",
+  "admission_gates": [
+    "source hashes match",
+    "all 251 episode trade_id values are unique",
+    "raw event time and ids are internally consistent",
+    "replacement old/new/cancel transaction links are exact",
+    "no protection create used before fill or after close",
+    "at most one active TP and one active SL per trade",
+    "terminal protection order, when present, matches the active order immediately before close",
+    "independent SQLite oracle agrees"
+  ],
+  "failure_policy": {
+    "missing": "preserve as MISSING; never impute",
+    "ambiguous": "mark trade strict_schedule_eligible=false",
+    "future_event": "reject from causal schedule",
+    "normalized_raw_conflict": "raw broker transaction wins only when its own exact links validate; conflict remains reported"
+  },
+  "downstream_boundary": {
+    "allowed_after_pass": "body/wick and first-touch replay on exact active intervals",
+    "forbidden_in_this_phase": [
+      "parameter tuning",
+      "exit-arm profitability selection",
+      "mid-price fills",
+      "future quote inference",
+      "holdout",
+      "live",
+      "Paper",
+      "broker writes",
+      "orders",
+      "deploy"
+    ]
+  }
+}

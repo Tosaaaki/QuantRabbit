@@ -1,0 +1,14 @@
+{
+  "contract": "ACTIVE_PROTECTION_SCHEDULE_RUN_MANIFEST_V1",
+  "manifest_sha256": "2ae50ac78ee555842ed1c13f0188b2a9dc7583d48ede3164ecad8c5c80942c9e",
+  "outputs": {
+    "coverage_report_v1.json": "c3d46833ef16c9477a2b2f8ea4b7ecd45c382654381079a9ec9ba8d756d0db17",
+    "schedule_events_v1.jsonl": "0c73d7b87afccc4f7bc8da6c1436837d9bc6c25a1e8226139aeb4ba6d38a584c",
+    "trade_summaries_v1.jsonl": "8d08e597a6ca007e699548bfcd320efef1d069917169c01e37af52ba93cd9c99"
+  },
+  "preregister_sha256": "e3ba0e4d52a444f851f796ef09085f2c808937e4ad4accf003dfce7c3e796dd4",
+  "source_sha256": {
+    "episodes": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "execution_ledger": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb"
+  }
+}

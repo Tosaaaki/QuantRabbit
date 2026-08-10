@@ -1,0 +1,58 @@
+{
+  "admission_status": "PASS",
+  "cancel_reason_counts": {
+    "CLIENT_REQUEST": 18,
+    "CLIENT_REQUEST_REPLACED": 456,
+    "LINKED_TRADE_CLOSED": 190
+  },
+  "contract": "ACTIVE_PROTECTION_SCHEDULE_V1",
+  "episodes": 251,
+  "episodes_with_any_protection": 251,
+  "episodes_with_replacement": 133,
+  "episodes_with_sl": 99,
+  "episodes_with_tp": 251,
+  "global_issues": [],
+  "issue_counts": {},
+  "normalized_create_order_id_mismatch": 456,
+  "output_sha256": "e17ce3ea59698330b57119a57aedacc962f7d418bc47219b06d8faf44037718c",
+  "source_cancel_events": 664,
+  "source_create_events": 810,
+  "source_replacement_events": 456,
+  "strict_schedule_eligible": 251,
+  "strict_schedule_ineligible": 0,
+  "terminal_nonprotection_or_missing": 105,
+  "terminal_protection_active_match": 146,
+  "terminal_protection_order": 146,
+  "window_coverage": {
+    "DOUBLE_32D": {
+      "episodes": 76,
+      "from_utc": "2026-06-07T07:46:03.151624347Z",
+      "purged_train": 2,
+      "strict_train": 43,
+      "strict_validation": 31,
+      "to_utc": "2026-07-09T07:46:03.151624347Z",
+      "train": 43,
+      "validation": 31
+    },
+    "INITIAL_16D": {
+      "episodes": 30,
+      "from_utc": "2026-06-23T07:46:03.151624347Z",
+      "purged_train": 5,
+      "strict_train": 13,
+      "strict_validation": 12,
+      "to_utc": "2026-07-09T07:46:03.151624347Z",
+      "train": 13,
+      "validation": 12
+    },
+    "QUADRUPLE_64D": {
+      "episodes": 251,
+      "from_utc": "2026-05-06T07:46:03.151624347Z",
+      "purged_train": 5,
+      "strict_train": 145,
+      "strict_validation": 101,
+      "to_utc": "2026-07-09T07:46:03.151624347Z",
+      "train": 145,
+      "validation": 101
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "dry_run": false,
+  "errors": [],
+  "generated_at_utc": "2026-08-10T03:18:43.884680Z",
+  "granularities": [
+    "S5"
+  ],
+  "max_candles_per_request": 4500,
+  "output_dir": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z",
+  "pairs": [
+    "AUD_JPY",
+    "EUR_JPY",
+    "EUR_USD"
+  ],
+  "price": "BA",
+  "tasks": [
+    {
+      "compressed": true,
+      "dry_run": false,
+      "errors": [],
+      "from": "2026-07-09T00:39:37Z",
+      "granularity": "S5",
+      "pair": "AUD_JPY",
+      "partial_path": null,
+      "path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/AUD_JPY/AUD_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "price": "BA",
+      "published": true,
+      "requests": 2,
+      "rows": 4733,
+      "to": "2026-07-09T07:46:03Z",
+      "windows": 2
+    },
+    {
+      "compressed": true,
+      "dry_run": false,
+      "errors": [],
+      "from": "2026-07-09T00:39:37Z",
+      "granularity": "S5",
+      "pair": "EUR_JPY",
+      "partial_path": null,
+      "path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_JPY/EUR_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "price": "BA",
+      "published": true,
+      "requests": 2,
+      "rows": 4864,
+      "to": "2026-07-09T07:46:03Z",
+      "windows": 2
+    },
+    {
+      "compressed": true,
+      "dry_run": false,
+      "errors": [],
+      "from": "2026-07-09T00:39:37Z",
+      "granularity": "S5",
+      "pair": "EUR_USD",
+      "partial_path": null,
+      "path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_USD/EUR_USD_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "price": "BA",
+      "published": true,
+      "requests": 2,
+      "rows": 4225,
+      "to": "2026-07-09T07:46:03Z",
+      "windows": 2
+    }
+  ],
+  "total_requests": 6,
+  "total_rows": 13822,
+  "window": {
+    "from": "2026-07-09T00:39:37Z",
+    "to": "2026-07-09T07:46:03Z"
+  }
+}

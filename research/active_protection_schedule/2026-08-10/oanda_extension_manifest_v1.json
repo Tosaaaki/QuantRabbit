@@ -1,0 +1,118 @@
+{
+  "contract": "OANDA_S5_BA_EXTENSION_VALIDATION_V1",
+  "per_pair": {
+    "AUD_JPY": {
+      "audit": {
+        "complete_rows": 4733,
+        "first_time": "2026-07-09T00:39:40.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 275,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 40.0,
+        "rows": 4733
+      },
+      "expanded_sha256": "3841f01730824c3b8783aafeda1b2aedbfc27c90939a79d15ea4e7188890932a",
+      "granularity": "S5",
+      "price": "BA",
+      "primary_bytes": 70648,
+      "primary_compressed_sha256": "0e2fbbca696bd79a260b4dea1828de3bd1fce7c9d498bb5720e0403b88800564",
+      "primary_path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/AUD_JPY/AUD_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "repeat_audit": {
+        "complete_rows": 4733,
+        "first_time": "2026-07-09T00:39:40.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 275,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 40.0,
+        "rows": 4733
+      },
+      "repeat_bytes": 70648,
+      "repeat_compressed_sha256": "3542acf8814bc73fffb6fde6490ba2c888e0c7766e9e17906e97f793f7527828",
+      "repeat_content_match": true,
+      "repeat_expanded_sha256": "3841f01730824c3b8783aafeda1b2aedbfc27c90939a79d15ea4e7188890932a",
+      "repeat_path": "research/active_protection_schedule/2026-08-10/oanda_extension_repeat/20260810T031857Z/AUD_JPY/AUD_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "source": "OANDA_V20_INSTRUMENT_CANDLES_READ_ONLY",
+      "status": "PASS",
+      "timezone": "UTC"
+    },
+    "EUR_JPY": {
+      "audit": {
+        "complete_rows": 4864,
+        "first_time": "2026-07-09T00:39:35.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 204,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 30.0,
+        "rows": 4864
+      },
+      "expanded_sha256": "5a49ef2be7904b19f7c1f5ff7ef487dbb3af1c3daafd866f27bcf194b2a02d44",
+      "granularity": "S5",
+      "price": "BA",
+      "primary_bytes": 72734,
+      "primary_compressed_sha256": "8f119bdfcd09a28b6362dd672aae8dc4d0696b850bb865a5503df2facfbeb43e",
+      "primary_path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_JPY/EUR_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "repeat_audit": {
+        "complete_rows": 4864,
+        "first_time": "2026-07-09T00:39:35.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 204,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 30.0,
+        "rows": 4864
+      },
+      "repeat_bytes": 72734,
+      "repeat_compressed_sha256": "e5b7d416e722b010c0acdfd14bb85650da459ce6c441ef7e0464a484f484dd92",
+      "repeat_content_match": true,
+      "repeat_expanded_sha256": "5a49ef2be7904b19f7c1f5ff7ef487dbb3af1c3daafd866f27bcf194b2a02d44",
+      "repeat_path": "research/active_protection_schedule/2026-08-10/oanda_extension_repeat/20260810T031857Z/EUR_JPY/EUR_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "source": "OANDA_V20_INSTRUMENT_CANDLES_READ_ONLY",
+      "status": "PASS",
+      "timezone": "UTC"
+    },
+    "EUR_USD": {
+      "audit": {
+        "complete_rows": 4225,
+        "first_time": "2026-07-09T00:39:40.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 591,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 45.0,
+        "rows": 4225
+      },
+      "expanded_sha256": "109725193fbc85b6f79cba27bb2dac7228b2e1ed3b934bf7c6dc86a3f15044ad",
+      "granularity": "S5",
+      "price": "BA",
+      "primary_bytes": 54140,
+      "primary_compressed_sha256": "df65cb54ca12eb1b1d6a6bcca84c2fe0d4f1cdebabf9b3ad7e8caa8d6a31ddab",
+      "primary_path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_USD/EUR_USD_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "repeat_audit": {
+        "complete_rows": 4225,
+        "first_time": "2026-07-09T00:39:40.000000000Z",
+        "gap_classification": "CANDLE_ENDPOINT_NO_BAR_INTERVAL_UNRESOLVED_WITHOUT_RAW_TICK_TRUTH",
+        "gap_count_over_5s": 591,
+        "issues": [],
+        "last_time": "2026-07-09T07:46:00.000000000Z",
+        "max_gap_seconds": 45.0,
+        "rows": 4225
+      },
+      "repeat_bytes": 54140,
+      "repeat_compressed_sha256": "dc93fc78620036576e7408da39140253c91de6f6a4f640717334ef5bb1a7b4bd",
+      "repeat_content_match": true,
+      "repeat_expanded_sha256": "109725193fbc85b6f79cba27bb2dac7228b2e1ed3b934bf7c6dc86a3f15044ad",
+      "repeat_path": "research/active_protection_schedule/2026-08-10/oanda_extension_repeat/20260810T031857Z/EUR_USD/EUR_USD_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz",
+      "source": "OANDA_V20_INSTRUMENT_CANDLES_READ_ONLY",
+      "status": "PASS",
+      "timezone": "UTC"
+    }
+  },
+  "requested_from_utc": "2026-07-09T00:39:37Z",
+  "requested_to_utc": "2026-07-09T07:46:03Z",
+  "source_boundary": "OANDA candle rows are executable bid/ask candle truth. Missing candle timestamps are not raw-tick-proved no-trade intervals and are never filled.",
+  "status": "PASS_CANDLE_TRUTH_WITH_UNRESOLVED_NO_BAR_INTERVALS",
+  "strict_gapless_tick_truth": false
+}
