@@ -1,0 +1,17 @@
+{
+  "contract": "CROSS_SECTIONAL_CURRENCY_ROTATION_V6",
+  "frozen_before_run": true,
+  "independent_opportunity_source": "relative strength across the complete local 28-pair OANDA M5 universe",
+  "source_directory": "logs/replay/oanda_history/20260715T115624Z",
+  "source_count": 28,
+  "sorted_pair_sha_manifest_sha256": "5a53bd86b8eda5aeed11888108175a764ec4710b47600cfb65b527b3a09ca404",
+  "holdout_start_utc": "2026-06-30T00:00:00Z",
+  "signal": "mean currency return from all incident pairs; trade strongest versus weakest",
+  "directions": ["MOMENTUM", "REVERSION"],
+  "lookback_bars": [12, 24, 48],
+  "horizon_bars": [6, 12, 24],
+  "execution": "one portfolio position; next common M5 open; side-correct bid/ask; adverse 0.5 spread at entry/exit; financing-cross exclusion",
+  "conversion": "quote-currency PnL converted to JPY at the same exit timestamp using direct quote_JPY bid for gains and ask for losses",
+  "split": "16/32/64 days, chronological 60/40, 1h embargo, holdout unread",
+  "acceptance": "connected TRAIN plateau plus positive 32D and 64D VALIDATION expectancy/PF/LCB; projected 30d LCB >=400000 under margin 150000 and DD 80000"
+}

@@ -1,0 +1,12 @@
+{
+  "best_candidate": null,
+  "common_m5_rows": 22562,
+  "conclusion": "MONTHLY_3X_NOT_PROVED",
+  "contract": "CROSS_SECTIONAL_CURRENCY_ROTATION_V6",
+  "decision_count": 30792,
+  "holdout_used": false,
+  "monthly_3x_pass_count": 0,
+  "source_count": 28,
+  "stable_32d_64d_count": 0,
+  "train_plateau_count": 0
+}

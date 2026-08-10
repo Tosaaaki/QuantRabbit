@@ -1,0 +1,17 @@
+{
+  "contract": "SLOW_CROSS_SECTIONAL_CURRENCY_ROTATION_V7",
+  "frozen_before_run": true,
+  "independent_change": "move from 1-2 hour churn to completed 4-24 hour strength and 4-8 hour holds; do not change direction after outcomes",
+  "source_directory": "logs/replay/oanda_history/20260715T115624Z",
+  "source_count": 28,
+  "sorted_pair_sha_manifest_sha256": "5a53bd86b8eda5aeed11888108175a764ec4710b47600cfb65b527b3a09ca404",
+  "holdout_start_utc": "2026-06-30T00:00:00Z",
+  "signal": "mean currency return from all incident pairs; trade strongest versus weakest",
+  "directions": ["MOMENTUM", "REVERSION"],
+  "lookback_bars": [48, 96, 288],
+  "horizon_bars": [48, 96],
+  "execution": "one portfolio position; next common M5 open; side-correct bid/ask; adverse 0.5 spread at entry/exit; financing-cross exclusion",
+  "conversion": "same-timestamp quote_JPY bid for gains and ask for losses",
+  "split": "16/32/64 days, chronological 60/40, 1h embargo, holdout unread",
+  "acceptance": "adjacent TRAIN lookback or horizon plateau plus positive 32D and 64D VALIDATION expectancy/PF/LCB; projected 30d LCB >=400000 under margin 150000 and DD 80000"
+}
