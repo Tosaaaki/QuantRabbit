@@ -1,0 +1,65 @@
+{
+  "actions": {
+    "WAIT": 251
+  },
+  "capital_preservation_invariant": "No new exposure is permitted when any required evidence, positive after-cost LCB, or bounded-loss input is missing.",
+  "contract": "CAPITAL_PRESERVATION_GATE_V1",
+  "episodes": 251,
+  "holdout_read": false,
+  "legacy_episode_label_net_jpy_diagnostic_only": -18039.786599999985,
+  "legacy_label_warning": "Known incomplete allocation of DAILY_FINANCING and partial closes; not an accepted financial oracle.",
+  "live_permission_granted": false,
+  "market_no_loss_guarantee": false,
+  "new_exposure_permitted": 0,
+  "profit_generation_status": "NOT_PROVEN",
+  "receipts_sha256": "6da90c7a876c8f77f4303ccef9bc8777d9981fc553b533e2be91bd3cd2f27b87",
+  "source_sha256": {
+    "episodes": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "evidence": "8077eb90c86cd25aa583bd54c19e393602928fe853d102ca2e8568a234ad139f"
+  },
+  "status": "CAPITAL_FLOOR_ACTIVE_EDGE_NOT_PROVEN",
+  "strict_policy_realized_max_drawdown_jpy": 0.0,
+  "strict_policy_realized_net_jpy": 0.0,
+  "top_reason_codes": [
+    [
+      "AFTER_COST_LCB_MISSING",
+      251
+    ],
+    [
+      "CANDIDATE_LOSS_BOUND_MISSING",
+      251
+    ],
+    [
+      "DAILY_GROSS_LOSS_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "EQUITY_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "EXIT_UNWIND_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "MARGIN_EXPOSURE_CONCURRENCY_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "PEAK_EQUITY_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "SLIPPAGE_FEE_FINANCING_EVIDENCE_MISSING",
+      251
+    ],
+    [
+      "FILLABILITY_EVIDENCE_MISSING",
+      98
+    ],
+    [
+      "PRICING_EVIDENCE_MISSING",
+      97
+    ]
+  ]
+}

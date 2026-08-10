@@ -1,0 +1,63 @@
+{
+  "contract": "CAPITAL_PRESERVATION_GATE_V1",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "purpose": "Prevent unsupported new exposure; this is a capital-preservation permission layer, not a profit or no-loss guarantee.",
+  "scope": "research-only dry-run on the frozen 251 decision-time evidence rows",
+  "permissions": {
+    "holdout_read": false,
+    "live": false,
+    "paper": false,
+    "broker_mutation": false,
+    "order": false,
+    "deploy": false
+  },
+  "frozen_sources": {
+    "decision_evidence": "research/decision_time_execution_evidence/2026-08-10/evidence_ledger_v1.jsonl",
+    "episode_labels": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+    "financial_oracle": "research/decision_time_execution_evidence/2026-08-10/financial_oracle_v1.json"
+  },
+  "decision_time_required_stages": [
+    "pricing",
+    "candidate_order",
+    "fillability",
+    "slippage_fee_financing",
+    "margin_exposure_concurrency",
+    "exit_unwind"
+  ],
+  "policy": {
+    "missing_required_stage": "WAIT",
+    "unknown_or_nonpositive_after_cost_lcb": "SKIP",
+    "missing_candidate_loss_bound": "WAIT",
+    "candidate_loss_above_equity_fraction": "WAIT",
+    "daily_gross_loss_budget_exhausted": "WAIT",
+    "drawdown_lock_reached": "WAIT",
+    "existing_position": "MANAGE",
+    "all_checks_pass": "TRADE"
+  },
+  "risk_parameters": {
+    "derivation": "all JPY limits are derived from decision-time equity supplied to the policy",
+    "per_trade_risk_fraction": 0.0025,
+    "daily_gross_loss_fraction": 0.01,
+    "drawdown_lock_fraction": 0.05,
+    "loss_budget_non_refillable": true
+  },
+  "causality": {
+    "current_or_future_realized_outcome_in_decision": false,
+    "prior_closed_loss_may_reduce_daily_budget": true,
+    "later_profit_may_refill_daily_loss_budget": false,
+    "missing_values_are_zero": false
+  },
+  "acceptance_tests": [
+    "missing margin, costs, or unwind can never produce TRADE",
+    "a fully evidenced positive-LCB bounded-risk shape can produce TRADE",
+    "daily gross-loss spend is not refilled by profits",
+    "drawdown lock blocks new exposure",
+    "receipt hash is deterministic and excludes realized outcome",
+    "frozen 251 cohort emits one receipt per decision without reading holdout"
+  ],
+  "reporting": {
+    "separate_capital_preservation_from_profit_generation": true,
+    "legacy_financial_oracle_status": "KNOWN_INCOMPLETE_DAILY_FINANCING_AND_PARTIAL_CLOSE_ALLOCATION",
+    "never_claim_market_no_loss": true
+  }
+}

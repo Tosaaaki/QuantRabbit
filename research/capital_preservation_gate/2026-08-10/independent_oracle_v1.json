@@ -1,0 +1,17 @@
+{
+  "checks": {
+    "decision_ids_unique": true,
+    "each_receipt_self_hash_matches": true,
+    "live_permission_never_granted": true,
+    "missing_not_zero": true,
+    "no_new_exposure": true,
+    "no_realized_outcome_in_decision": true,
+    "one_receipt_per_frozen_decision": true,
+    "profit_not_claimed": true,
+    "receipt_hash_matches": true,
+    "report_actions_match": true
+  },
+  "contract": "CAPITAL_PRESERVATION_GATE_V1_INDEPENDENT_ORACLE",
+  "passed": 10,
+  "total": 10
+}
