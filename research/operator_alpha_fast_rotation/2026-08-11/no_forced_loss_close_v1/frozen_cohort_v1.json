@@ -1,0 +1,1823 @@
+{
+  "contract": "NO_FORCED_LOSS_CLOSE_COHORT_V1",
+  "decisions": [
+    {
+      "atr": 0.003688000000000313,
+      "decision_id": "NOFLC-2025-01-02-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-01-02T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.55180000000002,
+      "decision_id": "NOFLC-2025-01-03-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-01-03T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0043419999999997575,
+      "decision_id": "NOFLC-2025-01-06-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-01-06T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0032859999999999448,
+      "decision_id": "NOFLC-2025-01-07-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-01-07T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004438000000000298,
+      "decision_id": "NOFLC-2025-01-08-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-01-08T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5505999999999971,
+      "decision_id": "NOFLC-2025-01-09-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-01-09T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004855999999999927,
+      "decision_id": "NOFLC-2025-01-10-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-01-10T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003251999999999966,
+      "decision_id": "NOFLC-2025-01-13-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-01-13T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004838000000000342,
+      "confirm_utc": "2025-01-14T08:29:00Z",
+      "decision_id": "NOFLC-2025-01-14-EUR_USD",
+      "entry_utc": "2025-01-14T08:30:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 157.4565,
+      "scan_mid": 1.025445,
+      "scan_utc": "2025-01-14T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.6656000000000063,
+      "confirm_utc": "2025-01-15T08:59:00Z",
+      "decision_id": "NOFLC-2025-01-15-USD_JPY",
+      "entry_utc": "2025-01-15T09:00:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 156.88549999999998,
+      "scan_utc": "2025-01-15T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.006325999999999877,
+      "confirm_utc": "2025-01-16T08:24:00Z",
+      "decision_id": "NOFLC-2025-01-16-GBP_USD",
+      "entry_utc": "2025-01-16T08:25:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 156.209,
+      "scan_mid": 1.22188,
+      "scan_utc": "2025-01-16T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.003042000000000167,
+      "decision_id": "NOFLC-2025-01-17-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-01-17T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0038880000000003356,
+      "decision_id": "NOFLC-2025-01-20-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-01-20T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6082000000000165,
+      "decision_id": "NOFLC-2025-01-21-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-01-21T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006113999999999597,
+      "decision_id": "NOFLC-2025-01-22-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-01-22T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002838000000000096,
+      "confirm_utc": "2025-01-23T08:39:00Z",
+      "decision_id": "NOFLC-2025-01-23-AUD_USD",
+      "entry_utc": "2025-01-23T08:40:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 156.5895,
+      "scan_mid": 0.626735,
+      "scan_utc": "2025-01-23T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004686000000000412,
+      "decision_id": "NOFLC-2025-01-24-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-01-24T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6744000000000085,
+      "decision_id": "NOFLC-2025-01-27-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-01-27T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00550999999999977,
+      "decision_id": "NOFLC-2025-01-28-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-01-28T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0029479999999999507,
+      "decision_id": "NOFLC-2025-01-29-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-01-29T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003646000000000349,
+      "decision_id": "NOFLC-2025-01-30-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-01-30T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6576000000000249,
+      "decision_id": "NOFLC-2025-01-31-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-01-31T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006837999999999721,
+      "confirm_utc": "2025-02-03T08:34:00Z",
+      "decision_id": "NOFLC-2025-02-03-GBP_USD",
+      "entry_utc": "2025-02-03T08:35:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 155.6695,
+      "scan_mid": 1.2284000000000002,
+      "scan_utc": "2025-02-03T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0032599999999999964,
+      "decision_id": "NOFLC-2025-02-04-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-02-04T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004580000000000339,
+      "decision_id": "NOFLC-2025-02-05-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-02-05T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6258000000000039,
+      "decision_id": "NOFLC-2025-02-06-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-02-06T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004679999999999928,
+      "decision_id": "NOFLC-2025-02-07-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-02-07T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002942000000000067,
+      "decision_id": "NOFLC-2025-02-10-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-02-10T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0035920000000002617,
+      "confirm_utc": "2025-02-11T08:49:00Z",
+      "decision_id": "NOFLC-2025-02-11-EUR_USD",
+      "entry_utc": "2025-02-11T08:50:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 151.9685,
+      "scan_mid": 1.0303300000000002,
+      "scan_utc": "2025-02-11T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5679999999999893,
+      "decision_id": "NOFLC-2025-02-12-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-02-12T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006409999999999805,
+      "decision_id": "NOFLC-2025-02-13-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-02-13T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0030479999999999396,
+      "decision_id": "NOFLC-2025-02-14-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-02-14T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00393800000000053,
+      "decision_id": "NOFLC-2025-02-17-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-02-17T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5057999999999936,
+      "confirm_utc": "2025-02-18T08:24:00Z",
+      "decision_id": "NOFLC-2025-02-18-USD_JPY",
+      "entry_utc": "2025-02-18T08:25:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 152.0575,
+      "scan_utc": "2025-02-18T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005974000000000057,
+      "decision_id": "NOFLC-2025-02-19-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-02-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002907999999999933,
+      "decision_id": "NOFLC-2025-02-20-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-02-20T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0036660000000005243,
+      "confirm_utc": "2025-02-21T08:24:00Z",
+      "decision_id": "NOFLC-2025-02-21-EUR_USD",
+      "entry_utc": "2025-02-21T08:25:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 150.542,
+      "scan_mid": 1.04922,
+      "scan_utc": "2025-02-21T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5954000000000292,
+      "confirm_utc": "2025-02-24T08:34:00Z",
+      "decision_id": "NOFLC-2025-02-24-USD_JPY",
+      "entry_utc": "2025-02-24T08:35:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 149.45600000000002,
+      "scan_utc": "2025-02-24T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005105999999999921,
+      "confirm_utc": "2025-02-25T08:24:00Z",
+      "decision_id": "NOFLC-2025-02-25-GBP_USD",
+      "entry_utc": "2025-02-25T08:25:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 149.28199999999998,
+      "scan_mid": 1.2612800000000002,
+      "scan_utc": "2025-02-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0032279999999998976,
+      "decision_id": "NOFLC-2025-02-26-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-02-26T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0037300000000003216,
+      "decision_id": "NOFLC-2025-02-27-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-02-27T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.7870000000000346,
+      "decision_id": "NOFLC-2025-02-28-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-02-28T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004658000000000051,
+      "confirm_utc": "2025-03-03T08:39:00Z",
+      "decision_id": "NOFLC-2025-03-03-GBP_USD",
+      "entry_utc": "2025-03-03T08:40:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 150.1125,
+      "scan_mid": 1.26016,
+      "scan_utc": "2025-03-03T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.003298000000000023,
+      "decision_id": "NOFLC-2025-03-04-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-03-04T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006444000000000028,
+      "decision_id": "NOFLC-2025-03-05-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-03-05T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.8830000000000211,
+      "decision_id": "NOFLC-2025-03-06-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-03-06T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0050679999999998955,
+      "decision_id": "NOFLC-2025-03-07-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-03-07T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0034960000000000325,
+      "confirm_utc": "2025-03-10T08:59:00Z",
+      "decision_id": "NOFLC-2025-03-10-AUD_USD",
+      "entry_utc": "2025-03-10T09:00:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 147.62400000000002,
+      "scan_mid": 0.632255,
+      "scan_utc": "2025-03-10T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0063000000000002394,
+      "decision_id": "NOFLC-2025-03-11-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-03-11T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6412000000000091,
+      "confirm_utc": "2025-03-12T08:39:00Z",
+      "decision_id": "NOFLC-2025-03-12-USD_JPY",
+      "entry_utc": "2025-03-12T08:40:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 148.59300000000002,
+      "scan_utc": "2025-03-12T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004519999999999725,
+      "decision_id": "NOFLC-2025-03-13-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-03-13T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0031000000000000138,
+      "decision_id": "NOFLC-2025-03-14-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-03-14T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004566000000000337,
+      "decision_id": "NOFLC-2025-03-17-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-03-17T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5080000000000211,
+      "confirm_utc": "2025-03-18T08:54:00Z",
+      "decision_id": "NOFLC-2025-03-18-USD_JPY",
+      "entry_utc": "2025-03-18T08:55:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 149.8325,
+      "scan_utc": "2025-03-18T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005361999999999822,
+      "decision_id": "NOFLC-2025-03-19-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-03-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003443999999999825,
+      "decision_id": "NOFLC-2025-03-20-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-03-20T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004398000000000169,
+      "confirm_utc": "2025-03-21T08:29:00Z",
+      "decision_id": "NOFLC-2025-03-21-EUR_USD",
+      "entry_utc": "2025-03-21T08:30:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 149.351,
+      "scan_mid": 1.0839050000000001,
+      "scan_utc": "2025-03-21T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5116000000000156,
+      "decision_id": "NOFLC-2025-03-24-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-03-24T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004491999999999808,
+      "decision_id": "NOFLC-2025-03-25-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-03-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003031999999999968,
+      "decision_id": "NOFLC-2025-03-26-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-03-26T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004626000000000196,
+      "decision_id": "NOFLC-2025-03-27-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-03-27T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.4846000000000288,
+      "decision_id": "NOFLC-2025-03-28-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-03-28T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005971999999999821,
+      "decision_id": "NOFLC-2025-03-31-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-03-31T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0034439999999999584,
+      "decision_id": "NOFLC-2025-04-01-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-04-01T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004274000000000466,
+      "decision_id": "NOFLC-2025-04-02-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-04-02T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.8981999999999972,
+      "confirm_utc": "2025-04-03T08:59:00Z",
+      "decision_id": "NOFLC-2025-04-03-USD_JPY",
+      "entry_utc": "2025-04-03T09:00:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 147.269,
+      "scan_utc": "2025-04-03T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.007455999999999952,
+      "decision_id": "NOFLC-2025-04-04-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-04-04T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006656000000000018,
+      "confirm_utc": "2025-04-07T08:14:00Z",
+      "decision_id": "NOFLC-2025-04-07-AUD_USD",
+      "entry_utc": "2025-04-07T08:15:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 145.7405,
+      "scan_mid": 0.60087,
+      "scan_utc": "2025-04-07T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.007644000000000163,
+      "confirm_utc": "2025-04-08T08:34:00Z",
+      "decision_id": "NOFLC-2025-04-08-EUR_USD",
+      "entry_utc": "2025-04-08T08:35:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 147.45499999999998,
+      "scan_mid": 1.092365,
+      "scan_utc": "2025-04-08T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 1.5090000000000034,
+      "decision_id": "NOFLC-2025-04-09-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-04-09T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0085139999999996,
+      "decision_id": "NOFLC-2025-04-10-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-04-10T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006523999999999974,
+      "confirm_utc": "2025-04-11T08:09:00Z",
+      "decision_id": "NOFLC-2025-04-11-AUD_USD",
+      "entry_utc": "2025-04-11T08:10:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 142.687,
+      "scan_mid": 0.6224350000000001,
+      "scan_utc": "2025-04-11T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.007762000000000224,
+      "decision_id": "NOFLC-2025-04-14-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-04-14T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6931999999999846,
+      "decision_id": "NOFLC-2025-04-15-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-04-15T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006190000000000273,
+      "decision_id": "NOFLC-2025-04-16-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-04-16T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004023999999999827,
+      "decision_id": "NOFLC-2025-04-17-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-04-17T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005738000000000288,
+      "decision_id": "NOFLC-2025-04-18-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-04-18T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6420000000000016,
+      "decision_id": "NOFLC-2025-04-21-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-04-21T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006080000000000262,
+      "decision_id": "NOFLC-2025-04-22-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-04-22T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004155999999999915,
+      "decision_id": "NOFLC-2025-04-23-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-04-23T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0051700000000002525,
+      "decision_id": "NOFLC-2025-04-24-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-04-24T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.8784000000000276,
+      "decision_id": "NOFLC-2025-04-25-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-04-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00542400000000014,
+      "decision_id": "NOFLC-2025-04-28-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-04-28T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0038799999999999503,
+      "confirm_utc": "2025-04-29T08:19:00Z",
+      "decision_id": "NOFLC-2025-04-29-AUD_USD",
+      "entry_utc": "2025-04-29T08:20:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 142.36849999999998,
+      "scan_mid": 0.64302,
+      "scan_utc": "2025-04-29T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005290000000000461,
+      "decision_id": "NOFLC-2025-04-30-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-04-30T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.7842000000000325,
+      "decision_id": "NOFLC-2025-05-01-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-01T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005550000000000121,
+      "decision_id": "NOFLC-2025-05-02-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-05-02T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003503999999999996,
+      "confirm_utc": "2025-05-05T08:24:00Z",
+      "decision_id": "NOFLC-2025-05-05-AUD_USD",
+      "entry_utc": "2025-05-05T08:25:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 144.346,
+      "scan_mid": 0.646555,
+      "scan_utc": "2025-05-05T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005476000000000613,
+      "decision_id": "NOFLC-2025-05-06-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-05-06T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6022000000000389,
+      "decision_id": "NOFLC-2025-05-07-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-07T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006218000000000279,
+      "confirm_utc": "2025-05-08T08:39:00Z",
+      "decision_id": "NOFLC-2025-05-08-GBP_USD",
+      "entry_utc": "2025-05-08T08:40:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 144.297,
+      "scan_mid": 1.329065,
+      "scan_utc": "2025-05-08T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0033759999999999125,
+      "confirm_utc": "2025-05-09T08:29:00Z",
+      "decision_id": "NOFLC-2025-05-09-AUD_USD",
+      "entry_utc": "2025-05-09T08:30:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 145.1885,
+      "scan_mid": 0.6410199999999999,
+      "scan_utc": "2025-05-09T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.01203200000000013,
+      "confirm_utc": "2025-05-12T08:59:00Z",
+      "decision_id": "NOFLC-2025-05-12-EUR_USD",
+      "entry_utc": "2025-05-12T09:00:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 147.878,
+      "scan_mid": 1.1105200000000002,
+      "scan_utc": "2025-05-12T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.7687999999999817,
+      "decision_id": "NOFLC-2025-05-13-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-13T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006164000000000591,
+      "decision_id": "NOFLC-2025-05-14-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-05-14T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004112000000000027,
+      "decision_id": "NOFLC-2025-05-15-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-05-15T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005006000000000288,
+      "decision_id": "NOFLC-2025-05-16-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-05-16T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.784600000000006,
+      "decision_id": "NOFLC-2025-05-19-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005716000000000143,
+      "confirm_utc": "2025-05-20T08:49:00Z",
+      "decision_id": "NOFLC-2025-05-20-GBP_USD",
+      "entry_utc": "2025-05-20T08:50:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 144.1525,
+      "scan_mid": 1.3391950000000001,
+      "scan_utc": "2025-05-20T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0034779999999999143,
+      "decision_id": "NOFLC-2025-05-21-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-05-21T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006374000000000235,
+      "decision_id": "NOFLC-2025-05-22-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-05-22T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5820000000000277,
+      "decision_id": "NOFLC-2025-05-23-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-23T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0055340000000005055,
+      "decision_id": "NOFLC-2025-05-26-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-05-26T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0038899999999999933,
+      "decision_id": "NOFLC-2025-05-27-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-05-27T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004504000000000197,
+      "decision_id": "NOFLC-2025-05-28-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-05-28T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.7334000000000174,
+      "decision_id": "NOFLC-2025-05-29-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-05-29T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006308000000000292,
+      "decision_id": "NOFLC-2025-05-30-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-05-30T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0037080000000000225,
+      "decision_id": "NOFLC-2025-06-02-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-06-02T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0047320000000003574,
+      "decision_id": "NOFLC-2025-06-03-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-06-03T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5388000000000034,
+      "confirm_utc": "2025-06-04T08:49:00Z",
+      "decision_id": "NOFLC-2025-06-04-USD_JPY",
+      "entry_utc": "2025-06-04T08:50:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 144.086,
+      "scan_utc": "2025-06-04T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.00489200000000043,
+      "decision_id": "NOFLC-2025-06-05-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-06-05T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00315599999999987,
+      "confirm_utc": "2025-06-06T08:44:00Z",
+      "decision_id": "NOFLC-2025-06-06-AUD_USD",
+      "entry_utc": "2025-06-06T08:45:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 143.9435,
+      "scan_mid": 0.6499699999999999,
+      "scan_utc": "2025-06-06T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.003972000000000398,
+      "confirm_utc": "2025-06-09T08:54:00Z",
+      "decision_id": "NOFLC-2025-06-09-EUR_USD",
+      "entry_utc": "2025-06-09T08:55:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 144.115,
+      "scan_mid": 1.14225,
+      "scan_utc": "2025-06-09T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.6040000000000418,
+      "confirm_utc": "2025-06-10T08:19:00Z",
+      "decision_id": "NOFLC-2025-06-10-USD_JPY",
+      "entry_utc": "2025-06-10T08:20:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 144.743,
+      "scan_utc": "2025-06-10T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004984000000000276,
+      "decision_id": "NOFLC-2025-06-11-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-06-11T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00380999999999998,
+      "decision_id": "NOFLC-2025-06-12-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-06-12T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005926000000000231,
+      "decision_id": "NOFLC-2025-06-13-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-06-13T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6108000000000061,
+      "decision_id": "NOFLC-2025-06-16-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-06-16T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005394000000000209,
+      "decision_id": "NOFLC-2025-06-17-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-06-17T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0031420000000000224,
+      "decision_id": "NOFLC-2025-06-18-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-06-18T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005096000000000034,
+      "confirm_utc": "2025-06-19T08:59:00Z",
+      "decision_id": "NOFLC-2025-06-19-EUR_USD",
+      "entry_utc": "2025-06-19T09:00:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 145.3515,
+      "scan_mid": 1.14618,
+      "scan_utc": "2025-06-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.4343999999999653,
+      "decision_id": "NOFLC-2025-06-20-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-06-20T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0062960000000003465,
+      "decision_id": "NOFLC-2025-06-23-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-06-23T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004541999999999912,
+      "decision_id": "NOFLC-2025-06-24-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-06-24T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0045960000000004,
+      "decision_id": "NOFLC-2025-06-25-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-06-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6498000000000105,
+      "decision_id": "NOFLC-2025-06-26-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-06-26T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005274000000000311,
+      "decision_id": "NOFLC-2025-06-27-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-06-27T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0034839999999999533,
+      "decision_id": "NOFLC-2025-06-30-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-06-30T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004656000000000349,
+      "decision_id": "NOFLC-2025-07-01-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-01T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5492000000000076,
+      "decision_id": "NOFLC-2025-07-02-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-07-02T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005870000000000264,
+      "decision_id": "NOFLC-2025-07-03-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-07-03T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003826000000000063,
+      "decision_id": "NOFLC-2025-07-04-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-07-04T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004586000000000157,
+      "decision_id": "NOFLC-2025-07-07-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-07T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5818000000000211,
+      "confirm_utc": "2025-07-08T08:29:00Z",
+      "decision_id": "NOFLC-2025-07-08-USD_JPY",
+      "entry_utc": "2025-07-08T08:30:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 146.0375,
+      "scan_utc": "2025-07-08T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.00555399999999997,
+      "confirm_utc": "2025-07-09T08:49:00Z",
+      "decision_id": "NOFLC-2025-07-09-GBP_USD",
+      "entry_utc": "2025-07-09T08:50:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 146.86700000000002,
+      "scan_mid": 1.3586,
+      "scan_utc": "2025-07-09T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.002998000000000167,
+      "decision_id": "NOFLC-2025-07-10-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-07-10T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004240000000000555,
+      "decision_id": "NOFLC-2025-07-11-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-11T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5626000000000148,
+      "confirm_utc": "2025-07-14T08:14:00Z",
+      "decision_id": "NOFLC-2025-07-14-USD_JPY",
+      "entry_utc": "2025-07-14T08:15:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 147.372,
+      "scan_utc": "2025-07-14T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0049860000000004675,
+      "decision_id": "NOFLC-2025-07-15-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-07-15T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0028399999999999316,
+      "decision_id": "NOFLC-2025-07-16-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-07-16T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004802000000000328,
+      "decision_id": "NOFLC-2025-07-17-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-17T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.49100000000005933,
+      "confirm_utc": "2025-07-18T08:54:00Z",
+      "decision_id": "NOFLC-2025-07-18-USD_JPY",
+      "entry_utc": "2025-07-18T08:55:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 148.78300000000002,
+      "scan_utc": "2025-07-18T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.00453800000000042,
+      "decision_id": "NOFLC-2025-07-21-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-07-21T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002787999999999946,
+      "confirm_utc": "2025-07-22T08:44:00Z",
+      "decision_id": "NOFLC-2025-07-22-AUD_USD",
+      "entry_utc": "2025-07-22T08:45:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 147.6465,
+      "scan_mid": 0.65057,
+      "scan_utc": "2025-07-22T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004358000000000217,
+      "decision_id": "NOFLC-2025-07-23-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-23T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5984000000000322,
+      "decision_id": "NOFLC-2025-07-24-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-07-24T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005592000000000308,
+      "decision_id": "NOFLC-2025-07-25-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-07-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003628000000000009,
+      "decision_id": "NOFLC-2025-07-28-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-07-28T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.006010000000000293,
+      "decision_id": "NOFLC-2025-07-29-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-07-29T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.6274000000000228,
+      "decision_id": "NOFLC-2025-07-30-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-07-30T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005384000000000589,
+      "decision_id": "NOFLC-2025-07-31-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-07-31T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003215999999999975,
+      "decision_id": "NOFLC-2025-08-01-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-08-01T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005206000000000044,
+      "decision_id": "NOFLC-2025-08-04-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-08-04T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5774000000000115,
+      "decision_id": "NOFLC-2025-08-05-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-08-05T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004448000000000407,
+      "confirm_utc": "2025-08-06T08:24:00Z",
+      "decision_id": "NOFLC-2025-08-06-GBP_USD",
+      "entry_utc": "2025-08-06T08:25:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 147.57049999999998,
+      "scan_mid": 1.330315,
+      "scan_utc": "2025-08-06T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.002869999999999928,
+      "confirm_utc": "2025-08-07T08:29:00Z",
+      "decision_id": "NOFLC-2025-08-07-AUD_USD",
+      "entry_utc": "2025-08-07T08:30:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 146.825,
+      "scan_mid": 0.65374,
+      "scan_utc": "2025-08-07T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004132000000000158,
+      "confirm_utc": "2025-08-08T08:54:00Z",
+      "decision_id": "NOFLC-2025-08-08-EUR_USD",
+      "entry_utc": "2025-08-08T08:55:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 147.31900000000002,
+      "scan_mid": 1.1659199999999998,
+      "scan_utc": "2025-08-08T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5010000000000219,
+      "confirm_utc": "2025-08-11T08:59:00Z",
+      "decision_id": "NOFLC-2025-08-11-USD_JPY",
+      "entry_utc": "2025-08-11T09:00:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 147.39,
+      "scan_utc": "2025-08-11T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0049180000000002885,
+      "decision_id": "NOFLC-2025-08-12-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-08-12T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003101999999999872,
+      "decision_id": "NOFLC-2025-08-13-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-08-13T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004376000000000291,
+      "decision_id": "NOFLC-2025-08-14-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-08-14T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5446000000000311,
+      "decision_id": "NOFLC-2025-08-15-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-08-15T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00489200000000043,
+      "confirm_utc": "2025-08-18T08:44:00Z",
+      "decision_id": "NOFLC-2025-08-18-GBP_USD",
+      "entry_utc": "2025-08-18T08:45:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 147.4435,
+      "scan_mid": 1.3538999999999999,
+      "scan_utc": "2025-08-18T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.003059999999999929,
+      "decision_id": "NOFLC-2025-08-19-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-08-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0042820000000002075,
+      "decision_id": "NOFLC-2025-08-20-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-08-20T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.46460000000002993,
+      "decision_id": "NOFLC-2025-08-21-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-08-21T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004046000000000393,
+      "decision_id": "NOFLC-2025-08-22-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-08-22T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0031079999999999554,
+      "confirm_utc": "2025-08-25T08:24:00Z",
+      "decision_id": "NOFLC-2025-08-25-AUD_USD",
+      "entry_utc": "2025-08-25T08:25:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 147.303,
+      "scan_mid": 0.64867,
+      "scan_utc": "2025-08-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005368000000000306,
+      "decision_id": "NOFLC-2025-08-26-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-08-26T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.4264000000000294,
+      "decision_id": "NOFLC-2025-08-27-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-08-27T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004638000000000231,
+      "decision_id": "NOFLC-2025-08-28-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-08-28T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002782000000000018,
+      "decision_id": "NOFLC-2025-08-29-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-08-29T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003928000000000376,
+      "decision_id": "NOFLC-2025-09-01-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-09-01T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.8020000000000493,
+      "confirm_utc": "2025-09-02T08:34:00Z",
+      "decision_id": "NOFLC-2025-09-02-USD_JPY",
+      "entry_utc": "2025-09-02T08:35:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 148.651,
+      "scan_utc": "2025-09-02T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.007136000000000165,
+      "confirm_utc": "2025-09-03T08:24:00Z",
+      "decision_id": "NOFLC-2025-09-03-GBP_USD",
+      "entry_utc": "2025-09-03T08:25:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 148.71300000000002,
+      "scan_mid": 1.3366500000000001,
+      "scan_utc": "2025-09-03T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.002792000000000061,
+      "decision_id": "NOFLC-2025-09-04-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-09-04T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0037440000000004137,
+      "decision_id": "NOFLC-2025-09-05-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-09-05T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5800000000000466,
+      "confirm_utc": "2025-09-08T08:59:00Z",
+      "decision_id": "NOFLC-2025-09-08-USD_JPY",
+      "entry_utc": "2025-09-08T09:00:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 147.5335,
+      "scan_utc": "2025-09-08T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004795999999999977,
+      "decision_id": "NOFLC-2025-09-09-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-09-09T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003168000000000037,
+      "decision_id": "NOFLC-2025-09-10-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-09-10T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004438000000000342,
+      "decision_id": "NOFLC-2025-09-11-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-09-11T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.5082000000000618,
+      "decision_id": "NOFLC-2025-09-12-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-09-12T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.005134000000000416,
+      "decision_id": "NOFLC-2025-09-15-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-09-15T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.00292200000000018,
+      "decision_id": "NOFLC-2025-09-16-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-09-16T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.003964000000000079,
+      "confirm_utc": "2025-09-17T08:59:00Z",
+      "decision_id": "NOFLC-2025-09-17-EUR_USD",
+      "entry_utc": "2025-09-17T09:00:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 146.663,
+      "scan_mid": 1.18405,
+      "scan_utc": "2025-09-17T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5676000000000669,
+      "confirm_utc": "2025-09-18T08:39:00Z",
+      "decision_id": "NOFLC-2025-09-18-USD_JPY",
+      "entry_utc": "2025-09-18T08:40:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 147.1165,
+      "scan_utc": "2025-09-18T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.006630000000000003,
+      "decision_id": "NOFLC-2025-09-19-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-09-19T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0033380000000001074,
+      "confirm_utc": "2025-09-22T08:24:00Z",
+      "decision_id": "NOFLC-2025-09-22-AUD_USD",
+      "entry_utc": "2025-09-22T08:25:00Z",
+      "pair": "AUD_USD",
+      "quote_to_jpy": 148.06900000000002,
+      "scan_mid": 0.658005,
+      "scan_utc": "2025-09-22T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.005570000000000163,
+      "decision_id": "NOFLC-2025-09-23-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-09-23T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.4262,
+      "confirm_utc": "2025-09-24T08:54:00Z",
+      "decision_id": "NOFLC-2025-09-24-USD_JPY",
+      "entry_utc": "2025-09-24T08:55:00Z",
+      "pair": "USD_JPY",
+      "quote_to_jpy": 1.0,
+      "scan_mid": 148.043,
+      "scan_utc": "2025-09-24T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.004990000000000228,
+      "confirm_utc": "2025-09-25T08:24:00Z",
+      "decision_id": "NOFLC-2025-09-25-GBP_USD",
+      "entry_utc": "2025-09-25T08:25:00Z",
+      "pair": "GBP_USD",
+      "quote_to_jpy": 148.80450000000002,
+      "scan_mid": 1.34376,
+      "scan_utc": "2025-09-25T08:00:00Z",
+      "side": "SHORT",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.0029779999999999473,
+      "decision_id": "NOFLC-2025-09-26-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-09-26T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.004026000000000307,
+      "confirm_utc": "2025-09-29T08:29:00Z",
+      "decision_id": "NOFLC-2025-09-29-EUR_USD",
+      "entry_utc": "2025-09-29T08:30:00Z",
+      "pair": "EUR_USD",
+      "quote_to_jpy": 148.586,
+      "scan_mid": 1.1726999999999999,
+      "scan_utc": "2025-09-29T08:00:00Z",
+      "side": "LONG",
+      "status": "CONFIRMED"
+    },
+    {
+      "atr": 0.5432000000000187,
+      "decision_id": "NOFLC-2025-09-30-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-09-30T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0060340000000002275,
+      "decision_id": "NOFLC-2025-10-01-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-10-01T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.002944000000000191,
+      "decision_id": "NOFLC-2025-10-02-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-10-02T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0039000000000004144,
+      "decision_id": "NOFLC-2025-10-03-EUR_USD",
+      "pair": "EUR_USD",
+      "scan_utc": "2025-10-03T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.7686000000000263,
+      "decision_id": "NOFLC-2025-10-06-USD_JPY",
+      "pair": "USD_JPY",
+      "scan_utc": "2025-10-06T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0051900000000003835,
+      "decision_id": "NOFLC-2025-10-07-GBP_USD",
+      "pair": "GBP_USD",
+      "scan_utc": "2025-10-07T08:00:00Z",
+      "side": "SHORT",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    },
+    {
+      "atr": 0.0029180000000001535,
+      "decision_id": "NOFLC-2025-10-08-AUD_USD",
+      "pair": "AUD_USD",
+      "scan_utc": "2025-10-08T08:00:00Z",
+      "side": "LONG",
+      "status": "SKIP_NO_RETURN_CONFIRM"
+    }
+  ],
+  "source_manifest": {
+    "AUD_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T105320Z/AUD_USD/AUD_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "sha256": "6bfe8ba710849d32dc0033067d9fec61808df46189d682dd95900a9f6404341f"
+    },
+    "EUR_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T085350Z/EUR_USD/EUR_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "sha256": "73aecdd7222c7da269d535f702462c0715356aa8ccc462756cd6745038e83680"
+    },
+    "GBP_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T104309Z/GBP_USD/GBP_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "sha256": "8e8e0886c100d5971e7b1def3692b59a8129234293e533a9eaccc113e93af0e2"
+    },
+    "USD_JPY": {
+      "path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084558Z/USD_JPY/USD_JPY_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "sha256": "629adb8fbbb8742758852991acc7f6e3768b9901672167a8ae3d068c5187d301"
+    }
+  }
+}

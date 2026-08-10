@@ -1,0 +1,77 @@
+{
+  "contract": "NO_FORCED_LOSS_CLOSE_PREREGISTER_V1",
+  "status": "FROZEN_BEFORE_RESULT_GENERATION",
+  "research_only": true,
+  "live_permission": false,
+  "holdout_used": false,
+  "goal": "Compare fixed hard-SL, no-SL return waiting, delayed entry/early TP, bounded hedge, partial-profit/BE, and multi-pair rotation under one bid/ask MTM and margin accounting contract.",
+  "forbidden": [
+    "future maximum adverse excursion selection",
+    "end-of-replay forced loss close",
+    "missing financing imputed as zero",
+    "post-outcome threshold selection",
+    "unbounded averaging or hedge re-entry",
+    "broker, Paper, live, order, deploy, authentication, or position mutation"
+  ],
+  "standard_replay_contract": {
+    "required_command": "python scripts/replay_exit_workers_groups.py --ticks <frozen> --workers impulse_break_s5,impulse_momentum_s5,impulse_retest_s5,pullback_s5 --no-hard-sl --exclude-end-of-replay --out-dir <out>",
+    "hard_tp_enabled": true,
+    "end_of_replay_excluded": true,
+    "repository_entrypoint_present_at_preregistration": false,
+    "checked_refs": ["HEAD", "origin/codex/qr-python-ecosystem-audit-20260810", "origin/main"],
+    "status": "BLOCKED_MISSING_REPOSITORY_ENTRYPOINT",
+    "claim_boundary": "The research-local replay below is not represented as the missing standard worker replay."
+  },
+  "real_data": {
+    "source": "local OANDA M1 complete bid/ask gzip artifacts, read-only",
+    "period": ["2025-01-02T00:00:00Z", "2025-12-31T23:59:00Z"],
+    "pairs": ["EUR_USD", "USD_JPY", "GBP_USD", "AUD_USD"],
+    "decision_count": 200,
+    "schedule": "first 200 observed weekdays; one 08:00 UTC decision per day; pair cycles in the listed order",
+    "missing_rows": "no interpolation; a decision with an incomplete causal window is SKIP_MISSING",
+    "complete_bar_only": true
+  },
+  "decision_rule": {
+    "scan": "at 08:00 UTC, direction is the sign of the last completed 60-minute midpoint return",
+    "atr": "mean one-minute midpoint true range over the same 60 completed bars multiplied by 12",
+    "wait_return": "observe an adverse pullback of at least 0.25 ATR, then a completed five-minute close back in the selected direction",
+    "confirm_deadline_minutes": 60,
+    "entry": "first executable M1 open after confirmation",
+    "units": 5000,
+    "entry_slippage": "0.10 of observed entry spread, adverse, charged separately",
+    "exit_slippage": "0.10 of observed exit spread, adverse, charged separately",
+    "fee_jpy": 0.0,
+    "quote_conversion": "JPY quote=1; USD quote uses latest causal USD_JPY midpoint",
+    "financing": "unknown for counterfactual open legs; any rollover-crossing result is NOT_EVALUABLE_FINANCING",
+    "terminal": "open legs remain open and are marked to final executable bid/ask; never force-closed"
+  },
+  "accounting": {
+    "start_equity_jpy": 254209.0185,
+    "margin_rate": 0.04,
+    "margin_closeout_ratio": 1.0,
+    "hedging_account_margin": "sum per-pair max(long notional, short notional) margin; double-gross also reported",
+    "netting_account": "opposite same-pair order reduces or reverses exposure and realizes the reduced original; it is not labelled a hedge",
+    "margin_closeout": "when terminal-equity <= broker-margin * ratio, liquidate at executable bid/ask and count explicit failure",
+    "equity": "cash realized + original MTM + hedge MTM",
+    "profit_factor": "positive decision-level terminal contribution divided by absolute negative contribution",
+    "unresolved_inventory": "any original or hedge leg still open at terminal"
+  },
+  "arms": {
+    "A_HARD_SL_BASELINE": {"sl_atr": 1.0, "tp_atr": 0.5},
+    "B_NO_SL_NAKED_RETURN_WAIT": {"tp_atr": 0.5, "global_original_limit": 1},
+    "C_NO_SL_DELAYED_ENTRY_EARLY_TP": {"delay_completed_m5": 1, "do_not_chase_atr": 0.25, "tp_atr": 0.35},
+    "D_NO_SL_HEDGE_RETURN_025": {"trigger_atr": 0.25, "hedge_tp_atr": 0.5, "max_rehedges": 1},
+    "D_NO_SL_HEDGE_RETURN_050": {"trigger_atr": 0.5, "hedge_tp_atr": 0.5, "max_rehedges": 1},
+    "D_NO_SL_HEDGE_RETURN_100": {"trigger_atr": 1.0, "hedge_tp_atr": 0.5, "max_rehedges": 1},
+    "E_NO_SL_PARTIAL_PROFIT_BE": {"partial_fraction": 0.5, "partial_tp_atr": 0.35, "final_tp_atr": 0.5, "remaining_floor": "entry executable BE"},
+    "F_NO_SL_MULTI_PAIR_ROTATION": {"tp_atr": 0.5, "one_original_per_pair": true, "no_same_pair_chase": true},
+    "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT": {"trigger_sweep_atr": [0.25, 0.5, 1.0, 1.5], "hedge_exit": "only with original recovery; otherwise terminal MTM"},
+    "H2_HEDGE_TP_KEEP_ORIGINAL": {"trigger_sweep_atr": [0.25, 0.5, 1.0, 1.5], "hedge_tp_atr": 0.5, "max_rehedges": 1},
+    "H3_HEDGE_PARTIAL_TP_REHEDGE": {"trigger_sweep_atr": [0.25, 0.5, 1.0, 1.5], "hedge_partial_tp_atr": [0.25, 0.5], "cooldown_minutes": 60, "max_rehedges": 2},
+    "H4_HEDGE_REVERSAL_CONFIRM_EXIT": {"trigger_sweep_atr": [0.25, 0.5, 1.0, 1.5], "completed_m5_reversal_bars": 2, "max_rehedges": 1},
+    "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE": {"trigger_sweep_atr": [0.25, 0.5, 1.0, 1.5], "hedge_tp_atr": 0.5, "unwind": "combined realized hedge profit plus original executable MTM must be nonnegative"},
+    "H6_PERSISTENT_TREND_STRESS": {"base": "H3 trigger 0.5", "synthetic_adverse_drift_atr_per_day": 0.25, "days": 10, "not_real_cohort_claim": true},
+    "H7_GAP_AND_FINANCING_STRESS": {"base": "H3 trigger 0.5", "adverse_gap_atr": 1.5, "spread_multiplier": 3.0, "financing_notional_bps_per_day_per_leg": 2.0, "days": 10, "not_real_cohort_claim": true}
+  },
+  "selection_rule": "No best trigger is selected after results. Every trigger row is reported separately. A positive net with unresolved inventory, financing unknown, or margin closeout is REJECT/NOT_EVALUABLE, never ACCEPT."
+}

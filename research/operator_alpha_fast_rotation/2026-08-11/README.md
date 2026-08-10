@@ -75,3 +75,13 @@ forecast lineage, and executable unwind evidence.  Initial required-margin
 proxies are 85–95% of entry balance on these rows.  Every fusion row therefore
 returns `WAIT_EVIDENCE_INCOMPLETE` for live use.  The reusable output is the
 operator state/exit/reentry contract and the evidence schema—not live settings.
+
+## NO_FIXED_SL extension
+
+The user-directed return-wait and bounded-hedge hypotheses are evaluated under
+one frozen 200-decision, M1 bid/ask, realized-plus-terminal-MTM contract in
+[`no_forced_loss_close_v1/verdict_v1.md`](no_forced_loss_close_v1/verdict_v1.md).
+The extension separates hedging and netting accounts, never force-closes a loss
+at replay end, and rejects positive pre-financing rows when unresolved inventory
+or unknown financing remains. It is research-only and does not change the live
+answer above.

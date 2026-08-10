@@ -1,0 +1,482 @@
+{
+  "A_HARD_SL_BASELINE::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": null,
+    "p50_recovery_seconds": null,
+    "p90_recovery_seconds": null,
+    "recovered": 0,
+    "unrecovered": 0
+  },
+  "A_HARD_SL_BASELINE::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": null,
+    "p50_recovery_seconds": null,
+    "p90_recovery_seconds": null,
+    "recovered": 0,
+    "unrecovered": 0
+  },
+  "B_NO_SL_NAKED_RETURN_WAIT::HEDGING": {
+    "executed": 38,
+    "max_recovery_seconds": 617040.0,
+    "p50_recovery_seconds": 28200.0,
+    "p90_recovery_seconds": 236040.0,
+    "recovered": 33,
+    "unrecovered": 5
+  },
+  "B_NO_SL_NAKED_RETURN_WAIT::NETTING": {
+    "executed": 38,
+    "max_recovery_seconds": 617040.0,
+    "p50_recovery_seconds": 28200.0,
+    "p90_recovery_seconds": 236040.0,
+    "recovered": 33,
+    "unrecovered": 5
+  },
+  "C_NO_SL_DELAYED_ENTRY_EARLY_TP::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 598800.0,
+    "p50_recovery_seconds": 18540.0,
+    "p90_recovery_seconds": 219660.0,
+    "recovered": 46,
+    "unrecovered": 4
+  },
+  "C_NO_SL_DELAYED_ENTRY_EARLY_TP::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 598800.0,
+    "p50_recovery_seconds": 18540.0,
+    "p90_recovery_seconds": 219660.0,
+    "recovered": 46,
+    "unrecovered": 4
+  },
+  "D_NO_SL_HEDGE_RETURN_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "D_NO_SL_HEDGE_RETURN_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "D_NO_SL_HEDGE_RETURN_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 5
+  },
+  "D_NO_SL_HEDGE_RETURN_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "D_NO_SL_HEDGE_RETURN_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 6
+  },
+  "D_NO_SL_HEDGE_RETURN_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "E_NO_SL_PARTIAL_PROFIT_BE::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": null,
+    "p50_recovery_seconds": null,
+    "p90_recovery_seconds": null,
+    "recovered": 0,
+    "unrecovered": 3
+  },
+  "E_NO_SL_PARTIAL_PROFIT_BE::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": null,
+    "p50_recovery_seconds": null,
+    "p90_recovery_seconds": null,
+    "recovered": 0,
+    "unrecovered": 3
+  },
+  "F_NO_SL_MULTI_PAIR_ROTATION::HEDGING": {
+    "executed": 48,
+    "max_recovery_seconds": 617040.0,
+    "p50_recovery_seconds": 26490.0,
+    "p90_recovery_seconds": 236040.0,
+    "recovered": 42,
+    "unrecovered": 6
+  },
+  "F_NO_SL_MULTI_PAIR_ROTATION::NETTING": {
+    "executed": 48,
+    "max_recovery_seconds": 617040.0,
+    "p50_recovery_seconds": 26490.0,
+    "p90_recovery_seconds": 236040.0,
+    "recovered": 42,
+    "unrecovered": 6
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_150::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 31650.0,
+    "p90_recovery_seconds": 230580.0,
+    "recovered": 46,
+    "unrecovered": 4
+  },
+  "H1_LOCK_AT_ADVERSE_LEVEL_AND_WAIT_150::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 273960.0,
+    "p50_recovery_seconds": 21600.0,
+    "p90_recovery_seconds": 227940.0,
+    "recovered": 35,
+    "unrecovered": 0
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 5
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 6
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_150::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 31650.0,
+    "p90_recovery_seconds": 230580.0,
+    "recovered": 46,
+    "unrecovered": 8
+  },
+  "H2_HEDGE_TP_KEEP_ORIGINAL_150::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 273960.0,
+    "p50_recovery_seconds": 21600.0,
+    "p90_recovery_seconds": 227940.0,
+    "recovered": 35,
+    "unrecovered": 0
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 8
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_150::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 31650.0,
+    "p90_recovery_seconds": 230580.0,
+    "recovered": 46,
+    "unrecovered": 8
+  },
+  "H3_HEDGE_PARTIAL_TP_REHEDGE_150::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 273960.0,
+    "p50_recovery_seconds": 21600.0,
+    "p90_recovery_seconds": 227940.0,
+    "recovered": 35,
+    "unrecovered": 0
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 3
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_150::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 31650.0,
+    "p90_recovery_seconds": 230580.0,
+    "recovered": 46,
+    "unrecovered": 4
+  },
+  "H4_HEDGE_REVERSAL_CONFIRM_EXIT_150::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 273960.0,
+    "p50_recovery_seconds": 21600.0,
+    "p90_recovery_seconds": 227940.0,
+    "recovered": 35,
+    "unrecovered": 0
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_025::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 506880.0,
+    "p50_recovery_seconds": 18120.0,
+    "p90_recovery_seconds": 167040.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_025::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 23880.0,
+    "p50_recovery_seconds": 9480.0,
+    "p90_recovery_seconds": 19680.0,
+    "recovered": 17,
+    "unrecovered": 0
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_050::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 5
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_050::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_100::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 35100.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 6
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_100::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 17640.0,
+    "p90_recovery_seconds": 63780.0,
+    "recovered": 31,
+    "unrecovered": 0
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_150::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 31650.0,
+    "p90_recovery_seconds": 230580.0,
+    "recovered": 46,
+    "unrecovered": 8
+  },
+  "H5_HEDGE_PROFIT_OFFSET_ORIGINAL_BE_150::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 273960.0,
+    "p50_recovery_seconds": 21600.0,
+    "p90_recovery_seconds": 227940.0,
+    "recovered": 35,
+    "unrecovered": 0
+  },
+  "H6_PERSISTENT_TREND_STRESS::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H6_PERSISTENT_TREND_STRESS::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  },
+  "H7_GAP_AND_FINANCING_STRESS::HEDGING": {
+    "executed": 50,
+    "max_recovery_seconds": 597840.0,
+    "p50_recovery_seconds": 27780.0,
+    "p90_recovery_seconds": 200400.0,
+    "recovered": 47,
+    "unrecovered": 7
+  },
+  "H7_GAP_AND_FINANCING_STRESS::NETTING": {
+    "executed": 50,
+    "max_recovery_seconds": 232440.0,
+    "p50_recovery_seconds": 15180.0,
+    "p90_recovery_seconds": 36720.0,
+    "recovered": 26,
+    "unrecovered": 0
+  }
+}

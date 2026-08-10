@@ -1,0 +1,69 @@
+{
+  "contract": "OPERATOR_ALPHA_FAST_ROTATION_V1+RETURN_WAIT_V1+NO_FORCED_LOSS_CLOSE_V1",
+  "status": "RESEARCH_ONLY_NOT_ADOPTED",
+  "permissions": {
+    "live": false,
+    "paper": false,
+    "broker": false,
+    "order": false,
+    "deploy": false,
+    "manual_or_unknown_positions": "NO_TOUCH"
+  },
+  "inputs": {
+    "decision_key": ["decision_id", "completed_bar_timestamp", "pair", "account_mode"],
+    "observation": ["completed M1/M5 bid/ask", "causal ATR", "spread", "quote-to-JPY"],
+    "direction": ["pair-specific direction", "supporting return", "opposing evidence", "structure break"],
+    "entry": ["return confirmation", "next executable quote", "fixed units", "do-not-chase state"],
+    "monitor": ["original realized", "hedge realized", "original bid/ask MTM", "hedge bid/ask MTM", "gross/net exposure", "margin", "underwater time", "costs"],
+    "exit": ["hard TP", "partial profit", "executable original BE", "combined offset after exit slippage", "margin closeout failure"],
+    "reentry": ["completed-bar adverse trigger", "one-hour cooldown", "bounded count", "same-pair inventory eligibility"]
+  },
+  "states": [
+    "SCAN",
+    "WAIT_RETURN",
+    "CONFIRM",
+    "ENTER",
+    "MONITOR",
+    "TAKE_PROFIT",
+    "HEDGE",
+    "WAIT_RECOVERY",
+    "BE_UNWIND",
+    "TERMINAL_MTM",
+    "FORCED_LIQUIDATION_FAILURE",
+    "NOT_EVALUABLE"
+  ],
+  "transitions": {
+    "SCAN_to_WAIT_RETURN": "a completed 60-minute window yields one pair-specific direction and causal ATR",
+    "WAIT_RETURN_to_CONFIRM": "a preregistered 0.25 ATR adverse pullback is observed and a later completed M5 close resumes in the direction",
+    "CONFIRM_to_ENTER": "enter only at the next available M1 executable quote; delayed-entry arm skips a chase",
+    "ENTER_to_MONITOR": "freeze decision_id, account mode, units, entry quote, spread/slippage and margin inputs",
+    "MONITOR_to_TAKE_PROFIT": "a preregistered hard TP or partial-profit threshold is met at a completed quote",
+    "MONITOR_to_HEDGE": "a completed M5 bar reaches a separately reported trigger in {0.25,0.5,1.0,1.5} ATR; order is effective no earlier than the next M1 bar",
+    "HEDGE_to_WAIT_RECOVERY": "hedging account holds both legs and reports both; netting account realizes a reduction and cannot label it hedge P/L",
+    "WAIT_RECOVERY_to_BE_UNWIND": "original executable P/L is at least BE, or the H5 combined realized hedge offset covers original executable loss including unwind slippage",
+    "any_open_to_TERMINAL_MTM": "the replay ends with open inventory marked at final executable bid/ask; no end-of-replay close is generated",
+    "any_to_FORCED_LIQUIDATION_FAILURE": "equity is not above broker margin; liquidation is explicit failure, never a successful no-loss exit",
+    "any_to_NOT_EVALUABLE": "financing, causal quote, account mode, or joint portfolio margin is missing"
+  },
+  "causality": {
+    "maximum_adverse_hindsight": "FORBIDDEN",
+    "completed_bar_only": true,
+    "hedge_effective_quote": "next M1 bar after completed trigger",
+    "threshold_selection": "every preregistered trigger reported separately; no post-result winner selection",
+    "missing_data": "no interpolation; NOT_EVALUABLE or SKIP"
+  },
+  "fusion": {
+    "technical_price_action": "provide pair direction, structural break and return confirmation; they do not waive accounting gates",
+    "forecast": "optional edge family only when causally archived; missing remains missing",
+    "continuous_thesis": "tracks entry-frozen direction versus completed return/reversal evidence",
+    "multidimensional_cube": "one cell per independent family, preserving dissent and missing values",
+    "trailing_BE_partial": "may request profit/BE unwind only at an executable later quote",
+    "hedge": "constraint/unwind family, never independent edge",
+    "operator_alpha": "consumes the fused answer to rotate, wait, manage or skip",
+    "one_answer": ["TRADE", "WAIT_RETURN", "MANAGE_HEDGE", "BE_UNWIND", "SKIP", "NOT_EVALUABLE"]
+  },
+  "adoption_gate": {
+    "automatic_reject": ["unresolved inventory", "margin closeout", "forced liquidation", "hidden terminal MTM", "unknown financing", "unbounded rehedge", "post-hoc threshold selection"],
+    "required_before_any_runtime_proposal": ["standard repository replay entrypoint", "broker-specific financing", "joint concurrent portfolio margin", "out-of-sample cohort", "independent arithmetic oracle"]
+  }
+}

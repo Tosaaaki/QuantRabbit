@@ -1,0 +1,49 @@
+{
+  "adoption": "REJECT_ALL_NO_FIXED_SL_ARMS",
+  "artifact_manifest": {
+    "comparison_v1.csv": {
+      "bytes": 27696,
+      "sha256": "c3386d8e782e09096f4fd28bd82df4b4d00334632a5accde61d93b05f9641759"
+    },
+    "comparison_v1.json": {
+      "bytes": 459308,
+      "sha256": "5a186c58f3a1734c01476db765d0f5b884e66084441b9babce6c57857a8f5b5a"
+    },
+    "decision_results_v1.jsonl": {
+      "bytes": 5638519,
+      "sha256": "b7edca4f10cbef191fb2907f9ff2d7d83d004d098dc6fb1e012607ce2095f565"
+    },
+    "frozen_cohort_v1.json": {
+      "bytes": 53541,
+      "sha256": "833e21e8baae8872592a1159759402a94dc1a3866d718d4b7d0eb3a165132a54"
+    },
+    "independent_oracle_v1.json": {
+      "bytes": 39300,
+      "sha256": "17c1bae6b11ab26d6aa2c57ede62849e005dc39ca305d3c0b4cd9810377a7a2e"
+    },
+    "mtm_inclusive_equity_curve_v1.jsonl": {
+      "bytes": 681877,
+      "sha256": "b38d34609a54e36b290d33048d4e5e21103c504452a57006776cd702baa00a1f"
+    },
+    "no_forced_loss_close_contract_v1.json": {
+      "bytes": 4409,
+      "sha256": "18eb92d6a74497ef3900419a16f7d50fb8115cf15d2791a6bb1b6da4e96013d3"
+    },
+    "preregister_v1.json": {
+      "bytes": 5708,
+      "sha256": "592b5ac17481d62c3abba793762b16b7bdc78f44ae04c7fd60e3ffeb3cef9ecb"
+    },
+    "return_time_distribution_v1.json": {
+      "bytes": 13595,
+      "sha256": "0aba4bdb3b60a64c7471b08a6828b8321d598230f5eee5a818893d333f20d371"
+    },
+    "verdict_v1.md": {
+      "bytes": 3930,
+      "sha256": "fc66693de1bab19afd819d9ea44f2bd0e12f149e6b6e862199bcef266c29dabf"
+    }
+  },
+  "contract": "NO_FORCED_LOSS_CLOSE_READBACK_V1",
+  "generated_artifacts_readable": true,
+  "independent_oracle_pass": true,
+  "standard_replay_status": "BLOCKED_MISSING_REPOSITORY_ENTRYPOINT"
+}
