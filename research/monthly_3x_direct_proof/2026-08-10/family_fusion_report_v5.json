@@ -1,0 +1,10 @@
+{
+  "best_candidate": null,
+  "conclusion": "MONTHLY_3X_NOT_PROVED",
+  "contract": "FAMILY_NORMALIZED_TECHNICAL_FUSION_V5",
+  "decision_count": 8351,
+  "holdout_used": false,
+  "monthly_3x_pass_count": 0,
+  "stable_32d_64d_count": 0,
+  "train_plateau_count": 0
+}

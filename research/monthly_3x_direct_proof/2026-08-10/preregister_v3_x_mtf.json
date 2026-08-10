@@ -1,0 +1,12 @@
+{
+  "contract_id": "Q-XFX-MTF-001",
+  "frozen_before_run": true,
+  "single_change": "reject a baseline failed-break only when strict completed H1 structure continuation is opposite",
+  "parent_mapping": "M5_to_H1",
+  "completeness": "each M5 must have exact 60 S5 slots; each H1 exact 12 M5; three contiguous H1 required",
+  "opposite_definition": "three closes trend, latest completed H1 body agrees, latest close breaks prior two completed H1 extremes",
+  "missing_policy": "exclude from both paired arms",
+  "split": "TRAIN before 2026-06-17; 24h embargo; VALIDATION 2026-06-18 through before 2026-06-23; holdout unread",
+  "acceptance": "TRAIN>=20, VALIDATION>=10, both expectancy positive, validation paired daily bootstrap LCB positive",
+  "target": "monthly 3x remains separate hard gate and cannot pass without a 30-day validation interval"
+}

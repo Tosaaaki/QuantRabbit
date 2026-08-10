@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "contract_id": "Q-XFX-MTF-001",
+  "status": "REJECT_OR_INSUFFICIENT_EVIDENCE",
+  "monthly_3x_proven": false,
+  "reason_monthly_3x": "The fixed archive does not contain a 30-day validation interval and cannot prove 200,000 to 600,000 JPY.",
+  "source": {
+    "path": "logs/replay/oanda_history/20260705T081428Z/USD_JPY/USD_JPY_S5_BA_20260608T060528Z_20260626T065906Z.jsonl.gz",
+    "sha256": "c46612964813f1b5fdd8235b8703e0d70e1be784412479edbc7126c5484d8f81"
+  },
+  "split": {
+    "train_end": "2026-06-17T00:00:00Z",
+    "validation_start": "2026-06-18T00:00:00Z",
+    "validation_end": "2026-06-23T00:00:00Z",
+    "embargo_hours": 24,
+    "holdout_unread": true
+  },
+  "classifier": {
+    "mapping": "M5 entry -> H1 parent",
+    "evidence": "three contiguous H1 bars, each built from 12 exact 60/60 M5 bars",
+    "long": "latest close breaks prior two highs, three closes rising, bullish body",
+    "short": "latest close breaks prior two lows, three closes falling, bearish body",
+    "candidate_change": "reject only directionally opposite STRONG_CONTINUATION",
+    "missing": "excluded from both paired arms, never treated as neutral",
+    "function_sha256": "917633d9cc38a2f306225452934ff1b347db4da1b14b33ca8c0d4314838cb95c"
+  },
+  "coverage": {
+    "raw_s5_rows": 162697,
+    "observed_m5_buckets": 3093,
+    "strict_60_of_60_m5": 563,
+    "strict_12_of_12_h1": 4,
+    "acquisition_gap_m5": 2530
+  },
+  "counts": {
+    "signals": 196,
+    "outcomes": 71,
+    "skipped": {
+      "non_executable_geometry": 119,
+      "missing_exact_next_s5_entry": 6,
+      "unresolved_before_validation_end": 0
+    },
+    "train_eligible": 0,
+    "validation_eligible": 0,
+    "train_changed": 0,
+    "validation_changed": 0
+  },
+  "train": {
+    "baseline": {
+      "trade_count": 0,
+      "active_days": 0,
+      "net_jpy_per_1000u": 0,
+      "expectancy_jpy_per_1000u": null,
+      "expectancy_r": null,
+      "profit_factor_r": null,
+      "max_drawdown_jpy_per_1000u": 0.0,
+      "exit_reason_counts": {
+        "STOP": 0,
+        "POC_TARGET": 0,
+        "SESSION_END": 0
+      }
+    },
+    "candidate": {
+      "trade_count": 0,
+      "active_days": 0,
+      "net_jpy_per_1000u": 0,
+      "expectancy_jpy_per_1000u": null,
+      "expectancy_r": null,
+      "profit_factor_r": null,
+      "max_drawdown_jpy_per_1000u": 0.0,
+      "exit_reason_counts": {
+        "STOP": 0,
+        "POC_TARGET": 0,
+        "SESSION_END": 0
+      }
+    }
+  },
+  "validation": {
+    "baseline": {
+      "trade_count": 0,
+      "active_days": 0,
+      "net_jpy_per_1000u": 0,
+      "expectancy_jpy_per_1000u": null,
+      "expectancy_r": null,
+      "profit_factor_r": null,
+      "max_drawdown_jpy_per_1000u": 0.0,
+      "exit_reason_counts": {
+        "STOP": 0,
+        "POC_TARGET": 0,
+        "SESSION_END": 0
+      }
+    },
+    "candidate": {
+      "trade_count": 0,
+      "active_days": 0,
+      "net_jpy_per_1000u": 0,
+      "expectancy_jpy_per_1000u": null,
+      "expectancy_r": null,
+      "profit_factor_r": null,
+      "max_drawdown_jpy_per_1000u": 0.0,
+      "exit_reason_counts": {
+        "STOP": 0,
+        "POC_TARGET": 0,
+        "SESSION_END": 0
+      }
+    },
+    "paired_daily": {
+      "active_days": 0,
+      "daily_deltas_jpy_per_1000u": {},
+      "mean_delta_jpy_per_1000u": null,
+      "bootstrap_samples": 0,
+      "lower_95pct": null,
+      "upper_95pct": null
+    }
+  },
+  "acceptance_gate": "TRAIN>=20, VALIDATION>=10, both expectancy>0, paired validation daily LCB>0",
+  "limitations": [
+    "Acquisition gaps are excluded rather than imputed.",
+    "The frozen X handoff archive is shorter than 30 days.",
+    "Fee and financing remain unsuitable for holds crossing a financing boundary; the inherited replay forces session end."
+  ]
+}

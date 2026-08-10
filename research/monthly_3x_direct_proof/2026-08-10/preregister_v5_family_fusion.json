@@ -1,0 +1,12 @@
+{
+  "contract": "FAMILY_NORMALIZED_TECHNICAL_FUSION_V5",
+  "frozen_before_run": true,
+  "decision": "at each completed M5, each family gets one vote from the majority of lookbacks 12/24/48; TRADE only when at least two families agree and no family dissents",
+  "anti_double_count": "three lookbacks inside one family are normalized to one family vote",
+  "families": ["BREAKOUT_CONTINUATION", "LIQUIDITY_SWEEP_REVERSAL", "RANGE_REVERSION", "COMPRESSION_BREAKOUT", "SMA_PULLBACK_CONTINUATION"],
+  "horizon_bars": [6, 12, 24],
+  "sessions": ["ALL", "07_16", "13_20"],
+  "execution": "next M5 open, side-correct OANDA bid/ask, adverse 0.5 observed spread at entry and exit, financing-crossing holds excluded",
+  "split": "16/32/64 day; 60/40 chronological; 1h embargo; holdout unread",
+  "acceptance": "adjacent TRAIN horizon plateau and positive 32D+64D VALIDATION expectancy/PF/LCB; 30d LCB>=400000 JPY under 150000 margin and 80000 DD"
+}

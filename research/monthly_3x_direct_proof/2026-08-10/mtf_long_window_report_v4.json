@@ -1,0 +1,10 @@
+{
+  "best_candidate": null,
+  "conclusion": "MONTHLY_3X_NOT_PROVED",
+  "contract": "MONTHLY_3X_DIRECT_PROOF_MTF_LONG_WINDOW_V4",
+  "eligible_trade_rows": 544548,
+  "holdout_used": false,
+  "monthly_3x_pass_count": 0,
+  "stable_32d_64d_count": 0,
+  "train_plateau_count": 0
+}
