@@ -1,0 +1,264 @@
+{
+  "admission_gates": {
+    "cross_asset_bid_ask_or_native_executable_sides": false,
+    "historical_first_published_actuals_with_receipt_time": false,
+    "holdout_unread": true,
+    "no_live_paper_broker_order_deploy": true,
+    "preregistration_precedes_admission_inventory": true,
+    "prerelease_consensus_with_observation_time": false,
+    "reproducible_dxy_definition_present": true,
+    "required_cross_asset_proxy_presence": true,
+    "revision_safe_append_only_release_lineage": false,
+    "strict_decision_time_cost_margin_unwind_coverage": false,
+    "synchronized_cross_asset_event_history": false
+  },
+  "admission_id": "EVENT_DRIVEN_CROSS_ASSET_SYSTEM_ADMISSION_V1",
+  "classification": "NOT_EVALUABLE",
+  "contract": {
+    "contract_id": "EVENT_DRIVEN_CROSS_ASSET_DISLOCATION_V1",
+    "parent": {
+      "path": "research/monthly_2x_direct_proof_v1/MONTHLY_2X_DIRECT_PROOF_V1.json",
+      "sha256": "c2d2211fe90305f4935cb30d3bb4dcb6f4a2cbbd320278ad942c96658b4d6724"
+    },
+    "preregistration": {
+      "path": "research/monthly_2x_direct_proof_v1/event_driven_cross_asset_v1/PREREGISTER_EVENT_DRIVEN_CROSS_ASSET_V1.json",
+      "sha256": "9b2b2196cbed5e28c435518ef46d6c05ace974b5201c07a33f21b0e92c9b9460"
+    }
+  },
+  "dominant_blocker": "No append-only, revision-safe macro release ledger binds first-published actuals and prerelease consensus to provider receipt times; synchronized executable cross-asset history and strict cost/margin/unwind evidence are also absent.",
+  "failed_admission_gates": [
+    "cross_asset_bid_ask_or_native_executable_sides",
+    "historical_first_published_actuals_with_receipt_time",
+    "prerelease_consensus_with_observation_time",
+    "revision_safe_append_only_release_lineage",
+    "strict_decision_time_cost_margin_unwind_coverage",
+    "synchronized_cross_asset_event_history"
+  ],
+  "inspection_boundary": {
+    "holdout_read": false,
+    "live_paper_broker_order_deploy": false,
+    "local_read_only_named_sources": true,
+    "network_data_acquisition": false,
+    "strategy_outcomes_read": false
+  },
+  "next_action": "Execute ACQUISITION_CONTRACT_V1 in a separately authorized phase, then rerun System Admission without reading holdout.",
+  "parent_target_status": "TARGET_PATH_NOT_YET_PROVEN",
+  "replay": {
+    "grid_points_evaluated": 0,
+    "metrics": {
+      "gross_margin_jpy": null,
+      "maximum_drawdown_jpy": null,
+      "profit_factor": null,
+      "rolling_30d_multiple_after_all_costs": null,
+      "train_lcb": null,
+      "validation_paired_lcb": null
+    },
+    "reason": "System Admission failed before any outcome or holdout read.",
+    "started": false
+  },
+  "source_inventory": {
+    "context_asset_charts": {
+      "all_required_views_have_bid_ask": false,
+      "append_only_history": false,
+      "generated_at_utc": "2026-07-09T17:20:05.069779+00:00",
+      "path": "data/context_asset_charts.json",
+      "sha256": "0c1892f7aca6ad7741c1ffe1d30660c86598c591cff1907147f140bc3d19ccf0",
+      "snapshot_count": 1,
+      "view_rows": [
+        {
+          "completed_counts": [
+            29,
+            29,
+            29,
+            29,
+            29,
+            29,
+            29
+          ],
+          "granularities": [
+            "M1",
+            "M5",
+            "M15",
+            "M30",
+            "H1",
+            "H4",
+            "D"
+          ],
+          "has_bid_ask_on_every_candle": false,
+          "instrument": "SPX500_USD",
+          "recent_candle_counts": [
+            30,
+            30,
+            30,
+            30,
+            30,
+            30,
+            30
+          ]
+        },
+        {
+          "completed_counts": [
+            30,
+            30,
+            29,
+            29,
+            29,
+            29,
+            29
+          ],
+          "granularities": [
+            "M1",
+            "M5",
+            "M15",
+            "M30",
+            "H1",
+            "H4",
+            "D"
+          ],
+          "has_bid_ask_on_every_candle": false,
+          "instrument": "USB02Y_USD",
+          "recent_candle_counts": [
+            30,
+            30,
+            30,
+            30,
+            30,
+            30,
+            30
+          ]
+        },
+        {
+          "completed_counts": [
+            30,
+            30,
+            29,
+            29,
+            29,
+            29,
+            29
+          ],
+          "granularities": [
+            "M1",
+            "M5",
+            "M15",
+            "M30",
+            "H1",
+            "H4",
+            "D"
+          ],
+          "has_bid_ask_on_every_candle": false,
+          "instrument": "USB10Y_USD",
+          "recent_candle_counts": [
+            30,
+            30,
+            30,
+            30,
+            30,
+            30,
+            30
+          ]
+        },
+        {
+          "completed_counts": [
+            29,
+            29,
+            29,
+            29,
+            29,
+            29,
+            29
+          ],
+          "granularities": [
+            "M1",
+            "M5",
+            "M15",
+            "M30",
+            "H1",
+            "H4",
+            "D"
+          ],
+          "has_bid_ask_on_every_candle": false,
+          "instrument": "XAU_USD",
+          "recent_candle_counts": [
+            30,
+            30,
+            30,
+            30,
+            30,
+            30,
+            30
+          ]
+        }
+      ]
+    },
+    "cross_asset_snapshot": {
+      "dxy_mode": "SYNTHETIC_CURRENT_AGGREGATE",
+      "generated_at_utc": "2026-07-09T17:20:05.045756+00:00",
+      "granularity": "H1",
+      "path": "data/cross_asset_snapshot.json",
+      "requested_candle_count": 200,
+      "required_proxy_assets_present": [
+        "SPX500_USD",
+        "USB02Y_USD",
+        "USB10Y_USD",
+        "XAU_USD"
+      ],
+      "sha256": "963f94515903dbfe693deab9d2fe01a0dd179e23bb20d5702f1419a68813339b",
+      "stored_asset_rows_are_scalar_aggregates": true,
+      "stored_bar_timestamps": false
+    },
+    "economic_calendar": {
+      "actual_non_null_count": 0,
+      "append_only_history": false,
+      "event_count": 76,
+      "event_fields": [
+        "actual",
+        "currency",
+        "forecast",
+        "impact",
+        "previous",
+        "timestamp_utc",
+        "title"
+      ],
+      "first_published_value_marker": false,
+      "forecast_non_null_count": 42,
+      "generated_at_utc": "2026-07-09T17:21:24.707369+00:00",
+      "path": "data/economic_calendar.json",
+      "provider_receipt_timestamp_field": false,
+      "revision_lineage": false,
+      "sha256": "9d3bf22449ead97745428c4c0369e8eeabecbf8c987de5848faa5c7d277689aa",
+      "source_url": "https://nfs.faireconomy.media/ff_calendar_thisweek.xml",
+      "timestamp_max": "2026-07-10T15:00:00+00:00",
+      "timestamp_min": "2026-07-06T01:00:00+00:00",
+      "writer_is_snapshot_overwrite": true
+    },
+    "inherited_execution_coverage": {
+      "episode_count": 251,
+      "overall_stage_coverage": {
+        "candidate_order": 251,
+        "exit_unwind": 0,
+        "fillability": 153,
+        "margin_exposure_concurrency": 0,
+        "pricing": 154,
+        "slippage_fee_financing": 0
+      },
+      "path": "research/decision_time_execution_evidence/2026-08-10/coverage_report_v1.json",
+      "sha256": "ee84f61dd89a6069155c4e2bdc4e8200460bb9be2d0a361857e1e10eb0da25b1",
+      "strict_eligible": 0
+    },
+    "lineage_code": [
+      {
+        "path": "src/quant_rabbit/analysis/calendar.py",
+        "sha256": "5df3d41fb6e5069098af38c801dae9e8d47ecbf332f0cc9661fe41f20009d30c"
+      },
+      {
+        "path": "src/quant_rabbit/analysis/cross_asset.py",
+        "sha256": "a0b16ebd8c59f7219bbaad40c71166eda08e118bf5c1615ce6d2ef2641fe8f1a"
+      },
+      {
+        "path": "src/quant_rabbit/analysis/context_assets.py",
+        "sha256": "9caee743f57369775d537b286164f841a149164cc7f6a0c190735602a541a30c"
+      }
+    ]
+  }
+}

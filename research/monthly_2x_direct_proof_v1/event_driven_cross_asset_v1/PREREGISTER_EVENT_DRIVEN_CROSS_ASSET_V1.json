@@ -1,0 +1,165 @@
+{
+  "contract_id": "EVENT_DRIVEN_CROSS_ASSET_DISLOCATION_V1",
+  "contract_version": 1,
+  "preregistered_at_utc": "2026-08-10T08:26:31Z",
+  "parent_contract": {
+    "path": "research/monthly_2x_direct_proof_v1/MONTHLY_2X_DIRECT_PROOF_V1.json",
+    "sha256": "c2d2211fe90305f4935cb30d3bb4dcb6f4a2cbbd320278ad942c96658b4d6724",
+    "inherit_all_acceptance_and_prohibitions": true
+  },
+  "problem_contract": {
+    "desired": "Prove or refute an independent event-driven opportunity source that can take 200000 JPY to at least 400000 JPY in rolling 30 calendar days after all costs without changing the existing technical, MTF, hedge, sizing, or rotation thresholds.",
+    "as_is": "Every previously observed family remains below the 2x gate or is not evaluable, and strict decision-time cost, margin, fill, and unwind coverage is zero on the inherited 251-decision cohort.",
+    "gap": "No preregistered independent family has a positive TRAIN LCB plateau plus stable 32-day and 64-day validation at the 2x equity gate.",
+    "counter_hypothesis": "Timestamped macro surprises and synchronized cross-asset reactions do not produce a stable after-cost FX dislocation edge, or the available archive cannot establish causal decision-time execution.",
+    "success": "All parent acceptance conditions pass on a causally complete event cohort with reproducible hashes and independent oracle agreement.",
+    "fail_closed": "Missing or ambiguous release timestamps, revisions, consensus values, asset bars, bid/ask fills, cost schedules, margin, netting, or unwind evidence makes the affected event and every aggregate containing it NOT_EVALUABLE."
+  },
+  "independence": {
+    "new_opportunity_mechanism": "scheduled macro information shock and cross-asset reaction",
+    "new_data_source_roles": [
+      "timestamped_macro_release_truth",
+      "synchronized_cross_asset_bars",
+      "side_aware_fx_bid_ask_execution"
+    ],
+    "not_allowed": [
+      "retune_observed_family_thresholds",
+      "reuse_validation_winner_as_event_rule",
+      "select_event_types_after_outcomes",
+      "select_pairs_after_outcomes"
+    ]
+  },
+  "frozen_universe": {
+    "event_series": [
+      "US_CPI_HEADLINE_MOM",
+      "US_CORE_CPI_MOM",
+      "US_NONFARM_PAYROLLS",
+      "US_UNEMPLOYMENT_RATE",
+      "US_AVERAGE_HOURLY_EARNINGS_MOM",
+      "FOMC_RATE_DECISION"
+    ],
+    "tradable_fx_pairs": [
+      "EUR_USD",
+      "GBP_USD",
+      "USD_JPY"
+    ],
+    "cross_asset_confirmation": [
+      "DXY_OR_REPRODUCIBLE_DXY_SYNTHETIC",
+      "US_2Y_YIELD_OR_APPROVED_PROXY",
+      "US_10Y_YIELD_OR_APPROVED_PROXY",
+      "XAU_USD_OR_APPROVED_GOLD_PROXY",
+      "SPX_OR_APPROVED_SP500_PROXY"
+    ],
+    "event_deduplication": "One composite event per release timestamp; multi-field releases remain one decision opportunity.",
+    "overlap": "At most one open event trade per pair and one USD event basket at a time."
+  },
+  "causal_timing": {
+    "event_truth_available_at": "provider-published release timestamp, including the provider receipt timestamp",
+    "revision_policy": "Only the first published actual and the consensus observable before release may enter the decision. Later revisions are forbidden.",
+    "pre_event_features": "completed bars ending strictly before the release timestamp",
+    "reaction_features": "first completed five-minute bar ending after the release timestamp",
+    "entry": "next completed-bar boundary using the first side-correct bid/ask quote after the reaction bar",
+    "future_information_allowed": false,
+    "same_bar_fill_order": "STOP_FIRST when adverse and favorable exits touch in the same unresolved bar"
+  },
+  "signal_contract": {
+    "surprise": "(first_published_actual - prerelease_consensus) divided by a TRAIN-only rolling robust scale for the same event series",
+    "direction": "USD direction is derived from the frozen economic sign table; pair direction is the deterministic USD-base/USD-quote transform.",
+    "cross_asset_vote": "A confirmation vote uses only the sign of the first completed post-release return relative to its pre-release side-aware close.",
+    "trade_gate": "Absolute surprise threshold passes and the required number of cross-asset votes agree with the deterministic USD direction.",
+    "abstain": "WAIT when the surprise scale, sign mapping, required asset observations, or execution evidence is missing."
+  },
+  "frozen_sparse_grid": {
+    "absolute_surprise_z_threshold": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "minimum_cross_asset_votes": [
+      3,
+      4
+    ],
+    "maximum_hold_minutes": [
+      15,
+      30,
+      60
+    ],
+    "grid_points": 18,
+    "allowed_interactions": [
+      "absolute_surprise_z_threshold x minimum_cross_asset_votes",
+      "minimum_cross_asset_votes x maximum_hold_minutes"
+    ],
+    "forbidden_interactions": "All other Cartesian interactions and any event-series-specific or pair-specific threshold."
+  },
+  "execution_and_cost": {
+    "bars": "completed only",
+    "price_sides": "bid/ask side-aware",
+    "entry_slippage": "adverse half contemporaneous spread",
+    "exit_slippage": "adverse half contemporaneous spread",
+    "required_costs": [
+      "spread",
+      "slippage",
+      "fee",
+      "financing"
+    ],
+    "required_account_evidence": [
+      "gross_margin",
+      "netting",
+      "concurrent_exposure",
+      "partial_fill",
+      "unwind"
+    ],
+    "gross_margin_cap_jpy": 150000,
+    "maximum_drawdown_jpy": 80000
+  },
+  "split_and_selection": {
+    "sequence": [
+      "TRAIN",
+      "ONE_HOUR_EMBARGO",
+      "VALIDATION"
+    ],
+    "validation_days": [
+      16,
+      32,
+      64
+    ],
+    "holdout": "UNREAD_AND_UNUSED",
+    "minimum_train_events": 20,
+    "minimum_validation_events": 10,
+    "train_selection": "Positive expectancy, PF above one, positive bootstrap LCB, and a connected adjacent-parameter plateau.",
+    "validation": "Frozen points only; no refit, winner selection, or threshold change.",
+    "stability": "The same frozen point must pass 32-day and 64-day validation."
+  },
+  "acceptance": {
+    "rolling_30d_multiple_after_all_costs_gte": 2.0,
+    "ending_equity_jpy_gte": 400000,
+    "train_positive_lcb_plateau_required": true,
+    "validation_paired_lcb_gt": 0.0,
+    "profit_factor_gt": 1.0,
+    "maximum_drawdown_jpy_lte": 80000,
+    "gross_margin_jpy_lte": 150000,
+    "stable_validation_days": [
+      32,
+      64
+    ],
+    "decision_time_fill_unwind_margin_evidence_required": true,
+    "regeneration_hash_match_required": true,
+    "independent_oracle_and_tests_required": true
+  },
+  "status_vocabulary": [
+    "PROVEN",
+    "TARGET_PATH_NOT_YET_PROVEN",
+    "NOT_EVALUABLE"
+  ],
+  "permissions": {
+    "research_only": true,
+    "local_read_only_source_inventory": true,
+    "network_data_acquisition": false,
+    "holdout_read": false,
+    "live": false,
+    "paper": false,
+    "broker": false,
+    "order": false,
+    "deploy": false
+  }
+}

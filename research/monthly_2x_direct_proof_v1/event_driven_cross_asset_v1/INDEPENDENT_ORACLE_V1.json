@@ -1,0 +1,18 @@
+{
+  "all_pass": true,
+  "checks": {
+    "calendar_actuals_are_absent": true,
+    "calendar_receipt_time_is_absent": true,
+    "context_is_not_side_aware": true,
+    "holdout_unread": true,
+    "no_external_execution": true,
+    "report_classifies_not_evaluable": true,
+    "report_stopped_before_replay": true,
+    "strict_cost_coverage_is_zero": true,
+    "strict_margin_coverage_is_zero": true,
+    "strict_unwind_coverage_is_zero": true
+  },
+  "classification": "NOT_EVALUABLE",
+  "oracle_id": "EVENT_DRIVEN_CROSS_ASSET_SYSTEM_ADMISSION_ORACLE_V1",
+  "verified_report_sha256": "f42f0380249832949562f08a471f10ef1da8486b5b3d2e51b47775e1a4064571"
+}

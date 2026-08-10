@@ -1,0 +1,160 @@
+{
+  "acquisition_contract_id": "EVENT_DRIVEN_CROSS_ASSET_ACQUISITION_V1",
+  "status": "PRE_REGISTERED_NOT_EXECUTED",
+  "purpose": "Acquire only the missing causal inputs needed to decide System Admission for EVENT_DRIVEN_CROSS_ASSET_DISLOCATION_V1.",
+  "authorization_boundary": {
+    "current_phase_network_acquisition": false,
+    "current_phase_broker_connection": false,
+    "current_phase_live_paper_order_deploy": false,
+    "current_phase_holdout_read": false,
+    "execution_requires_separately_authorized_phase": true
+  },
+  "frozen_before_acquisition": {
+    "event_series": [
+      "US_CPI_HEADLINE_MOM",
+      "US_CORE_CPI_MOM",
+      "US_NONFARM_PAYROLLS",
+      "US_UNEMPLOYMENT_RATE",
+      "US_AVERAGE_HOURLY_EARNINGS_MOM",
+      "FOMC_RATE_DECISION"
+    ],
+    "fx_pairs": [
+      "EUR_USD",
+      "GBP_USD",
+      "USD_JPY"
+    ],
+    "cross_assets": [
+      "DXY_OR_REPRODUCIBLE_DXY_SYNTHETIC",
+      "US_2Y_YIELD_OR_APPROVED_PROXY",
+      "US_10Y_YIELD_OR_APPROVED_PROXY",
+      "XAU_USD_OR_APPROVED_GOLD_PROXY",
+      "SPX_OR_APPROVED_SP500_PROXY"
+    ],
+    "grid_points": 18,
+    "holdout": "UNREAD_AND_UNUSED"
+  },
+  "required_datasets": {
+    "macro_release_ledger": {
+      "format": "append-only JSONL or immutable table export",
+      "required_fields": [
+        "event_id",
+        "event_series",
+        "scheduled_release_at_utc",
+        "provider_published_at_utc",
+        "provider_received_at_utc",
+        "consensus_value",
+        "consensus_observed_at_utc",
+        "first_published_actual_value",
+        "unit",
+        "economic_direction_sign",
+        "revision_number",
+        "source_provider",
+        "source_record_id",
+        "raw_record_sha256"
+      ],
+      "hard_rules": [
+        "Only revision_number zero may enter features.",
+        "consensus_observed_at_utc must be strictly before scheduled_release_at_utc.",
+        "provider_received_at_utc must not be after the decision boundary used by the replay.",
+        "Later-revised actuals may be retained for audit but never substitute for first_published_actual_value.",
+        "Missing actual, consensus, timestamps, unit, or lineage is never zero and makes the event NOT_EVALUABLE."
+      ]
+    },
+    "cross_asset_event_bars": {
+      "format": "immutable completed-bar partitions plus manifest",
+      "required_fields": [
+        "instrument",
+        "granularity",
+        "bar_open_at_utc",
+        "bar_close_at_utc",
+        "complete",
+        "bid_ohlc_or_provider_native_executable_side",
+        "ask_ohlc_or_provider_native_executable_side",
+        "volume_if_available",
+        "source_provider",
+        "raw_partition_sha256"
+      ],
+      "coverage": "Every admitted release must have the last completed pre-release bar and first completed post-release M5 bar for every required confirmation asset.",
+      "dxy": "If synthetic, retain every component bar and the frozen ICE basket formula so the index is reproducible at each event boundary."
+    },
+    "fx_execution_bars": {
+      "format": "immutable side-aware completed M1/M5 bars or finer quotes plus manifest",
+      "required_fields": [
+        "pair",
+        "quote_at_utc",
+        "bid",
+        "ask",
+        "complete_bar_marker",
+        "source_provider",
+        "raw_partition_sha256"
+      ],
+      "coverage": "Entry, every ambiguous stop/target path, maximum hold, and unwind boundary for every admitted event and frozen pair."
+    },
+    "cost_margin_unwind_ledger": {
+      "required_fields": [
+        "decision_id",
+        "spread_jpy",
+        "adverse_half_spread_slippage_jpy",
+        "fee_jpy",
+        "financing_jpy",
+        "gross_margin_required_jpy",
+        "margin_available_jpy",
+        "concurrent_exposure_jpy",
+        "netting_rule_id",
+        "partial_fill_or_depth_evidence",
+        "unwind_price_and_time",
+        "evidence_observed_at_utc",
+        "source_record_sha256"
+      ],
+      "hard_rule": "Missing cost, margin, fill, partial-fill, netting, or unwind evidence is never zero and never sufficient."
+    },
+    "acquisition_manifest": {
+      "required_fields": [
+        "dataset_id",
+        "provider",
+        "retrieved_at_utc",
+        "query_or_export_identity",
+        "raw_sha256",
+        "normalized_sha256",
+        "row_count",
+        "timestamp_min",
+        "timestamp_max",
+        "timezone",
+        "transform_version"
+      ]
+    }
+  },
+  "minimum_admission_coverage": {
+    "train_events_gte": 20,
+    "validation_events_gte": 10,
+    "validation_calendar_days": [
+      16,
+      32,
+      64
+    ],
+    "one_hour_embargo": true,
+    "all_required_fields_non_missing": true,
+    "all_raw_and_normalized_hashes_verified": true,
+    "no_holdout_overlap": true
+  },
+  "forbidden": [
+    "backfill first-published actual with a later revised value",
+    "infer a missing prerelease consensus from a later page",
+    "convert missing data to zero",
+    "interpolate across event boundaries",
+    "omit spread, adverse half-spread slippage, fee, or financing",
+    "select providers, event types, pairs, thresholds, or periods after outcomes",
+    "read holdout during acquisition or admission",
+    "live, Paper, broker order, deployment, or account mutation"
+  ],
+  "post_acquisition_sequence": [
+    "verify every raw and normalized hash",
+    "rerun System Admission only",
+    "if and only if every admission gate passes, freeze split boundaries before outcome calculation",
+    "run the 18 preregistered grid points on TRAIN",
+    "freeze connected positive-LCB plateau points",
+    "run 16/32/64-day VALIDATION without refit",
+    "run independent oracle and byte-identical regeneration",
+    "keep holdout unread"
+  ]
+}
