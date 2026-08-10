@@ -1,0 +1,14 @@
+{
+  "all_passed": true,
+  "checks": {
+    "all_realized_positive": true,
+    "all_replay_wins": true,
+    "four_distinct_trades": true,
+    "net_reconciles": true,
+    "source_sha": true,
+    "touch_order_causal": true,
+    "vehicle_not_mixed": true
+  },
+  "passed": 7,
+  "total": 7
+}

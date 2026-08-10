@@ -1,0 +1,81 @@
+{
+  "claim_status": "CONDITIONAL_PROFIT_EXISTENCE_PROVED__UNCONDITIONAL_ANYTIME_PROFIT_NOT_PROVED",
+  "contract": "ALWAYS_AVAILABLE_CONDITIONAL_PROFIT_V1",
+  "forward_engine": {
+    "admission_fixture_action": {
+      "abstain_reasons": [],
+      "action": "TRADE",
+      "decision_id": "620388b20fcd8cce1c513151",
+      "decisive_constraint": null,
+      "entry": 1.14486,
+      "input_output_lineage_sha256": "1556405123647a3f168f7ef555cd178406aa9ae77c2d1a10e0f1119ab4abd61b",
+      "outcome_fields_consumed": [],
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "stop_loss": 1.14556,
+      "take_profit": 1.14406
+    },
+    "admission_fixture_is_not_empirical_profit_claim": true,
+    "current_action": {
+      "abstain_reasons": [
+        "ACTIVE_DAY_FLOOR_NOT_MET",
+        "SAMPLE_FLOOR_NOT_MET"
+      ],
+      "action": "WAIT",
+      "decision_id": "620388b20fcd8cce1c513151",
+      "decisive_constraint": "ACTIVE_DAY_FLOOR_NOT_MET",
+      "entry": null,
+      "input_output_lineage_sha256": "e29d80c0f498e728e556915175e8b28e1da1edec83b804e902a68ba324bdb4f5",
+      "outcome_fields_consumed": [],
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "stop_loss": null,
+      "take_profit": null
+    },
+    "total_answer_contract": "TRADE when every gate passes; otherwise WAIT with exact blockers",
+    "why": "The profitable vehicle is real, but four independent receipts do not meet the frozen 20-sample/10-day forward permission floor."
+  },
+  "generated_at_utc": "2026-08-10T00:00:00Z",
+  "holdout_used": false,
+  "live_paper_order_deploy_used": false,
+  "next_proof_count": 16,
+  "proof": {
+    "decision_totality": "PROVED_BY_EXHAUSTIVE_GATE_TESTS",
+    "exact_realized_after_bidask": {
+      "bootstrap_lcb_expectancy_jpy": 292.49165,
+      "expectancy_jpy": 813.7734499999999,
+      "losses": 0,
+      "max_drawdown_jpy": 0.0,
+      "net_jpy": 3255.0937999999996,
+      "profit_factor": "INF",
+      "trades": 4,
+      "wins": 4
+    },
+    "exact_realized_after_bidask_per_1000u": {
+      "bootstrap_lcb_expectancy_jpy": 112.45846249999998,
+      "expectancy_jpy": 150.3141685019841,
+      "losses": 0,
+      "max_drawdown_jpy": 0.0,
+      "net_jpy": 601.2566740079365,
+      "profit_factor": "INF",
+      "trades": 4,
+      "wins": 4
+    },
+    "positive_vehicle_exists": true,
+    "supporting_correlated_forecast_rule": {
+      "active_days": 6,
+      "admission_use": "SUPPORT_ONLY_NOT_INDEPENDENT_PROOF",
+      "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
+      "max_daily_sample_share": 0.9605,
+      "optimized_avg_realized_pips": 2.5518,
+      "optimized_profit_factor": 3.2682,
+      "positive_day_rate": 0.3333,
+      "samples": 228
+    }
+  },
+  "source_hashes": {
+    "exact_vehicle_replay": "3ad6ee8feb3db5c79016a13c4ea8f13812b01d0fd9c8616a1dcba1822b15fed6",
+    "forecast_replay_audit": "c45a064e0e8139bb695ee086aa25c8813e3e66bfcf8d2bf823e7b3e82cc9528e",
+    "profit_reason_ledger": "af1b7a0e1f021282b153b9a07e745b09b0764a4e6d81997479919456660d6ce0"
+  }
+}

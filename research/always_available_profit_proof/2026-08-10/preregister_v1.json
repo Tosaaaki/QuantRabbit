@@ -1,0 +1,66 @@
+{
+  "contract": "ALWAYS_AVAILABLE_CONDITIONAL_PROFIT_V1",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "claim_boundary": {
+    "proved_claim": "At every decision request the engine returns exactly one deterministic answer, TRADE or WAIT. TRADE is permitted only when the preregistered profitable vehicle and every execution/risk evidence gate are present.",
+    "not_claimed": "A trade, profit, or monthly 3x return at every time. Market opportunity is conditional and losses remain possible.",
+    "existence_claim": "The exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT attached-TP vehicle has positive realized after-bid/ask evidence in the frozen historical receipts."
+  },
+  "vehicle": {
+    "pair": "EUR_USD",
+    "side": "SHORT",
+    "strategy": "BREAKOUT_FAILURE",
+    "order_type": "LIMIT",
+    "exit_policy": "ATTACHED_TECHNICAL_TP_HARVEST",
+    "bar_contract": "completed body close confirms the failed breakout; wick high defines the sweep and LIMIT/TP/SL first-touch uses side-correct bid/ask",
+    "tp_distance_pips_min": 5.0,
+    "tp_distance_pips_max": 15.0,
+    "normal_spread_pips_max": 2.0
+  },
+  "forward_admission": {
+    "minimum_independent_samples": 20,
+    "minimum_active_days": 10,
+    "minimum_positive_day_rate": 0.6,
+    "bootstrap_lcb_expectancy_jpy_per_1000u": ">0",
+    "profit_factor": ">1",
+    "required_evidence": [
+      "fresh side-correct bid/ask",
+      "completed-bar failed-break confirmation",
+      "causal fillability",
+      "causal fee and financing schedule",
+      "decision-time margin and exposure",
+      "attached TP and SL geometry",
+      "executable exit/unwind"
+    ]
+  },
+  "sources": {
+    "exact_vehicle_replay": {
+      "path": "data/eurusd_short_breakout_failure_limit_s5_bidask_replay.json",
+      "sha256": "3ad6ee8feb3db5c79016a13c4ea8f13812b01d0fd9c8616a1dcba1822b15fed6"
+    },
+    "profit_reason_ledger": {
+      "path": "research/monthly_3x_growth_engine/2026-08-10/profit_reason_ledger_v1.json",
+      "sha256": "af1b7a0e1f021282b153b9a07e745b09b0764a4e6d81997479919456660d6ce0"
+    },
+    "forecast_replay_audit": {
+      "path": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260709T005653Z.json",
+      "sha256": "c45a064e0e8139bb695ee086aa25c8813e3e66bfcf8d2bf823e7b3e82cc9528e"
+    }
+  },
+  "negative_controls": [
+    "missing evidence returns WAIT, never an assumed TRADE",
+    "future causal cutoff returns WAIT",
+    "mid-price or inverted bid/ask returns WAIT",
+    "body-only touch cannot replace broker wick touch",
+    "sample count below 20 cannot create forward permission",
+    "all-time profit and validation-best parameter are forbidden claims"
+  ],
+  "permissions": {
+    "research_only": true,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false,
+    "holdout": false
+  }
+}
