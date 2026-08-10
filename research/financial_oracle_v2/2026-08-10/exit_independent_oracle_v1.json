@@ -1,0 +1,8 @@
+{
+  "checks": 400,
+  "contract": "EXIT_POLICY_PAIRED_REPLAY_INDEPENDENT_ORACLE_V1",
+  "failed": [],
+  "holdout_used": false,
+  "passed": 400,
+  "status": "PASS"
+}

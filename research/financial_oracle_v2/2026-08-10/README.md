@@ -14,6 +14,9 @@ python3 research/financial_oracle_v2/2026-08-10/verify_independent_oracle.py
 python3 research/financial_oracle_v2/2026-08-10/build_path_metrics.py
 python3 research/financial_oracle_v2/2026-08-10/test_path_metrics.py
 python3 research/financial_oracle_v2/2026-08-10/verify_path_oracle.py
+python3 research/financial_oracle_v2/2026-08-10/run_exit_replay.py
+python3 research/financial_oracle_v2/2026-08-10/test_exit_replay.py
+python3 research/financial_oracle_v2/2026-08-10/verify_exit_oracle.py
 ```
 
 Truth boundaries:

@@ -1,0 +1,16 @@
+{
+  "contract": "EXIT_POLICY_PAIRED_REPLAY_RUN_MANIFEST_V1",
+  "holdout_used": false,
+  "inputs": {
+    "exit_preregister": "1a3ee676f7ff5c0fd4a08deaebdb76d21af206395b6a7bcedfc4ccc92f50f1f6",
+    "financial_oracle": "f9e69e1466f702dcab3cebec2c57581942b4b74d3bd92859299bc5f5d52d512d",
+    "path_metrics": "5b254119e3911bd5b5bffbc98b2be0a96c8fcbc66ee630913b82435700107084",
+    "split_membership": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814"
+  },
+  "manifest_sha256": "df9c9b5618c75276ffdcbb37f9664711020feb0d7a81c77d4077c02c61819e5f",
+  "outputs": {
+    "exit_cube_long_v1.jsonl": "43e08cc46517e7ab660a7dd8e7042fb5c53ea002e5904de6bdabc9eafe52ba94",
+    "exit_replay_rows_v1.jsonl": "d1f6cef66234cf9153ef09651f549e7c2bd75083e281296429b8d5e141bf7e5c",
+    "exit_report_v1.json": "a5d404fa054ed93d0fc34634374223c390297f87fc42b18662e1ffe150d5cf0b"
+  }
+}

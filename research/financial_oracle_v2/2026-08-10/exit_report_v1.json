@@ -1,0 +1,429 @@
+{
+  "arms": [
+    "BASELINE",
+    "FIXED_BE",
+    "ALL_COST_BE",
+    "PARTIAL_TP_BE",
+    "PURE_ATR_TRAIL",
+    "SMA_DETERIORATION_TRAIL",
+    "STRUCTURE_BREAK_EXIT",
+    "TIME_EXIT"
+  ],
+  "contract": "EXIT_POLICY_PAIRED_REPLAY_V1",
+  "cube_rows": 8280,
+  "decisive_blockers": [
+    "STRICT_PATH_VALIDATION_BELOW_20",
+    "CAUSAL_FEE_FINANCING_SCHEDULE_MISSING",
+    "ACCOUNT_MARGIN_AND_NETTING_MISSING",
+    "PARTIAL_FILL_DEPTH_AND_UNWIND_MISSING"
+  ],
+  "holdout_used": false,
+  "next_cube_phase": "NO_PROMISING_AXIS_ADMITTED_SO_TWO_AXIS_INTERACTIONS_AND_PARETO_NOT_RUN",
+  "records": 2760,
+  "status": "BASELINE_PASS_EXIT_ARMS_NOT_EVALUABLE",
+  "strict_path_episodes": 5,
+  "summary": {
+    "DOUBLE_32D": {
+      "TRAIN": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 43,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -1483.3754999999994,
+          "episodes": 43,
+          "strict_path": 0
+        }
+      },
+      "VALIDATION": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 15642.9227,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 31,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 15642.9227,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 15642.9227,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 15233.422700000017,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 15374.797699999985,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 15642.9227,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 2,
+          "diagnostic_full_cohort_net_jpy": 15642.922700000208,
+          "episodes": 31,
+          "strict_path": 2
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 15825.622700000065,
+          "episodes": 31,
+          "strict_path": 2
+        }
+      }
+    },
+    "INITIAL_16D": {
+      "TRAIN": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 1427.6052999999997,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 13,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 1427.6052999999997,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 1427.6052999999997,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 1018.1053000000167,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 1159.4802999999843,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 1427.6052999999997,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 2,
+          "diagnostic_full_cohort_net_jpy": 1427.605300000209,
+          "episodes": 13,
+          "strict_path": 2
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 1610.3053000000646,
+          "episodes": 13,
+          "strict_path": 2
+        }
+      },
+      "VALIDATION": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 12,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 10520.0537,
+          "episodes": 12,
+          "strict_path": 0
+        }
+      }
+    },
+    "QUADRUPLE_64D": {
+      "TRAIN": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 145,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 3,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 3,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 3,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 2,
+          "diagnostic_full_cohort_net_jpy": -39406.38480000013,
+          "episodes": 145,
+          "strict_path": 3
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 3,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": -40225.50180000001,
+          "episodes": 145,
+          "strict_path": 3
+        }
+      },
+      "VALIDATION": {
+        "ALL_COST_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 11706.052300000001,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "BASELINE": {
+          "admission": "PASS_BASELINE",
+          "after_cost_evaluable": 101,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 11706.052300000001,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "FIXED_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 11706.052300000001,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "PARTIAL_TP_BE": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 11296.552300000016,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "PURE_ATR_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 11437.927299999985,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "SMA_DETERIORATION_TRAIL": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 2,
+          "changed": 0,
+          "diagnostic_full_cohort_net_jpy": 11706.052300000001,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "STRUCTURE_BREAK_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 0,
+          "changed": 2,
+          "diagnostic_full_cohort_net_jpy": 11706.052300000209,
+          "episodes": 101,
+          "strict_path": 2
+        },
+        "TIME_EXIT": {
+          "admission": "NOT_EVALUABLE_MINIMUM_AND_COST_MARGIN_EVIDENCE",
+          "after_cost_evaluable": 1,
+          "changed": 1,
+          "diagnostic_full_cohort_net_jpy": 11888.752300000066,
+          "episodes": 101,
+          "strict_path": 2
+        }
+      }
+    }
+  }
+}

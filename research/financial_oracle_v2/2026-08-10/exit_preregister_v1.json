@@ -1,0 +1,36 @@
+{
+  "contract": "EXIT_POLICY_PAIRED_REPLAY_V1",
+  "parent_commit": "b48c2ad766e75710f907f44284c0112f95fdc0a9",
+  "financial_gate": "TRADE_CASHFLOW_FINANCIAL_ORACLE_V2_PASS",
+  "cohort": "same frozen 251 entry trade_ids; 16/32/64 day existing 60/40 split and 1h embargo",
+  "strict_path_gate": "path_complete=true; missing S5 endpoints, boundary bars and within-S5 ordering are never relaxed",
+  "common_execution": {
+    "action_time": "completed feature bar signal becomes active at the next OANDA S5",
+    "long_exit": "OANDA bid; short exit: OANDA ask",
+    "market_or_partial_fill": "next S5 side-correct open plus an additional adverse half-spread slippage bound",
+    "stop_fill": "stop level unless the first eligible S5 opens through it adversely; add adverse half-spread slippage bound",
+    "same_s5_competing_touch": "UNRESOLVED",
+    "unknown_cost": "candidate actual_after_cost_net=null; retain diagnostic executable-price PnL separately",
+    "baseline": "corrected V2 actual after-cost trade cash flow"
+  },
+  "arms": {
+    "BASELINE": "actual OANDA terminal path and corrected V2 cash flow",
+    "FIXED_BE": "after 60% progress to the then-active TP, arm stop at entry on the next S5",
+    "ALL_COST_BE": "same trigger but stop recovers causal fee, financing accrued through exit, and slippage bound; missing schedule is ineligible",
+    "PARTIAL_TP_BE": "after +1 entry-frozen ATR, close 50% rounded down to 100 units at next S5 and arm entry stop for runner; entry units must be >=2000 and runner >=1000",
+    "PURE_ATR_TRAIL": "after +1 entry-frozen ATR, ratchet once per completed M1 to OANDA favorable extreme minus/plus 1.5 current causal ATR; next S5 activation",
+    "SMA_DETERIORATION_TRAIL": "existing completed-M1 hard contradiction (aligned SMA20 slope and SMA20-SMA50 distance negative with worsening slope and MA distance) must persist 3 bars; full exit next S5",
+    "STRUCTURE_BREAK_EXIT": "completed feature-only M1 close crosses the prior 5 completed-bar low for LONG or high for SHORT; full exit next S5",
+    "TIME_EXIT": "full exit at first OANDA S5 at or after 30 minutes from actual fill"
+  },
+  "feature_boundary": "Dukascopy complete M1 is feature-only. It may emit ATR/SMA/structure signals but never supplies financial fill price.",
+  "minimums": {"train": 30, "validation": 20, "changed": 10},
+  "adoption": "32d and 64d validation incremental net>0, paired LCB>0, PF>1, DD not worse, complete margin and fill/unwind evidence; no one-window adoption",
+  "cube": {
+    "axes": ["entry_forecast_family", "technical_body_wick_sma_regime", "exit", "hedge", "sizing_risk_budget", "pair_support", "inventory_exposure_cap", "regime_timeframe", "cost_slippage_financing_margin"],
+    "order": ["single_axis_causal_ablation", "promising_two_axis_interaction", "train_connected_stable_plateau_pareto", "frozen_validation"],
+    "missing": "null plus admission reason; never zero",
+    "target_10_30_percent": "reporting_only"
+  },
+  "permissions": {"live": false, "paper": false, "broker_order": false, "deploy": false, "holdout": false}
+}

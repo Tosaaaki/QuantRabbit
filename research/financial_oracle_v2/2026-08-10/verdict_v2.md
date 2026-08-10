@@ -46,12 +46,29 @@ available margin, and external/manual inventory have zero evidence coverage.
 ## Exit and multidimensional gate
 
 Baseline, fixed BE, all-cost BE, partial TP+BE, pure ATR trail, SMA
-deterioration trail, structure-break exit, and time exit are **not yet
-admissible for comparative VALIDATION**. Strict path coverage is below the
-preregistered minimum and decision-time fee/financing schedule, account margin,
-partial-fill depth, and executable unwind evidence remain missing. Existing
-SMA early-exit and sizing shadows were calculated against the superseded V1
-financial label and cannot be adopted without V2 relabelling.
+deterioration trail, structure-break exit, and time exit were implemented as
+bounded state-machine diagnostics, but are **not admissible for comparative
+VALIDATION**. The replay produced 2,760 episode/window/arm records and 8,280
+sparse long-table metric rows; unknown after-cost results stay null.
+
+In 64-day VALIDATION, strict path coverage is 2/101. Fixed BE and SMA
+deterioration changed zero of those two. Partial+BE and pure ATR trail each
+changed the same winning trade once and reduced its diagnostic price P/L from
+413.0 JPY to 3.5 JPY and 144.875 JPY respectively. Structure break changed
+both rows: one winner became -217.0 JPY while one loser improved from -844.2
+JPY to -214.2 JPY, nearly cancelling in the two-row aggregate. The frozen
+30-minute exit changed the loser and improved its diagnostic price P/L to
+-661.5 JPY. These are two-row diagnostics, not after-cost estimates or an
+adoption result. All-cost BE remains directly ineligible because its causal
+fee/financing schedule is missing.
+
+Strict path coverage is below the preregistered minimum and decision-time
+fee/financing schedule, account margin, partial-fill depth, and executable
+unwind evidence remain missing. The independent exit oracle passes 400/400 and
+the policy/sparse-missingness tests pass 8/8. No exit axis was admitted, so no
+two-axis interaction, plateau search, Pareto selection, or threshold freezing
+was run. Existing SMA early-exit and sizing shadows calculated against the
+superseded V1 label remain non-adoptable.
 
 The frozen sparse-cube order remains: single-axis causal ablation, promising
 two-axis interactions only, connected stable TRAIN plateau/Pareto, then one
