@@ -1,0 +1,737 @@
+{
+  "active_versioned_protection": {
+    "strict_eligible": 251,
+    "terminal_active_matches": 146,
+    "terminal_protection_orders": 146
+  },
+  "all_episodes": {
+    "episode_terminal_max_drawdown_jpy": 55836.8259,
+    "event_time_cashflow_transactions": 303,
+    "event_time_max_drawdown_jpy": 56288.2237,
+    "expectancy_jpy": -123.94693505976096,
+    "gross_gain_jpy": 77725.6681,
+    "gross_loss_jpy": 108836.3488,
+    "net_jpy": -31110.6807,
+    "original_v1_net_jpy": -18039.7866,
+    "paired_delta_vs_v1_jpy": -13070.8941,
+    "profit_factor": 0.7141517421062181,
+    "trades": 251,
+    "win_rate": 0.6254980079681275
+  },
+  "cohort_daily_financing_components": 164,
+  "cohort_daily_financing_jpy": -9278.5941,
+  "cohort_partial_reduction_components": 2,
+  "cohort_partial_reduction_jpy": -3792.3,
+  "cohort_trades_with_nonzero_daily_financing": 58,
+  "contract": "TRADE_CASHFLOW_FINANCIAL_ORACLE_V2",
+  "daily_transaction_audits": [
+    {
+      "cohort_component_count": 4,
+      "cohort_financing_jpy": 72.9692,
+      "open_trade_financing_sum_jpy": 797.6735,
+      "out_of_cohort_financing_jpy": 724.7043,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 797.6735,
+      "transaction_id": "470287",
+      "ts_utc": "2026-05-06T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 7,
+      "cohort_financing_jpy": -32.1661,
+      "open_trade_financing_sum_jpy": 211.3522,
+      "out_of_cohort_financing_jpy": 243.5183,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 211.3522,
+      "transaction_id": "470370",
+      "ts_utc": "2026-05-07T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": -54.947,
+      "open_trade_financing_sum_jpy": -54.947,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -54.947,
+      "transaction_id": "470602",
+      "ts_utc": "2026-05-08T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "470603",
+      "ts_utc": "2026-05-09T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "470604",
+      "ts_utc": "2026-05-10T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 8,
+      "cohort_financing_jpy": -440.3466,
+      "open_trade_financing_sum_jpy": -440.3466,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -440.3466,
+      "transaction_id": "470845",
+      "ts_utc": "2026-05-11T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -179.5668,
+      "open_trade_financing_sum_jpy": -179.5668,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -179.5668,
+      "transaction_id": "470973",
+      "ts_utc": "2026-05-12T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 3,
+      "cohort_financing_jpy": -1172.6849,
+      "open_trade_financing_sum_jpy": -1172.6849,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -1172.6849,
+      "transaction_id": "471050",
+      "ts_utc": "2026-05-13T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -303.6292,
+      "open_trade_financing_sum_jpy": -303.6292,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -303.6292,
+      "transaction_id": "471241",
+      "ts_utc": "2026-05-14T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 3,
+      "cohort_financing_jpy": -320.4958,
+      "open_trade_financing_sum_jpy": -320.4958,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -320.4958,
+      "transaction_id": "471282",
+      "ts_utc": "2026-05-15T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 3,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471283",
+      "ts_utc": "2026-05-16T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 3,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471284",
+      "ts_utc": "2026-05-17T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -303.0629,
+      "open_trade_financing_sum_jpy": -303.0629,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -303.0629,
+      "transaction_id": "471287",
+      "ts_utc": "2026-05-18T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -299.9685,
+      "open_trade_financing_sum_jpy": -299.9685,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -299.9685,
+      "transaction_id": "471288",
+      "ts_utc": "2026-05-19T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -1191.7914,
+      "open_trade_financing_sum_jpy": -1191.7914,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -1191.7914,
+      "transaction_id": "471342",
+      "ts_utc": "2026-05-20T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 4,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471433",
+      "ts_utc": "2026-05-21T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -272.0943,
+      "open_trade_financing_sum_jpy": -272.0943,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -272.0943,
+      "transaction_id": "471499",
+      "ts_utc": "2026-05-22T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471500",
+      "ts_utc": "2026-05-23T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471501",
+      "ts_utc": "2026-05-24T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -271.4601,
+      "open_trade_financing_sum_jpy": -271.4601,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -271.4601,
+      "transaction_id": "471574",
+      "ts_utc": "2026-05-25T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -272.2729,
+      "open_trade_financing_sum_jpy": -272.2729,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -272.2729,
+      "transaction_id": "471587",
+      "ts_utc": "2026-05-26T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -844.0633,
+      "open_trade_financing_sum_jpy": -844.0633,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -844.0633,
+      "transaction_id": "471698",
+      "ts_utc": "2026-05-27T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 7,
+      "cohort_financing_jpy": -231.2065,
+      "open_trade_financing_sum_jpy": -231.2065,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -231.2065,
+      "transaction_id": "471776",
+      "ts_utc": "2026-05-28T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 6,
+      "cohort_financing_jpy": 17.4544,
+      "open_trade_financing_sum_jpy": 17.4544,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 17.4544,
+      "transaction_id": "471831",
+      "ts_utc": "2026-05-29T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 6,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471832",
+      "ts_utc": "2026-05-30T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 6,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "471833",
+      "ts_utc": "2026-05-31T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 6,
+      "cohort_financing_jpy": 15.7281,
+      "open_trade_financing_sum_jpy": 15.7281,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 15.7281,
+      "transaction_id": "471858",
+      "ts_utc": "2026-06-01T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 6,
+      "cohort_financing_jpy": 16.4122,
+      "open_trade_financing_sum_jpy": 16.4122,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 16.4122,
+      "transaction_id": "471907",
+      "ts_utc": "2026-06-02T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 7,
+      "cohort_financing_jpy": -249.0328,
+      "open_trade_financing_sum_jpy": -249.0328,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -249.0328,
+      "transaction_id": "471975",
+      "ts_utc": "2026-06-03T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 23.0326,
+      "open_trade_financing_sum_jpy": 23.0326,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 23.0326,
+      "transaction_id": "472117",
+      "ts_utc": "2026-06-05T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472118",
+      "ts_utc": "2026-06-06T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472119",
+      "ts_utc": "2026-06-07T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 17.1728,
+      "open_trade_financing_sum_jpy": 17.1728,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 17.1728,
+      "transaction_id": "472135",
+      "ts_utc": "2026-06-08T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 17.2098,
+      "open_trade_financing_sum_jpy": 17.2098,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 17.2098,
+      "transaction_id": "472136",
+      "ts_utc": "2026-06-09T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 51.6552,
+      "open_trade_financing_sum_jpy": 51.6552,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 51.6552,
+      "transaction_id": "472140",
+      "ts_utc": "2026-06-10T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 33.5781,
+      "open_trade_financing_sum_jpy": 33.5781,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 33.5781,
+      "transaction_id": "472272",
+      "ts_utc": "2026-06-11T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -11.9824,
+      "open_trade_financing_sum_jpy": -11.9824,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -11.9824,
+      "transaction_id": "472399",
+      "ts_utc": "2026-06-12T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472400",
+      "ts_utc": "2026-06-13T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472401",
+      "ts_utc": "2026-06-14T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472645",
+      "ts_utc": "2026-06-17T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 28.6069,
+      "open_trade_financing_sum_jpy": 28.6069,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 28.6069,
+      "transaction_id": "472766",
+      "ts_utc": "2026-06-19T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472767",
+      "ts_utc": "2026-06-20T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472768",
+      "ts_utc": "2026-06-21T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": -255.4576,
+      "open_trade_financing_sum_jpy": -255.4576,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -255.4576,
+      "transaction_id": "472808",
+      "ts_utc": "2026-06-23T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": -759.8599,
+      "open_trade_financing_sum_jpy": -759.8599,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -759.8599,
+      "transaction_id": "472817",
+      "ts_utc": "2026-06-24T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": -303.3375,
+      "open_trade_financing_sum_jpy": -303.3375,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -303.3375,
+      "transaction_id": "472885",
+      "ts_utc": "2026-06-26T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472886",
+      "ts_utc": "2026-06-27T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 1,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472887",
+      "ts_utc": "2026-06-28T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 2,
+      "cohort_financing_jpy": -324.5357,
+      "open_trade_financing_sum_jpy": -324.5357,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -324.5357,
+      "transaction_id": "472915",
+      "ts_utc": "2026-06-29T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 4,
+      "cohort_financing_jpy": -355.4653,
+      "open_trade_financing_sum_jpy": -355.4653,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -355.4653,
+      "transaction_id": "472941",
+      "ts_utc": "2026-06-30T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 5,
+      "cohort_financing_jpy": -1122.9859,
+      "open_trade_financing_sum_jpy": -1122.9859,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": -1122.9859,
+      "transaction_id": "472955",
+      "ts_utc": "2026-07-01T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 67.9999,
+      "out_of_cohort_financing_jpy": 67.9999,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 67.9999,
+      "transaction_id": "472989",
+      "ts_utc": "2026-07-02T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 68.1295,
+      "out_of_cohort_financing_jpy": 68.1295,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 68.1295,
+      "transaction_id": "472990",
+      "ts_utc": "2026-07-03T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472991",
+      "ts_utc": "2026-07-04T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 0.0,
+      "out_of_cohort_financing_jpy": 0.0,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 0.0,
+      "transaction_id": "472992",
+      "ts_utc": "2026-07-05T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 68.4539,
+      "out_of_cohort_financing_jpy": 68.4539,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 68.4539,
+      "transaction_id": "472999",
+      "ts_utc": "2026-07-06T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 69.8053,
+      "out_of_cohort_financing_jpy": 69.8053,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 69.8053,
+      "transaction_id": "473000",
+      "ts_utc": "2026-07-07T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 210.1755,
+      "out_of_cohort_financing_jpy": 210.1755,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 210.1755,
+      "transaction_id": "473001",
+      "ts_utc": "2026-07-08T21:00:00.000000000Z"
+    },
+    {
+      "cohort_component_count": 0,
+      "cohort_financing_jpy": 0.0,
+      "open_trade_financing_sum_jpy": 65.4708,
+      "out_of_cohort_financing_jpy": 65.4708,
+      "residual_jpy": 0.0,
+      "top_financing_jpy": 65.4708,
+      "transaction_id": "473024",
+      "ts_utc": "2026-07-09T21:00:00.000000000Z"
+    }
+  ],
+  "episodes": 251,
+  "holdout_used": false,
+  "issues": [],
+  "path_replay_gate": {
+    "exit_arms_evaluated": false,
+    "financial_oracle_pass": true,
+    "unknown_intrabar_order": "UNRESOLVED"
+  },
+  "permissions": {
+    "broker_order": false,
+    "deploy": false,
+    "holdout": false,
+    "live": false,
+    "paper": false,
+    "read_only_sources": true,
+    "research_outputs_only": true
+  },
+  "source_daily_financing_transactions": 59,
+  "status": "PASS",
+  "strict_allocated": 251,
+  "windows": {
+    "DOUBLE_32D": {
+      "TRAIN": {
+        "episode_terminal_max_drawdown_jpy": 3146.9188,
+        "event_time_cashflow_transactions": 51,
+        "event_time_max_drawdown_jpy": 3146.9188,
+        "expectancy_jpy": -34.49710465116279,
+        "gross_gain_jpy": 8659.3886,
+        "gross_loss_jpy": 10142.7641,
+        "net_jpy": -1483.3755,
+        "original_v1_net_jpy": -1591.009,
+        "paired_delta_vs_v1_jpy": 107.6335,
+        "profit_factor": 0.8537503696847293,
+        "status": "PASS",
+        "trades": 43,
+        "win_rate": 0.5116279069767442
+      },
+      "VALIDATION": {
+        "episode_terminal_max_drawdown_jpy": 3134.354,
+        "event_time_cashflow_transactions": 39,
+        "event_time_max_drawdown_jpy": 4877.8903,
+        "expectancy_jpy": 504.61040967741934,
+        "gross_gain_jpy": 22718.1559,
+        "gross_loss_jpy": 7075.2332,
+        "net_jpy": 15642.9227,
+        "original_v1_net_jpy": 18764.5646,
+        "paired_delta_vs_v1_jpy": -3121.6419,
+        "profit_factor": 3.210940934074088,
+        "status": "PASS",
+        "trades": 31,
+        "win_rate": 0.8064516129032258
+      }
+    },
+    "INITIAL_16D": {
+      "TRAIN": {
+        "episode_terminal_max_drawdown_jpy": 2676.6859,
+        "event_time_cashflow_transactions": 18,
+        "event_time_max_drawdown_jpy": 2676.6859,
+        "expectancy_jpy": 109.8157923076923,
+        "gross_gain_jpy": 5412.4912,
+        "gross_loss_jpy": 3984.8859,
+        "net_jpy": 1427.6053,
+        "original_v1_net_jpy": 2746.2603,
+        "paired_delta_vs_v1_jpy": -1318.655,
+        "profit_factor": 1.3582550004756724,
+        "status": "PASS",
+        "trades": 13,
+        "win_rate": 0.6923076923076923
+      },
+      "VALIDATION": {
+        "episode_terminal_max_drawdown_jpy": 2750.1473,
+        "event_time_cashflow_transactions": 13,
+        "event_time_max_drawdown_jpy": 2750.1473,
+        "expectancy_jpy": 876.6711416666667,
+        "gross_gain_jpy": 13270.201,
+        "gross_loss_jpy": 2750.1473,
+        "net_jpy": 10520.0537,
+        "original_v1_net_jpy": 10579.5043,
+        "paired_delta_vs_v1_jpy": -59.4506,
+        "profit_factor": 4.825269177400061,
+        "status": "PASS",
+        "trades": 12,
+        "win_rate": 0.9166666666666666
+      }
+    },
+    "QUADRUPLE_64D": {
+      "TRAIN": {
+        "episode_terminal_max_drawdown_jpy": 47059.7966,
+        "event_time_cashflow_transactions": 169,
+        "event_time_max_drawdown_jpy": 46928.5597,
+        "expectancy_jpy": -277.41725379310344,
+        "gross_gain_jpy": 37806.6029,
+        "gross_loss_jpy": 78032.1047,
+        "net_jpy": -40225.5018,
+        "original_v1_net_jpy": -30177.1122,
+        "paired_delta_vs_v1_jpy": -10048.3896,
+        "profit_factor": 0.484500617346542,
+        "status": "PASS",
+        "trades": 145,
+        "win_rate": 0.6068965517241379
+      },
+      "VALIDATION": {
+        "episode_terminal_max_drawdown_jpy": 9876.0991,
+        "event_time_cashflow_transactions": 129,
+        "event_time_max_drawdown_jpy": 10170.1845,
+        "expectancy_jpy": 115.90150792079208,
+        "gross_gain_jpy": 37898.0183,
+        "gross_loss_jpy": 26191.966,
+        "net_jpy": 11706.0523,
+        "original_v1_net_jpy": 15144.4802,
+        "paired_delta_vs_v1_jpy": -3438.4279,
+        "profit_factor": 1.446932937374766,
+        "status": "PASS",
+        "trades": 101,
+        "win_rate": 0.6534653465346535
+      }
+    }
+  }
+}

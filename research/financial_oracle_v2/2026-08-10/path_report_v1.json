@@ -1,0 +1,110 @@
+{
+  "contract": "EXECUTABLE_PATH_METRICS_V1",
+  "episodes": 251,
+  "episodes_with_first_active_protection_touch": 15,
+  "episodes_with_observed_mfe_mae": 145,
+  "episodes_with_s5_source": 146,
+  "financial_gate": {
+    "corrected_64d_validation_net_jpy": 11706.0523,
+    "status": "PASS"
+  },
+  "margin": {
+    "account_available_margin_coverage": 0,
+    "admission": "RELATIVE_GROSS_COHORT_PROXY_ONLY_ACCOUNT_NETTING_MISSING",
+    "events": 503,
+    "external_inventory_coverage": 0,
+    "peak_at_utc": "2026-05-11T19:14:13.427119695Z",
+    "peak_gross_trade_required_margin_proxy_jpy": 362877.1112,
+    "peak_open_cohort_trades": 9
+  },
+  "output_sha256": "ed2ec374092b962ed99d2bd4042fd4608fdd0d9cff889a12ab01afbd611aaa10",
+  "pairs_with_oanda_s5_bid_ask": [
+    "AUD_JPY",
+    "EUR_JPY",
+    "EUR_USD"
+  ],
+  "reason_counts": {
+    "PAIR_S5_BID_ASK_SOURCE_MISSING": 105,
+    "SL_WICK_TOUCH_WITHIN_S5_ORDER_UNRESOLVED": 15,
+    "UNRESOLVED_NO_BAR_ENDPOINTS": 246
+  },
+  "source_audit": {
+    "AUD_JPY": {
+      "duplicate_source_rows": 0,
+      "first_time": "2026-03-11T00:39:35.000000000Z",
+      "last_time": "2026-07-09T07:46:00.000000000Z",
+      "unique_rows": 1339535
+    },
+    "EUR_JPY": {
+      "duplicate_source_rows": 1,
+      "first_time": "2026-03-11T00:39:35.000000000Z",
+      "last_time": "2026-07-09T07:46:00.000000000Z",
+      "unique_rows": 1381664
+    },
+    "EUR_USD": {
+      "duplicate_source_rows": 0,
+      "first_time": "2026-03-11T00:39:35.000000000Z",
+      "last_time": "2026-07-09T07:46:00.000000000Z",
+      "unique_rows": 1257320
+    }
+  },
+  "status": "PASS_DIAGNOSTIC_PATH_WITH_STRICT_UNRESOLVED_PRESERVED",
+  "strict_path_pass": 5,
+  "strict_path_unresolved": 246,
+  "truth_boundary": {
+    "fill": "No counterfactual fill is asserted from an OHLC touch",
+    "margin": "Gross trade-level cohort proxy; broker netting, account availability, and external inventory are missing",
+    "missing": "No-bar intervals remain unresolved and are not forward-filled",
+    "wick": "Observed OANDA executable-side bid/ask extrema only"
+  },
+  "window_coverage": {
+    "DOUBLE_32D": {
+      "TRAIN": {
+        "episodes": 43,
+        "first_active_protection_touch": 0,
+        "observed_mfe_mae": 4,
+        "s5_source": 4,
+        "strict_path_pass": 0
+      },
+      "VALIDATION": {
+        "episodes": 31,
+        "first_active_protection_touch": 1,
+        "observed_mfe_mae": 10,
+        "s5_source": 11,
+        "strict_path_pass": 2
+      }
+    },
+    "INITIAL_16D": {
+      "TRAIN": {
+        "episodes": 13,
+        "first_active_protection_touch": 1,
+        "observed_mfe_mae": 8,
+        "s5_source": 8,
+        "strict_path_pass": 2
+      },
+      "VALIDATION": {
+        "episodes": 12,
+        "first_active_protection_touch": 0,
+        "observed_mfe_mae": 2,
+        "s5_source": 3,
+        "strict_path_pass": 0
+      }
+    },
+    "QUADRUPLE_64D": {
+      "TRAIN": {
+        "episodes": 145,
+        "first_active_protection_touch": 12,
+        "observed_mfe_mae": 118,
+        "s5_source": 118,
+        "strict_path_pass": 3
+      },
+      "VALIDATION": {
+        "episodes": 101,
+        "first_active_protection_touch": 2,
+        "observed_mfe_mae": 22,
+        "s5_source": 23,
+        "strict_path_pass": 2
+      }
+    }
+  }
+}

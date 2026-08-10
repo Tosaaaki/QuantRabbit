@@ -1,0 +1,17 @@
+{
+  "contract": "EXECUTABLE_PATH_METRICS_RUN_MANIFEST_V1",
+  "manifest_sha256": "dbf6e78e7f0fe67a4d4e3c42209a4c4b959bdf3a5501aa3dbaac69c6e843e791",
+  "outputs": {
+    "concurrent_margin_timeline_v1.jsonl": "0a9d4ebef01cd5f241211879a1ded8b01b1a979573c3739de41fd3a79d1f9e86",
+    "path_metrics_v1.jsonl": "5b254119e3911bd5b5bffbc98b2be0a96c8fcbc66ee630913b82435700107084",
+    "path_report_v1.json": "a3a73d232305c9b47ecdd096a4e8c3fb0dadc6bbbddf35ba33ba93d39be15350"
+  },
+  "preregister_sha256": "29d9d35d9781d5f83254196e2dae936c0cff79b7990a318a6ef405bccb9a8a67",
+  "source_sha256": {
+    "active_protection_schedule": "0c73d7b87afccc4f7bc8da6c1436837d9bc6c25a1e8226139aeb4ba6d38a584c",
+    "execution_ledger": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb",
+    "financial_oracle": "f9e69e1466f702dcab3cebec2c57581942b4b74d3bd92859299bc5f5d52d512d",
+    "split_membership": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814",
+    "trade_cashflows": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb"
+  }
+}

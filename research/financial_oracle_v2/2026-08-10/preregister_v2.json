@@ -1,0 +1,112 @@
+{
+  "contract": "TRADE_CASHFLOW_FINANCIAL_ORACLE_V2",
+  "created_at_utc": "2026-08-10T04:20:00Z",
+  "problem_contract": {
+    "desired": "Each frozen executed episode has exactly one trade_id-level after-cost cash-flow label containing every broker partial reduction, daily financing allocation, and terminal close exactly once.",
+    "as_is": "The V1 episode builder selects only the last TRADE_CLOSED row and therefore may omit TRADE_REDUCED and DAILY_FINANCING cash flows.",
+    "gap": "Reported ALL_TRADES financial metrics can be overstated when omitted cash flows are negative.",
+    "counter_hypothesis": "The reported candidate correction is wrong if independent raw-transaction aggregation reproduces the V1 labels or if the alleged omitted lines cannot be uniquely allocated to the frozen trade ids.",
+    "success": "251 unique trade ids, zero unallocated frozen-trade cash-flow lines, zero duplicate component ids, transaction arithmetic invariants pass, and an independent implementation reproduces every corrected trade label and fixed-window metric.",
+    "fail_closed": "Any missing raw identity, duplicate component, non-unique episode/trade mapping, raw-vs-normalized mismatch, or unexplained transaction residual makes the affected trade and every aggregate containing it NOT_EVALUABLE."
+  },
+  "source_bindings": {
+    "execution_ledger": {
+      "path": "data/execution_ledger.db",
+      "sha256": "545feb1d62410904bf3f86b4290986caf3932546ef858abec6c3eb27a58b38eb"
+    },
+    "episodes_v1": {
+      "path": "research/historical_learning_admission/all_entry_episodes_v1.jsonl",
+      "sha256": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e"
+    },
+    "split_membership": {
+      "path": "research/python_ecosystem_audit/2026-08-10/real_shadow_payload.json",
+      "sha256": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814"
+    },
+    "active_protection_events": {
+      "path": "research/active_protection_schedule/2026-08-10/schedule_events_v1.jsonl",
+      "sha256": "0c73d7b87afccc4f7bc8da6c1436837d9bc6c25a1e8226139aeb4ba6d38a584c"
+    },
+    "active_protection_summaries": {
+      "path": "research/active_protection_schedule/2026-08-10/trade_summaries_v1.jsonl",
+      "sha256": "8d08e597a6ca007e699548bfcd320efef1d069917169c01e37af52ba93cd9c99"
+    }
+  },
+  "frozen_cohort": {
+    "label_status": "ACTUAL_AFTER_COST",
+    "expected_episodes": 251,
+    "identity": "episode_id maps one-to-one to non-null trade_id",
+    "anchor_utc": "2026-07-09T07:46:03.151624347Z",
+    "windows": ["INITIAL_16D", "DOUBLE_32D", "QUADRUPLE_64D"],
+    "split": "existing 60/40 chronological membership with 1h close-time embargo from split_membership",
+    "holdout": "UNREAD_AND_UNUSED"
+  },
+  "cashflow_rules": {
+    "terminal_close": "One TRADE_CLOSED event per frozen trade_id; use raw tradesClosed realizedPL, financing, commission, and guaranteedExecutionFee with normalized fields as an equality oracle.",
+    "partial_reduction": "Every TRADE_REDUCED event for a frozen trade_id; use raw tradeReduced realizedPL, financing, guaranteedExecutionFee and the transaction commission exactly once.",
+    "daily_financing": "For every raw DAILY_FINANCING transaction, allocate each openTradeFinancings item by its explicit tradeID. Never allocate the top-level account amount pro-rata.",
+    "spread_slippage": "Already implicit in broker executable fill prices and realizedPL; never subtract displayed halfSpreadCost again.",
+    "home_conversion_cost": "Do not subtract display-only conversion-cost fields unless the account-balance transaction identity proves a separate debit.",
+    "corrected_net": "sum(realizedPL + financing + commission + guaranteedExecutionFee) across partial reductions and terminal close, plus all allocated DAILY_FINANCING financing for the trade.",
+    "component_identity": "raw transaction id plus component kind plus trade_id plus component ordinal",
+    "ordering": "Numeric OANDA transaction id, then raw timestamp. Unknown within-bar market ordering is UNRESOLVED, never inferred from OHLC.",
+    "missing": "null/NOT_EVALUABLE, never zero-imputed"
+  },
+  "financial_outputs": [
+    "corrected_net_jpy",
+    "profit_factor",
+    "expectancy_jpy",
+    "max_drawdown_jpy",
+    "win_rate",
+    "cashflow_breakdown",
+    "allocation_coverage",
+    "paired_delta_vs_v1"
+  ],
+  "path_phase_gate": {
+    "requires_financial_oracle_pass": true,
+    "requires_active_versioned_protection": true,
+    "unknown_tick_order": "UNRESOLVED",
+    "metrics": ["MFE", "MAE", "TP_PRE_MAE", "CONCURRENT_MARGIN"],
+    "exit_arms": [
+      "BASELINE",
+      "FIXED_BE",
+      "ALL_COST_BE",
+      "PARTIAL_TP_BE",
+      "PURE_ATR_TRAIL",
+      "SMA_DETERIORATION_TRAIL",
+      "STRUCTURE_BREAK_EXIT",
+      "TIME_EXIT"
+    ]
+  },
+  "multidimensional_cube": {
+    "execution_order": [
+      "single_axis_causal_ablation",
+      "promising_two_axis_interaction",
+      "train_connected_stable_plateau_and_pareto",
+      "frozen_validation_paired_replay"
+    ],
+    "axes": [
+      "entry_forecast_family",
+      "technical_body_wick_sma_regime",
+      "exit",
+      "hedge",
+      "sizing_risk_budget",
+      "pair_support",
+      "inventory_exposure_cap",
+      "regime_timeframe",
+      "cost_slippage_financing_margin"
+    ],
+    "hedge_levels": ["NONE", "STOP_OPPOSITE_0_25_DIAGNOSTIC", "STOP_OPPOSITE_0_35_DIAGNOSTIC", "FULL_LOCK_DIAGNOSTIC"],
+    "objectives": ["NET", "PF", "DD", "PAIRED_LCB", "TURNOVER", "MARGIN", "RUIN_PROXY", "OPPORTUNITY_COUNT"],
+    "selection_rule": "Never select one point from the full Cartesian product. Preserve sparse labelled missingness, require a connected stable TRAIN plateau/Pareto set, then freeze before VALIDATION.",
+    "target_10_30_percent": "REPORTING_METRIC_ONLY_NOT_AN_OPTIMIZATION_OBJECTIVE"
+  },
+  "permissions": {
+    "read_only_sources": true,
+    "research_outputs_only": true,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false,
+    "holdout": false
+  }
+}

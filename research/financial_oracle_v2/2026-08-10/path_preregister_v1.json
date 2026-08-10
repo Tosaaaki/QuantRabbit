@@ -1,0 +1,69 @@
+{
+  "contract": "EXECUTABLE_PATH_METRICS_V1",
+  "financial_gate": {
+    "path": "research/financial_oracle_v2/2026-08-10/financial_oracle_v2.json",
+    "sha256": "f9e69e1466f702dcab3cebec2c57581942b4b74d3bd92859299bc5f5d52d512d",
+    "required_status": "PASS"
+  },
+  "trade_cashflows": {
+    "path": "research/financial_oracle_v2/2026-08-10/trade_cashflows_v2.jsonl",
+    "sha256": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb"
+  },
+  "split_membership": {
+    "path": "research/python_ecosystem_audit/2026-08-10/real_shadow_payload.json",
+    "sha256": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814"
+  },
+  "active_protection": {
+    "events_path": "research/active_protection_schedule/2026-08-10/schedule_events_v1.jsonl",
+    "events_sha256": "0c73d7b87afccc4f7bc8da6c1436837d9bc6c25a1e8226139aeb4ba6d38a584c",
+    "summary_path": "research/active_protection_schedule/2026-08-10/trade_summaries_v1.jsonl",
+    "summary_sha256": "8d08e597a6ca007e699548bfcd320efef1d069917169c01e37af52ba93cd9c99"
+  },
+  "source_boundary": {
+    "financial_truth": "OANDA transaction cash flows and OANDA executable bid/ask candles",
+    "features_only": "Dukascopy tick/M1 may later generate causal technical features but cannot settle OANDA fills or broker order sequencing",
+    "pairs": ["AUD_JPY", "EUR_JPY", "EUR_USD"],
+    "s5_files": {
+      "AUD_JPY": [
+        {"path": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "222e0b7c39dc6fa101654268be19393a41ebbbad2c8c7c54315844aa461ba8f6"},
+        {"path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/AUD_JPY/AUD_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz", "sha256": "0e2fbbca696bd79a260b4dea1828de3bd1fce7c9d498bb5720e0403b88800564"}
+      ],
+      "EUR_JPY": [
+        {"path": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "26af73c453465260c98205b88d8100a18dbde3e088626a412d0860d8eeb08dac"},
+        {"path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_JPY/EUR_JPY_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz", "sha256": "8f119bdfcd09a28b6362dd672aae8dc4d0696b850bb865a5503df2facfbeb43e"}
+      ],
+      "EUR_USD": [
+        {"path": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_S5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz", "sha256": "b634f396889a2b41ae13f5e0957ea705639dad0c16e1c2b3be08ba3ebc98d5ed"},
+        {"path": "research/active_protection_schedule/2026-08-10/oanda_extension/20260810T031843Z/EUR_USD/EUR_USD_S5_BA_20260709T003937Z_20260709T074603Z.jsonl.gz", "sha256": "df65cb54ca12eb1b1d6a6bcca84c2fe0d4f1cdebabf9b3ad7e8caa8d6a31ddab"}
+      ]
+    }
+  },
+  "path_rules": {
+    "entry": "actual OANDA fill; LONG enters ask and exits/marks at bid, SHORT enters bid and exits/marks at ask",
+    "mfe": "observed favorable executable-side S5 wick excursion from actual entry",
+    "mae": "observed adverse executable-side S5 wick excursion from actual entry",
+    "tp_pre_mae": "observed adverse excursion strictly before the first unambiguous touch of the then-active versioned TP",
+    "fill_and_close_boundary": "Any touch in an S5 containing fill or terminal close is UNRESOLVED without tick ordering",
+    "protection_change_boundary": "Any touch in an S5 containing create/cancel/replace is UNRESOLVED",
+    "same_s5_dual_touch": "UNRESOLVED; STOP-first and TP-first may be diagnostics only",
+    "gaps": "Any missing 5-second endpoint inside a market-open holding interval makes strict path false. Observed extrema remain lower-bound diagnostics and are never filled.",
+    "output_missing": "null with reason code, never zero"
+  },
+  "concurrent_margin": {
+    "scope": "frozen 251 trade cohort only",
+    "required_margin_proxy": "gross trade-level proxy: actual entry OANDA tradeOpened.initialMarginRequired divided by entry units, multiplied by causal remaining units; implied instrument margin rate is retained as a diagnostic and never forced to one cross-pair constant",
+    "unit_timeline": "actual entry fill, each partial reduction, terminal close",
+    "account_available_margin": "MISSING",
+    "manual_external_inventory": "MISSING",
+    "netting": "broker account/position netting state is missing, so gross trade-level sums are not account marginUsed",
+    "admission": "proxy may compare relative gross exposure but cannot certify account-wide margin safety"
+  },
+  "permissions": {
+    "read_only": true,
+    "holdout": false,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false
+  }
+}

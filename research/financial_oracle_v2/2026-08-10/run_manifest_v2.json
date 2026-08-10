@@ -1,0 +1,10 @@
+{
+  "contract": "TRADE_CASHFLOW_FINANCIAL_ORACLE_V2",
+  "outputs": {
+    "cashflow_components_v2.jsonl": "7005687a1abbe8715426cb88bedc50614d3ce8d83985a194f727c0b8168722ba",
+    "financial_oracle_v2.json": "f9e69e1466f702dcab3cebec2c57581942b4b74d3bd92859299bc5f5d52d512d",
+    "trade_cashflows_v2.jsonl": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb"
+  },
+  "preregister_sha256": "0c58c5b8be0e701da97998b76f2cd745807e200e30ecdef8d64440e9664b674d",
+  "status": "PASS"
+}

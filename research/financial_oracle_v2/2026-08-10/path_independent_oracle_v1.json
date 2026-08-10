@@ -1,0 +1,11 @@
+{
+  "checks": 306,
+  "contract": "EXECUTABLE_PATH_INDEPENDENT_ORACLE_V1",
+  "failed": [],
+  "holdout_used": false,
+  "independent_gross_margin_peak_jpy": 362877.1112,
+  "passed": 306,
+  "raw_entry_receipts": 251,
+  "raw_path_sample": 12,
+  "status": "PASS"
+}
