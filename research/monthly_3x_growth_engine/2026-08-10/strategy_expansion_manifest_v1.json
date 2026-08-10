@@ -1,0 +1,8 @@
+{
+  "contract": "INDEPENDENT_STRATEGY_EXPANSION_V1",
+  "outputs": {
+    "strategy_expansion_grid_v1.jsonl": "9660854037572447582955d5d7261ef47015128922dc8e1b6a6c9bd9b8b0a8dc",
+    "strategy_expansion_report_v1.json": "1515837f349b649943e657cd3882fa38979f4b15c09cba81fbbc51cac36780f5"
+  },
+  "preregister_sha256": "b0d805898bd05159f436010e8829a13577a3648e3a484b1d43da648f93901947"
+}

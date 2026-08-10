@@ -1,0 +1,105 @@
+{
+  "conclusion": "TARGET_PATH_NOT_YET_PROVEN",
+  "contract": "MONTHLY_3X_GROWTH_ENGINE_V1",
+  "corrected_64d_validation_baseline_at_1x_75pct_cap": {
+    "after_cost_net_jpy": 8849.578065145884,
+    "baseline_after_cost_net_jpy": 8849.578065145884,
+    "baseline_ending_equity_jpy": 208849.57806514588,
+    "baseline_realized_max_drawdown_jpy": 9876.099099999992,
+    "changed_decisions": 0,
+    "cohort_margin_peak_fraction_of_start": 0.7516948560095141,
+    "cohort_margin_peak_jpy": 150338.97120190284,
+    "ending_equity_jpy": 208849.57806514588,
+    "ending_equity_multiple": 1.0442478903257293,
+    "expectancy_jpy": 87.6195848034246,
+    "margin_cap_fraction": 0.75,
+    "margin_capped_entries": 17,
+    "monthly_target_gap_jpy_from_ending_equity": 391150.4219348541,
+    "monthly_target_reached_all": false,
+    "monthly_target_reached_any": false,
+    "opportunity_count": 94,
+    "paired_incremental_expectancy_jpy": 0.0,
+    "paired_incremental_net_jpy": 0.0,
+    "paired_lcb_jpy": 0.0,
+    "policy": "BASELINE_ACTUAL_SIZE",
+    "profit_factor": 1.372924690680491,
+    "realized_max_drawdown_fraction": 0.04938049549999996,
+    "realized_max_drawdown_jpy": 9876.099099999992,
+    "requested_risk_scale": 1.0,
+    "risk_scale": 1.0,
+    "rolling_30d_count": 27,
+    "rolling_30d_equity_multiple_max": 1.0476891546051672,
+    "rolling_30d_equity_multiple_median": 1.0217447561442115,
+    "rolling_30d_equity_multiple_min": 0.9756671870095031,
+    "ruin": false,
+    "split": "VALIDATION",
+    "trades": 101,
+    "train_connected_plateau": false,
+    "validation_admission_candidate": false,
+    "validation_success": false,
+    "window": "QUADRUPLE_64D"
+  },
+  "holdout_used": false,
+  "limits": [
+    "Cohort-only margin excludes manual/tagless and external inventory.",
+    "Realized-close drawdown is not mark-to-market drawdown; path MAE is incomplete.",
+    "Linear unit scaling is a shadow assumption and does not prove depth/partial-fill at larger size.",
+    "This phase cannot create new independent opportunities; it measures the opportunity multiplier still required."
+  ],
+  "preregister_sha256": "6c7e57f540f081860dc8bc2bf3c645521b5420420b9ca67122f0edaeab585269",
+  "reason_can_work": [
+    "Corrected 64d validation ALL_TRADES remains after-cost positive, so the starting edge is non-zero.",
+    "Sizing modifiers preserve every baseline opportunity and can only redistribute bounded exposure; they no longer discard winners through a SKIP fallback.",
+    "The engine now measures the exact opportunity/edge/capital-efficiency gap to 3x under causal margin caps instead of treating missing evidence as zero edge."
+  ],
+  "source_hashes_verified": true,
+  "target_math": [
+    {
+      "equal_compound_return_per_trade": 0.022215413278477092,
+      "first_trade_jpy_at_200k": 4443.082655695418,
+      "fixed_jpy_expectancy_required": 8000.0,
+      "monthly_trades": 50
+    },
+    {
+      "equal_compound_return_per_trade": 0.01104669193785357,
+      "first_trade_jpy_at_200k": 2209.338387570714,
+      "fixed_jpy_expectancy_required": 4000.0,
+      "monthly_trades": 100
+    },
+    {
+      "equal_compound_return_per_trade": 0.0055081759676813835,
+      "first_trade_jpy_at_200k": 1101.6351935362768,
+      "fixed_jpy_expectancy_required": 2000.0,
+      "monthly_trades": 200
+    },
+    {
+      "equal_compound_return_per_trade": 0.0027503058925892887,
+      "first_trade_jpy_at_200k": 550.0611785178578,
+      "fixed_jpy_expectancy_required": 1000.0,
+      "monthly_trades": 400
+    },
+    {
+      "equal_compound_return_per_trade": 0.0013742087214894116,
+      "first_trade_jpy_at_200k": 274.8417442978823,
+      "fixed_jpy_expectancy_required": 500.0,
+      "monthly_trades": 800
+    }
+  ],
+  "train_connected_points": 3,
+  "validation_success_count": 0,
+  "validation_successes": [],
+  "windows": {
+    "DOUBLE_32D": {
+      "TRAIN": 43,
+      "VALIDATION": 31
+    },
+    "INITIAL_16D": {
+      "TRAIN": 13,
+      "VALIDATION": 12
+    },
+    "QUADRUPLE_64D": {
+      "TRAIN": 145,
+      "VALIDATION": 101
+    }
+  }
+}

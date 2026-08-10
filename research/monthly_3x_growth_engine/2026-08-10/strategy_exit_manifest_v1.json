@@ -1,0 +1,8 @@
+{
+  "contract": "INDEPENDENT_STRATEGY_EXIT_EXPANSION_V1",
+  "outputs": {
+    "strategy_exit_grid_v1.jsonl": "9fe96cec85cb516904441752adb0797e6bed068b9e8b726a90f29b6930c8d598",
+    "strategy_exit_report_v1.json": "488e9a3a371c9f610bca09ac5142b9dd30465b254260530a7d52179d38317ae3"
+  },
+  "preregister_sha256": "a9a85d668941ddc48b05a80edb99f0552760bedcae226c0669de7dd6ede5ab22"
+}

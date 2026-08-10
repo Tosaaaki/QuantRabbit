@@ -1,0 +1,105 @@
+{
+  "contract": "MONTHLY_3X_GROWTH_ENGINE_V1",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "objective": {
+    "starting_equity_jpy": 200000.0,
+    "target_ending_equity_jpy": 600000.0,
+    "target_window_calendar_days": 30,
+    "target_multiple": 3.0,
+    "meaning": "月3倍は元本20万円を30暦日で60万円へ増やすこと。利益保証ではなく、必要条件と再現可能な経路を検証する。",
+    "target_use": "REPORT_AND_FEASIBILITY_GATE_NOT_VALIDATION_PARAMETER_TUNING"
+  },
+  "problem_contract": {
+    "as_is": "修正済み64日系VALIDATIONは費用後プラスだが、既存モデルはALL_TRADESをSKIPして勝ち取引を捨て、ライブラリは事後検算に留まり、機会数・資本効率・出口寄与を一つの成長経路へ接続していない。",
+    "desired": "ALL_TRADESを常時基準に残し、decision-time情報は取引拒否ではなく配分倍率に使い、機会数・1取引edge・資本効率が月3倍へどう寄与するかを同じ会計正本で示す。",
+    "counter_hypothesis": "費用後プラスは一期間の偶然で、TRAINから固定した配分はVALIDATIONで増分を作らず、月3倍に必要な倍率はDD・証拠金・破産制約を破る。",
+    "success": "TRAINだけで固定した少なくとも一つのmodifierがVALIDATIONでbaselineを上回り、paired LCBが正、PF>1、実現DD<=30%、cohort-only margin cap<=75%、かつ少なくとも一つの30日窓で3倍へ到達する。",
+    "partial_success": "月3倍未達でも、費用後増分が正で、月3倍への不足を機会数・edge・資本効率へ一意に分解できる。",
+    "fail_closed": "結果後のpolicy選択、未来outcomeを使う倍率、欠測0化、mid fill、未配賦cashflow、証拠金超過、破産後継続は無効。"
+  },
+  "frozen_sources": {
+    "financial_labels": {
+      "path": "research/financial_oracle_v2/2026-08-10/trade_cashflows_v2.jsonl",
+      "sha256": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb"
+    },
+    "margin_and_path": {
+      "path": "research/financial_oracle_v2/2026-08-10/path_metrics_v1.jsonl",
+      "sha256": "5b254119e3911bd5b5bffbc98b2be0a96c8fcbc66ee630913b82435700107084"
+    },
+    "split_and_features": {
+      "path": "research/python_ecosystem_audit/2026-08-10/real_shadow_payload.json",
+      "sha256": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814"
+    },
+    "inventory_modifier": {
+      "path": "research/continuous_thesis_monitor/2026-08-10/inventory_overlap_rows_v2.jsonl",
+      "sha256": "158c9ffe14385aad8029d8505865cf584666b5b3e9465c0e71b90eff49f1137a"
+    },
+    "technical_modifier": {
+      "path": "research/continuous_thesis_monitor/2026-08-10/size_cap_rows_v3.jsonl",
+      "sha256": "ad2b6ea430798715a7722c8e81305d37fdc64b97656a2b54081d5507c7eaa023"
+    }
+  },
+  "cohort": {
+    "windows": ["INITIAL_16D", "DOUBLE_32D", "QUADRUPLE_64D"],
+    "membership": "existing ALL_TRADES 60/40 chronological TRAIN/VALIDATION rows with 1h embargo; purge rows excluded",
+    "label": "corrected_actual_after_cost_net_jpy from TRADE_CASHFLOW_FINANCIAL_ORACLE_V2",
+    "holdout": "UNREAD_AND_UNUSED"
+  },
+  "policies": {
+    "BASELINE_ACTUAL_SIZE": "multiplier=1; no prediction gate",
+    "INVENTORY_CAP_V2_RELABELED": "existing frozen 0.5/1.0 decision multiplier, joined to corrected V2 cashflow",
+    "TECHNICAL_DISSENT_CAP_V3_RELABELED": "existing frozen 0.5/1.0 decision multiplier, joined to corrected V2 cashflow",
+    "GROUP_RELATIVE_SIZE": "TRAIN-only pair/side/regime normalized-return empirical-Bayes score with prior weight 20; group n<8 uses global score; score rank maps continuously to [0.5,1.5]; never SKIP",
+    "PRICE_ACTION_RIDGE_SIZE": "TRAIN-only Ridge(alpha=10) on standardized decision-time price-action features predicting corrected JPY per 1000 units; TRAIN 33/67 percentiles map to 0.5/1.0/1.5; missing features pass through at 1.0; never SKIP",
+    "FUSED_SIZE": "arithmetic mean of GROUP_RELATIVE_SIZE and PRICE_ACTION_RIDGE_SIZE clipped to [0.5,1.5]; inventory and technical caps remain separate ablations"
+  },
+  "growth_grid": {
+    "risk_scale": [0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 16.0],
+    "cohort_margin_cap_fraction": [0.25, 0.5, 0.75],
+    "selection": "Evaluate the entire preregistered sparse grid. TRAIN marks connected feasible plateaus; VALIDATION reports every frozen point and may not choose a new threshold.",
+    "execution_shadow": "cashflow and initial margin scale linearly with units; fractional multiplier is diagnostic. Existing broker fill prices are preserved; no extra opportunities are invented.",
+    "portfolio_order": "process entries and closes by exact UTC; only already-realized cashflow changes decision-time equity; open cohort margin consumes the cap",
+    "ruin": "stop a path at equity<=0; never continue after ruin"
+  },
+  "train_plateau_gate": {
+    "after_cost_net_jpy": ">0",
+    "profit_factor": ">1",
+    "realized_max_drawdown_fraction": "<=0.30",
+    "ruin": false,
+    "minimum_changed_entries_for_modifier": 10,
+    "connectedness": "the same policy must have at least one adjacent feasible risk_scale or margin-cap grid point",
+    "validation": "only exact TRAIN-connected points are admission candidates; all other frozen points remain diagnostics"
+  },
+  "metrics": [
+    "after_cost_net_jpy",
+    "ending_equity_jpy",
+    "ending_equity_multiple",
+    "profit_factor",
+    "expectancy_jpy",
+    "paired_incremental_net_jpy",
+    "paired_lcb_jpy",
+    "realized_max_drawdown_jpy",
+    "realized_max_drawdown_fraction",
+    "cohort_margin_peak_jpy",
+    "cohort_margin_peak_fraction",
+    "margin_capped_entries",
+    "ruin",
+    "opportunity_count",
+    "rolling_30d_equity_multiple_min_median_max",
+    "monthly_target_gap_jpy"
+  ],
+  "known_limits": [
+    "Cohort-only margin excludes manual/tagless and external inventory.",
+    "Realized-close drawdown is not mark-to-market drawdown; path MAE is incomplete.",
+    "Linear unit scaling is a shadow assumption and does not prove depth/partial-fill at larger size.",
+    "This phase cannot create new independent opportunities; it measures the opportunity multiplier still required."
+  ],
+  "permissions": {
+    "research_only": true,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false,
+    "holdout": false
+  }
+}

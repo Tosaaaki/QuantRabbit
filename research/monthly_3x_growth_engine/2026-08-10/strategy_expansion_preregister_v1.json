@@ -1,0 +1,78 @@
+{
+  "contract": "INDEPENDENT_STRATEGY_EXPANSION_V1",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "purpose": "月3倍の機会数不足を、既存entryのパラメータ調整ではなく独立したprice-action/structure戦略族で埋められるか検証する。",
+  "sources": {
+    "AUD_JPY": {
+      "path": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_M5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "sha256": "ac979a5a8d8606b24c77337a383a2ecfb777f06efdbd86a768834374a0e6fd87"
+    },
+    "EUR_JPY": {
+      "path": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_M5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "sha256": "67783b4f3f8fd4a02d42866586fae2836e63b058d4c7d7d5f5e80b17c705d2c7"
+    }
+  },
+  "truth_boundary": {
+    "entry": "signal uses only completed M5 bar i; fill at next consecutive M5 OANDA ask open for LONG or bid open for SHORT",
+    "exit": "fixed completed-bar horizon; LONG exits at OANDA bid open, SHORT at ask open",
+    "spread": "implicit in side-correct bid/ask",
+    "slippage": "primary uses additional 0.5 times contemporaneous spread adversely at both entry and exit; zero is diagnostic only",
+    "fee": "0 under the frozen account observation; no extra fee invented",
+    "financing": "trades crossing 21:00 UTC daily financing boundary are excluded because causal schedule is unavailable",
+    "currency": "JPY quote pairs only, so PnL JPY equals price difference times units",
+    "unit_size": 1000,
+    "overlap": "one open trade per pair/family/parameter set; later signals wait until the fixed exit",
+    "gaps": "lookback, entry, and exit require exact consecutive 5-minute timestamps; no fill-forward"
+  },
+  "time_split": {
+    "holdout_start_utc": "2026-06-30T00:00:00Z",
+    "holdout": "UNREAD_AND_UNUSED; streaming reader stops before parsing the first row at or after this timestamp",
+    "windows_days": [16, 32, 64],
+    "split": "for each window ending at holdout_start, first 60% TRAIN, then 1h embargo, remainder VALIDATION"
+  },
+  "families": {
+    "BREAKOUT_CONTINUATION": "close breaks prior lookback high/low with SMA20/SMA50 alignment",
+    "LIQUIDITY_SWEEP_REVERSAL": "wick breaks prior high/low but completed close returns inside",
+    "RANGE_REVERSION": "completed close in outer 15% of prior range with trend efficiency <=0.30",
+    "COMPRESSION_BREAKOUT": "prior 6-bar range <=35% of broader range and completed close breaks the compression with SMA alignment",
+    "SMA_PULLBACK_CONTINUATION": "SMA20/SMA50 trend and completed close recrosses SMA20 after a one-bar pullback"
+  },
+  "grid": {
+    "lookback": [12, 24, 48],
+    "horizon_bars": [6, 12, 24],
+    "entry_session_utc": ["ALL", "07_16", "13_20"],
+    "slippage_spread_multiple": [0.0, 0.5],
+    "selection_cost_scenario": 0.5
+  },
+  "train_gate": {
+    "minimum_trades": 20,
+    "expectancy_jpy_per_1000u": ">0",
+    "profit_factor": ">1",
+    "bootstrap_lcb_expectancy_jpy": ">0",
+    "connected_plateau": "at least one adjacent lookback or horizon point in the same family/pair/session also passes"
+  },
+  "validation_gate": {
+    "exact_train_connected_parameter": true,
+    "minimum_trades": 10,
+    "expectancy_jpy_per_1000u": ">0",
+    "profit_factor": ">1",
+    "bootstrap_lcb_expectancy_jpy": ">0",
+    "multiple_windows": "sign must be positive in 32d and 64d when both have eligible samples"
+  },
+  "negative_controls": [
+    "mid-price fill",
+    "zero-slippage primary selection",
+    "same-bar entry",
+    "weekend or acquisition-gap fill-forward",
+    "validation-best parameter",
+    "outcome-selected direction"
+  ],
+  "permissions": {
+    "research_only": true,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false,
+    "holdout": false
+  }
+}

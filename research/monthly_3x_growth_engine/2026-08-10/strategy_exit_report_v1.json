@@ -1,0 +1,10 @@
+{
+  "conclusion": "EXIT_MANAGEMENT_NOT_YET_STABLE",
+  "contract": "INDEPENDENT_STRATEGY_EXIT_EXPANSION_V1",
+  "grid_rows": 1680,
+  "holdout_used": false,
+  "preregister_sha256": "a9a85d668941ddc48b05a80edb99f0552760bedcae226c0669de7dd6ede5ab22",
+  "train_plateaus": 0,
+  "validation_pass_count": 0,
+  "validation_pass_rows": []
+}

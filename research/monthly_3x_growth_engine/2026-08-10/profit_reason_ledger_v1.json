@@ -1,0 +1,1578 @@
+{
+  "causal_bottleneck": {
+    "next_engine_change": "Generate more decision-time candidates matching the exact profitable EUR_USD SHORT LIMIT/TP vehicle, keep ALL_TRADES pass-through, and use price-action scoring only for size/rank.",
+    "not_primary": [
+      "NO_EDGE",
+      "MISSING_LIBRARY",
+      "NEED_MORE_RANDOM_INDICATORS"
+    ],
+    "primary": "PROFITABLE_VEHICLE_TOO_RARE",
+    "secondary": "EARLY_MARKET_CLOSE_LOSS_TAIL_AND_REGIME_MIX"
+  },
+  "contract": "PROFIT_REASON_LEDGER_V1",
+  "exact_limit_attached_tp_evidence": {
+    "available": true,
+    "classification": "PARTIAL_EXECUTABLE_PROOF_REQUIRES_CANONICAL_FILL_RECONCILIATION_AND_MORE_SAMPLES",
+    "expectancy_after_bidask_jpy": 813.7734,
+    "live_permission_allowed": false,
+    "losses": 0,
+    "net_jpy": 3255.0938,
+    "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+    "sample_count": 4,
+    "source_sha256": "3ad6ee8feb3db5c79016a13c4ea8f13812b01d0fd9c8616a1dcba1822b15fed6",
+    "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+    "timestamp_alignment_status": "TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+    "wins": 4
+  },
+  "holdout_used": false,
+  "method_groups": [
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "AUD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 507.08885,
+        "losses": 0,
+        "net_jpy": 1014.1777,
+        "paired_bootstrap_lcb_expectancy_jpy": 478.9224,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 139.6881,
+        "losses": 0,
+        "net_jpy": 139.6881,
+        "paired_bootstrap_lcb_expectancy_jpy": 139.6881,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_CAD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 49.20715,
+        "losses": 0,
+        "net_jpy": 98.4143,
+        "paired_bootstrap_lcb_expectancy_jpy": 16.6134,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "AUD_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -448.96745000000004,
+        "losses": 1,
+        "net_jpy": -897.9349000000001,
+        "paired_bootstrap_lcb_expectancy_jpy": -1215.4046,
+        "trades": 2,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 217.866,
+        "losses": 0,
+        "net_jpy": 435.732,
+        "paired_bootstrap_lcb_expectancy_jpy": 114.2891,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "AUD_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -243.3251923076923,
+        "losses": 9,
+        "net_jpy": -3163.2275,
+        "paired_bootstrap_lcb_expectancy_jpy": -552.6696553846155,
+        "trades": 13,
+        "wins": 4
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": 52.0,
+        "losses": 0,
+        "net_jpy": 52.0,
+        "paired_bootstrap_lcb_expectancy_jpy": 52.0,
+        "trades": 1,
+        "wins": 1
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "AUD_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": -244.5584583333333,
+        "losses": 6,
+        "net_jpy": -2934.7014999999997,
+        "paired_bootstrap_lcb_expectancy_jpy": -1293.8238668749998,
+        "trades": 12,
+        "wins": 6
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": -3272.3139,
+        "losses": 1,
+        "net_jpy": -3272.3139,
+        "paired_bootstrap_lcb_expectancy_jpy": -3272.3139,
+        "trades": 1,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": 118.24480000000001,
+        "losses": 1,
+        "net_jpy": 236.48960000000002,
+        "paired_bootstrap_lcb_expectancy_jpy": -151.4924,
+        "trades": 2,
+        "wins": 1
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_NZD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 16.7556,
+        "losses": 0,
+        "net_jpy": 16.7556,
+        "paired_bootstrap_lcb_expectancy_jpy": 16.7556,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_NZD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -84.53885,
+        "losses": 1,
+        "net_jpy": -169.0777,
+        "paired_bootstrap_lcb_expectancy_jpy": -239.4791,
+        "trades": 2,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_NZD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -462.3796,
+        "losses": 1,
+        "net_jpy": -462.3796,
+        "paired_bootstrap_lcb_expectancy_jpy": -462.3796,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -2750.1473,
+        "losses": 1,
+        "net_jpy": -2750.1473,
+        "paired_bootstrap_lcb_expectancy_jpy": -2750.1473,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "UNATTRIBUTED",
+      "pair": "AUD_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 1621.9379,
+        "losses": 0,
+        "net_jpy": 1621.9379,
+        "paired_bootstrap_lcb_expectancy_jpy": 1621.9379,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "AUD_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -1705.6738,
+        "losses": 1,
+        "net_jpy": -1705.6738,
+        "paired_bootstrap_lcb_expectancy_jpy": -1705.6738,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "AUD_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 255.3475,
+        "losses": 0,
+        "net_jpy": 255.3475,
+        "paired_bootstrap_lcb_expectancy_jpy": 255.3475,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "CAD_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 271.8,
+        "losses": 0,
+        "net_jpy": 543.6,
+        "paired_bootstrap_lcb_expectancy_jpy": 9.0,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "CHF_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -661.5,
+        "losses": 1,
+        "net_jpy": -661.5,
+        "paired_bootstrap_lcb_expectancy_jpy": -661.5,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_AUD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -6.7428,
+        "losses": 1,
+        "net_jpy": -6.7428,
+        "paired_bootstrap_lcb_expectancy_jpy": -6.7428,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 204.8361,
+        "losses": 1,
+        "net_jpy": 409.6722,
+        "paired_bootstrap_lcb_expectancy_jpy": -38.054,
+        "trades": 2,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -348.17890000000006,
+        "losses": 2,
+        "net_jpy": -1044.5367,
+        "paired_bootstrap_lcb_expectancy_jpy": -1019.7829,
+        "trades": 3,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_GBP",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -439.12645,
+        "losses": 1,
+        "net_jpy": -878.2529,
+        "paired_bootstrap_lcb_expectancy_jpy": -891.0833,
+        "trades": 2,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_GBP",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 475.3568,
+        "losses": 0,
+        "net_jpy": 475.3568,
+        "paired_bootstrap_lcb_expectancy_jpy": 475.3568,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_GBP",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -142.63524999999998,
+        "losses": 2,
+        "net_jpy": -285.27049999999997,
+        "paired_bootstrap_lcb_expectancy_jpy": -169.1591,
+        "trades": 2,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -170.1,
+        "losses": 1,
+        "net_jpy": -170.1,
+        "paired_bootstrap_lcb_expectancy_jpy": -170.1,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -208.35000000000002,
+        "losses": 1,
+        "net_jpy": -416.70000000000005,
+        "paired_bootstrap_lcb_expectancy_jpy": -1071.9,
+        "trades": 2,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": -353.5485,
+        "losses": 4,
+        "net_jpy": -1414.194,
+        "paired_bootstrap_lcb_expectancy_jpy": -558.25,
+        "trades": 4,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 3.2666666666666515,
+        "losses": 1,
+        "net_jpy": 9.799999999999955,
+        "paired_bootstrap_lcb_expectancy_jpy": -844.2000000000002,
+        "trades": 3,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -153.15350000000004,
+        "losses": 9,
+        "net_jpy": -4441.4515,
+        "paired_bootstrap_lcb_expectancy_jpy": -905.3482237931034,
+        "trades": 29,
+        "wins": 20
+      },
+      "validation": {
+        "expectancy_jpy": 879.0965999999999,
+        "losses": 1,
+        "net_jpy": 3516.3863999999994,
+        "paired_bootstrap_lcb_expectancy_jpy": 291.26332499999995,
+        "trades": 4,
+        "wins": 3
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -79.51666666666667,
+        "losses": 1,
+        "net_jpy": -238.54999999999998,
+        "paired_bootstrap_lcb_expectancy_jpy": -299.768,
+        "trades": 3,
+        "wins": 2
+      },
+      "validation": {
+        "expectancy_jpy": -720.7659666666665,
+        "losses": 1,
+        "net_jpy": -2162.2978999999996,
+        "paired_bootstrap_lcb_expectancy_jpy": -2663.2488,
+        "trades": 3,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -2272.8205500000004,
+        "losses": 1,
+        "net_jpy": -4545.641100000001,
+        "paired_bootstrap_lcb_expectancy_jpy": -4756.9853,
+        "trades": 2,
+        "wins": 1
+      },
+      "validation": {
+        "expectancy_jpy": 163.81675,
+        "losses": 0,
+        "net_jpy": 327.6335,
+        "paired_bootstrap_lcb_expectancy_jpy": 100.4337,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "UNATTRIBUTED",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -8373.753,
+        "losses": 1,
+        "net_jpy": -8373.753,
+        "paired_bootstrap_lcb_expectancy_jpy": -8373.753,
+        "trades": 1,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 1107.4898999999998,
+        "losses": 0,
+        "net_jpy": 3322.4696999999996,
+        "paired_bootstrap_lcb_expectancy_jpy": 88.7824,
+        "trades": 3,
+        "wins": 3
+      }
+    },
+    {
+      "evidence_grade": "PARTIAL_REPRODUCTION",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "EUR_USD",
+      "same_sign_positive": true,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": 162.23763235294118,
+        "losses": 9,
+        "net_jpy": 5516.079499999998,
+        "paired_bootstrap_lcb_expectancy_jpy": -153.0393698529412,
+        "trades": 34,
+        "wins": 24
+      },
+      "validation": {
+        "expectancy_jpy": 523.0701,
+        "losses": 0,
+        "net_jpy": 1046.1402,
+        "paired_bootstrap_lcb_expectancy_jpy": 218.0282,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "PARTIAL_REPRODUCTION",
+      "method": "RANGE_ROTATION",
+      "pair": "EUR_USD",
+      "same_sign_positive": true,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": 242.14506999999998,
+        "losses": 0,
+        "net_jpy": 2421.4507,
+        "paired_bootstrap_lcb_expectancy_jpy": 121.42133175,
+        "trades": 10,
+        "wins": 10
+      },
+      "validation": {
+        "expectancy_jpy": 30.1535,
+        "losses": 0,
+        "net_jpy": 30.1535,
+        "paired_bootstrap_lcb_expectancy_jpy": 30.1535,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": -72.91966666666669,
+        "losses": 2,
+        "net_jpy": -437.5180000000001,
+        "paired_bootstrap_lcb_expectancy_jpy": -554.4353333333333,
+        "trades": 6,
+        "wins": 4
+      },
+      "validation": {
+        "expectancy_jpy": 734.8395,
+        "losses": 0,
+        "net_jpy": 734.8395,
+        "paired_bootstrap_lcb_expectancy_jpy": 734.8395,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "UNATTRIBUTED",
+      "pair": "EUR_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 361.9933,
+        "losses": 0,
+        "net_jpy": 361.9933,
+        "paired_bootstrap_lcb_expectancy_jpy": 361.9933,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_AUD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -48.3235,
+        "losses": 1,
+        "net_jpy": -48.3235,
+        "paired_bootstrap_lcb_expectancy_jpy": -48.3235,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 295.7438,
+        "losses": 0,
+        "net_jpy": 295.7438,
+        "paired_bootstrap_lcb_expectancy_jpy": 295.7438,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "GBP_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 71.9577,
+        "losses": 0,
+        "net_jpy": 71.9577,
+        "paired_bootstrap_lcb_expectancy_jpy": 71.9577,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -951.95355,
+        "losses": 2,
+        "net_jpy": -1903.9071,
+        "paired_bootstrap_lcb_expectancy_jpy": -955.691,
+        "trades": 2,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 363.6,
+        "losses": 0,
+        "net_jpy": 363.6,
+        "paired_bootstrap_lcb_expectancy_jpy": 363.6,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -197.122,
+        "losses": 1,
+        "net_jpy": -197.122,
+        "paired_bootstrap_lcb_expectancy_jpy": -197.122,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -654.1944590909092,
+        "losses": 10,
+        "net_jpy": -14392.278100000001,
+        "paired_bootstrap_lcb_expectancy_jpy": -1918.5819317045452,
+        "trades": 22,
+        "wins": 12
+      },
+      "validation": {
+        "expectancy_jpy": -2981.8961,
+        "losses": 1,
+        "net_jpy": -2981.8961,
+        "paired_bootstrap_lcb_expectancy_jpy": -2981.8961,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "GBP_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -1181.2168,
+        "losses": 1,
+        "net_jpy": -2362.4336,
+        "paired_bootstrap_lcb_expectancy_jpy": -2364.6529,
+        "trades": 2,
+        "wins": 1
+      },
+      "validation": {
+        "expectancy_jpy": 451.88425,
+        "losses": 0,
+        "net_jpy": 903.7685,
+        "paired_bootstrap_lcb_expectancy_jpy": 294.8855,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "GBP_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": -2918.857,
+        "losses": 1,
+        "net_jpy": -2918.857,
+        "paired_bootstrap_lcb_expectancy_jpy": -2918.857,
+        "trades": 1,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 1061.5402,
+        "losses": 0,
+        "net_jpy": 1061.5402,
+        "paired_bootstrap_lcb_expectancy_jpy": 1061.5402,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "GBP_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": 21.698800000000002,
+        "losses": 0,
+        "net_jpy": 43.397600000000004,
+        "paired_bootstrap_lcb_expectancy_jpy": 0.1983,
+        "trades": 2,
+        "wins": 2
+      },
+      "validation": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "GBP_USD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -971.0121,
+        "losses": 1,
+        "net_jpy": -971.0121,
+        "paired_bootstrap_lcb_expectancy_jpy": -971.0121,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -218.1407,
+        "losses": 1,
+        "net_jpy": -218.1407,
+        "paired_bootstrap_lcb_expectancy_jpy": -218.1407,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "NZD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 158.2535,
+        "losses": 0,
+        "net_jpy": 158.2535,
+        "paired_bootstrap_lcb_expectancy_jpy": 158.2535,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CAD",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -1026.936,
+        "losses": 2,
+        "net_jpy": -2053.872,
+        "paired_bootstrap_lcb_expectancy_jpy": -1495.5275,
+        "trades": 2,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -96.6085,
+        "losses": 1,
+        "net_jpy": -96.6085,
+        "paired_bootstrap_lcb_expectancy_jpy": -96.6085,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "NZD_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -1380.8008,
+        "losses": 1,
+        "net_jpy": -1380.8008,
+        "paired_bootstrap_lcb_expectancy_jpy": -1380.8008,
+        "trades": 1,
+        "wins": 0
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "NZD_USD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 77.5472,
+        "losses": 0,
+        "net_jpy": 77.5472,
+        "paired_bootstrap_lcb_expectancy_jpy": 77.5472,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "BREAKOUT_FAILURE",
+      "pair": "USD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 222.5317,
+        "losses": 2,
+        "net_jpy": 1112.6585,
+        "paired_bootstrap_lcb_expectancy_jpy": -130.58883999999998,
+        "trades": 5,
+        "wins": 3
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "USD_CAD",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -27.91916666666666,
+        "losses": 1,
+        "net_jpy": -83.75749999999998,
+        "paired_bootstrap_lcb_expectancy_jpy": -620.0993,
+        "trades": 3,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "TREND_CONTINUATION",
+      "pair": "USD_CHF",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 1565.1377000000002,
+        "losses": 0,
+        "net_jpy": 3130.2754000000004,
+        "paired_bootstrap_lcb_expectancy_jpy": 866.8938,
+        "trades": 2,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 432.0,
+        "losses": 0,
+        "net_jpy": 432.0,
+        "paired_bootstrap_lcb_expectancy_jpy": 432.0,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "UNATTRIBUTED",
+      "pair": "USD_JPY",
+      "same_sign_positive": false,
+      "side": "LONG",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 7280.0,
+        "losses": 0,
+        "net_jpy": 7280.0,
+        "paired_bootstrap_lcb_expectancy_jpy": 7280.0,
+        "trades": 1,
+        "wins": 1
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "RANGE_ROTATION",
+      "pair": "USD_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": -170.76,
+        "losses": 3,
+        "net_jpy": -853.8,
+        "paired_bootstrap_lcb_expectancy_jpy": -377.84000000000003,
+        "trades": 5,
+        "wins": 2
+      }
+    },
+    {
+      "evidence_grade": "DIAGNOSTIC_ONLY",
+      "method": "UNATTRIBUTED",
+      "pair": "USD_JPY",
+      "same_sign_positive": false,
+      "side": "SHORT",
+      "train": {
+        "expectancy_jpy": null,
+        "losses": 0,
+        "net_jpy": 0,
+        "paired_bootstrap_lcb_expectancy_jpy": null,
+        "trades": 0,
+        "wins": 0
+      },
+      "validation": {
+        "expectancy_jpy": 441.6785181818182,
+        "losses": 0,
+        "net_jpy": 4858.4637,
+        "paired_bootstrap_lcb_expectancy_jpy": 147.67954545454546,
+        "trades": 11,
+        "wins": 11
+      }
+    }
+  ],
+  "monthly_target_equations": [
+    {
+      "monthly_trades": 200,
+      "observed_eurusd_short_validation_expectancy_jpy": 434.6253,
+      "required_edge_or_size_multiple": 4.60166492838774,
+      "required_expectancy_jpy": 2000.0
+    },
+    {
+      "monthly_trades": 400,
+      "observed_eurusd_short_validation_expectancy_jpy": 434.6253,
+      "required_edge_or_size_multiple": 2.30083246419387,
+      "required_expectancy_jpy": 1000.0
+    },
+    {
+      "monthly_trades": 800,
+      "observed_eurusd_short_validation_expectancy_jpy": 434.6253,
+      "required_edge_or_size_multiple": 1.150416232096935,
+      "required_expectancy_jpy": 500.0
+    },
+    {
+      "monthly_trades": 1000,
+      "observed_eurusd_short_validation_expectancy_jpy": 434.6253,
+      "required_edge_or_size_multiple": 0.9203329856775481,
+      "required_expectancy_jpy": 400.0
+    }
+  ],
+  "runtime_tp_capture_hint": {
+    "available": true,
+    "hints": [
+      {
+        "broad_capture_take_profit_expectancy_jpy": 642,
+        "broad_capture_take_profit_trades": 22,
+        "capture_take_profit_expectancy_jpy": 1146.7898,
+        "capture_take_profit_trades": 2,
+        "classification": "READ_ONLY_RUNTIME_HINT_NOT_V2_FINANCIAL_PROOF",
+        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+      },
+      {
+        "broad_capture_take_profit_expectancy_jpy": 613.2,
+        "broad_capture_take_profit_trades": 17,
+        "capture_take_profit_expectancy_jpy": 813.7706,
+        "capture_take_profit_trades": 1,
+        "classification": "READ_ONLY_RUNTIME_HINT_NOT_V2_FINANCIAL_PROOF",
+        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+      }
+    ],
+    "source_sha256": "859a8c09f7bb5e721c82e0bad1fa1408aa5a673ea0dee8efe93c6b3ed664e4f6"
+  },
+  "sources": {
+    "episodes_sha256": "efcf6b0fb675050d6a08efc0119065e0874e50e1c51373a0c0fb61bb6ebd815e",
+    "financial_labels_sha256": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb",
+    "payload_sha256": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814"
+  },
+  "verified_reasons_can_work": [
+    {
+      "evidence": "Corrected 64d validation ALL_TRADES is +11,706.0523 JPY over 101 trades.",
+      "meaning": "The system already contains after-cost edge; the problem is amplification and stability, not creating edge from zero.",
+      "reason": "NON_ZERO_AFTER_COST_BASELINE"
+    },
+    {
+      "meaning": "All five validation EUR_USD SHORT receipts are positive. The later vehicle/exit mix is materially better than the broad early cohort, so vehicle and exit lineage are a growth lever.",
+      "reason": "EURUSD_SHORT_PERSISTS_ACROSS_SPLIT",
+      "train": {
+        "expectancy_jpy": 150.000244,
+        "losses": 11,
+        "net_jpy": 7500.012199999997,
+        "paired_bootstrap_lcb_expectancy_jpy": -77.62866024999998,
+        "trades": 50,
+        "wins": 38
+      },
+      "validation": {
+        "expectancy_jpy": 434.6253,
+        "losses": 0,
+        "net_jpy": 2173.1265,
+        "paired_bootstrap_lcb_expectancy_jpy": 171.67134,
+        "trades": 5,
+        "wins": 5
+      },
+      "validation_receipts": [
+        {
+          "corrected_net_jpy": 30.1535,
+          "decision_time": "2026-06-05T11:37:04.312932419Z",
+          "episode_id": "oanda:472074:ORDER_ACCEPTED:472074",
+          "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+          "terminal_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "units": 6300
+        },
+        {
+          "corrected_net_jpy": 734.8395,
+          "decision_time": "2026-06-08T17:22:30.552876202Z",
+          "episode_id": "oanda:472132:ORDER_ACCEPTED:472132",
+          "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+          "terminal_reason": "TAKE_PROFIT_ORDER",
+          "units": 5000
+        },
+        {
+          "corrected_net_jpy": 828.112,
+          "decision_time": "2026-06-19T07:45:51.251537238Z",
+          "episode_id": "oanda:472730:ORDER_ACCEPTED:472730",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "terminal_reason": "TAKE_PROFIT_ORDER",
+          "units": 6300
+        },
+        {
+          "corrected_net_jpy": 218.0282,
+          "decision_time": "2026-06-25T01:46:52.899169269Z",
+          "episode_id": "oanda:472818:ORDER_ACCEPTED:472818",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "terminal_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "units": 5000
+        },
+        {
+          "corrected_net_jpy": 361.9933,
+          "decision_time": "2026-06-29T22:27:27.907283119Z",
+          "episode_id": "oanda:472918:ORDER_ACCEPTED:472918",
+          "lane_id": null,
+          "terminal_reason": "TAKE_PROFIT_ORDER",
+          "units": 4000
+        }
+      ]
+    },
+    {
+      "caveat": "paired LCB is -19.27 JPY/trade; this is a working lever, not yet stable proof.",
+      "evidence": "PRICE_ACTION_RIDGE_SIZE at 1x/75% cohort margin cap improves corrected 64d validation by +2,493.46 JPY without skipping baseline trades.",
+      "reason": "DECISION_TIME_SIZING_CREATES_POINT_INCREMENT"
+    },
+    {
+      "evidence": {
+        "available": true,
+        "classification": "PARTIAL_EXECUTABLE_PROOF_REQUIRES_CANONICAL_FILL_RECONCILIATION_AND_MORE_SAMPLES",
+        "expectancy_after_bidask_jpy": 813.7734,
+        "live_permission_allowed": false,
+        "losses": 0,
+        "net_jpy": 3255.0938,
+        "s5_bidask_replay_status": "PASSED_WITH_S5_TOUCH_LAG_4_OF_4_LIMIT_SAMPLES_STILL_UNDERSAMPLED_AND_BLOCKED",
+        "sample_count": 4,
+        "source_sha256": "3ad6ee8feb3db5c79016a13c4ea8f13812b01d0fd9c8616a1dcba1822b15fed6",
+        "target_shape": "EUR_USD|SHORT|BREAKOUT_FAILURE|LIMIT|HARVEST",
+        "timestamp_alignment_status": "TOUCH_LAG_REQUIRES_CANONICAL_FILL_RECONCILIATION",
+        "wins": 4
+      },
+      "meaning": "The exact EUR_USD SHORT BREAKOUT_FAILURE LIMIT/attached-TP vehicle has four S5 bid/ask replayed wins and positive realized net. Random time exits and generic ATR stops are not substitutes for this vehicle.",
+      "reason": "EXACT_LIMIT_ATTACHED_TP_SHAPE_IS_COST_POSITIVE"
+    }
+  ]
+}

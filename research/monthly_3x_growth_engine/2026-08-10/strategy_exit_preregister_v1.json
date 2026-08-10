@@ -1,0 +1,44 @@
+{
+  "contract": "INDEPENDENT_STRATEGY_EXIT_EXPANSION_V1",
+  "created_after": "INDEPENDENT_STRATEGY_EXPANSION_V1_NO_STABLE_EDGE",
+  "single_new_axis": "exit_policy",
+  "rationale": "固定時間exitではTRAIN上の点期待値が正でも分散とLCBが悪い。entry族を変えず、損失尾を限定し利益を伸ばすBE/trail/structure exitを独立軸として検証する。",
+  "source_contract": "same archived OANDA M5 BA JPY pairs and pre-2026-06-30 holdout boundary as strategy_expansion_preregister_v1",
+  "signal_grid": {
+    "families": ["BREAKOUT_CONTINUATION", "LIQUIDITY_SWEEP_REVERSAL", "RANGE_REVERSION", "COMPRESSION_BREAKOUT", "SMA_PULLBACK_CONTINUATION"],
+    "lookback": [24, 48],
+    "entry_session_utc": ["07_16", "13_20"],
+    "unit_size": 1000
+  },
+  "exit_policies": {
+    "TIME_24": "exit at next 24th consecutive M5 open",
+    "BRACKET_1ATR_1_5ATR": "entry-frozen ATR14, SL=1 ATR, TP=1.5 ATR",
+    "BRACKET_1ATR_2ATR": "entry-frozen ATR14, SL=1 ATR, TP=2 ATR",
+    "BE_AFTER_1ATR_TP2ATR": "initial 1 ATR SL and 2 ATR TP; after favorable 1 ATR wick, entry-price stop becomes active from next bar",
+    "ATR_TRAIL": "initial 1 ATR SL; after completed close gains 1 ATR, 1.5 ATR ratchet becomes active next bar; time exit at 24 bars",
+    "SMA_DETERIORATION": "initial 1 ATR SL; three completed adverse SMA20 slopes trigger next-bar side-correct open exit; time exit at 24 bars",
+    "STRUCTURE_BREAK": "initial 1 ATR SL; completed close beyond prior 6-bar structure triggers next-bar side-correct open exit; time exit at 24 bars"
+  },
+  "execution": {
+    "entry": "next consecutive M5 side-correct open",
+    "first_touch": "LONG uses OANDA bid high/low; SHORT uses ask low/high",
+    "dual_touch": "conservative STOP_FIRST primary",
+    "completed_bar_action": "active next bar, never retroactive",
+    "gap_stop": "worse side-correct open; gap TP improvement capped at target",
+    "spread": "implicit bid/ask",
+    "slippage": "additional adverse 0.5 contemporaneous spread at entry and exit",
+    "financing": "exclude 21:00 UTC crossing",
+    "max_horizon_bars": 24
+  },
+  "split_and_gates": {
+    "windows_days": [16, 32, 64],
+    "train_fraction": 0.6,
+    "embargo_hours": 1,
+    "holdout_start_utc": "2026-06-30T00:00:00Z",
+    "train": "n>=20, expectancy>0, PF>1, bootstrap LCB>0, and both lookback 24/48 pass for same pair/family/session/exit",
+    "validation": "exact TRAIN plateau, n>=10, expectancy>0, PF>1, bootstrap LCB>0",
+    "multi_window": "32d and 64d validation signs both positive when eligible"
+  },
+  "negative_controls": ["TP_FIRST dual touch", "same-bar BE/trail activation", "mid fill", "no slippage", "outcome-best exit"],
+  "permissions": {"research_only": true, "live": false, "paper": false, "broker_order": false, "deploy": false, "holdout": false}
+}

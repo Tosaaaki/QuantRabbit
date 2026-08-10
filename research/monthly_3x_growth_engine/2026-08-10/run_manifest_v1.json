@@ -1,0 +1,9 @@
+{
+  "contract": "MONTHLY_3X_GROWTH_ENGINE_V1",
+  "outputs": {
+    "decision_multipliers_v1.jsonl": "0a013b7761790de33dcadfc049e0109550b6e2936eb3081682ede66505ceee45",
+    "growth_grid_v1.jsonl": "9ff2e311fdb8d29fbf3b4bdf666dbd555a0cfe0edbe8b0202a8ea92152806c1e",
+    "growth_report_v1.json": "424346e8574300b369e89d6cfe4271600d80cf7a40e28bb92140822f31aafb55"
+  },
+  "preregister_sha256": "6c7e57f540f081860dc8bc2bf3c645521b5420420b9ca67122f0edaeab585269"
+}

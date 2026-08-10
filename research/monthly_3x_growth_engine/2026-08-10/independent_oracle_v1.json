@@ -1,0 +1,16 @@
+{
+  "checks": {
+    "all_growth_rows_conserve_cashflow": true,
+    "monthly_3x_compound_identity": true,
+    "monthly_3x_fixed_200_trade_expectancy_2000": true,
+    "no_validation_success_without_train_plateau": true,
+    "v2_64d_validation_count_101": true,
+    "v2_64d_validation_net_11706_0523": true
+  },
+  "contract": "MONTHLY_3X_GROWTH_ENGINE_INDEPENDENT_ORACLE_V1",
+  "corrected_64d_validation_net_jpy": 11706.052300000001,
+  "passed": 6,
+  "source_membership_sha256": "f669aa6720bafb516ccf48c5aa92b8eaa69837c2ef83b24abc4f41ecb47af7d6",
+  "status": "PASS",
+  "total": 6
+}
