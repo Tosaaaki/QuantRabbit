@@ -1,0 +1,11 @@
+{
+  "best_candidate": null,
+  "conclusion": "MONTHLY_3X_NOT_PROVED",
+  "contract": "MONTHLY_3X_DIRECT_PROOF_V1",
+  "grid_rows": 5670,
+  "holdout_used": false,
+  "monthly_3x_pass_count": 0,
+  "monthly_3x_passes": [],
+  "preregister_sha256": "f8bcb175116c2b6c47606fca4843c97ccf0c1364fe09492da0d22cd36a3ca300",
+  "stable_multiwindow_candidate_count": 0
+}

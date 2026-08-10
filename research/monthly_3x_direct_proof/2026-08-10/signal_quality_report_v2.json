@@ -1,0 +1,10 @@
+{
+  "conclusion": "NO_STABLE_EDGE",
+  "contract": "MONTHLY_3X_SIGNAL_QUALITY_REFINE_V2",
+  "grid_rows": 2430,
+  "holdout_used": false,
+  "preregister_sha256": "682513c0eac8814f830b7577470fe2a7b87ff39a614b90c805579bc11ce68861",
+  "stable_multiwindow_candidates": [],
+  "train_plateau_rows": 0,
+  "validation_pass_rows": 0
+}

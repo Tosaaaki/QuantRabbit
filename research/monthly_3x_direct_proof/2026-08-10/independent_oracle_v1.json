@@ -1,0 +1,15 @@
+{
+  "all_passed": true,
+  "checks": {
+    "holdout_sealed": true,
+    "monthly_target_not_mislabeled": true,
+    "no_hidden_v1_validation_pass": true,
+    "no_hidden_v2_validation_pass": true,
+    "refine_not_mislabeled": true,
+    "source_hashes_match": true,
+    "v1_grid_count": true,
+    "v2_grid_count": true
+  },
+  "passed": 8,
+  "total": 8
+}

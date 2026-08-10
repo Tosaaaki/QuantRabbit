@@ -1,0 +1,78 @@
+{
+  "contract": "MONTHLY_3X_DIRECT_PROOF_V1",
+  "target": {
+    "starting_equity_jpy": 200000,
+    "ending_equity_jpy": 600000,
+    "required_profit_jpy": 400000,
+    "period_days": 30,
+    "max_realized_drawdown_jpy": 80000,
+    "margin_cap_jpy": 150000,
+    "margin_rate": 0.05
+  },
+  "sources": {
+    "AUD_JPY": {
+      "path": "logs/replay/oanda_history/20260709T003937Z/AUD_JPY/AUD_JPY_M5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "sha256": "ac979a5a8d8606b24c77337a383a2ecfb777f06efdbd86a768834374a0e6fd87"
+    },
+    "EUR_JPY": {
+      "path": "logs/replay/oanda_history/20260709T003937Z/EUR_JPY/EUR_JPY_M5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "sha256": "67783b4f3f8fd4a02d42866586fae2836e63b058d4c7d7d5f5e80b17c705d2c7"
+    },
+    "EUR_USD": {
+      "path": "logs/replay/oanda_history/20260709T003937Z/EUR_USD/EUR_USD_M5_BA_20260311T003937Z_20260709T003937Z.jsonl.gz",
+      "sha256": "5df6849bd1405fc96edf95814e3ef52baf35e4029c94f0ca9d61f69d2986630f"
+    }
+  },
+  "signal_grid": {
+    "families": [
+      "BREAKOUT_CONTINUATION",
+      "LIQUIDITY_SWEEP_REVERSAL",
+      "RANGE_REVERSION",
+      "COMPRESSION_BREAKOUT",
+      "SMA_PULLBACK_CONTINUATION"
+    ],
+    "lookback": [12, 24, 48],
+    "entry_session_utc": ["ALL", "07_16", "13_20"],
+    "exit_policies": [
+      "TIME_24",
+      "BRACKET_1ATR_1_5ATR",
+      "BRACKET_1ATR_2ATR",
+      "BE_AFTER_1ATR_TP2ATR",
+      "ATR_TRAIL",
+      "SMA_DETERIORATION",
+      "STRUCTURE_BREAK"
+    ]
+  },
+  "execution": {
+    "signal": "completed M5 only",
+    "entry": "next consecutive M5 side-correct open",
+    "touch": "wick first-touch; STOP_FIRST on dual touch",
+    "spread": "implicit OANDA bid/ask",
+    "slippage": "additional adverse 0.5 contemporaneous spread on entry and exit",
+    "financing": "exclude trades crossing 21:00 UTC because causal schedule is unavailable",
+    "fee": 0,
+    "overlap": "one open trade per pair/config",
+    "eurusd_conversion": "exit-time EURJPY/EURUSD mid cross with additional 0.1% adverse conversion haircut"
+  },
+  "split": {
+    "holdout_start_utc": "2026-06-30T00:00:00Z",
+    "windows_days": [16, 32, 64],
+    "train_fraction": 0.6,
+    "embargo_hours": 1,
+    "holdout": "UNREAD_AND_UNUSED"
+  },
+  "admission": {
+    "train": "n>=20, expectancy>0, PF>1, LCB>0, adjacent lookback plateau",
+    "validation": "n>=10, expectancy>0, PF>1, LCB>0",
+    "multi_window": "same frozen point passes both 32d and 64d validation",
+    "monthly_3x": "64d validation annualized 30d Net>=400k and LCB>=400k at margin cap, DD<=80k"
+  },
+  "permissions": {
+    "research_only": true,
+    "holdout": false,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "contract": "MONTHLY_3X_SIGNAL_QUALITY_REFINE_V2",
+  "created_after": "V1 found zero positive TRAIN LCB and top rows concentrated in TIME_24",
+  "frozen_from_v1": {
+    "pairs": ["AUD_JPY", "EUR_JPY", "EUR_USD"],
+    "families": ["BREAKOUT_CONTINUATION", "COMPRESSION_BREAKOUT", "SMA_PULLBACK_CONTINUATION"],
+    "lookback": [12, 24, 48],
+    "sessions": ["ALL", "07_16", "13_20"],
+    "exit_policy": "TIME_24",
+    "source_and_execution": "preregister_v1.json"
+  },
+  "single_new_axis": {
+    "name": "completed_bar_signal_quality",
+    "values": {
+      "NONE": "no additional filter",
+      "BODY_GE_0_5ATR": "completed signal-bar absolute body >=0.5 entry-frozen ATR14",
+      "SLOPE3_GE_0_15ATR": "absolute three-bar SMA20 change >=0.15 ATR14",
+      "ATR48_GE_1_1": "ATR14 >=1.1 times causal trailing-48 ATR median",
+      "BODY_AND_SLOPE": "BODY_GE_0_5ATR and SLOPE3_GE_0_15ATR"
+    }
+  },
+  "split_and_target": "identical to preregister_v1.json; TRAIN thresholds fixed before VALIDATION",
+  "permissions": {
+    "research_only": true,
+    "holdout": false,
+    "live": false,
+    "paper": false,
+    "broker_order": false,
+    "deploy": false
+  }
+}
