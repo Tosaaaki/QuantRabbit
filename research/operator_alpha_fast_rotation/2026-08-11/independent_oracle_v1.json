@@ -1,0 +1,281 @@
+{
+  "artifact_readback_sha256": {
+    "arm_receipts_v1.jsonl": "8cb334e328c2fe2a14e8f8a4c0aa99d1024b4eb90f682083292aa97e1283eb8d",
+    "canonical_decision_table_v1.csv": "23a2f8e3c4c9f60ff702b6fb2c00ed467d221a513bc1bea76c9be4c5857630b0",
+    "comparison_report_v1.json": "08c5c5ee6210e29b292008efa8de8e20079f9f717ad08653d04ca26f3c8cb285",
+    "fusion_table_v1.json": "c0527adaabd808955b1210f1c0c3811ce1af55f926ca1eba47e9f8ceb3122653",
+    "source_candles_v1.json": "de8efed57a4b7a765c2f0728ec303a0c05cf5019c31cce25420735e7996d04c8",
+    "source_manifest_v1.json": "c1cc7d5cbc5b4e57b77ef831bba45cebf116e44c1268b0f5853c3651352f02b6",
+    "source_transactions_v1.json": "1135153f8375c550650913c78edcafd30e7fc842dcb5e433ffed048aaa052d63",
+    "target_arithmetic_v1.json": "9b35d6314db39f77f5f0fb766f395a56f51180f0c75dff6b1fe8d2a845fcea22",
+    "trade_reconstruction_v1.json": "7e8f81e61f2558ddae2e43d96bcaed9410c4bae109def3eaf046ff661003ae95",
+    "verdict_v1.md": "a25d06280510d7ecbc669433b391c8186ea12f92ae01d8e161818cc13661bb11"
+  },
+  "checks": [
+    {
+      "evidence": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "name": "exact_six_trade_reconstruction",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "BASELINE_ACTUAL",
+        "OPERATOR_ALPHA",
+        "X_STRUCTURE",
+        "X_OPERATOR_INTERACTION"
+      ],
+      "name": "exact_four_arms",
+      "passed": true
+    },
+    {
+      "evidence": 24,
+      "name": "exact_24_receipts",
+      "passed": true
+    },
+    {
+      "evidence": [],
+      "name": "receipt_hashes",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "name": "same_cohort_BASELINE_ACTUAL",
+      "passed": true
+    },
+    {
+      "evidence": {
+        "dd": true,
+        "net": true,
+        "pf": true,
+        "selected": true,
+        "turnover": true
+      },
+      "name": "metrics_BASELINE_ACTUAL",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "name": "same_cohort_OPERATOR_ALPHA",
+      "passed": true
+    },
+    {
+      "evidence": {
+        "dd": true,
+        "net": true,
+        "pf": true,
+        "selected": true,
+        "turnover": true
+      },
+      "name": "metrics_OPERATOR_ALPHA",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "name": "same_cohort_X_STRUCTURE",
+      "passed": true
+    },
+    {
+      "evidence": {
+        "dd": true,
+        "net": true,
+        "pf": true,
+        "selected": true,
+        "turnover": true
+      },
+      "name": "metrics_X_STRUCTURE",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "name": "same_cohort_X_OPERATOR_INTERACTION",
+      "passed": true
+    },
+    {
+      "evidence": {
+        "dd": true,
+        "net": true,
+        "pf": true,
+        "selected": true,
+        "turnover": true
+      },
+      "name": "metrics_X_OPERATOR_INTERACTION",
+      "passed": true
+    },
+    {
+      "evidence": "5052.0833",
+      "name": "four_win_total",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "-45720.0",
+        "-30480.0"
+      ],
+      "name": "two_margin_closeouts",
+      "passed": true
+    },
+    {
+      "evidence": [],
+      "name": "transaction_order_fill_timeline",
+      "passed": true
+    },
+    {
+      "evidence": [],
+      "name": "operator_exits_post_entry_within_cap",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "PROFIT_HARVEST",
+        "LOSS_BUDGET",
+        "LOSS_BUDGET",
+        "LOSS_BUDGET",
+        "PROFIT_HARVEST",
+        "PROFIT_HARVEST"
+      ],
+      "name": "operator_contains_observed_failure_shape",
+      "passed": true
+    },
+    {
+      "evidence": [
+        [
+          "473162->473180",
+          "PROFIT_HARVEST",
+          540.0000000000251
+        ],
+        [
+          "473183->473186",
+          "LOSS_BUDGET",
+          -1559.9999999994898
+        ],
+        [
+          "473189->473191",
+          "LOSS_BUDGET",
+          -645.9999999993828
+        ],
+        [
+          "473193->473195",
+          "LOSS_BUDGET",
+          -1023.4860000003421
+        ],
+        [
+          "473197->473199",
+          "PROFIT_HARVEST",
+          787.5000000000523
+        ],
+        [
+          "473201->473204",
+          "PROFIT_HARVEST",
+          595.2038249997357
+        ]
+      ],
+      "name": "operator_allows_valid_profit_shape",
+      "passed": true
+    },
+    {
+      "evidence": {
+        "action": "NO_TOUCH",
+        "entry_fill_id": "473207",
+        "ownership": "manual_or_unknown",
+        "state": "OPEN_AT_TRANSACTION_WATERMARK_473209"
+      },
+      "name": "open_boundary_no_touch",
+      "passed": true
+    },
+    {
+      "evidence": [
+        "WAIT_EVIDENCE_INCOMPLETE",
+        "WAIT_EVIDENCE_INCOMPLETE",
+        "WAIT_EVIDENCE_INCOMPLETE",
+        "WAIT_EVIDENCE_INCOMPLETE",
+        "WAIT_EVIDENCE_INCOMPLETE",
+        "WAIT_EVIDENCE_INCOMPLETE"
+      ],
+      "name": "live_fusion_waits",
+      "passed": true
+    },
+    {
+      "evidence": 36,
+      "name": "six_state_cycles",
+      "passed": true
+    },
+    {
+      "evidence": null,
+      "name": "decision_table_no_live_permission",
+      "passed": true
+    }
+  ],
+  "checks_passed": 22,
+  "checks_total": 22,
+  "contract": "OPERATOR_ALPHA_INDEPENDENT_ORACLE_V1",
+  "oracle_metrics": {
+    "BASELINE_ACTUAL": {
+      "dd": "76200.0",
+      "max_hold": "218492.691788",
+      "net": "-71147.9167",
+      "pf": "0.06630030577427821522309711286",
+      "selected": 6,
+      "turnover": 218007
+    },
+    "OPERATOR_ALPHA": {
+      "dd": "3229.4859999992147",
+      "max_hold": "702.733828",
+      "net": "-1306.7821749994016",
+      "pf": "0.5953590834579498519232594685",
+      "selected": 6,
+      "turnover": 218007
+    },
+    "X_OPERATOR_INTERACTION": {
+      "dd": "1559.9999999994898",
+      "max_hold": "123.109932",
+      "net": "-1019.9999999994647",
+      "pf": "0.3461538461539754536489152297",
+      "selected": 2,
+      "turnover": 85000
+    },
+    "X_STRUCTURE": {
+      "dd": "76200.0",
+      "max_hold": "218492.691788",
+      "net": "-76200.0",
+      "pf": "0E+1",
+      "selected": 2,
+      "turnover": 85000
+    }
+  },
+  "status": "PASS"
+}

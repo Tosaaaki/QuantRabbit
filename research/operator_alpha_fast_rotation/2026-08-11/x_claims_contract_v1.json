@@ -1,0 +1,104 @@
+{
+  "contract": "X_POST_FALSIFIABLE_ELEMENTS_V1",
+  "source": {
+    "url": "https://x.com/foodloss_otoko/status/2086650504831201507?s=46",
+    "author_handle": "@foodloss_otoko",
+    "posted_at_display": "2026-08-10 12:07 JST",
+    "verified_at_utc": "2026-08-10T18:16:56.757Z",
+    "verification": {
+      "browser": "Chrome extension",
+      "profile": "existing connected Chrome profile, unchanged",
+      "viewport": "native Chrome viewport; no override",
+      "operations": [
+        "direct URL navigation",
+        "visible DOM readback",
+        "target article text readback",
+        "full-page and target-region screenshot",
+        "target link enumeration",
+        "target image-node inspection",
+        "parent and author-reply inspection"
+      ],
+      "result": "target text and related posts verified; no attached target media",
+      "evidence": "visible article text, timestamp link, related post links, and one profile-image src",
+      "unverified_risk": "engagement counts are volatile and are not used; the screenshot renderer clipped long page regions, so text/media classification relies on fresh visible DOM plus target-node inspection",
+      "x_api_used": false
+    },
+    "media": {
+      "attached_media_count": 0,
+      "observed_image_nodes": 1,
+      "image_node_classification": "profile image only",
+      "claim": "the target post contains text but no attached image or video"
+    },
+    "related_posts": [
+      {
+        "url": "https://x.com/foodloss_otoko/status/2086650503119991148",
+        "role": "parent promotional post",
+        "claims": ["FX monthly 500,000 JPY is targetable", "about ten minutes per day can be enough"]
+      },
+      {
+        "url": "https://x.com/foodloss_otoko/status/2086768789434298672",
+        "role": "author reply",
+        "claim": "start by resolving one's concrete problems"
+      }
+    ]
+  },
+  "rejected_as_strategy_evidence": [
+    {
+      "claim": "monthly 500,000 JPY is targetable",
+      "reason": "no capital, units, opportunity density, cost, drawdown, or failure condition is supplied"
+    },
+    {
+      "claim": "about ten minutes per day is enough",
+      "reason": "no observation or execution-time distribution is supplied"
+    },
+    {
+      "claim": "the method improves trading overwhelmingly",
+      "reason": "directional language without a comparator or measured outcome"
+    }
+  ],
+  "admitted_as_one_variable_contracts": [
+    {
+      "id": "X_H4_TREND",
+      "variable": "completed H4 trend direction",
+      "falsification": "three preregistered H4 direction features do not agree or disagree with the entered side"
+    },
+    {
+      "id": "X_RECENT_EXTREMES",
+      "variable": "recent completed H4 high and low",
+      "falsification": "the proposed entry or invalidation is outside the recorded range contract"
+    },
+    {
+      "id": "X_BIDIRECTIONAL_REASONS",
+      "variable": "three supporting and opposing reasons are recorded separately",
+      "falsification": "the direction cannot be reproduced from the feature values"
+    },
+    {
+      "id": "X_ENTRY_AND_SKIP",
+      "variable": "entry and skip predicates are both explicit",
+      "falsification": "a missing or conflicting predicate still permits entry"
+    },
+    {
+      "id": "X_FAILURE_SIGNS",
+      "variable": "five failure modes and observable precursors are attached to the decision",
+      "falsification": "a failure has no predeclared observable or response"
+    },
+    {
+      "id": "X_VALIDATION_FIELDS",
+      "variable": "after-cost win rate, PF, expectancy, DD, margin, holding time, turnover, and maximum losing streak",
+      "falsification": "any selected arm omits a field or uses a different cohort"
+    },
+    {
+      "id": "X_REVIEW",
+      "variable": "decision and outcome are reviewed as separate records",
+      "falsification": "future outcome fields influence the decision record"
+    }
+  ],
+  "five_failure_modes": [
+    "H4 direction changes or becomes conflicting",
+    "M5 trigger fails to confirm the H4 direction",
+    "spread or executable price invalidates after-cost expectancy",
+    "loss budget or margin evidence fails",
+    "maximum holding time expires before a valid profit exit"
+  ],
+  "use_boundary": "The post contributes question structure and measurable fields, not a forecast, entry signal, expected return, or live permission."
+}

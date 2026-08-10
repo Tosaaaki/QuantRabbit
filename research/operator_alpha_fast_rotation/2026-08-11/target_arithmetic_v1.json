@@ -1,0 +1,118 @@
+{
+  "arm_context": {
+    "BASELINE_ACTUAL": {
+      "after_cost_net_jpy": -71147.9167,
+      "cohort_decisions": 6,
+      "executed_or_retained": 6,
+      "expectancy_per_cohort_decision_jpy": -11857.986116666667,
+      "expectancy_per_execution_jpy": -11857.986116666667,
+      "holding_time_max_seconds": 218492.691788,
+      "holding_time_mean_seconds": 43917.665102499996,
+      "holding_time_median_seconds": 1108.349081,
+      "losses": 2,
+      "margin_required_peak_proxy_jpy": 283114.8,
+      "margin_required_peak_to_entry_balance_proxy": 0.9503190776844921,
+      "max_drawdown_jpy": 76200.0,
+      "max_losing_streak": 2,
+      "profit_factor": 0.06630030577427821,
+      "turnover_units": 218007,
+      "wins": 4
+    },
+    "OPERATOR_ALPHA": {
+      "after_cost_net_jpy": -1306.7821749994014,
+      "cohort_decisions": 6,
+      "executed_or_retained": 6,
+      "expectancy_per_cohort_decision_jpy": -217.7970291665669,
+      "expectancy_per_execution_jpy": -217.7970291665669,
+      "holding_time_max_seconds": 702.733828,
+      "holding_time_mean_seconds": 223.33044216666667,
+      "holding_time_median_seconds": 124.372834,
+      "losses": 3,
+      "margin_required_peak_proxy_jpy": 283114.8,
+      "margin_required_peak_to_entry_balance_proxy": 0.9503190776844921,
+      "max_drawdown_jpy": 3229.4859999992145,
+      "max_losing_streak": 3,
+      "profit_factor": 0.5953590834579499,
+      "turnover_units": 218007,
+      "wins": 3
+    },
+    "X_OPERATOR_INTERACTION": {
+      "after_cost_net_jpy": -1019.9999999994646,
+      "cohort_decisions": 6,
+      "executed_or_retained": 2,
+      "expectancy_per_cohort_decision_jpy": -169.99999999991078,
+      "expectancy_per_execution_jpy": -509.9999999997323,
+      "holding_time_max_seconds": 123.109932,
+      "holding_time_mean_seconds": 70.7966165,
+      "holding_time_median_seconds": 70.7966165,
+      "losses": 1,
+      "margin_required_peak_proxy_jpy": 283114.8,
+      "margin_required_peak_to_entry_balance_proxy": 0.8893128415488917,
+      "max_drawdown_jpy": 1559.9999999994898,
+      "max_losing_streak": 1,
+      "profit_factor": 0.3461538461539755,
+      "turnover_units": 85000,
+      "wins": 1
+    },
+    "X_STRUCTURE": {
+      "after_cost_net_jpy": -76200.0,
+      "cohort_decisions": 6,
+      "executed_or_retained": 2,
+      "expectancy_per_cohort_decision_jpy": -12700.0,
+      "expectancy_per_execution_jpy": -38100.0,
+      "holding_time_max_seconds": 218492.691788,
+      "holding_time_mean_seconds": 130352.339196,
+      "holding_time_median_seconds": 130352.339196,
+      "losses": 2,
+      "margin_required_peak_proxy_jpy": 283114.8,
+      "margin_required_peak_to_entry_balance_proxy": 0.8893128415488917,
+      "max_drawdown_jpy": 76200.0,
+      "max_losing_streak": 2,
+      "profit_factor": 0.0,
+      "turnover_units": 85000,
+      "wins": 0
+    }
+  },
+  "break_conditions": {
+    "combined_loss_as_four_win_batches": 15.082886697454096,
+    "combined_margin_closeout_loss_jpy": 76200.0,
+    "interpretation": "One unlimited hold can erase multiple fast-rotation batches; the observed pace is invalid if maximum hold, loss budget, margin completeness, or opportunity density fails.",
+    "largest_loss_as_four_win_batches": 9.049732018472458,
+    "margin_closeout_losses_jpy": [
+      45720.0,
+      30480.0
+    ]
+  },
+  "contract": "OBSERVED_PACE_NOT_GUARANTEE_V1",
+  "four_win_return_fraction": 0.019873737485045204,
+  "four_win_total_jpy": 5052.0833,
+  "goals": {
+    "10pct": {
+      "equivalent_four_win_batches_at_observed_total": 5.031766172580725,
+      "equivalent_wins_at_observed_mean": 20.1270646903229,
+      "required_average_jpy_by_opportunities_per_day": {
+        "1": 847.3633950000001,
+        "2": 423.68169750000004,
+        "4": 211.84084875000002
+      },
+      "required_daily_profit_over_30_days_jpy": 847.3633950000001,
+      "required_wins_per_day_at_observed_mean": 0.6709021563440968,
+      "target_profit_jpy": 25420.901850000002
+    },
+    "50pct": {
+      "equivalent_four_win_batches_at_observed_total": 25.158830862903624,
+      "equivalent_wins_at_observed_mean": 100.6353234516145,
+      "required_average_jpy_by_opportunities_per_day": {
+        "1": 4236.816975,
+        "2": 2118.4084875,
+        "4": 1059.20424375
+      },
+      "required_daily_profit_over_30_days_jpy": 4236.816975,
+      "required_wins_per_day_at_observed_mean": 3.3545107817204833,
+      "target_profit_jpy": 127104.50925
+    }
+  },
+  "guarantee": false,
+  "mean_win_jpy": 1263.020825,
+  "starting_balance_jpy": 254209.0185
+}

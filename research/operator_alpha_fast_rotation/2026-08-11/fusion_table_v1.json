@@ -1,0 +1,460 @@
+{
+  "contract": "OPERATOR_ALPHA_FUSION_TABLE_V1",
+  "fusion_semantics": {
+    "constraint_families": [
+      "execution",
+      "risk_margin",
+      "trailing_BE",
+      "hedge"
+    ],
+    "edge_families": [
+      "technical",
+      "forecast",
+      "price_action",
+      "strategy_evidence"
+    ],
+    "missing_is_not_zero": true,
+    "one_answer": [
+      "TRADE",
+      "WAIT",
+      "SKIP",
+      "MANAGE"
+    ],
+    "operator_alpha_role": "state/exit/rotation consumer; never an independent forecast family",
+    "x_role": "measurable checklist only; no edge prior"
+  },
+  "one_answer_per_decision": true,
+  "repository_lineage": {
+    "active_TP_SL_replacements": "research/active_protection_schedule/2026-08-10/verdict_v1.md",
+    "continuous_thesis_exit_audit": "research/continuous_thesis_monitor/2026-08-10/owner_exit_target_audit_v1.md",
+    "decision_time_execution": "research/decision_time_execution_evidence/2026-08-10/preregister_v1.json",
+    "margin_and_loss_floor": "research/capital_preservation_gate/2026-08-10/preregister_v1.json",
+    "multidimensional_cube": "research/python_ecosystem_audit/2026-08-10/canonical_long_table.jsonl",
+    "technical_forecast_price_action_fusion": "research/system_utilization_rca/2026-08-10/preregister_v1.json",
+    "trailing_BE_partial_exit_cube": "research/financial_oracle_v2/2026-08-10/exit_report_v1.json"
+  },
+  "rows": [
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473162->473180",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "SHORT",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 283114.8,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [
+            "ema10_vs_ema20",
+            "ema20_slope_3",
+            "close_vs_ema20"
+          ],
+          "m5_confirmed": true,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": true,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "USD_JPY",
+      "research_answer": "DIAGNOSTIC_CANDIDATE"
+    },
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473183->473186",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "SHORT",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 253177.6,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [
+            "ema10_vs_ema20",
+            "ema20_slope_3",
+            "close_vs_ema20"
+          ],
+          "m5_confirmed": false,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": true,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "USD_JPY",
+      "research_answer": "DIAGNOSTIC_CANDIDATE"
+    },
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473189->473191",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "LONG",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 241579.68,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [],
+          "m5_confirmed": true,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": false,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "USD_JPY",
+      "research_answer": "WAIT_DIRECTION_CONFLICT"
+    },
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473193->473195",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "LONG",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 220329.6,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [],
+          "m5_confirmed": false,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": false,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "EUR_USD",
+      "research_answer": "WAIT_DIRECTION_CONFLICT"
+    },
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473197->473199",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "LONG",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 222588.8,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [],
+          "m5_confirmed": false,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": false,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "USD_JPY",
+      "research_answer": "WAIT_DIRECTION_CONFLICT"
+    },
+    {
+      "actual_side": "SHORT",
+      "decision_id": "473201->473204",
+      "decisive_constraint": [
+        "forecast_decision_time_record",
+        "account_margin_available_used",
+        "executable_unwind_packet"
+      ],
+      "families": {
+        "continuous_thesis": {
+          "entry_frozen_direction": "LONG",
+          "monitor": "S5 after-cost and elapsed-time state",
+          "status": "DERIVED_RESEARCH"
+        },
+        "execution": {
+          "source": "side-correct S5 bid/ask",
+          "status": "USED_RESEARCH"
+        },
+        "forecast": {
+          "reason": "no causal decision-time record in the frozen packet",
+          "status": "MISSING"
+        },
+        "hedge": {
+          "reason": "no explicit executable unwind; cannot grant entry",
+          "status": "NOT_EDGE"
+        },
+        "multidimensional_cube": {
+          "missing_cells": [
+            "forecast_decision_time_record",
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "SPARSE"
+        },
+        "operator_alpha": {
+          "role": "exit and rotation contract",
+          "status": "USED_RESEARCH"
+        },
+        "price_action": {
+          "source": "completed M5 close versus EMA10",
+          "status": "USED"
+        },
+        "risk_margin": {
+          "initial_margin_required_jpy": 220407.4164,
+          "missing": [
+            "account_margin_available_used",
+            "executable_unwind_packet"
+          ],
+          "status": "INCOMPLETE"
+        },
+        "technical": {
+          "h4_support": [],
+          "m5_confirmed": false,
+          "status": "USED"
+        },
+        "trailing_BE": {
+          "reason": "separate causal next-quote study required",
+          "status": "NOT_ACTIVATED_IN_V1"
+        },
+        "x_method": {
+          "selected": false,
+          "status": "USED_AS_STRUCTURE_ONLY"
+        }
+      },
+      "live_answer": "WAIT_EVIDENCE_INCOMPLETE",
+      "live_permission": false,
+      "pair": "EUR_USD",
+      "research_answer": "WAIT_DIRECTION_CONFLICT"
+    }
+  ]
+}

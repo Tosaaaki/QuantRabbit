@@ -1,0 +1,477 @@
+{
+  "broker_last_transaction_id_at_acquisition": "473209",
+  "contract": "OPERATOR_ALPHA_TRANSACTION_TRUTH_V1",
+  "frozen_trades": [
+    {
+      "close_fill_id": "473180",
+      "entry_fill_id": "473162",
+      "label": "margin_closeout_1"
+    },
+    {
+      "close_fill_id": "473186",
+      "entry_fill_id": "473183",
+      "label": "margin_closeout_2"
+    },
+    {
+      "close_fill_id": "473191",
+      "entry_fill_id": "473189",
+      "label": "manual_win_1"
+    },
+    {
+      "close_fill_id": "473195",
+      "entry_fill_id": "473193",
+      "label": "manual_win_2"
+    },
+    {
+      "close_fill_id": "473199",
+      "entry_fill_id": "473197",
+      "label": "manual_win_3"
+    },
+    {
+      "close_fill_id": "473204",
+      "entry_fill_id": "473201",
+      "label": "manual_win_4"
+    }
+  ],
+  "read_only": true,
+  "since_transaction_id": "473160",
+  "transactions": [
+    {
+      "id": "473161",
+      "instrument": "USD_JPY",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-07T13:14:16.516699977Z",
+      "type": "MARKET_ORDER",
+      "units": "-45000"
+    },
+    {
+      "accountBalance": "331834.4023",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473162",
+      "instrument": "USD_JPY",
+      "orderID": "473161",
+      "pl": "0.0000",
+      "price": "157.282",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-07T13:14:16.516699977Z",
+      "tradeOpened": {
+        "halfSpreadCost": "180.0000",
+        "initialMarginRequired": "283114.8000",
+        "price": "157.282",
+        "tradeID": "473162",
+        "units": "-45000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-45000"
+    },
+    {
+      "id": "473179",
+      "instrument": "USD_JPY",
+      "reason": "MARGIN_CLOSEOUT",
+      "time": "2026-08-10T01:55:49.208487135Z",
+      "type": "MARKET_ORDER",
+      "units": "45000"
+    },
+    {
+      "accountBalance": "284689.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473180",
+      "instrument": "USD_JPY",
+      "orderID": "473179",
+      "pl": "-45720.0000",
+      "price": "158.298",
+      "reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "time": "2026-08-10T01:55:49.208487135Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "180.0000",
+          "homeConversionCost": "0.00000000000000",
+          "plHomeConversionCost": "0.000",
+          "price": "158.298",
+          "realizedPL": "-45720.0000",
+          "tradeID": "473162",
+          "units": "45000"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "45000"
+    },
+    {
+      "id": "473182",
+      "instrument": "USD_JPY",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T02:01:51.890068356Z",
+      "type": "MARKET_ORDER",
+      "units": "-40000"
+    },
+    {
+      "accountBalance": "284689.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473183",
+      "instrument": "USD_JPY",
+      "orderID": "473182",
+      "pl": "0.0000",
+      "price": "158.232",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T02:01:51.890068356Z",
+      "tradeOpened": {
+        "halfSpreadCost": "160.0000",
+        "initialMarginRequired": "253177.6000",
+        "price": "158.232",
+        "tradeID": "473183",
+        "units": "-40000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-40000"
+    },
+    {
+      "id": "473185",
+      "instrument": "USD_JPY",
+      "reason": "MARGIN_CLOSEOUT",
+      "time": "2026-08-10T13:45:23.876672361Z",
+      "type": "MARKET_ORDER",
+      "units": "40000"
+    },
+    {
+      "accountBalance": "254209.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473186",
+      "instrument": "USD_JPY",
+      "orderID": "473185",
+      "pl": "-30480.0000",
+      "price": "158.994",
+      "reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "time": "2026-08-10T13:45:23.876672361Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "160.0000",
+          "homeConversionCost": "0.00000000000000",
+          "plHomeConversionCost": "0.000",
+          "price": "158.994",
+          "realizedPL": "-30480.0000",
+          "tradeID": "473183",
+          "units": "40000"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "40000"
+    },
+    {
+      "id": "473188",
+      "instrument": "USD_JPY",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T15:44:37.266172316Z",
+      "type": "MARKET_ORDER",
+      "units": "-38000"
+    },
+    {
+      "accountBalance": "254209.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473189",
+      "instrument": "USD_JPY",
+      "orderID": "473188",
+      "pl": "0.0000",
+      "price": "158.930",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T15:44:37.266172316Z",
+      "tradeOpened": {
+        "halfSpreadCost": "152.0000",
+        "initialMarginRequired": "241579.6800",
+        "price": "158.930",
+        "tradeID": "473189",
+        "units": "-38000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-38000"
+    },
+    {
+      "id": "473190",
+      "instrument": "USD_JPY",
+      "reason": "POSITION_CLOSEOUT",
+      "time": "2026-08-10T15:52:35.159250442Z",
+      "type": "MARKET_ORDER",
+      "units": "38000"
+    },
+    {
+      "accountBalance": "254741.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473191",
+      "instrument": "USD_JPY",
+      "orderID": "473190",
+      "pl": "532.0000",
+      "price": "158.916",
+      "reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+      "time": "2026-08-10T15:52:35.159250442Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "152.0000",
+          "homeConversionCost": "0.00000000000000",
+          "plHomeConversionCost": "0.000",
+          "price": "158.916",
+          "realizedPL": "532.0000",
+          "tradeID": "473189",
+          "units": "38000"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "38000"
+    },
+    {
+      "id": "473192",
+      "instrument": "EUR_USD",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:04:29.862200337Z",
+      "type": "MARKET_ORDER",
+      "units": "-30000"
+    },
+    {
+      "accountBalance": "254741.0185",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473193",
+      "instrument": "EUR_USD",
+      "orderID": "473192",
+      "pl": "0.0000",
+      "price": "1.15521",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T16:04:29.862200337Z",
+      "tradeOpened": {
+        "halfSpreadCost": "190.7148",
+        "initialMarginRequired": "220329.6000",
+        "price": "1.15521",
+        "tradeID": "473193",
+        "units": "-30000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-30000"
+    },
+    {
+      "id": "473194",
+      "instrument": "EUR_USD",
+      "reason": "TRADE_CLOSE",
+      "time": "2026-08-10T16:33:28.667284312Z",
+      "type": "MARKET_ORDER",
+      "units": "30000"
+    },
+    {
+      "accountBalance": "255550.2865",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473195",
+      "instrument": "EUR_USD",
+      "orderID": "473194",
+      "pl": "809.2680",
+      "price": "1.15504",
+      "reason": "MARKET_ORDER_TRADE_CLOSE",
+      "time": "2026-08-10T16:33:28.667284312Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "190.7976",
+          "homeConversionCost": "-1.58607960000000",
+          "plHomeConversionCost": "-1.58607960000",
+          "price": "1.15504",
+          "realizedPL": "809.2680",
+          "tradeID": "473193",
+          "units": "30000"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "30000"
+    },
+    {
+      "id": "473196",
+      "instrument": "USD_JPY",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:34:09.364264182Z",
+      "type": "MARKET_ORDER",
+      "units": "-35000"
+    },
+    {
+      "accountBalance": "255550.2865",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473197",
+      "instrument": "USD_JPY",
+      "orderID": "473196",
+      "pl": "0.0000",
+      "price": "158.988",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T16:34:09.364264182Z",
+      "tradeOpened": {
+        "halfSpreadCost": "140.0000",
+        "initialMarginRequired": "222588.8000",
+        "price": "158.988",
+        "tradeID": "473197",
+        "units": "-35000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-35000"
+    },
+    {
+      "id": "473198",
+      "instrument": "USD_JPY",
+      "reason": "TRADE_CLOSE",
+      "time": "2026-08-10T16:37:05.760507295Z",
+      "type": "MARKET_ORDER",
+      "units": "35000"
+    },
+    {
+      "accountBalance": "256880.2865",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473199",
+      "instrument": "USD_JPY",
+      "orderID": "473198",
+      "pl": "1330.0000",
+      "price": "158.950",
+      "reason": "MARKET_ORDER_TRADE_CLOSE",
+      "time": "2026-08-10T16:37:05.760507295Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "140.0000",
+          "homeConversionCost": "0.00000000000000",
+          "plHomeConversionCost": "0.000",
+          "price": "158.950",
+          "realizedPL": "1330.0000",
+          "tradeID": "473197",
+          "units": "35000"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "35000"
+    },
+    {
+      "id": "473200",
+      "instrument": "EUR_USD",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:38:40.117944680Z",
+      "type": "MARKET_ORDER",
+      "units": "-30007"
+    },
+    {
+      "accountBalance": "256880.2865",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473201",
+      "instrument": "EUR_USD",
+      "orderID": "473200",
+      "pl": "0.0000",
+      "price": "1.15520",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T16:38:40.117944680Z",
+      "tradeOpened": {
+        "halfSpreadCost": "190.7821",
+        "initialMarginRequired": "220407.4164",
+        "price": "1.15520",
+        "tradeID": "473201",
+        "units": "-30007"
+      },
+      "type": "ORDER_FILL",
+      "units": "-30007"
+    },
+    {
+      "id": "473202",
+      "price": "1.15300",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:41:27.262946890Z",
+      "tradeID": "473201",
+      "type": "TAKE_PROFIT_ORDER"
+    },
+    {
+      "id": "473203",
+      "instrument": "EUR_USD",
+      "reason": "POSITION_CLOSEOUT",
+      "time": "2026-08-10T16:45:28.335762705Z",
+      "type": "MARKET_ORDER",
+      "units": "30007"
+    },
+    {
+      "accountBalance": "259261.1018",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473204",
+      "instrument": "EUR_USD",
+      "orderID": "473203",
+      "pl": "2380.8153",
+      "price": "1.15470",
+      "reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+      "time": "2026-08-10T16:45:28.335762705Z",
+      "tradesClosed": [
+        {
+          "financing": "0.0000",
+          "halfSpreadCost": "190.8469",
+          "homeConversionCost": "-4.65114501400000",
+          "plHomeConversionCost": "-4.65114501400",
+          "price": "1.15470",
+          "realizedPL": "2380.8153",
+          "tradeID": "473201",
+          "units": "30007"
+        }
+      ],
+      "type": "ORDER_FILL",
+      "units": "30007"
+    },
+    {
+      "id": "473205",
+      "orderID": "473202",
+      "reason": "LINKED_TRADE_CLOSED",
+      "time": "2026-08-10T16:45:28.335762705Z",
+      "type": "ORDER_CANCEL"
+    },
+    {
+      "id": "473206",
+      "instrument": "USD_JPY",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:45:44.514074269Z",
+      "type": "MARKET_ORDER",
+      "units": "-35000"
+    },
+    {
+      "accountBalance": "259261.1018",
+      "commission": "0.0000",
+      "financing": "0.0000",
+      "id": "473207",
+      "instrument": "USD_JPY",
+      "orderID": "473206",
+      "pl": "0.0000",
+      "price": "159.000",
+      "reason": "MARKET_ORDER",
+      "time": "2026-08-10T16:45:44.514074269Z",
+      "tradeOpened": {
+        "halfSpreadCost": "140.0000",
+        "initialMarginRequired": "222605.6000",
+        "price": "159.000",
+        "tradeID": "473207",
+        "units": "-35000"
+      },
+      "type": "ORDER_FILL",
+      "units": "-35000"
+    },
+    {
+      "id": "473208",
+      "price": "158.900",
+      "reason": "CLIENT_ORDER",
+      "time": "2026-08-10T16:46:18.753900807Z",
+      "tradeID": "473207",
+      "type": "TAKE_PROFIT_ORDER"
+    },
+    {
+      "id": "473209",
+      "orderID": "473208",
+      "reason": "CLIENT_REQUEST",
+      "time": "2026-08-10T17:54:24.126888501Z",
+      "type": "ORDER_CANCEL"
+    }
+  ]
+}

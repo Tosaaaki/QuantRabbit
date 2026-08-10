@@ -1,0 +1,344 @@
+{
+  "contract": "OPERATOR_ALPHA_TRADE_RECONSTRUCTION_V1",
+  "four_win_summary": {
+    "after_cost_net_jpy": 5052.0833,
+    "mean_jpy_per_trade": 1263.020825,
+    "return_fraction": 0.019873737485045204,
+    "start_balance_jpy": 254209.0185
+  },
+  "open_boundary": {
+    "action": "NO_TOUCH",
+    "entry_fill_id": "473207",
+    "ownership": "manual_or_unknown",
+    "state": "OPEN_AT_TRANSACTION_WATERMARK_473209"
+  },
+  "operator_parameters": {
+    "derivation_cohort_ids": [
+      "473189->473191",
+      "473193->473195",
+      "473197->473199",
+      "473201->473204"
+    ],
+    "loss_budget_activation_seconds": 120,
+    "loss_budget_fraction_of_entry_equity": 0.0025,
+    "max_hold_seconds": 1740,
+    "profit_floor_jpy": 532.0,
+    "slippage_stress": "additional adverse half of observed S5 closing spread",
+    "status": "IN_SAMPLE_DESCRIPTION_NOT_VALIDATION"
+  },
+  "source_manifest_sha256": "c1cc7d5cbc5b4e57b77ef831bba45cebf116e44c1268b0f5853c3651352f02b6",
+  "trades": [
+    {
+      "close_fill_id": "473180",
+      "close_price": 158.298,
+      "close_time_utc": "2026-08-10T01:55:49.208487135Z",
+      "cohort_id": "473162->473180",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 331834.4023,
+      "entry_fill_id": "473162",
+      "entry_half_spread_cost_jpy": 180.0,
+      "entry_price": 157.282,
+      "entry_time_utc": "2026-08-07T13:14:16.516699977Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "SHORT",
+        "ema10": 158.04635914439095,
+        "ema20": 158.12387390365697,
+        "last_close_mid": 157.389,
+        "last_completed_h4_start_utc": "2026-08-07T09:00:00.000000000Z",
+        "long_reasons": [],
+        "recent_high_mid": 158.575,
+        "recent_low_mid": 156.666,
+        "short_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "signals": {
+          "close_vs_ema20": -1,
+          "ema10_vs_ema20": -1,
+          "ema20_slope_3": -1
+        }
+      },
+      "holding_seconds": 218492.691788,
+      "initial_margin_required_jpy": 283114.8,
+      "label": "margin_closeout_1",
+      "m5": {
+        "complete": true,
+        "ema10": 157.50019530963746,
+        "last_close_mid": 157.3585,
+        "last_completed_m5_start_utc": "2026-08-07T13:05:00.000000000Z",
+        "side_confirmed": true
+      },
+      "pair": "USD_JPY",
+      "pip_size": 0.01,
+      "quote_to_jpy_conversion": 1.0000000000000087,
+      "realized_after_cost_jpy": -45720.0,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "units": 45000,
+      "x_structure_selected": true
+    },
+    {
+      "close_fill_id": "473186",
+      "close_price": 158.994,
+      "close_time_utc": "2026-08-10T13:45:23.876672361Z",
+      "cohort_id": "473183->473186",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 284689.0185,
+      "entry_fill_id": "473183",
+      "entry_half_spread_cost_jpy": 160.0,
+      "entry_price": 158.232,
+      "entry_time_utc": "2026-08-10T02:01:51.890068356Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "SHORT",
+        "ema10": 157.92007614670476,
+        "ema20": 158.0266769508387,
+        "last_close_mid": 157.9485,
+        "last_completed_h4_start_utc": "2026-08-09T21:00:00.000000000Z",
+        "long_reasons": [],
+        "recent_high_mid": 158.575,
+        "recent_low_mid": 156.666,
+        "short_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "signals": {
+          "close_vs_ema20": -1,
+          "ema10_vs_ema20": -1,
+          "ema20_slope_3": -1
+        }
+      },
+      "holding_seconds": 42211.986604,
+      "initial_margin_required_jpy": 253177.6,
+      "label": "margin_closeout_2",
+      "m5": {
+        "complete": true,
+        "ema10": 158.16973618789024,
+        "last_close_mid": 158.2735,
+        "last_completed_m5_start_utc": "2026-08-10T01:55:00.000000000Z",
+        "side_confirmed": false
+      },
+      "pair": "USD_JPY",
+      "pip_size": 0.01,
+      "quote_to_jpy_conversion": 0.9999999999999994,
+      "realized_after_cost_jpy": -30480.0,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+      "units": 40000,
+      "x_structure_selected": true
+    },
+    {
+      "close_fill_id": "473191",
+      "close_price": 158.916,
+      "close_time_utc": "2026-08-10T15:52:35.159250442Z",
+      "cohort_id": "473189->473191",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 254209.0185,
+      "entry_fill_id": "473189",
+      "entry_half_spread_cost_jpy": 152.0,
+      "entry_price": 158.93,
+      "entry_time_utc": "2026-08-10T15:44:37.266172316Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "LONG",
+        "ema10": 158.2678354729556,
+        "ema20": 158.19344128878416,
+        "last_close_mid": 158.9435,
+        "last_completed_h4_start_utc": "2026-08-10T09:00:00.000000000Z",
+        "long_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "recent_high_mid": 158.9495,
+        "recent_low_mid": 156.666,
+        "short_reasons": [],
+        "signals": {
+          "close_vs_ema20": 1,
+          "ema10_vs_ema20": 1,
+          "ema20_slope_3": 1
+        }
+      },
+      "holding_seconds": 477.893078,
+      "initial_margin_required_jpy": 241579.68,
+      "label": "manual_win_1",
+      "m5": {
+        "complete": true,
+        "ema10": 158.92817459673864,
+        "last_close_mid": 158.919,
+        "last_completed_m5_start_utc": "2026-08-10T15:35:00.000000000Z",
+        "side_confirmed": true
+      },
+      "pair": "USD_JPY",
+      "pip_size": 0.01,
+      "quote_to_jpy_conversion": 0.9999999999992853,
+      "realized_after_cost_jpy": 532.0,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+      "units": 38000,
+      "x_structure_selected": false
+    },
+    {
+      "close_fill_id": "473195",
+      "close_price": 1.15504,
+      "close_time_utc": "2026-08-10T16:33:28.667284312Z",
+      "cohort_id": "473193->473195",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 254741.0185,
+      "entry_fill_id": "473193",
+      "entry_half_spread_cost_jpy": 190.7148,
+      "entry_price": 1.15521,
+      "entry_time_utc": "2026-08-10T16:04:29.862200337Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "LONG",
+        "ema10": 1.1549475378632248,
+        "ema20": 1.1541995361840964,
+        "last_close_mid": 1.1547049999999999,
+        "last_completed_h4_start_utc": "2026-08-10T09:00:00.000000000Z",
+        "long_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "recent_high_mid": 1.158085,
+        "recent_low_mid": 1.151465,
+        "short_reasons": [],
+        "signals": {
+          "close_vs_ema20": 1,
+          "ema10_vs_ema20": 1,
+          "ema20_slope_3": 1
+        }
+      },
+      "holding_seconds": 1738.805084,
+      "initial_margin_required_jpy": 220329.6,
+      "label": "manual_win_2",
+      "m5": {
+        "complete": true,
+        "ema10": 1.154936193968311,
+        "last_close_mid": 1.1551650000000002,
+        "last_completed_m5_start_utc": "2026-08-10T15:55:00.000000000Z",
+        "side_confirmed": false
+      },
+      "pair": "EUR_USD",
+      "pip_size": 0.0001,
+      "quote_to_jpy_conversion": 158.67999999999677,
+      "realized_after_cost_jpy": 809.268,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "units": 30000,
+      "x_structure_selected": false
+    },
+    {
+      "close_fill_id": "473199",
+      "close_price": 158.95,
+      "close_time_utc": "2026-08-10T16:37:05.760507295Z",
+      "cohort_id": "473197->473199",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 255550.2865,
+      "entry_fill_id": "473197",
+      "entry_half_spread_cost_jpy": 140.0,
+      "entry_price": 158.988,
+      "entry_time_utc": "2026-08-10T16:34:09.364264182Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "LONG",
+        "ema10": 158.2678354729556,
+        "ema20": 158.19344128878416,
+        "last_close_mid": 158.9435,
+        "last_completed_h4_start_utc": "2026-08-10T09:00:00.000000000Z",
+        "long_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "recent_high_mid": 158.9495,
+        "recent_low_mid": 156.666,
+        "short_reasons": [],
+        "signals": {
+          "close_vs_ema20": 1,
+          "ema10_vs_ema20": 1,
+          "ema20_slope_3": 1
+        }
+      },
+      "holding_seconds": 176.396243,
+      "initial_margin_required_jpy": 222588.8,
+      "label": "manual_win_3",
+      "m5": {
+        "complete": true,
+        "ema10": 158.93016684054237,
+        "last_close_mid": 158.9315,
+        "last_completed_m5_start_utc": "2026-08-10T16:25:00.000000000Z",
+        "side_confirmed": false
+      },
+      "pair": "USD_JPY",
+      "pip_size": 0.01,
+      "quote_to_jpy_conversion": 0.9999999999997128,
+      "realized_after_cost_jpy": 1330.0,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_TRADE_CLOSE",
+      "units": 35000,
+      "x_structure_selected": false
+    },
+    {
+      "close_fill_id": "473204",
+      "close_price": 1.1547,
+      "close_time_utc": "2026-08-10T16:45:28.335762705Z",
+      "cohort_id": "473201->473204",
+      "commission_jpy": 0.0,
+      "entry_balance_jpy": 256880.2865,
+      "entry_fill_id": "473201",
+      "entry_half_spread_cost_jpy": 190.7821,
+      "entry_price": 1.1552,
+      "entry_time_utc": "2026-08-10T16:38:40.117944680Z",
+      "financing_jpy": 0.0,
+      "h4": {
+        "complete": true,
+        "direction": "LONG",
+        "ema10": 1.1549475378632248,
+        "ema20": 1.1541995361840964,
+        "last_close_mid": 1.1547049999999999,
+        "last_completed_h4_start_utc": "2026-08-10T09:00:00.000000000Z",
+        "long_reasons": [
+          "ema10_vs_ema20",
+          "ema20_slope_3",
+          "close_vs_ema20"
+        ],
+        "recent_high_mid": 1.158085,
+        "recent_low_mid": 1.151465,
+        "short_reasons": [],
+        "signals": {
+          "close_vs_ema20": 1,
+          "ema10_vs_ema20": 1,
+          "ema20_slope_3": 1
+        }
+      },
+      "holding_seconds": 408.217818,
+      "initial_margin_required_jpy": 220407.4164,
+      "label": "manual_win_4",
+      "m5": {
+        "complete": true,
+        "ema10": 1.155122297516612,
+        "last_close_mid": 1.15517,
+        "last_completed_m5_start_utc": "2026-08-10T16:30:00.000000000Z",
+        "side_confirmed": false
+      },
+      "pair": "EUR_USD",
+      "pip_size": 0.0001,
+      "quote_to_jpy_conversion": 158.6839937348127,
+      "realized_after_cost_jpy": 2380.8153,
+      "side": "SHORT",
+      "terminal_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+      "units": 30007,
+      "x_structure_selected": false
+    }
+  ]
+}

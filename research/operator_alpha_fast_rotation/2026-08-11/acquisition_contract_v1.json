@@ -1,0 +1,54 @@
+{
+  "contract": "OPERATOR_ALPHA_FAST_ROTATION_ACQUISITION_V1",
+  "created_for_jst_date": "2026-08-11",
+  "scope": "research-only reconstruction of two margin-closeout failures, four consecutive manual winners, and the immediate post-close open-position boundary",
+  "permissions": {
+    "live": false,
+    "paper": false,
+    "broker_get_only": true,
+    "broker_mutation": false,
+    "order": false,
+    "deploy": false,
+    "holdout_read": false
+  },
+  "position_boundary": {
+    "existing_manual_unknown": "NO_TOUCH",
+    "open_boundary_entry_fill_id": "473207",
+    "open_boundary_is_not_an_outcome": true,
+    "research_must_not_close_cancel_replace_or_protect_it": true
+  },
+  "frozen_cohort": {
+    "entry_close_fill_pairs": [
+      ["473162", "473180"],
+      ["473183", "473186"],
+      ["473189", "473191"],
+      ["473193", "473195"],
+      ["473197", "473199"],
+      ["473201", "473204"]
+    ],
+    "selection": "all two same-day margin closeouts plus the next four consecutive positive manual closes; no row may be added or removed after replay",
+    "comparison_arms": ["BASELINE_ACTUAL", "OPERATOR_ALPHA", "X_STRUCTURE", "X_OPERATOR_INTERACTION"]
+  },
+  "truth": {
+    "transactions": "read-only OANDA transactions/sinceid; sanitized exact fill/order facts",
+    "path": "complete OANDA S5 bid/ask candles, bounded to the first 40 minutes from each entry",
+    "context": "complete OANDA M5 and H4 bid/ask candles available before each decision",
+    "costs": "actual baseline P/L; counterfactual side-correct bid/ask plus adverse half-spread exit stress; observed commissions and financing retained",
+    "missing": "remain null or WAIT; never zero-filled"
+  },
+  "causality": {
+    "operator_parameters": "derived only from the four explicitly identified manual wins and labeled in-sample",
+    "x_features": "completed pre-entry H4/M5 bars only",
+    "future_outcome_in_entry_decision": false,
+    "same_cohort_is_validation": false,
+    "adoption_claim_allowed": false
+  },
+  "acceptance_tests": [
+    "exact six frozen closed trades and one open NO_TOUCH boundary",
+    "four-win realized P/L equals 5052.0833 JPY",
+    "every counterfactual exit uses a post-entry complete S5 executable side",
+    "no arm changes actual units or calls a broker mutation method",
+    "all four arms use exactly the same six cohort ids",
+    "independent oracle reproduces metrics from row-level receipts"
+  ]
+}

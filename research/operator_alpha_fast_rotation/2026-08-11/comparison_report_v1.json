@@ -1,0 +1,150 @@
+{
+  "arms": {
+    "BASELINE_ACTUAL": {
+      "cohort_ids": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "metrics": {
+        "after_cost_net_jpy": -71147.9167,
+        "cohort_decisions": 6,
+        "executed_or_retained": 6,
+        "expectancy_per_cohort_decision_jpy": -11857.986116666667,
+        "expectancy_per_execution_jpy": -11857.986116666667,
+        "holding_time_max_seconds": 218492.691788,
+        "holding_time_mean_seconds": 43917.665102499996,
+        "holding_time_median_seconds": 1108.349081,
+        "losses": 2,
+        "margin_required_peak_proxy_jpy": 283114.8,
+        "margin_required_peak_to_entry_balance_proxy": 0.9503190776844921,
+        "max_drawdown_jpy": 76200.0,
+        "max_losing_streak": 2,
+        "profit_factor": 0.06630030577427821,
+        "turnover_units": 218007,
+        "wins": 4
+      }
+    },
+    "OPERATOR_ALPHA": {
+      "cohort_ids": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "metrics": {
+        "after_cost_net_jpy": -1306.7821749994014,
+        "cohort_decisions": 6,
+        "executed_or_retained": 6,
+        "expectancy_per_cohort_decision_jpy": -217.7970291665669,
+        "expectancy_per_execution_jpy": -217.7970291665669,
+        "holding_time_max_seconds": 702.733828,
+        "holding_time_mean_seconds": 223.33044216666667,
+        "holding_time_median_seconds": 124.372834,
+        "losses": 3,
+        "margin_required_peak_proxy_jpy": 283114.8,
+        "margin_required_peak_to_entry_balance_proxy": 0.9503190776844921,
+        "max_drawdown_jpy": 3229.4859999992145,
+        "max_losing_streak": 3,
+        "profit_factor": 0.5953590834579499,
+        "turnover_units": 218007,
+        "wins": 3
+      }
+    },
+    "X_OPERATOR_INTERACTION": {
+      "cohort_ids": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "metrics": {
+        "after_cost_net_jpy": -1019.9999999994646,
+        "cohort_decisions": 6,
+        "executed_or_retained": 2,
+        "expectancy_per_cohort_decision_jpy": -169.99999999991078,
+        "expectancy_per_execution_jpy": -509.9999999997323,
+        "holding_time_max_seconds": 123.109932,
+        "holding_time_mean_seconds": 70.7966165,
+        "holding_time_median_seconds": 70.7966165,
+        "losses": 1,
+        "margin_required_peak_proxy_jpy": 283114.8,
+        "margin_required_peak_to_entry_balance_proxy": 0.8893128415488917,
+        "max_drawdown_jpy": 1559.9999999994898,
+        "max_losing_streak": 1,
+        "profit_factor": 0.3461538461539755,
+        "turnover_units": 85000,
+        "wins": 1
+      }
+    },
+    "X_STRUCTURE": {
+      "cohort_ids": [
+        "473162->473180",
+        "473183->473186",
+        "473189->473191",
+        "473193->473195",
+        "473197->473199",
+        "473201->473204"
+      ],
+      "metrics": {
+        "after_cost_net_jpy": -76200.0,
+        "cohort_decisions": 6,
+        "executed_or_retained": 2,
+        "expectancy_per_cohort_decision_jpy": -12700.0,
+        "expectancy_per_execution_jpy": -38100.0,
+        "holding_time_max_seconds": 218492.691788,
+        "holding_time_mean_seconds": 130352.339196,
+        "holding_time_median_seconds": 130352.339196,
+        "losses": 2,
+        "margin_required_peak_proxy_jpy": 283114.8,
+        "margin_required_peak_to_entry_balance_proxy": 0.8893128415488917,
+        "max_drawdown_jpy": 76200.0,
+        "max_losing_streak": 2,
+        "profit_factor": 0.0,
+        "turnover_units": 85000,
+        "wins": 0
+      }
+    }
+  },
+  "cohort_size": 6,
+  "contract": "OPERATOR_ALPHA_FOUR_ARM_COMPARISON_V1",
+  "limitations": [
+    "six trades, all SHORT, from one account and two pairs",
+    "operator thresholds were derived from four rows in the same cohort",
+    "X post contributes a structure checklist, not predictive edge",
+    "decision-time margin available/used, full inventory, forecast, and executable unwind packets are missing",
+    "S5 close ordering is causal but cannot reproduce raw ticks inside a five-second bar",
+    "margin metric is required-margin proxy, not broker account margin or netting"
+  ],
+  "live_permission": false,
+  "operator_parameters": {
+    "derivation_cohort_ids": [
+      "473189->473191",
+      "473193->473195",
+      "473197->473199",
+      "473201->473204"
+    ],
+    "loss_budget_activation_seconds": 120,
+    "loss_budget_fraction_of_entry_equity": 0.0025,
+    "max_hold_seconds": 1740,
+    "profit_floor_jpy": 532.0,
+    "slippage_stress": "additional adverse half of observed S5 closing spread",
+    "status": "IN_SAMPLE_DESCRIPTION_NOT_VALIDATION"
+  },
+  "same_frozen_cohort": true,
+  "source_hashes": {
+    "acquisition_contract": "7177562bc83156f7f3005050805be38d32f2031878aff86bd2ddd61351b2e046",
+    "candles": "de8efed57a4b7a765c2f0728ec303a0c05cf5019c31cce25420735e7996d04c8",
+    "operator_contract": "d82061253fd58bc7d82d1512cf1bba24644d7f16eab5e12a349b7276ae62b860",
+    "transactions": "1135153f8375c550650913c78edcafd30e7fc842dcb5e433ffed048aaa052d63",
+    "x_contract": "c07d9be77cca253fe709f09c8812e4319537e8206561e4d62feb42da76cbe439"
+  },
+  "status": "IN_SAMPLE_DIAGNOSTIC_NOT_ADOPTION_EVIDENCE"
+}

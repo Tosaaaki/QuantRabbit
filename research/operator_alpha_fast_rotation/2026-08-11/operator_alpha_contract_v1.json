@@ -1,0 +1,77 @@
+{
+  "contract": "OPERATOR_ALPHA_FAST_ROTATION_V1",
+  "status": "RESEARCH_ONLY_IN_SAMPLE_DIAGNOSTIC",
+  "purpose": "Encode the reproducible parts of the observed manual fast-rotation wins while preventing a scalp from silently becoming an unlimited hold.",
+  "permissions": {
+    "live": false,
+    "paper": false,
+    "broker_mutation": false,
+    "order": false,
+    "deploy": false,
+    "existing_manual_unknown": "NO_TOUCH"
+  },
+  "inputs": {
+    "observation": ["completed H4 structure", "completed M5 trigger context", "fresh S5 bid/ask", "spread"],
+    "direction": ["pair", "LONG_or_SHORT", "three independent H4 reasons", "opposing reasons", "invalidation"],
+    "entry": ["actual or candidate executable price", "units", "equity", "required margin", "available margin", "inventory ownership"],
+    "monitor": ["side-correct mark", "after-cost P/L", "MFE_MAE", "elapsed seconds", "thesis state", "spread state"],
+    "exit": ["profit floor", "equity-derived loss budget", "maximum holding time", "market or thesis invalidation"],
+    "reentry": ["prior close confirmed", "flat or explicitly isolated inventory", "fresh direction packet", "fresh margin packet", "fresh executable quote"]
+  },
+  "states": [
+    "OBSERVE",
+    "DIRECTION_READY",
+    "ENTRY_ELIGIBLE",
+    "HOLD_MONITOR",
+    "EXIT_REQUESTED",
+    "CLOSE_CONFIRMED",
+    "REENTRY_WAIT_FRESH_EVIDENCE",
+    "REENTRY_ELIGIBLE",
+    "FAIL_CLOSED"
+  ],
+  "transition_contract": {
+    "OBSERVE_to_DIRECTION_READY": "completed evidence produces one pair-specific direction with three recorded reasons and explicit opposing evidence",
+    "DIRECTION_READY_to_ENTRY_ELIGIBLE": "execution, cost, margin, inventory, and unwind stages are complete; missing never passes",
+    "ENTRY_ELIGIBLE_to_HOLD_MONITOR": "fill is confirmed; entry-frozen thesis and time budget are persisted",
+    "HOLD_MONITOR_to_EXIT_REQUESTED": "first of profit harvest, activated loss budget, thesis invalidation, spread failure, or time budget fires",
+    "EXIT_REQUESTED_to_CLOSE_CONFIRMED": "broker close fill is read back; intent alone is insufficient",
+    "CLOSE_CONFIRMED_to_REENTRY_WAIT_FRESH_EVIDENCE": "rotation may begin immediately, but the prior thesis is invalidated and cannot be reused",
+    "REENTRY_WAIT_FRESH_EVIDENCE_to_REENTRY_ELIGIBLE": "new pair-specific evidence and full risk packet pass",
+    "any_to_FAIL_CLOSED": "missing ownership, quote, costs, margin, unwind, or conflicting evidence"
+  },
+  "research_parameter_derivation": {
+    "profit_floor_jpy": "minimum realized P/L among the four frozen wins",
+    "max_hold_seconds": "ceiling to one minute of the maximum holding time among the four frozen wins",
+    "loss_budget_activation_seconds": "floor to one minute of the minimum holding time among the four frozen wins; prevents the entry spread from being mislabeled as thesis failure while remaining an in-sample diagnostic",
+    "loss_budget_fraction": "0.25% of entry equity, inherited from CAPITAL_PRESERVATION_GATE_V1",
+    "note": "These values describe the four wins and are not out-of-sample parameters or live constants."
+  },
+  "exit_precedence": [
+    "LOSS_BUDGET_OR_MARGIN_FAILURE",
+    "THESIS_INVALIDATION_OR_EXECUTION_FAILURE",
+    "AFTER_COST_PROFIT_HARVEST",
+    "MAX_HOLD_TIMEOUT",
+    "CONTINUE_MONITOR"
+  ],
+  "margin_closeout_contract": {
+    "classification": "FAILED_FAST_ROTATION_NOT_A_VALID_EXIT",
+    "effect": "blocks immediate reentry until flatness, ownership, full margin, cost, and fresh-thesis evidence are read back",
+    "never_relabel_as": ["stop_loss", "planned_exit", "acceptable_tail"]
+  },
+  "integration": {
+    "technical_and_price_action": "supply direction and invalidation evidence; do not directly place orders",
+    "forecast": "supplies calibrated edge and uncertainty when causally archived; missing means WAIT",
+    "continuous_thesis": "compares entry-frozen thesis with new completed evidence during HOLD_MONITOR",
+    "multidimensional_cube": "normalizes one opinion per independent family and preserves dissent/missing cells",
+    "trailing_and_BE": "eligible only after after-cost activation and next-quote effectiveness; never retroactive same-bar",
+    "hedge": "risk/unwind diagnostic only; does not create edge and requires an explicit executable unwind",
+    "fusion": "returns one of TRADE, WAIT, SKIP, MANAGE; execution/risk families constrain but never invent edge"
+  },
+  "reentry_contract": {
+    "rotation_is_allowed": true,
+    "reuse_previous_direction_without_refresh": false,
+    "same_pair_or_cross_pair": "both allowed only after pair-specific fresh evidence",
+    "margin_closeout_cooldown": "not time-only; evidence-gated",
+    "open_manual_or_unknown_inventory": "MANAGE_NO_TOUCH"
+  }
+}

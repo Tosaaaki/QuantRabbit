@@ -1,0 +1,25 @@
+{
+  "canonical_payload_sha256": {
+    "candles": "9322d1612b8bb36b4a0398ae46db189dd70297dad09ea0dbc6cc5e06cfd61731",
+    "transactions": "1eabd2f5e92af6440e14b51d89f3799b946db975c57b417fca68acf29901ae00"
+  },
+  "contract": "OPERATOR_ALPHA_SOURCE_MANIFEST_V1",
+  "files": {
+    "source_candles_v1.json": {
+      "bytes": 1404309,
+      "sha256": "de8efed57a4b7a765c2f0728ec303a0c05cf5019c31cce25420735e7996d04c8"
+    },
+    "source_transactions_v1.json": {
+      "bytes": 12680,
+      "sha256": "1135153f8375c550650913c78edcafd30e7fc842dcb5e433ffed048aaa052d63"
+    }
+  },
+  "permissions": {
+    "broker_get_only": true,
+    "broker_mutation": false,
+    "deploy": false,
+    "live": false,
+    "orders": false,
+    "paper": false
+  }
+}
