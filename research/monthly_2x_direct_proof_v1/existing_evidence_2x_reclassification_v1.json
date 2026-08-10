@@ -1,0 +1,175 @@
+{
+  "contract": "MONTHLY_2X_DIRECT_PROOF_V1",
+  "dominant_blocker": "no preregistered family has both a positive TRAIN LCB plateau and stable 32d/64d validation; strict decision-time cost, margin, fill, and unwind coverage is zero",
+  "families": [
+    {
+      "decisive_reason": "no stable multiwindow candidate exists before applying either the 3x or 2x terminal target",
+      "evidence": {
+        "grid_rows": 5670,
+        "prior_target_passes": 0,
+        "stable_multiwindow_candidates": 0
+      },
+      "family": "existing_multidimensional_sweeps",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "MTF and fusion have zero TRAIN plateau and zero 32d/64d stability; the X-MTF subarm is separately not evaluable",
+      "evidence": {
+        "fusion_stable_32d_64d": 0,
+        "fusion_train_plateau": 0,
+        "mtf_stable_32d_64d": 0,
+        "mtf_train_plateau": 0,
+        "x_mtf_validation_eligible": 0
+      },
+      "family": "technical_fusion_and_mtf",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "causal fee/financing, account margin/netting, partial-fill depth, and unwind evidence are incomplete",
+      "evidence": {
+        "blockers": [
+          "STRICT_PATH_VALIDATION_BELOW_20",
+          "CAUSAL_FEE_FINANCING_SCHEDULE_MISSING",
+          "ACCOUNT_MARGIN_AND_NETTING_MISSING",
+          "PARTIAL_FILL_DEPTH_AND_UNWIND_MISSING"
+        ],
+        "exit_status": "BASELINE_PASS_EXIT_ARMS_NOT_EVALUABLE",
+        "strict_path_episodes": 5
+      },
+      "family": "trailing_break_even_partial_take_profit",
+      "status": "NOT_EVALUABLE"
+    },
+    {
+      "decisive_reason": "all four preregistered hedge arms were rejected and the STOP-loss cohort does not establish monthly entry-strategy profitability",
+      "evidence": {
+        "arm_decisions": {
+          "A_SL_REVERSE_STOP_025": "REJECT",
+          "A_SL_REVERSE_STOP_035": "REJECT",
+          "B_INITIAL_EQUAL_HEDGE": "REJECT",
+          "B_SL_EQUAL_HEDGE": "REJECT"
+        },
+        "overall_decision": "REJECT"
+      },
+      "family": "hedging",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "no cap-compliant row reaches 2x; the best cap-compliant row also has a negative paired LCB and no TRAIN plateau",
+      "evidence": {
+        "cap_compliant_2x_rows": 0,
+        "cap_compliant_best_paired_lcb_jpy": -10.300239585396039,
+        "cap_compliant_best_rolling_30d_multiple": 1.0310861778747464,
+        "validation_success_count": 0
+      },
+      "family": "dynamic_lot_inventory_exposure",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "the fixed archive has no eligible validation trades and no complete 30-day proof interval",
+      "evidence": {
+        "x_mtf_status": "REJECT_OR_INSUFFICIENT_EVIDENCE",
+        "x_mtf_validation_eligible": 0,
+        "x_system_classifications": [
+          "INSUFFICIENT_EVIDENCE",
+          "INSUFFICIENT_EVIDENCE",
+          "DISCONNECTED"
+        ]
+      },
+      "family": "x_derived_methods",
+      "status": "NOT_EVALUABLE"
+    },
+    {
+      "decisive_reason": "the adapters preserve calculation parity but create zero profitability increment and no trading edge",
+      "evidence": {
+        "profitability_increment_jpy": 0.0,
+        "strategy_decision": "NO_CHANGE_KEEP_ALL_TRADES_BASELINE; ADAPTERS_DO_NOT_CREATE_EDGE"
+      },
+      "family": "oss_adapters",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "both fast and slow 28-pair rotations have zero TRAIN plateau and zero 32d/64d stability",
+      "evidence": {
+        "fast_sources": 28,
+        "fast_stable_32d_64d": 0,
+        "fast_train_plateau": 0,
+        "slow_stable_32d_64d": 0,
+        "slow_train_plateau": 0
+      },
+      "family": "currency_rotation_28",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "four positive receipts prove conditional existence only, not 30-day frequency, stability, margin, or 2x compounding",
+      "evidence": {
+        "net_jpy": 3255.0937999999996,
+        "next_proof_count": 16,
+        "trades": 4
+      },
+      "family": "conditional_positive_vehicle",
+      "status": "TARGET_PATH_NOT_YET_PROVEN"
+    },
+    {
+      "decisive_reason": "the gate proves fail-closed capital preservation, not profit generation",
+      "evidence": {
+        "actions": {
+          "WAIT": 251
+        },
+        "profit_generation_status": "NOT_PROVEN",
+        "strict_policy_net_jpy": 0.0
+      },
+      "family": "capital_preservation_gate",
+      "status": "NOT_EVALUABLE"
+    }
+  ],
+  "gap": {
+    "baseline_rolling_30d_multiple": 1.0476891546051672,
+    "linear_and_log_agree_on_shortfall": true,
+    "linear_equity_gap_jpy": 190462.16907896657,
+    "linear_multiple_gap": 0.9523108453948328,
+    "log_growth_gap": 0.6465602468591838,
+    "required_factor_from_baseline": 1.9089631606940909,
+    "required_increment_from_baseline_pct": 90.89631606940908,
+    "target_multiple": 2.0
+  },
+  "holdout_read": false,
+  "inheritance_commit": "6d590bd30e24cc650b7c5147080a16f1ae669bc7",
+  "live_paper_broker_order_deploy_touched": false,
+  "next_independent_hypothesis": {
+    "id": "EVENT_DRIVEN_CROSS_ASSET_DISLOCATION_V1",
+    "independence": "new event-driven opportunity and data source, not a threshold retune of observed technical, MTF, hedge, sizing, or rotation families",
+    "mechanism": "timestamped macro-release surprise plus synchronized cross-asset reaction and side-aware FX bid/ask execution",
+    "required_before_evaluation": "preregister source lineage, completed-bar/event chronology, after-cost fill/unwind/margin evidence, and keep holdout unread"
+  },
+  "overall_status": "TARGET_PATH_NOT_YET_PROVEN",
+  "source_hashes": {
+    "research/always_available_profit_proof/2026-08-10/proof_report_v1.json": "b681499d0d7c0267ea22067f46114f1d394bbf66dace71e12634824e75d12123",
+    "research/capital_preservation_gate/2026-08-10/report_v1.json": "00c9b74b2c98b4ef584fe0b76a5b88658b52425d5c44f6b142a3c8d968b08a4f",
+    "research/decision_time_execution_evidence/2026-08-10/coverage_report_v1.json": "ee84f61dd89a6069155c4e2bdc4e8200460bb9be2d0a361857e1e10eb0da25b1",
+    "research/financial_oracle_v2/2026-08-10/exit_report_v1.json": "a5d404fa054ed93d0fc34634374223c390297f87fc42b18662e1ffe150d5cf0b",
+    "research/loss_close_paired_robustness/robustness_report_v2.json": "ce44d29152725f6e6361f28ef5b41224459cbec11be4daffa71377f47cfe7069",
+    "research/monthly_3x_direct_proof/2026-08-10/currency_rotation_v6_report.json": "abe3badaf6310566623d556e387d2c969ac3318df2a3b8cc8b86cbb1281025e0",
+    "research/monthly_3x_direct_proof/2026-08-10/family_fusion_report_v5.json": "0b865e6d86867b262a065b57e81cfef8989d715739829cc4ab91de69d005a345",
+    "research/monthly_3x_direct_proof/2026-08-10/mtf_long_window_report_v4.json": "6ea40d0dc40294cae942f3ca3ee1d4b4c0b0a4fc5a3e7535de08115701f61cf9",
+    "research/monthly_3x_direct_proof/2026-08-10/report_v1.json": "bac260fa7c5e819cca7c5b46a6e774c45737c5fd2a9a36477c7de910418ec92c",
+    "research/monthly_3x_direct_proof/2026-08-10/slow_currency_rotation_v7_report.json": "36b28fd45a27d40d7f59656a2b7c08ed10abd7c37e5b49b5279188647f1c72b9",
+    "research/monthly_3x_direct_proof/2026-08-10/x_mtf_result_v3.json": "bb5cd3df0755b608cb75cb6c487eee3ee0ca449e3544a0ad8f117c6348ac0220",
+    "research/monthly_3x_growth_engine/2026-08-10/growth_grid_v1.jsonl": "9ff2e311fdb8d29fbf3b4bdf666dbd555a0cfe0edbe8b0202a8ea92152806c1e",
+    "research/monthly_3x_growth_engine/2026-08-10/growth_report_v1.json": "424346e8574300b369e89d6cfe4271600d80cf7a40e28bb92140822f31aafb55",
+    "research/python_ecosystem_audit/2026-08-10/real_shadow_report.json": "bab89ab3a1e7d9825379fe8a7a66195547cdf426d5d211917ecfdbae705907f8",
+    "research/system_utilization_rca/2026-08-10/utilization_report_v1.json": "3eb9a953068f15764c8a4b2967619ecd4737b338a61fff00fabee98f6a1022b8"
+  },
+  "source_hashes_verified": true,
+  "system_admission": {
+    "stage_coverage": {
+      "candidate_order": 251,
+      "exit_unwind": 0,
+      "fillability": 153,
+      "margin_exposure_concurrency": 0,
+      "pricing": 154,
+      "slippage_fee_financing": 0
+    },
+    "status": "FAIL_CLOSED_FOR_EXECUTABLE_2X_PROOF",
+    "strict_eligible_decisions": 0
+  }
+}

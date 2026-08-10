@@ -1,0 +1,153 @@
+{
+  "contract_id": "MONTHLY_2X_DIRECT_PROOF_V1",
+  "contract_version": 1,
+  "preregistered_at_utc": "2026-08-10T08:07:18Z",
+  "scope": {
+    "project": "QR",
+    "repository": "/Users/tossaki/App/QuantRabbit",
+    "inheritance_commit": "6d590bd30e24cc650b7c5147080a16f1ae669bc7",
+    "change_from_prior_contract": "target_multiple_only: 3.0 -> 2.0",
+    "all_other_conditions_unchanged": true,
+    "environment": "development_read_only_evidence_evaluation",
+    "external_side_effects": "none"
+  },
+  "capital_and_target": {
+    "starting_equity_jpy": 200000,
+    "minimum_ending_equity_jpy": 400000,
+    "minimum_rolling_30d_multiple_after_all_costs": 2.0,
+    "window": "rolling_30_calendar_days",
+    "gross_margin_cap_jpy": 150000,
+    "maximum_drawdown_jpy": 80000
+  },
+  "execution_model": {
+    "bar_policy": "completed_bars_only",
+    "price_sides": "bid_ask_side_aware",
+    "slippage": "adverse_half_spread",
+    "required_costs": [
+      "spread",
+      "slippage",
+      "fees",
+      "financing"
+    ],
+    "decision_time_evidence": [
+      "fill",
+      "unwind",
+      "margin"
+    ]
+  },
+  "chronology": {
+    "sequence": [
+      "TRAIN",
+      "EMBARGO",
+      "VALIDATION"
+    ],
+    "embargo_hours": 1,
+    "validation_days": [
+      16,
+      32,
+      64
+    ],
+    "holdout_policy": "unread",
+    "future_information_allowed": false
+  },
+  "acceptance": {
+    "rolling_30d_multiple_after_all_costs_gte": 2.0,
+    "validation_stability_required_days": [
+      32,
+      64
+    ],
+    "train_positive_lcb_plateau_required": true,
+    "validation_paired_lcb_gt": 0.0,
+    "profit_factor_gt": 1.0,
+    "maximum_drawdown_jpy_lte": 80000,
+    "gross_margin_jpy_lte": 150000,
+    "decision_time_fill_unwind_margin_evidence_required": true,
+    "regeneration_hash_match_required": true,
+    "independent_oracle_and_tests_required": true
+  },
+  "prohibited_actions": [
+    "live",
+    "paper",
+    "broker_access",
+    "order_access",
+    "deploy",
+    "holdout_read",
+    "post_hoc_threshold_change",
+    "winner_selection",
+    "loss_exclusion",
+    "missing_as_zero",
+    "interpolation",
+    "cost_omission",
+    "blind_cartesian_product"
+  ],
+  "preregistered_families": [
+    {
+      "family_id": "existing_multidimensional_sweeps",
+      "independent": true
+    },
+    {
+      "family_id": "technical_fusion_and_mtf",
+      "independent": true
+    },
+    {
+      "family_id": "trailing_break_even_partial_take_profit",
+      "independent": true
+    },
+    {
+      "family_id": "hedging",
+      "independent": true
+    },
+    {
+      "family_id": "dynamic_lot_inventory_exposure",
+      "independent": true
+    },
+    {
+      "family_id": "x_derived_methods",
+      "independent": true
+    },
+    {
+      "family_id": "oss_adapters",
+      "independent": true
+    },
+    {
+      "family_id": "currency_rotation_28",
+      "independent": true
+    }
+  ],
+  "allowed_limited_interactions": [
+    [
+      "existing_multidimensional_sweeps",
+      "trailing_break_even_partial_take_profit"
+    ],
+    [
+      "existing_multidimensional_sweeps",
+      "dynamic_lot_inventory_exposure"
+    ],
+    [
+      "existing_multidimensional_sweeps",
+      "technical_fusion_and_mtf"
+    ],
+    [
+      "technical_fusion_and_mtf",
+      "currency_rotation_28"
+    ],
+    [
+      "x_derived_methods",
+      "oss_adapters"
+    ]
+  ],
+  "comparison_contract": {
+    "same_cohort_required": true,
+    "same_cost_model_required": true,
+    "same_chronology_required": true,
+    "unobserved_interactions_allowed": false,
+    "if_existing_families_fail": "advance_to_independent_opportunity_source_instrument_or_data_source",
+    "retune_observed_family_thresholds": false
+  },
+  "status_vocabulary": {
+    "PROVEN": "all acceptance criteria have direct evidence",
+    "TARGET_PATH_NOT_YET_PROVEN": "evaluable evidence exists but at least one acceptance criterion fails",
+    "NOT_EVALUABLE": "required evidence is absent, invalid, incomparable, or cannot be read without a prohibited action"
+  },
+  "fail_closed": true
+}
