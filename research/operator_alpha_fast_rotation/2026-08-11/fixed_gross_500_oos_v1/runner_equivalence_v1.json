@@ -1,0 +1,18 @@
+{
+  "contract": "QR_REPLAY_LOCAL_EQUIVALENCE_V1",
+  "standard_worker": "scripts/replay_exit_workers_groups.py",
+  "standard_worker_present_in_revision": false,
+  "local_runner": "run_oos_signal_replay.py and run_confirmatory_v2.py",
+  "invariants": {
+    "hard_tp_enabled": true,
+    "no_hard_tp_flag_used": true,
+    "hard_sl_enabled": false,
+    "equivalent_standard_flag": "--no-hard-sl",
+    "end_of_replay_forced_close": false,
+    "equivalent_standard_flag_2": "--exclude-end-of-replay",
+    "canonical_summary": "summary_all.json",
+    "unresolved_accounting": "final executable bid/ask MTM plus financing stress; never realized as a replay close"
+  },
+  "side_rules": {"long_entry": "ask", "long_exit": "bid", "short_entry": "bid", "short_exit": "ask"},
+  "external_side_effects": false
+}

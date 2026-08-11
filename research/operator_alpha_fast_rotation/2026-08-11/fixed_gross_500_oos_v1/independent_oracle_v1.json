@@ -1,0 +1,78 @@
+{
+  "checks": {
+    "all_accounting_checks": true,
+    "v1_causality": true,
+    "v1_signal_hash_match": true,
+    "v2_causality": true,
+    "v2_signal_hash_match": true
+  },
+  "confirmatory_v2": {
+    "ATR_010": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 203666.74039163187,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "ATR_020": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 203816.87853841766,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "ATR_025": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 203909.47598306043,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "FIXED_GROSS_500": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 248057.18265809576,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    }
+  },
+  "contract": "OPERATOR_ALPHA_OOS_INDEPENDENT_ORACLE_V1",
+  "diagnostic_v1": {
+    "ATR_010": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 198739.13330639063,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "ATR_020": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 198757.53565710492,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "ATR_025": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 198767.45647746208,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    },
+    "FIXED_GROSS_500": {
+      "completed_match": true,
+      "executed_match": true,
+      "forced_end_close_absent": true,
+      "oracle_terminal_equity_jpy": 199221.45060067638,
+      "terminal_equity_match": true,
+      "unresolved_match": true
+    }
+  }
+}

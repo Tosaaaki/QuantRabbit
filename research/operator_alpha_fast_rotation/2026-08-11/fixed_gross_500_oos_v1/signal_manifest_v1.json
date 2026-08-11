@@ -1,0 +1,99 @@
+{
+  "built_before_outcome_replay": true,
+  "complete_only": true,
+  "contract": "OPERATOR_ALPHA_OOS_SIGNAL_MANIFEST_V1",
+  "coverage": {
+    "AUD_USD": {
+      "first_m1": "2024-09-01T21:04:00Z",
+      "first_s5": "2024-09-30T23:55:00Z",
+      "last_m1": "2024-12-31T21:59:00Z",
+      "last_s5": "2024-12-31T21:59:05Z",
+      "m1_rows": 122511,
+      "s5_rows": 894599
+    },
+    "EUR_USD": {
+      "first_m1": "2024-09-01T21:04:00Z",
+      "first_s5": "2024-09-30T23:55:10Z",
+      "last_m1": "2024-12-31T21:59:00Z",
+      "last_s5": "2024-12-31T21:59:00Z",
+      "m1_rows": 122950,
+      "s5_rows": 952167
+    },
+    "GBP_USD": {
+      "first_m1": "2024-09-01T21:04:00Z",
+      "first_s5": "2024-09-30T23:55:00Z",
+      "last_m1": "2024-12-31T21:59:00Z",
+      "last_s5": "2024-12-31T21:59:00Z",
+      "m1_rows": 123106,
+      "s5_rows": 1027805
+    },
+    "USD_JPY": {
+      "first_m1": "2024-09-01T21:04:00Z",
+      "first_s5": "2024-09-30T23:55:00Z",
+      "last_m1": "2024-12-31T21:59:00Z",
+      "last_s5": "2024-12-31T21:59:00Z",
+      "m1_rows": 122789,
+      "s5_rows": 1050277
+    }
+  },
+  "date_range": {
+    "end_exclusive": "2025-01-01T00:00:00Z",
+    "start": "2024-10-01T00:00:00Z"
+  },
+  "pairs": [
+    "EUR_USD",
+    "USD_JPY",
+    "GBP_USD",
+    "AUD_USD"
+  ],
+  "price_component": "BID_ASK",
+  "selected_trigger": "STRICT_PULLBACK_RECLAIM",
+  "signal_log": {
+    "rows": 3997,
+    "sha256": "8317176a14af4a61b2f716fecc406a402b1e55c0cfb6113759ae3cbe2a5c7b40"
+  },
+  "sources": {
+    "AUD_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T105139Z/AUD_USD/AUD_USD_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "m1_sha256": "2a68a8cfbf4acaa71536678ba247fcb1b1ddf9e71f303e114d927bce85091f4a",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/AUD_USD/AUD_USD_S5_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "s5_sha256": "fbd57df0c4f181186f6ae2b1c3fa1bf7223d74f497d0c1b68ddd433dc495bcd2"
+    },
+    "EUR_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T085236Z/EUR_USD/EUR_USD_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "m1_sha256": "3755f6c0623896cec11e535386eb095b0e31bf4ceef87705b581685c85b0a2a1",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/EUR_USD/EUR_USD_S5_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "s5_sha256": "ec02c1bb110f0d87accea6a5c1a81154b548050261af1272176413f6b4f1ce03"
+    },
+    "GBP_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T104116Z/GBP_USD/GBP_USD_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "m1_sha256": "4508a36a99e9faa69e210156711e6dd547bccb7b2691ab8b0a8024f88849ce96",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/GBP_USD/GBP_USD_S5_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "s5_sha256": "ba5937dc6a34513e270bd987c319880bd0c8e1ec31620e1a2734333495d1440d"
+    },
+    "USD_JPY": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084445Z/USD_JPY/USD_JPY_M1_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "m1_sha256": "41c69c09faf547e4cc0cf2a8e4ef0a27b0769d6489db7308d11a48efaf93c33d",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/USD_JPY/USD_JPY_S5_BA_20240101T000000Z_20250101T000000Z.jsonl.gz",
+      "s5_sha256": "194679903371cee2b23058ab6b8c1b0cf90c1dd10ea095913b5ee35fe0697280"
+    }
+  },
+  "supply_only_trigger_iteration": {
+    "BALANCED_EMA_CONTINUATION": {
+      "observed_signal_days": 69,
+      "raw_signals": 17369,
+      "signals_per_observed_day": 251.7246376811594
+    },
+    "PERMISSIVE_DIRECTIONAL_CONTINUATION": {
+      "observed_signal_days": 70,
+      "raw_signals": 35925,
+      "signals_per_observed_day": 513.2142857142857
+    },
+    "STRICT_PULLBACK_RECLAIM": {
+      "observed_signal_days": 66,
+      "raw_signals": 3997,
+      "signals_per_observed_day": 60.56060606060606
+    }
+  },
+  "trigger_selection_uses_outcomes": false
+}

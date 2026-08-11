@@ -1,0 +1,18 @@
+{
+  "contract": "OPERATOR_ALPHA_CONFIRMATORY_ENTRY_V2_PREREGISTER",
+  "created_after_diagnostic_v1_failure": true,
+  "outcomes_not_read_for_this_period": true,
+  "cohort": {"warmup_start": "2025-01-01T00:00:00Z", "start": "2025-01-13T00:00:00Z", "end_exclusive": "2025-04-01T00:00:00Z"},
+  "pairs": ["EUR_USD", "USD_JPY", "GBP_USD", "AUD_USD"],
+  "single_changed_axis": "entry trigger",
+  "entry_trigger": {
+    "direction": "completed D1 EMA5/EMA10 and completed H4 EMA8/EMA21 must agree",
+    "delay": "completed M1 must reclaim EMA8 after a preregistered adverse pullback",
+    "s5_confirmation": "three completed S5 bodies in the higher-timeframe direction",
+    "anti_chase": "at most one signal per pair per completed H4 bucket",
+    "ordered_supply_only_depths_atr": [0.25, 0.10],
+    "selection": "first depth producing at least 150 raw signals and 2 signals per observed signal day, before replaying outcomes"
+  },
+  "unchanged": {"hard_tp": true, "hard_sl": false, "end_forced_close": false, "concurrency": 1, "flat_confirmation": "one subsequent completed S5 bar", "units": 5000, "targets": ["gross_500_jpy", "ATR_0.10", "ATR_0.20", "ATR_0.25"]},
+  "adoption": "HOLD"
+}

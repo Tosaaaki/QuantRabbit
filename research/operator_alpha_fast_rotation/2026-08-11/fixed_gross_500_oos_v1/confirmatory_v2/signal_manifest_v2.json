@@ -1,0 +1,76 @@
+{
+  "built_before_outcome_replay": true,
+  "contract": "OPERATOR_ALPHA_CONFIRMATORY_SIGNAL_MANIFEST_V2",
+  "coverage": {
+    "AUD_USD": {
+      "m1_rows": 90107,
+      "s5_rows": 750579
+    },
+    "EUR_USD": {
+      "m1_rows": 90324,
+      "s5_rows": 835892
+    },
+    "GBP_USD": {
+      "m1_rows": 90446,
+      "s5_rows": 883126
+    },
+    "USD_JPY": {
+      "m1_rows": 90354,
+      "s5_rows": 912995
+    }
+  },
+  "date_range": {
+    "end_exclusive": "2025-04-01T00:00:00Z",
+    "start": "2025-01-13T00:00:00Z"
+  },
+  "pairs": [
+    "EUR_USD",
+    "USD_JPY",
+    "GBP_USD",
+    "AUD_USD"
+  ],
+  "selected_depth_atr": 0.25,
+  "selection_uses_outcomes": false,
+  "signal_log": {
+    "rows": 729,
+    "sha256": "484e0cd22b5583bcf0818c4fc8dbb4840a5994e3303503612b46d7a667e34f8b"
+  },
+  "sources": {
+    "AUD_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T105320Z/AUD_USD/AUD_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "m1_sha256": "6bfe8ba710849d32dc0033067d9fec61808df46189d682dd95900a9f6404341f",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/AUD_USD/AUD_USD_S5_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "s5_sha256": "60f7bd6675eae2e484718bd7c056a904f73bcc3f91c71f1917cafc339b6afd90"
+    },
+    "EUR_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T085350Z/EUR_USD/EUR_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "m1_sha256": "73aecdd7222c7da269d535f702462c0715356aa8ccc462756cd6745038e83680",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/EUR_USD/EUR_USD_S5_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "s5_sha256": "03ca0fcf00fff5d574ff03c7762fa427c9a42adc17eb7d819917e2700855f36c"
+    },
+    "GBP_USD": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T104309Z/GBP_USD/GBP_USD_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "m1_sha256": "8e8e0886c100d5971e7b1def3692b59a8129234293e533a9eaccc113e93af0e2",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/GBP_USD/GBP_USD_S5_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "s5_sha256": "9bfb62911c796501cae87ec3f068bd20bd06cb13b9f3f8e225cf72c1ef4b6e56"
+    },
+    "USD_JPY": {
+      "m1_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_m1_2020_2026/20260718T084558Z/USD_JPY/USD_JPY_M1_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "m1_sha256": "629adb8fbbb8742758852991acc7f6e3768b9901672167a8ae3d068c5187d301",
+      "s5_path": "/Users/tossaki/App/QuantRabbit-live/logs/replay/oanda_history_s5_2024_2026/split_by_year/USD_JPY/USD_JPY_S5_BA_20250101T000000Z_20260101T000000Z.jsonl.gz",
+      "s5_sha256": "902eba579c2eb4fdfb6b250a1508468cedde119eeaab48f74ff58ba1c65201a4"
+    }
+  },
+  "supply_only_iteration": {
+    "0.1": {
+      "observed_signal_days": 56,
+      "raw_signals": 731,
+      "signals_per_observed_day": 13.053571428571429
+    },
+    "0.25": {
+      "observed_signal_days": 56,
+      "raw_signals": 729,
+      "signals_per_observed_day": 13.017857142857142
+    }
+  }
+}

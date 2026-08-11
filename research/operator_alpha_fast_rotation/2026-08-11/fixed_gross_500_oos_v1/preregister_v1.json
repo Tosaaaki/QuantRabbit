@@ -1,0 +1,42 @@
+{
+  "contract": "OPERATOR_ALPHA_FAST_ROTATION_OOS_PREREGISTER_V1",
+  "frozen_before_outcome_replay": true,
+  "environment": "research_shadow_only",
+  "date_range_utc": {"warmup_start": "2024-09-01T00:00:00Z", "cohort_start": "2024-10-01T00:00:00Z", "cohort_end_exclusive": "2025-01-01T00:00:00Z"},
+  "pairs": ["EUR_USD", "USD_JPY", "GBP_USD", "AUD_USD"],
+  "entry_units": 5000,
+  "starting_equity_jpy": 254209.0185,
+  "permissions": {"live": false, "paper": false, "broker_mutation": false, "orders": false, "deploy": false},
+  "causality": {
+    "higher_timeframe": "only H4 buckets whose ending timestamp is no later than the completed M1 decision timestamp",
+    "entry_trigger": "completed M1 plus completed S5 bars only; entry is the next S5 open",
+    "target_evaluation": "subsequent executable bid for LONG and ask for SHORT",
+    "future_extrema": "forbidden"
+  },
+  "entry_trigger_iteration": {
+    "selection_metric_only": "raw signal supply before any PnL or target-path calculation",
+    "minimum_signals_per_observed_day": 2.0,
+    "minimum_raw_signals": 150,
+    "ordered_variants": ["STRICT_PULLBACK_RECLAIM", "BALANCED_EMA_CONTINUATION", "PERMISSIVE_DIRECTIONAL_CONTINUATION"],
+    "cooldown_seconds_per_pair": 300
+  },
+  "exit_arms": {
+    "FIXED_GROSS_500": {"hard_tp": true, "gross_jpy": 500.0},
+    "ATR_010": {"hard_tp": true, "atr_multiple": 0.10},
+    "ATR_020": {"hard_tp": true, "atr_multiple": 0.20},
+    "ATR_025": {"hard_tp": true, "atr_multiple": 0.25}
+  },
+  "execution_contract": {
+    "hard_sl": false,
+    "end_of_replay_forced_close": false,
+    "concurrency": 1,
+    "reentry": "only after the target bar and one following completed S5 flat-confirmation bar",
+    "unresolved": "remain unrealized and marked to final executable bid/ask",
+    "slippage_stress": "10 percent of exit-bar bid/ask spread, adverse",
+    "financing_stress": "1.5 percent annual adverse carry on entry notional, charged for each crossed UTC day",
+    "margin_rate": 0.04,
+    "margin_closeout_fraction": 0.50
+  },
+  "adoption_gate": {"minimum_completed_cycles": 100, "positive_after_cost_expectancy": true, "profit_factor_gt": 1.0, "unresolved_inventory": 0, "margin_closeouts": 0},
+  "adoption_status": "HOLD"
+}
