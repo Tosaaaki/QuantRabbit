@@ -1,0 +1,242 @@
+{
+  "account_margin_status": "NOT_EVALUABLE_ACCOUNT_NETTING_AND_EXTERNAL_INVENTORY_MISSING",
+  "candidate_grid_rows": 6720,
+  "conclusion": "BASELINE_POSITIVE_INTEGRATED_IMPROVEMENT_NOT_YET_ADMISSIBLE",
+  "contract": "INTEGRATED_PROFIT_CUBE_V1",
+  "cross_window_frozen_candidates": [],
+  "cube_rows": 5520,
+  "decision_ids": 251,
+  "exit_summary_64d_validation": {
+    "ALL_COST_BE": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 0,
+      "changed": 0,
+      "rows": 101
+    },
+    "FIXED_BE": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 2,
+      "changed": 0,
+      "rows": 101
+    },
+    "PARTIAL_TP_BE": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 1,
+      "changed": 1,
+      "rows": 101
+    },
+    "PURE_ATR_TRAIL": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 1,
+      "changed": 1,
+      "rows": 101
+    },
+    "SMA_DETERIORATION_TRAIL": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 2,
+      "changed": 0,
+      "rows": 101
+    },
+    "STRUCTURE_BREAK_EXIT": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 0,
+      "changed": 2,
+      "rows": 101
+    },
+    "TIME_EXIT": {
+      "admission": "NOT_EVALUABLE_STRICT_PATH_COST_MARGIN_UNWIND",
+      "after_cost_evaluable": 1,
+      "changed": 1,
+      "rows": 101
+    }
+  },
+  "hedge_status": "NOT_EVALUABLE_DUAL_LEG_COST_MARGIN_UNWIND_MISSING",
+  "holdout_used": false,
+  "mapie": {
+    "conformal_n": 58,
+    "coverage": 0.9405940594059405,
+    "fit_n": 87,
+    "mean_interval_width_jpy_per_1000u": 740.1846391870682,
+    "mean_prediction_jpy_per_1000u": -121.49999519009586,
+    "training_only_fit_and_calibration": true,
+    "validation_n": 101,
+    "validation_used_for_evaluation_only": true
+  },
+  "preregister_sha256": "df2d149a2b744f29f4246dd3f406d6919f97c45be0d38492da26e7396ccc57bf",
+  "pymoo": {
+    "pareto_candidate_count": 8,
+    "pareto_ids": [
+      "ipc:0ae8d61087138166",
+      "ipc:20762f1d3c0bfb3a",
+      "ipc:242347c136b1ea31",
+      "ipc:57742d4fb7287811",
+      "ipc:58b024a2b0518796",
+      "ipc:6ba66feecd6668d3",
+      "ipc:a7d87150662faab6",
+      "ipc:f058389bfece64e9"
+    ],
+    "training_only": true
+  },
+  "reason": "V2 baseline is positive, but no candidate can satisfy the preregistered incremental LCB, cross-window plateau, full changed-row path/cost/margin/unwind coverage, and account margin gates together.",
+  "salib": {
+    "first_order": {
+      "CAUSAL_FORECAST_RANK": 0.5427304096039379,
+      "CAUSAL_PRICE_ACTION_RANK": 0.01635344782450882,
+      "GROUP_RELATIVE_SIZE": 0.31390488259161947,
+      "PRICE_ACTION_RIDGE_SIZE": -0.001741992746226041
+    },
+    "samples": 384,
+    "total_order": {
+      "CAUSAL_FORECAST_RANK": 0.5223474880032378,
+      "CAUSAL_PRICE_ACTION_RANK": 0.08999355840204268,
+      "GROUP_RELATIVE_SIZE": 0.37281373998765605,
+      "PRICE_ACTION_RIDGE_SIZE": 0.1612079676847503
+    },
+    "training_only": true
+  },
+  "source_hashes_verified": true,
+  "strict_pass_candidates": [],
+  "train_feasible_counts": {
+    "DOUBLE_32D": 0,
+    "INITIAL_16D": 0,
+    "QUADRUPLE_64D": 0
+  },
+  "train_only_champion": "ipc:348949b5b902e056",
+  "train_plateau_counts": {
+    "DOUBLE_32D": 0,
+    "INITIAL_16D": 0,
+    "QUADRUPLE_64D": 0
+  },
+  "v2_baseline": {
+    "cohort_margin_cap_75pct_64d_validation_after_cost_net_jpy": 8849.578065145884,
+    "raw_64d_validation_after_cost_net_jpy": 11706.0523,
+    "raw_64d_validation_profit_factor": 1.4469329373747661
+  },
+  "validation_evaluations": {
+    "ipc:348949b5b902e056": {
+      "DOUBLE_32D": {
+        "account_margin_evaluable": false,
+        "after_cost_net_jpy": 13451.942545216298,
+        "baseline_after_cost_net_jpy": 13198.608751951684,
+        "baseline_cohort_margin_peak_jpy": 153523.65243615204,
+        "baseline_profit_factor": 3.819249996181791,
+        "baseline_realized_max_drawdown_jpy": 2676.685899999982,
+        "changed": 7,
+        "cohort_margin_peak_jpy": 153709.1621360166,
+        "concurrency": 6,
+        "episodes": 31,
+        "exit_evaluable_changed": 0,
+        "frozen_cross_window_candidate": false,
+        "hedge_evaluable_changed": 0,
+        "holdout_used": false,
+        "incremental_net_jpy": 253.33379326461298,
+        "overlay": "INVENTORY",
+        "paired_bootstrap_lcb_one_sided_95_jpy_per_episode": -0.07600287149961053,
+        "parameter_id": "ipc:348949b5b902e056",
+        "primary_evaluation_candidate": true,
+        "profit_factor": 4.024884238757746,
+        "realized_max_drawdown_jpy": 2433.9328749999986,
+        "row_sha256": "b51b592beb7d051c5118118f8e3e489338e81a288d8d86d1bcfe5adb6a18fb30",
+        "screening_lcb_normal_95_jpy_per_episode": -4.705360762181639,
+        "split": "VALIDATION",
+        "strength": 1.0,
+        "train_connected_plateau": false,
+        "train_feasible": false,
+        "train_only_champion": true,
+        "weights": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "window": "DOUBLE_32D"
+      },
+      "INITIAL_16D": {
+        "account_margin_evaluable": false,
+        "after_cost_net_jpy": 8074.0781760722475,
+        "baseline_after_cost_net_jpy": 8074.0781760722475,
+        "baseline_cohort_margin_peak_jpy": 149771.09295,
+        "baseline_profit_factor": 3.9358711717267827,
+        "baseline_realized_max_drawdown_jpy": 2750.1473000000115,
+        "changed": 0,
+        "cohort_margin_peak_jpy": 149771.09295,
+        "concurrency": 6,
+        "episodes": 12,
+        "exit_evaluable_changed": 0,
+        "frozen_cross_window_candidate": false,
+        "hedge_evaluable_changed": 0,
+        "holdout_used": false,
+        "incremental_net_jpy": 0.0,
+        "overlay": "INVENTORY",
+        "paired_bootstrap_lcb_one_sided_95_jpy_per_episode": 0.0,
+        "parameter_id": "ipc:348949b5b902e056",
+        "primary_evaluation_candidate": true,
+        "profit_factor": 3.9358711717267827,
+        "realized_max_drawdown_jpy": 2750.1473000000115,
+        "row_sha256": "2ff261adf2fe6e371a083d2e18345e29d7eb0eea894a57178fc6af8a5e706123",
+        "screening_lcb_normal_95_jpy_per_episode": 0.0,
+        "split": "VALIDATION",
+        "strength": 1.0,
+        "train_connected_plateau": false,
+        "train_feasible": false,
+        "train_only_champion": true,
+        "weights": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "window": "INITIAL_16D"
+      },
+      "QUADRUPLE_64D": {
+        "account_margin_evaluable": false,
+        "after_cost_net_jpy": 9729.180657467617,
+        "baseline_after_cost_net_jpy": 8849.578065145884,
+        "baseline_cohort_margin_peak_jpy": 150338.97120190284,
+        "baseline_profit_factor": 1.372924690680491,
+        "baseline_realized_max_drawdown_jpy": 9876.099099999992,
+        "changed": 101,
+        "cohort_margin_peak_jpy": 151247.16750500674,
+        "concurrency": 6,
+        "episodes": 101,
+        "exit_evaluable_changed": 0,
+        "frozen_cross_window_candidate": false,
+        "hedge_evaluable_changed": 0,
+        "holdout_used": false,
+        "incremental_net_jpy": 879.602592321733,
+        "overlay": "INVENTORY",
+        "paired_bootstrap_lcb_one_sided_95_jpy_per_episode": -19.917196726120718,
+        "parameter_id": "ipc:348949b5b902e056",
+        "primary_evaluation_candidate": true,
+        "profit_factor": 1.478886653295195,
+        "realized_max_drawdown_jpy": 7724.000594137935,
+        "row_sha256": "4fcc3699601be73ee1d75f775c1eb84ecc0c5af8cf54226a64111296dd818cdd",
+        "screening_lcb_normal_95_jpy_per_episode": -21.156257436898592,
+        "split": "VALIDATION",
+        "strength": 1.0,
+        "train_connected_plateau": false,
+        "train_feasible": false,
+        "train_only_champion": true,
+        "weights": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "window": "QUADRUPLE_64D"
+      }
+    }
+  },
+  "xarray": {
+    "dims": {
+      "decision_id": 246,
+      "split": 2,
+      "system_id": 16,
+      "window": 3
+    },
+    "nan_cells": 22498,
+    "non_null_cube_cells": 1118,
+    "non_null_source_rows": 1118,
+    "null_preserved": true
+  }
+}

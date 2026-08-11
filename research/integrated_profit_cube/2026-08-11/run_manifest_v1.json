@@ -1,0 +1,9 @@
+{
+  "contract": "INTEGRATED_PROFIT_CUBE_RUN_MANIFEST_V1",
+  "outputs": {
+    "candidate_grid_v1.jsonl": "60e94e781072e1bb67416dea655ec882e11fdffd08f54d1381032c6b6dc12399",
+    "canonical_decision_cube_v1.jsonl": "9d782cce8659349bbff35000c58193a62198612aa0c66cc81a7dad0250367678",
+    "report_v1.json": "f0e924a5efcad5a494b2bb743a9274558e397ff3ea67a81c20523da053f3a0e6"
+  },
+  "preregister_sha256": "df2d149a2b744f29f4246dd3f406d6919f97c45be0d38492da26e7396ccc57bf"
+}

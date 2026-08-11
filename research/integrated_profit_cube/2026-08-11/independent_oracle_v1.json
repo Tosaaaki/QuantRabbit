@@ -1,0 +1,161 @@
+{
+  "checks": [
+    {
+      "detail": "a329a15d3d9fed1f1d86dce2b07379f7eff3b90eb87f54607f38dc2c7b50a1eb",
+      "name": "source_hash:financial_labels_v2",
+      "passed": true
+    },
+    {
+      "detail": "7005687a1abbe8715426cb88bedc50614d3ce8d83985a194f727c0b8168722ba",
+      "name": "source_hash:cashflow_components_v2",
+      "passed": true
+    },
+    {
+      "detail": "5b254119e3911bd5b5bffbc98b2be0a96c8fcbc66ee630913b82435700107084",
+      "name": "source_hash:path_metrics",
+      "passed": true
+    },
+    {
+      "detail": "0a9d4ebef01cd5f241211879a1ded8b01b1a979573c3739de41fd3a79d1f9e86",
+      "name": "source_hash:concurrent_margin",
+      "passed": true
+    },
+    {
+      "detail": "fcafadb881c64a73a2e65b0103544a9c29bdd6362e67c8fb7523351813324814",
+      "name": "source_hash:split_and_features",
+      "passed": true
+    },
+    {
+      "detail": "419ee684b9298869ab89046f9e852f99689f4b4bcdf63a2bb26b59c19518b2f3",
+      "name": "source_hash:system_inference",
+      "passed": true
+    },
+    {
+      "detail": "0a013b7761790de33dcadfc049e0109550b6e2936eb3081682ede66505ceee45",
+      "name": "source_hash:decision_multipliers",
+      "passed": true
+    },
+    {
+      "detail": "8077eb90c86cd25aa583bd54c19e393602928fe853d102ca2e8568a234ad139f",
+      "name": "source_hash:execution_evidence",
+      "passed": true
+    },
+    {
+      "detail": "d1f6cef66234cf9153ef09651f549e7c2bd75083e281296429b8d5e141bf7e5c",
+      "name": "source_hash:exit_replay",
+      "passed": true
+    },
+    {
+      "detail": "60e94e781072e1bb67416dea655ec882e11fdffd08f54d1381032c6b6dc12399",
+      "name": "output_hash:candidate_grid_v1.jsonl",
+      "passed": true
+    },
+    {
+      "detail": "9d782cce8659349bbff35000c58193a62198612aa0c66cc81a7dad0250367678",
+      "name": "output_hash:canonical_decision_cube_v1.jsonl",
+      "passed": true
+    },
+    {
+      "detail": "f0e924a5efcad5a494b2bb743a9274558e397ff3ea67a81c20523da053f3a0e6",
+      "name": "output_hash:report_v1.json",
+      "passed": true
+    },
+    {
+      "detail": 251,
+      "name": "unique_v2_decisions",
+      "passed": true
+    },
+    {
+      "detail": 251,
+      "name": "evidence_ids_match",
+      "passed": true
+    },
+    {
+      "detail": {
+        "DOUBLE_32D:TRAIN": 43,
+        "DOUBLE_32D:VALIDATION": 31,
+        "INITIAL_16D:TRAIN": 13,
+        "INITIAL_16D:VALIDATION": 12,
+        "QUADRUPLE_64D:TRAIN": 145,
+        "QUADRUPLE_64D:VALIDATION": 101
+      },
+      "name": "split_counts",
+      "passed": true
+    },
+    {
+      "detail": {
+        "net": 11706.052300000001,
+        "pf": 1.446932937374766
+      },
+      "name": "v2_64d_baseline",
+      "passed": true
+    },
+    {
+      "detail": 58,
+      "name": "daily_financing_retained",
+      "passed": true
+    },
+    {
+      "detail": 1,
+      "name": "partial_reduction_retained",
+      "passed": true
+    },
+    {
+      "detail": 5520,
+      "name": "cube_nulls_not_zero",
+      "passed": true
+    },
+    {
+      "detail": 0,
+      "name": "incomplete_changed_not_monetized",
+      "passed": true
+    },
+    {
+      "detail": false,
+      "name": "holdout_unused",
+      "passed": true
+    },
+    {
+      "detail": "ipc:348949b5b902e056",
+      "name": "champion_is_train_only",
+      "passed": true
+    },
+    {
+      "detail": {
+        "account_margin": false,
+        "lcb": -19.917196726120718
+      },
+      "name": "champion_not_overclaimed",
+      "passed": true
+    },
+    {
+      "detail": {
+        "dims": {
+          "decision_id": 246,
+          "split": 2,
+          "system_id": 16,
+          "window": 3
+        },
+        "nan_cells": 22498,
+        "non_null_cube_cells": 1118,
+        "non_null_source_rows": 1118,
+        "null_preserved": true
+      },
+      "name": "xarray_preserved_nulls",
+      "passed": true
+    },
+    {
+      "detail": "all present",
+      "name": "library_consumers_ran",
+      "passed": true
+    },
+    {
+      "detail": "BASELINE_POSITIVE_INTEGRATED_IMPROVEMENT_NOT_YET_ADMISSIBLE",
+      "name": "final_conclusion",
+      "passed": true
+    }
+  ],
+  "contract": "INTEGRATED_PROFIT_CUBE_INDEPENDENT_ORACLE_V1",
+  "failed": 0,
+  "passed": 26
+}
