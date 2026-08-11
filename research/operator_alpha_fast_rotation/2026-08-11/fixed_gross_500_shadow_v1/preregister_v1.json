@@ -1,0 +1,27 @@
+{
+  "contract": "OPERATOR_ALPHA_FIXED_GROSS_500_PREREGISTER_V1",
+  "created_utc": "2026-08-11T00:00:00Z",
+  "environment": "research_shadow_only",
+  "permissions": {"live": false, "paper": false, "broker_mutation": false, "orders": false, "deploy": false, "broker_get_only": true},
+  "main_hypothesis": "A completed-higher-timeframe direction input plus a completed S5/M1 trigger can be evaluated with a fixed gross JPY profit exit and flat-confirmed re-entry without a fixed loss order.",
+  "state_machine": ["SCAN", "WAIT_DIRECTION", "WAIT_TRIGGER", "SHADOW_OPEN", "TAKE_PROFIT", "FLAT_PENDING", "FLAT_CONFIRMED", "REENTRY_ELIGIBLE"],
+  "fixed_controls": {
+    "higher_timeframe": "H4 completed bars only; EMA8/EMA21 and close-versus-EMA21 agreement",
+    "entry_timeframes": ["S5", "M1"],
+    "gross_target_jpy": 500.0,
+    "alternative_targets_atr": [0.1, 0.2, 0.25],
+    "max_monitor_minutes": 60,
+    "concurrency": 1,
+    "entry_probability": 1.0,
+    "entry_units_intent": "observed manual units for manual cohort; 5000 only for signal-supply research",
+    "reentry_gate": "a fresh read-only broker snapshot must report zero shadow-owned open trade and zero shadow-owned pending order",
+    "costs": "entry bid/ask fill, target exit executable side, and a preregistered adverse 10% of touch-bar spread exit slippage",
+    "end_of_replay": "never forced-close; mark remaining position to final executable quote and classify unresolved"
+  },
+  "cohorts": {
+    "manual_truth": "all six prior manual/closeout entries plus the new +560 close; new +560 is labelled overlapping-hedge-context and excluded from concurrency-one clean-success rate",
+    "signal_supply": "frozen 2025 M1 bid/ask files across EUR_USD, USD_JPY, GBP_USD, AUD_USD"
+  },
+  "rejection_conditions": ["broker margin closeout", "unresolved inventory at horizon", "missing bid/ask or financing data", "any result that treats MTM loss as a win", "post-outcome threshold selection"],
+  "adoption_status": "HOLD"
+}

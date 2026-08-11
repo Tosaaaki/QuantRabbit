@@ -1,0 +1,16 @@
+{
+  "contract": "OPERATOR_ALPHA_SIGNAL_SUPPLY_V1",
+  "current_manual_evidence": {
+    "clean_fixed_500_take_profit": 6,
+    "clean_fixed_500_total": 6,
+    "eligible_signals_per_day": null,
+    "status": "NOT_EVALUABLE_NO_FROZEN_OUT_OF_SAMPLE_SIGNAL_LOG"
+  },
+  "definition": "one closed shadow trade needs one completed HTF-aligned S5/M1 signal, one flat confirmation, and concurrency slot zero",
+  "formula": {
+    "required_calendar_days": "ceil(required_confirmed_signals / observed_eligible_signals_per_day)",
+    "required_confirmed_signals": "ceil(100 / observed_flat_confirmed_completion_rate)"
+  },
+  "guarantee": false,
+  "required_completed_trades": 100
+}

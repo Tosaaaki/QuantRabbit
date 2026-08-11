@@ -1,0 +1,25 @@
+{
+  "contract": "FIXED_GROSS_500_SOURCE_MANIFEST_V1",
+  "files": {
+    "broker_flat_check_v1.json": {
+      "bytes": 328,
+      "sha256": "45618cc6dbfb714afd2af0bb83621282ed94d7f390b0d7d9d01e45a8c7a08f93"
+    },
+    "source_candles_v1.json": {
+      "bytes": 3806712,
+      "sha256": "42caa6335f0d4d810be39b5eb8410711c4aaddd6d12325c28ca87aa1278f93a1"
+    },
+    "source_transactions_v1.json": {
+      "bytes": 15434,
+      "sha256": "6049b4f497b7125a906c4ff1118317ab3b3f0a92e3a83d789ad4a2bba3d59616"
+    }
+  },
+  "permissions": {
+    "broker_get_only": true,
+    "broker_mutation": false,
+    "deploy": false,
+    "live": false,
+    "orders": false,
+    "paper": false
+  }
+}

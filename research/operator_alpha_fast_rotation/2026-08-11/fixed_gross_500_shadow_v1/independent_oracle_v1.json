@@ -1,0 +1,68 @@
+{
+  "arms": {
+    "ATR_010": {
+      "decision_ids": [
+        "FGR500-473162",
+        "FGR500-473183",
+        "FGR500-473189",
+        "FGR500-473193",
+        "FGR500-473197",
+        "FGR500-473201",
+        "FGR500-473212"
+      ],
+      "take_profit_count": 7,
+      "terminal_sum_jpy": 654.1020900713432,
+      "unresolved_count": 0
+    },
+    "ATR_020": {
+      "decision_ids": [
+        "FGR500-473162",
+        "FGR500-473183",
+        "FGR500-473189",
+        "FGR500-473193",
+        "FGR500-473197",
+        "FGR500-473201",
+        "FGR500-473212"
+      ],
+      "take_profit_count": 7,
+      "terminal_sum_jpy": 1756.7631011416345,
+      "unresolved_count": 0
+    },
+    "ATR_025": {
+      "decision_ids": [
+        "FGR500-473162",
+        "FGR500-473183",
+        "FGR500-473189",
+        "FGR500-473193",
+        "FGR500-473197",
+        "FGR500-473201",
+        "FGR500-473212"
+      ],
+      "take_profit_count": 7,
+      "terminal_sum_jpy": 2317.1986066790178,
+      "unresolved_count": 0
+    },
+    "FIXED_GROSS_500": {
+      "decision_ids": [
+        "FGR500-473162",
+        "FGR500-473183",
+        "FGR500-473189",
+        "FGR500-473193",
+        "FGR500-473197",
+        "FGR500-473201",
+        "FGR500-473212"
+      ],
+      "take_profit_count": 6,
+      "terminal_sum_jpy": 2264.6410789986257,
+      "unresolved_count": 1
+    }
+  },
+  "checks": {
+    "all_arms_same_decision_ids": true,
+    "four_prior_manual_mean_seconds": 405.847355,
+    "four_prior_manual_wins_hit_fixed_500": true,
+    "new_560_not_clean_concurrency_one": true,
+    "no_forced_end_close": true
+  },
+  "contract": "FIXED_GROSS_500_INDEPENDENT_ORACLE_V1"
+}

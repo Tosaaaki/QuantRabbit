@@ -1,0 +1,15 @@
+{
+  "contract": "FIXED_GROSS_500_READONLY_FLAT_CHECK_V1",
+  "hedging_enabled": true,
+  "last_transaction_id": "473218",
+  "open_trade_count": 1,
+  "open_trades": [
+    {
+      "currentUnits": "-35000",
+      "id": "473207",
+      "instrument": "USD_JPY",
+      "price": "159.000",
+      "unrealizedPL": "-7840.0000"
+    }
+  ]
+}
