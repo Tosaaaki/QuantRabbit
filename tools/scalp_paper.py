@@ -97,12 +97,47 @@ def read_ledger() -> list[dict]:
 
 def cmd_log(args, reg) -> int:
     parts = args.intake.split()
-    if len(parts) < 3:
-        raise SystemExit("need '<pair> <long|short> <tp_pips>', e.g. 'USDJPY long 3.0'")
+    if len(parts) < 2:
+        raise SystemExit("need '<pair> <long|short> <tp_pips>' or '<pair> skip [note]'")
     pair = normalize_pair(parts[0])
     side = parts[1].lower()
+
+    # SKIP is a first-class record, not the absence of one. An entry rule cannot
+    # be recovered from entries alone: a classifier trained only on positives has
+    # no decision boundary. Phase 1 (does the entry have an edge?) needs only
+    # ENTERs, but phase 2 (what IS the rule?) needs the declines, and collecting
+    # them later means collecting everything again.
+    if side in ("skip", "pass"):
+        token, acct, base = creds()
+        q = get(base, token, f"/v3/accounts/{acct}/pricing", {"instruments": pair})["prices"][0]
+        bid, ask = float(q["bids"][0]["price"]), float(q["asks"][0]["price"])
+        row = {
+            "schema": "QR_SCALP_PAPER_SKIP_V1",
+            "logged_at_utc": iso(datetime.now(timezone.utc)),
+            "quote_time_utc": q["time"], "pair": pair, "side": "skip",
+            "bid_at_entry": bid, "ask_at_entry": ask,
+            "spread_pips": round((ask - bid) / pip_size(pair), 2),
+            "note": " ".join(parts[2:]) or None,
+            # a decline is attributed only to this pair at this clock; it says
+            # nothing about any other pair or any other moment
+            "attribution": "THIS_PAIR_THIS_CLOCK_ONLY",
+            "resolved": {"outcome": "SKIP", "pips": None, "at_utc": None},
+        }
+        LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        with LEDGER.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        rows = read_ledger()
+        skips = sum(1 for r in rows if r.get("side") == "skip")
+        enters = sum(1 for r in rows if r.get("side") in ("long", "short"))
+        print(f"logged SKIP  {pair} @ {bid}/{ask}" + (f"  note: {row['note']}" if row["note"] else ""))
+        print(f"  entries {enters} / skips {skips}  (skips do not count toward the {reg['required_n']} "
+              f"edge test; they are the phase-2 training material)")
+        return 0
+
     if side not in ("long", "short"):
-        raise SystemExit("side must be long or short")
+        raise SystemExit("side must be long, short or skip")
+    if len(parts) < 3:
+        raise SystemExit("an entry needs a take-profit distance, e.g. 'USDJPY long 3.0'")
     tp_pips = float(parts[2])
     tp_max = reg["population"]["take_profit_max_pips"]
     if not 0 < tp_pips <= tp_max:
@@ -202,12 +237,17 @@ def cmd_resolve(args, reg) -> int:
 
 def cmd_status(args, reg) -> int:
     rows = read_ledger()
-    done = [r for r in rows if r.get("resolved")]
-    open_ = [r for r in rows if not r.get("resolved")]
+    skips = [r for r in rows if r.get("side") == "skip"]
+    entries = [r for r in rows if r.get("side") in ("long", "short")]
+    done = [r for r in entries if r.get("resolved")]
+    open_ = [r for r in entries if not r.get("resolved")]
     need = reg["required_n"]
     print(f"\n=== paper scalp ledger / stop -{reg['rule']['stop_distance_pips']:.0f}p "
           f"/ TP<={reg['population']['take_profit_max_pips']:.0f}p ===")
     print(f"resolved {len(done)} / {need} required   still running {len(open_)}")
+    print(f"phase 1 (does the entry pay?): {len(done)}/{need} resolved entries")
+    print(f"phase 2 (what IS the rule?)  : {len(entries)} entries + {len(skips)} skips "
+          f"= {len(rows)} labelled decisions")
     if args.detail and done:
         print(f"\n{'logged':17}{'pair':9}{'side':6}{'TP':>5}{'spread':>7}{'out':>9}{'pips':>7}")
         for r in done:
