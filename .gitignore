@@ -34,3 +34,5 @@ research/paper/daily_close_cache.json
 research/paper/bitbank_daily_cache.json
 research/paper/scalp_verify_state.json
 research/operator_model/dataset_v1.json
+research/operator_model/dataset_v2_cot.json
+research/operator_model/cot_cache.json

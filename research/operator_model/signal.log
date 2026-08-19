@@ -7,3 +7,158 @@ signals 0 counted (1 blocked)  resolved 0 / 60 required  open 0
 USD_JPY  score 0.2473 / thr 0.2201  -> FIRE  LONG
    blocked: OPEN_SIGNAL_2026-08-19T15:09 / MARGIN_93%_OVER_30%  (recorded, not counted)
    logged  long @ 158.488  exit 2026-09-02T15:10  spread 0.8p
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 1 counted (1 blocked)  resolved 0 / 60 required  open 1
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.0054 / thr 0.2201  -> no-trade
+EUR_USD  score 0.0451 / thr 0.2201  -> no-trade
+GBP_USD  score 0.0206 / thr 0.2201  -> no-trade
+AUD_USD  score 0.0155 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0140 / thr 0.2201  -> no-trade
+USD_CAD  score 0.0166 / thr 0.2201  -> no-trade
+USD_CHF  score 0.0308 / thr 0.2201  -> no-trade
+EUR_JPY  score 0.0033 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.0054 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.0081 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0071 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 1 counted (1 blocked)  resolved 0 / 60 required  open 1
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1105 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1814 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1396 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1411 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0887 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1382 / thr 0.2201  -> no-trade
+USD_CHF  score 0.2439 / thr 0.2201  -> FIRE  LONG
+   paper only: margin 94% over the 30% execution cap — the signal still counts toward the 60
+   logged  long @ 0.79965  exit 2026-09-02T17:10  spread 1.7p
+EUR_JPY  score 0.0680 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.1018 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.1146 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0991 / thr 0.2201  -> no-trade
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 2 counted (1 blocked)  resolved 0 / 60 required  open 2
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1640 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1196 / thr 0.2201  -> no-trade
+GBP_USD  score 0.2183 / thr 0.2201  -> no-trade
+AUD_USD  score 0.0993 / thr 0.2201  -> no-trade
+NZD_USD  score 0.1224 / thr 0.2201  -> no-trade
+USD_CAD  score 0.2240 / thr 0.2201  -> FIRE  LONG
+   paper only: margin 94% over the 30% execution cap — the signal still counts toward the 60
+   logged  long @ 1.38147  exit 2026-09-02T18:11  spread 1.9p
+USD_CHF  score 0.2548 / thr 0.2201  -> FIRE  LONG
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 94% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CHF signal — not recorded
+EUR_JPY  score 0.0703 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.0849 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.0970 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.1074 / thr 0.2201  -> no-trade
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1032 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1688 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1695 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1374 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0864 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1545 / thr 0.2201  -> no-trade
+USD_CHF  score 0.2076 / thr 0.2201  -> no-trade
+EUR_JPY  score 0.0509 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.0977 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.0765 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0798 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1519 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1369 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1720 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1506 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0897 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1515 / thr 0.2201  -> no-trade
+USD_CHF  score 0.3354 / thr 0.2201  -> FIRE  LONG
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CHF signal — not recorded
+EUR_JPY  score 0.0785 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.1858 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.1124 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.1039 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1595 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1483 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1678 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1614 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0836 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1333 / thr 0.2201  -> no-trade
+USD_CHF  score 0.2288 / thr 0.2201  -> FIRE  LONG
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CHF signal — not recorded
+EUR_JPY  score 0.0816 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.1477 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.1162 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.1094 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1039 / thr 0.2201  -> no-trade
+EUR_USD  score 0.1182 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1630 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1233 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0711 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1066 / thr 0.2201  -> no-trade
+USD_CHF  score 0.1120 / thr 0.2201  -> no-trade
+EUR_JPY  score 0.0646 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.1259 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.1057 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0841 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.1298 / thr 0.2201  -> no-trade
+EUR_USD  score 0.0757 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1185 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1095 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0740 / thr 0.2201  -> no-trade
+USD_CAD  score 0.1334 / thr 0.2201  -> no-trade
+USD_CHF  score 0.1309 / thr 0.2201  -> no-trade
+EUR_JPY  score 0.0652 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.1021 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.1242 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0895 / thr 0.2201  -> no-trade
+no signal this cycle
