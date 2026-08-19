@@ -1,0 +1,29 @@
+#!/bin/sh
+# qs — quick scalp log. The collection only works if it is faster than the trade.
+#
+#   qs long 3          enter long on USD_JPY, 3-pip take-profit
+#   qs short 2.5       enter short on USD_JPY
+#   qs skip 弱い        decline, with a reason
+#   qs eurusd long 4   another pair
+#   qs r               resolve everything that has run its course
+#   qs s               status
+#
+# Defaults to USD_JPY because that is what the sample is. Anything else works
+# by naming the pair first.
+set -e
+DIR=$(cd "$(dirname "$0")" && pwd)
+PY=${QR_PYTHON:-/Library/Frameworks/Python.framework/Versions/3.12/bin/python3}
+[ -x "$PY" ] || PY=$(command -v python3)
+
+case "$1" in
+  r|resolve) exec "$PY" "$DIR/scalp_paper.py" resolve ;;
+  s|status)  exec "$PY" "$DIR/scalp_paper.py" status --detail ;;
+  "")        exec "$PY" "$DIR/scalp_paper.py" status ;;
+esac
+
+# a leading long/short/skip means the default pair
+case "$1" in
+  long|short|skip|pass) set -- USDJPY "$@" ;;
+esac
+
+exec "$PY" "$DIR/scalp_paper.py" log "$*"
