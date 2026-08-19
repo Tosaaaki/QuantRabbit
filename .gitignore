@@ -29,3 +29,5 @@ secrets/
 # forward M1 fetch + heavy research cache (regenerable, large)
 research/paper/forward_m1/
 research/paper/quiet_gate_cache.json
+
+research/paper/daily_close_cache.json
