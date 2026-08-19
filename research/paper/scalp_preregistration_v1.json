@@ -1,0 +1,45 @@
+{
+  "schema": "QR_SCALP_PREREGISTRATION_V1",
+  "registered_at_utc": "2026-08-19T00:00:00Z",
+  "rationale": "17 scalp-intent trades to 2026-08-18 showed winners' MAE median -2.6 pips (worst -8.8 excluding one 92-hour hold) while the two losers ran to -40.7 and -33.5. A stop halves dispersion without cutting winners. The 10-pip value was CHOSEN BY SCANNING THOSE 17 TRADES, so those trades are fitting data and are excluded from the evidence set. This registration freezes the rule before new data.",
+  "population": {
+    "definition": "manual trades whose take-profit distance at entry is <= 15.0 pips",
+    "take_profit_max_pips": 15.0,
+    "instrument_filter": null,
+    "note": "classification uses TP distance at entry, never realised hold time; classifying by hold time makes winners close fast and losers migrate out, producing a fake 100% win rate"
+  },
+  "rule": {
+    "stop_distance_pips": 10.0,
+    "stop_required": true,
+    "max_margin_used_fraction": 0.60,
+    "note": "a trade opened without a broker stop, or above the margin fraction, is recorded as a DISCIPLINE VIOLATION and excluded from the evidence set - it is not silently dropped"
+  },
+  "measurement": {
+    "unit": "pips",
+    "unit_rationale": "trade sizes in the prior sample ranged 1,000-35,000 units, a 35x spread; measuring in JPY would measure position size rather than method",
+    "statistic": "one-sided 95% lower bound on mean pips per trade",
+    "z": 1.645
+  },
+  "prior_estimate_do_not_reuse_as_evidence": {
+    "n": 17,
+    "mean_pips": 2.32,
+    "sd_pips": 6.45,
+    "lower_bound_pips": -0.26,
+    "sharpe_per_trade": 0.359,
+    "n_implied": 21
+  },
+  "required_n": 45,
+  "required_n_rationale": "the fitted estimate implies 21 trades, but the stop distance was fitted on the same sample. Assuming the true edge shrinks to ~70% of the fitted value (mu 1.62, sd 6.45) gives n = 43. Registered at 45.",
+  "decision_criteria": {
+    "accept": "lower bound > 0 after >= 45 clean trades",
+    "reject": "lower bound <= 0 with >= 90 clean trades, or mean <= 0 at any point beyond 45",
+    "abort": "any single trade loses more than 25 pips (means the stop is not being honoured)"
+  },
+  "forbidden": [
+    "changing stop_distance_pips, take_profit_max_pips, max_margin_used_fraction or required_n after the first clean trade is recorded",
+    "excluding a losing trade as 'not really a scalp'",
+    "reporting the prior 17 trades as evidence",
+    "computing a win rate or mean over any subset chosen after seeing outcomes"
+  ],
+  "evidence_start_transaction_id": "473332"
+}
