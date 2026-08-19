@@ -89,6 +89,50 @@ def normalize_pair(raw: str) -> str:
     return f"{m.group(1).upper()}_{m.group(2).upper()}"
 
 
+def market_shape(base, token, pair: str, side_sign: int) -> dict | None:
+    """Where the price sits inside its recent range, and how fast it got there.
+
+    Recorded at every decision because introspection is not reliable about this.
+    Asked what the entry rule was, the operator described breakouts — "ここ抜けたら
+    走る". Measured against the 18 historical entries, the median entry sat INSIDE
+    the range at every window (1min -0.49 ATR, 5min -3.41, 20min -6.20) and none
+    of the 18 broke the 60-minute range. The behaviour is pullback entry, not
+    breakout. A bot built from the description would have traded a different
+    strategy than the one that produced the edge.
+
+    `break_Nm` > 0 means the price is beyond the N-minute extreme in the trade's
+    direction (a breakout); < 0 means it is that far inside the range.
+    Everything is in ATR units so it compares across pairs and volatility.
+    """
+    try:
+        frm = (datetime.now(timezone.utc) - timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cs = get(base, token, f"/v3/instruments/{pair}/candles",
+                 {"granularity": "S5", "from": frm, "count": "600", "price": "M"})["candles"]
+    except Exception:
+        return None
+    bars = [c for c in cs if c.get("complete")]
+    if len(bars) < 300:
+        return None
+    hi = [float(c["mid"]["h"]) for c in bars]
+    lo = [float(c["mid"]["l"]) for c in bars]
+    cl = [float(c["mid"]["c"]) for c in bars]
+    tr = [max(hi[i] - lo[i], abs(hi[i] - cl[i - 1]), abs(lo[i] - cl[i - 1])) for i in range(1, len(cl))]
+    atr = sum(tr[-168:]) / 168          # ~14 minutes of S5
+    if atr <= 0:
+        return None
+    px = cl[-1]
+    out = {"atr_pips": round(atr / pip_size(pair), 2), "windows_minutes": [1, 3, 5, 10, 20]}
+    s = side_sign or 1                   # a SKIP has no side; record the long-frame view
+    for m in out["windows_minutes"]:
+        n = m * 12
+        wh, wl = max(hi[-n:]), min(lo[-n:])
+        out[f"break_{m}m"] = round(((px - wh) if s > 0 else (wl - px)) / atr, 2)
+        out[f"mom_{m}m"] = round((cl[-1] - cl[-1 - n]) / atr * s, 2)
+        out[f"range_{m}m_pips"] = round((wh - wl) / pip_size(pair), 1)
+    out["side_sign_used"] = s
+    return out
+
+
 def read_ledger() -> list[dict]:
     if not LEDGER.exists():
         return []
@@ -121,6 +165,7 @@ def cmd_log(args, reg) -> int:
             # a decline is attributed only to this pair at this clock; it says
             # nothing about any other pair or any other moment
             "attribution": "THIS_PAIR_THIS_CLOCK_ONLY",
+            "shape": market_shape(base, token, pair, 0),
             "resolved": {"outcome": "SKIP", "pips": None, "at_utc": None},
         }
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +207,7 @@ def cmd_log(args, reg) -> int:
         "tp_price": round(entry + sign * tp_pips * pip, 5),
         "stop_price": round(entry - sign * stop_pips * pip, 5),
         "prereg_stop": stop_pips, "prereg_tp_max": tp_max,
+        "shape": market_shape(base, token, pair, sign),
         "resolved": None,
     }
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
