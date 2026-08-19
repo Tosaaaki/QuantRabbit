@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.quantrabbit/research/manual-method-observability-label-v1.schema.json",
+  "title": "QuantRabbit direct manual decision capsule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "capsule_id",
+    "record_kind",
+    "population_stream",
+    "pair",
+    "captured_at_utc",
+    "decision_cutoff_utc",
+    "operator_evidence",
+    "market_context",
+    "broker_context",
+    "traceability",
+    "missing",
+    "proxy_classifier",
+    "inferred_label",
+    "source_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "QR_DIRECT_MANUAL_DECISION_CAPSULE_V1"},
+    "capsule_id": {"type": "string", "pattern": "^dca_[0-9a-f]{64}$"},
+    "record_kind": {"enum": ["SCHEDULED_5M_CLOCK", "MANUAL_EVENT"]},
+    "population_stream": {"enum": ["FULL_28_PAIR_CLOCK", "EVENT_OVERSAMPLE"]},
+    "pair": {"type": "string", "pattern": "^[A-Z]{3}_[A-Z]{3}$"},
+    "captured_at_utc": {"type": "string", "format": "date-time"},
+    "decision_cutoff_utc": {"type": "string", "format": "date-time"},
+    "operator_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["direct", "timing", "primary_action", "side", "confidence", "note", "lifecycle", "evidence_refs"],
+      "properties": {
+        "direct": {"type": "boolean"},
+        "timing": {"enum": ["CONTEMPORANEOUS", "RETROSPECTIVE", "MISSING"]},
+        "primary_action": {
+          "type": ["string", "null"],
+          "enum": ["ENTER", "SKIP", "EXIT", "PARTIAL_EXIT", "REENTRY", "PAIR_ROTATION", "HEDGE", "HEDGE_UNWIND", null]
+        },
+        "side": {"type": ["string", "null"], "enum": ["LONG", "SHORT", null]},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "note": {"type": ["string", "null"]},
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tp_intent", "partial_exit", "exit_reason", "reverse_reentry", "pair_rotation_to", "hedge_pair", "unwind_reason"],
+          "properties": {
+            "tp_intent": {"type": ["object", "null"]},
+            "partial_exit": {"type": ["object", "null"]},
+            "exit_reason": {"type": ["string", "null"]},
+            "reverse_reentry": {"type": ["boolean", "null"]},
+            "pair_rotation_to": {"type": ["string", "null"], "pattern": "^[A-Z]{3}_[A-Z]{3}$"},
+            "hedge_pair": {"type": ["string", "null"], "pattern": "^[A-Z]{3}_[A-Z]{3}$"},
+            "unwind_reason": {"type": ["string", "null"]}
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "captured_at_utc", "sha256"],
+            "properties": {
+              "kind": {"enum": ["SCREENSHOT", "DRAWING", "AUDIO", "TEXT", "CHAT_DIRECTIVE"]},
+              "captured_at_utc": {"type": "string", "format": "date-time"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"direct": {"const": false}}, "required": ["direct"]},
+          "then": {
+            "properties": {
+              "primary_action": {"type": "null"},
+              "side": {"type": "null"},
+              "confidence": {"type": "null"},
+              "note": {"type": "null"},
+              "evidence_refs": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"direct": {"const": true}}, "required": ["direct"]},
+          "then": {"properties": {"evidence_refs": {"minItems": 1}}}
+        }
+      ]
+    },
+    "market_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeframes", "geometry"],
+      "properties": {
+        "timeframes": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["timeframe", "bar_end_utc", "complete", "candle", "normalized_slope", "normalized_angle", "atr", "momentum", "support_resistance", "observed_at_utc"],
+            "properties": {
+              "timeframe": {"enum": ["S5", "M1", "M5", "M15", "H1", "H4", "D1"]},
+              "bar_end_utc": {"type": ["string", "null"], "format": "date-time"},
+              "complete": {"type": ["boolean", "null"]},
+              "candle": {"type": ["object", "null"]},
+              "normalized_slope": {"type": ["number", "null"]},
+              "normalized_angle": {"type": ["number", "null"]},
+              "atr": {"type": ["number", "null"]},
+              "momentum": {"type": ["number", "null"]},
+              "support_resistance": {"type": ["object", "null"]},
+              "observed_at_utc": {"type": ["string", "null"], "format": "date-time"}
+            }
+          }
+        },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["n_wave_anchors", "trendline_anchors", "stall_anchor", "rebound_anchor", "source_evidence_sha256"],
+          "properties": {
+            "n_wave_anchors": {"type": ["array", "null"]},
+            "trendline_anchors": {"type": ["array", "null"]},
+            "stall_anchor": {"type": ["object", "null"]},
+            "rebound_anchor": {"type": ["object", "null"]},
+            "source_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "broker_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quote_time_utc", "bid", "ask", "spread", "nav", "margin_available", "margin_used", "positions", "orders", "transaction_watermark", "fill", "financing", "conversion", "read_only"],
+      "properties": {
+        "quote_time_utc": {"type": ["string", "null"], "format": "date-time"},
+        "bid": {"type": ["number", "null"]},
+        "ask": {"type": ["number", "null"]},
+        "spread": {"type": ["number", "null"]},
+        "nav": {"type": ["number", "null"]},
+        "margin_available": {"type": ["number", "null"]},
+        "margin_used": {"type": ["number", "null"]},
+        "positions": {"type": ["array", "null"]},
+        "orders": {"type": ["array", "null"]},
+        "transaction_watermark": {"type": ["string", "null"]},
+        "fill": {"type": ["object", "null"]},
+        "financing": {"type": ["object", "null"]},
+        "conversion": {"type": ["object", "null"]},
+        "read_only": {"const": true}
+      }
+    },
+    "traceability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "observed_fields", "reconstructable_fields", "missing_fields"],
+      "properties": {
+        "classification": {"enum": ["OBSERVED", "RECONSTRUCTABLE", "MISSING", "MIXED"]},
+        "observed_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "reconstructable_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "missing_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "reason"],
+        "properties": {"field": {"type": "string"}, "reason": {"type": "string"}}
+      }
+    },
+    "proxy_classifier": {"type": "null"},
+    "inferred_label": {"type": "null"},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
