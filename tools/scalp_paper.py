@@ -133,6 +133,122 @@ def market_shape(base, token, pair: str, side_sign: int) -> dict | None:
     return out
 
 
+def reference_levels(base, token, pair: str, side_sign: int, px: float, atr: float) -> dict | None:
+    """Every level a scalper might mean by 「ここ」, measured at decision time.
+
+    Which one matters is unknown and cannot be settled by asking — the breakout
+    description did not match the behaviour. So instead of picking one, record
+    the distance to all of them and let 300-500 labels decide later.
+
+    Distances are signed by trade direction: positive means the price has already
+    passed the level in the direction of the trade, negative means the level is
+    still ahead. Both pips and ATR units are stored.
+    """
+    try:
+        m1 = get(base, token, f"/v3/instruments/{pair}/candles",
+                 {"granularity": "M1", "count": "2880", "price": "M"})["candles"]
+    except Exception:
+        return None
+    bars = [c for c in m1 if c.get("complete")]
+    if len(bars) < 400:
+        return None
+    pip = pip_size(pair)
+    s = side_sign or 1
+    now = parse_time(bars[-1]["time"])
+    today = now.strftime("%Y-%m-%d")
+
+    # These levels sit hours away, so the caller's S5 ATR (~0.4 pips) is the wrong
+    # yardstick — it turns a 70-pip distance into "168 ATR". Normalise them by an
+    # M1 ATR(14) instead, which is the scale the distances actually live on.
+    _h = [float(c["mid"]["h"]) for c in bars]
+    _l = [float(c["mid"]["l"]) for c in bars]
+    _c = [float(c["mid"]["c"]) for c in bars]
+    _tr = [max(_h[i] - _l[i], abs(_h[i] - _c[i - 1]), abs(_l[i] - _c[i - 1]))
+           for i in range(len(_c) - 14, len(_c))]
+    atr_m1 = sum(_tr) / len(_tr) if _tr else 0.0
+
+    def band(pred):
+        w = [c for c in bars if pred(parse_time(c["time"]))]
+        if not w:
+            return None, None, None
+        return (max(float(c["mid"]["h"]) for c in w),
+                min(float(c["mid"]["l"]) for c in w),
+                float(w[0]["mid"]["o"]))
+
+    prev_day = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    pdh, pdl, _ = band(lambda t: t.strftime("%Y-%m-%d") == prev_day)
+    tdh, tdl, tdo = band(lambda t: t.strftime("%Y-%m-%d") == today)
+    # OANDA sessions in UTC: Tokyo 00-08, London 07-16, New York 12-21
+    hour = now.hour
+    sess = "TOKYO" if hour < 8 else ("LONDON" if hour < 12 else ("NY_OVERLAP" if hour < 16 else "NY"))
+    sess_start = {"TOKYO": 0, "LONDON": 7, "NY_OVERLAP": 12, "NY": 16}[sess]
+    ssh, ssl, sso = band(lambda t: t.strftime("%Y-%m-%d") == today and t.hour >= sess_start)
+
+    # swing pivots: a bar whose extreme beats the 5 bars either side
+    hi = [float(c["mid"]["h"]) for c in bars]
+    lo = [float(c["mid"]["l"]) for c in bars]
+    swing_h = [hi[i] for i in range(len(hi) - 240, len(hi) - 5)
+               if hi[i] == max(hi[i - 5:i + 6])]
+    swing_l = [lo[i] for i in range(len(lo) - 240, len(lo) - 5)
+               if lo[i] == min(lo[i - 5:i + 6])]
+    near_sh = min((v for v in swing_h if v >= px), default=None)
+    near_sl = max((v for v in swing_l if v <= px), default=None)
+
+    # round numbers: the 50- and 100-pip grids
+    grid50, grid100 = 50 * pip, 100 * pip
+    r50 = round(px / grid50) * grid50
+    r100 = round(px / grid100) * grid100
+
+    # session VWAP from tick volume
+    vw = [c for c in bars if parse_time(c["time"]).strftime("%Y-%m-%d") == today
+          and parse_time(c["time"]).hour >= sess_start]
+    vol = sum(int(c.get("volume", 0)) for c in vw)
+    vwap = (sum(((float(c["mid"]["h"]) + float(c["mid"]["l"]) + float(c["mid"]["c"])) / 3)
+                * int(c.get("volume", 0)) for c in vw) / vol) if vol else None
+
+    out = {"session": sess, "day_utc": today, "atr_m1_pips": round(atr_m1 / pip, 2)}
+    for name, lvl in (("prev_day_high", pdh), ("prev_day_low", pdl),
+                      ("today_high", tdh), ("today_low", tdl), ("today_open", tdo),
+                      ("session_high", ssh), ("session_low", ssl), ("session_open", sso),
+                      ("nearest_swing_high", near_sh), ("nearest_swing_low", near_sl),
+                      ("round_50pip", r50), ("round_100pip", r100),
+                      ("session_vwap", vwap)):
+        if lvl is None:
+            out[name] = None
+            continue
+        d = (px - lvl) * s
+        out[name] = {"price": round(lvl, 5),
+                     "dist_pips": round(d / pip, 1),
+                     "dist_atr_m1": round(d / atr_m1, 2) if atr_m1 else None,
+                     "passed": d > 0}
+    return out
+
+
+def raw_path(base, token, pair: str) -> dict | None:
+    """The price path itself, so any shape hypothesis can be tested later.
+
+    The levels above are guesses about what 「ここ」 means. This is the insurance
+    against all of them being wrong: 10 minutes of S5 and 2 hours of M1 around
+    the decision, stored raw. Anything computable from price can be recovered
+    from it afterwards without having to have guessed correctly today.
+    """
+    try:
+        s5 = get(base, token, f"/v3/instruments/{pair}/candles",
+                 {"granularity": "S5", "count": "120", "price": "M"})["candles"]
+        m1 = get(base, token, f"/v3/instruments/{pair}/candles",
+                 {"granularity": "M1", "count": "120", "price": "M"})["candles"]
+    except Exception:
+        return None
+
+    def pack(cs):
+        return [[c["time"][11:19], float(c["mid"]["o"]), float(c["mid"]["h"]),
+                 float(c["mid"]["l"]), float(c["mid"]["c"]), int(c.get("volume", 0))]
+                for c in cs if c.get("complete")]
+
+    return {"columns": ["t", "o", "h", "l", "c", "v"],
+            "s5_10min": pack(s5), "m1_2h": pack(m1)}
+
+
 def read_ledger() -> list[dict]:
     if not LEDGER.exists():
         return []
@@ -165,7 +281,10 @@ def cmd_log(args, reg) -> int:
             # a decline is attributed only to this pair at this clock; it says
             # nothing about any other pair or any other moment
             "attribution": "THIS_PAIR_THIS_CLOCK_ONLY",
-            "shape": market_shape(base, token, pair, 0),
+            "shape": (sh := market_shape(base, token, pair, 0)),
+            "levels": reference_levels(base, token, pair, 0, (bid + ask) / 2,
+                                       (sh or {}).get("atr_pips", 0) * pip_size(pair)),
+            "path": raw_path(base, token, pair),
             "resolved": {"outcome": "SKIP", "pips": None, "at_utc": None},
         }
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
@@ -207,7 +326,10 @@ def cmd_log(args, reg) -> int:
         "tp_price": round(entry + sign * tp_pips * pip, 5),
         "stop_price": round(entry - sign * stop_pips * pip, 5),
         "prereg_stop": stop_pips, "prereg_tp_max": tp_max,
-        "shape": market_shape(base, token, pair, sign),
+        "shape": (sh := market_shape(base, token, pair, sign)),
+        "levels": reference_levels(base, token, pair, sign, entry,
+                                   (sh or {}).get("atr_pips", 0) * pip),
+        "path": raw_path(base, token, pair),
         "resolved": None,
     }
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
