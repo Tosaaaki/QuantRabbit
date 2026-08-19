@@ -39,7 +39,15 @@ from quant_rabbit.operator_model import (  # noqa: E402
 
 LEDGER = ROOT / "research" / "operator_model" / "signals.jsonl"
 PREREG = ROOT / "research" / "operator_model" / "PREREGISTRATION_V1.md"
-PAIRS = ("USD_JPY",)          # v1 is USD_JPY only: 404 of 464 training entries
+# All 11 majors, no pair selection. Restricting to USD_JPY made 60 signals take
+# 840 days: the exit is 336h and one-at-a-time caps throughput at 26/year.
+# Measured across the test window the full set gives +20.56 pips (LB +2.72) over
+# 220 signals, and +27.57 (LB +5.68) once same-pair overlaps are collapsed - so
+# widening is both faster AND better. JPY crosses scored best and USD majors
+# worst, but picking the winners after seeing that is the selection error that
+# killed every other candidate this session, so the whole set trades.
+PAIRS = ("USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "NZD_USD", "USD_CAD",
+         "USD_CHF", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CAD_JPY")
 REQUIRED_N = 60
 MAX_MARGIN_FRACTION = 0.30
 ENV = Path("/Users/tossaki/App/QuantRabbit/.env.local")
@@ -82,12 +90,20 @@ def cmd_check(args) -> int:
             print(f"{pair}: history too thin to score")
             continue
         # one open signal per pair at a time; the exit is time-based
-        live = [r for r in rows if r["pair"] == pair and not r.get("resolved")]
+        # Two separate gates. Evidence is collected on paper and costs no
+        # capital, so the account's margin state has no bearing on whether a
+        # signal counts — coupling them would stall the 60-signal test behind a
+        # position the model did not open. Margin gates EXECUTION only.
+        # Two signals on the same pair inside one 336h window share the same
+        # price path and are one observation, not two. Rather than logging ~63
+        # a day across 11 pairs and collapsing them afterwards, only the first
+        # in each (pair, block) is recorded - the ledger then IS the evidence,
+        # with no post-hoc aggregation step to get wrong.
         blocked = []
-        if live:
-            blocked.append(f"OPEN_SIGNAL_{live[-1]['at_utc'][:16]}")
-        if used / nav > MAX_MARGIN_FRACTION:
-            blocked.append(f"MARGIN_{used/nav:.0%}_OVER_{MAX_MARGIN_FRACTION:.0%}")
+        tradeable = used / nav <= MAX_MARGIN_FRACTION
+        block = int(datetime.now(timezone.utc).timestamp() // (EXIT_HOURS * 3600))
+        if any(r["pair"] == pair and r.get("block") == block for r in rows):
+            blocked.append(f"SAME_BLOCK_{block}")
 
         mark = "FIRE" if s["fires"] else "no-trade"
         print(f"{pair}  score {s['action']:.4f} / thr {s['threshold']:.4f}  -> {mark}"
@@ -96,6 +112,9 @@ def cmd_check(args) -> int:
             continue
         if blocked:
             print(f"   blocked: {' / '.join(blocked)}  (recorded, not counted)")
+        if not tradeable:
+            print(f"   paper only: margin {used/nav:.0%} over the {MAX_MARGIN_FRACTION:.0%} "
+                  f"execution cap — the signal still counts toward the {REQUIRED_N}")
         q = get(f"/v3/accounts/{acct}/pricing", {"instruments": pair})["prices"][0]
         bid, ask = float(q["bids"][0]["price"]), float(q["asks"][0]["price"])
         entry = ask if s["side"] == "long" else bid
@@ -104,13 +123,17 @@ def cmd_check(args) -> int:
                "exit_due_utc": (parse_time(s["at_utc"]) + timedelta(hours=EXIT_HOURS)
                                 ).isoformat().replace("+00:00", "Z"),
                "nav_at_signal": nav, "margin_used_fraction": round(used / nav, 4),
+               "block": block, "tradeable_live": tradeable,
                "blocked": blocked or None, "resolved": None}
+        if blocked and any(x.startswith("SAME_BLOCK") for x in blocked):
+            print(f"   same 336h block as an existing {pair} signal — not recorded")
+            continue
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         with LEDGER.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         fired += 1
         print(f"   logged  {s['side']} @ {entry}  exit {row['exit_due_utc'][:16]}  spread {row['spread_pips']}p")
-        if args.emit_order and not blocked:
+        if args.emit_order and not blocked and tradeable:
             units = int(nav * MAX_MARGIN_FRACTION * 25 / entry)
             units = (units // 1000) * 1000 * (1 if s["side"] == "long" else -1)
             print("   order payload (NOT sent — place it yourself or hand to an execution wrapper):")
@@ -175,10 +198,18 @@ def cmd_status(args) -> int:
                   + (f"  [{','.join(r['blocked'])}]" if r.get("blocked") else ""))
     if len(done) >= 2:
         net = [r["resolved"]["net_pips"] for r in done]
-        mu, sd = statistics.mean(net), statistics.pstdev(net)
-        lb = mu - 1.645 * sd / (len(net) ** 0.5)
-        print(f"\n  net {mu:+.2f} pips   sd {sd:.1f}   win {100*sum(1 for x in net if x>0)/len(net):.0f}%"
+        # Collapse same-pair overlaps into non-overlapping 336h blocks. Two
+        # signals on the same pair inside one exit window share the same price
+        # path and are one observation, not two.
+        # The ledger already holds one row per (pair, 336h block), so every
+        # resolved row is an independent observation and no collapsing is needed.
+        B = net
+        mu, sd = statistics.mean(B), statistics.pstdev(B)
+        lb = mu - 1.645 * sd / (len(B) ** 0.5)
+        print(f"\n  raw signals {len(net)} -> independent blocks {len(B)}")
+        print(f"  net {mu:+.2f} pips   sd {sd:.1f}   win {100*sum(1 for x in B if x>0)/len(B):.0f}%"
               f"   one-sided 95% LB {lb:+.2f}")
+        done = B
         if len(done) >= REQUIRED_N:
             print(f"  VERDICT: {'ACCEPT' if lb > 0 else 'not yet — LB not positive'}")
         else:

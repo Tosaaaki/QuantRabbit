@@ -1,0 +1,9 @@
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 0 counted (1 blocked)  resolved 0 / 60 required  open 0
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.2473 / thr 0.2201  -> FIRE  LONG
+   blocked: OPEN_SIGNAL_2026-08-19T15:09 / MARGIN_93%_OVER_30%  (recorded, not counted)
+   logged  long @ 158.488  exit 2026-09-02T15:10  spread 0.8p

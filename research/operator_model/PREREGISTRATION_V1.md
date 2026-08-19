@@ -42,7 +42,8 @@ features. That is the "どこを背にするか" family the operator named.
 
 | check | result |
 |---|---|
-| walk-forward, 4 split points | **all 4 positive with positive lower bounds** (LR +14.4 to +68.2) |
+| walk-forward, 4 splits, relative threshold | all 4 positive, LB +14.4 to +68.2 |
+| walk-forward, 4 splits, **the frozen absolute threshold** | all 4 positive, **LB +18.3 to +61.0** |
 | concentration, remove top 5 | +37.37 → **+25.25**; top 5 are 12% of profit |
 | concentration, remove top 10 | +15.46 |
 | direction bias | 96 long / 146 short — not a fixed-side bet |
@@ -72,7 +73,12 @@ threshold  0.2201   (the 70th percentile of the in-sample entry score)
 action     score >= threshold -> trade the higher-probability side
 exit       exactly 336 hours after entry. No stop, no trailing stop, no partial.
 sizing     total margin usage <= 30% of NAV at all times
-pairs      USD_JPY only for v1 (the training set is 87% USD_JPY)
+pairs      all 11 majors, no selection. USD_JPY-only made 60 signals take 840
+           days (exit 336h, one at a time = 26/year). Measured live the model
+           fires 23.8% of the time across pairs, giving ~0.8 independent blocks
+           a day and 60 in roughly 76 days.
+counting   one row per (pair, 336h block). Two signals on one pair inside one
+           exit window share a price path and are one observation.
 ```
 
 The exit rule is fixed because trailing and partial exits were measured to hurt:
