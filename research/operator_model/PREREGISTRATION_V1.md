@@ -40,6 +40,41 @@ the granularity of the holding period: the model fires during two-week windows
 that were followed by large moves, and which moment inside the window it picks
 carries nothing measurable.
 
+## Refutation 3 — the survivor is the median cell of its own search grid
+
+Reconstructing the full space actually explored — 5 model configs × 4 thresholds
+× 4 splits × 2 threshold conventions × 4 direction filters × 2 feature sets =
+320 configurations — places the reported result at the **54.7th percentile, rank
+146 of 320**. The grid's own median is +53.67 and 65.3% of it is positive. The
+acceptance criterion below, all four splits with a positive lower bound, is met
+by **127 of 320 configurations (40%)**: passing it is the modal outcome of the
+search, not evidence.
+
+Running the identical 320-cell search 1,000 times on pure noise:
+
+| null | best-of-grid median | survivor's percentile |
+|---|---|---|
+| circular shift within pair | +157.83 | **0.2** |
+| block permutation, 14d | +165.24 | **0.0** |
+| block permutation, 60d | +142.57 | **0.0** |
+
+**A noise grid's winner averages +143 to +165. This one earns +63** — below the
+median noise winner. White's reality check gives p = 0.1385 for the grid's best
+cell and **p = 0.8065** for this one. Effective independent tests across the grid
+are 5.9–8.2, so honest α ≈ 0.006–0.009; nothing approaches it.
+
+The four splits are nested subsets — Spearman rank correlation 0.87–0.97 between
+them — so they are one observation read four times. Block-corrected lower bounds
+are +33.24 / +0.73 / −11.51 / +34.74, two of four at or below zero.
+
+The auditor also reported and then discarded its own false positive: a
+studentised max-statistic gave z = 5.08, from a null that breaks the
+feature→return link but preserves the alignment between the operator's label
+blocks and the price path — the same block alignment refutation 2 shows carries
+all the P&L.
+
+**Not a shrunken outlier. The middle of its own noise.**
+
 ## What should have stopped this before any of that
 
 | f | model rows + model side | model rows + **always long** | all rows + always long |
