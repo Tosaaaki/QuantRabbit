@@ -1,3 +1,75 @@
+# Operator entry model v1 — **REFUTED 2026-08-20**
+
+Four independent agents were given the model, the data, and these claims, and
+told to break them. Two of them did, on separate grounds, and either one is
+sufficient. The collector is stopped and `launchctl disable`d. **Do not trade
+this model.** What follows is the original registration, kept intact so the
+refutation can be read against what was claimed.
+
+## Refutation 1 — look-ahead in the feature filter
+
+OANDA stamps a candle with its OPEN time, so the bar labelled 09:00 covers
+09:00–10:00, and historical bars return `complete: true` regardless of the `to`
+parameter. The filter `complete and time < at` therefore admitted the bar
+straddling the decision: at 09:30 it returned the 10:00 close. H1 leaked up to
+59 minutes, M15 up to 15, across 98.4% of rows — mean 9.09 pips into `px`, max
+183.80 — and through `px` into all 52 features and the label's entry price.
+
+The live path was clean, so this was a train/live mismatch that made only the
+backtest optimistic. Fixed in `28e2e605d`. Corrected, the accept criterion below
+(daily net LB > 0) goes from 4/4 splits to **1/4**:
+
+| split | trade LB | daily net LB |
+|---|---|---|
+| 0.5 | +61.01 → +56.82 | +41.68 → +30.61 |
+| 0.6 | +43.11 → +23.24 | +11.87 → **−21.04** |
+| 0.7 | +18.21 → +3.04 | +2.16 → **−5.35** |
+| 0.8 | +24.78 → +2.67 | +17.23 → **−7.50** |
+
+## Refutation 2 — the selection carries no information at the horizon's granularity
+
+Permuting *which rows the operator entered* inside ~12-day blocks, then refitting,
+re-thresholding and re-selecting entirely inside the null: a model imitating a
+**randomized** operator earns +65.28 against the real +79.08, **p = 0.230**
+(f=0.6: +45.51 vs +67.59, p = 0.195). The permuted models select genuinely
+different rows — Jaccard 0.27 — and still capture 83% of the P&L.
+
+The block sweep is diagnostic: the null mean peaks at ~12-day blocks and falls
+off both sides. **Twelve days is the 336-hour hold.** The value lives entirely at
+the granularity of the holding period: the model fires during two-week windows
+that were followed by large moves, and which moment inside the window it picks
+carries nothing measurable.
+
+## What should have stopped this before any of that
+
+| f | model rows + model side | model rows + **always long** | all rows + always long |
+|---|---|---|---|
+| 0.5 | +79.08 | **+110.06** | +90.17 |
+| 0.6 | +67.59 | **+138.18** | +105.86 |
+| 0.7 | +46.24 | **+88.01** | +78.70 |
+| 0.8 | +60.38 | **+63.93** | +45.07 |
+
+Buying every selected row and holding it long beats the model at all four
+splits. Every short cohort loses (−39.04 / −64.21 / −35.47 / −3.18). The claim
+below that "the edge is in *when*, not in a directional bet" is contradicted by
+its own data.
+
+## Also wrong in the text below
+
+- **n is fictitious.** 368 trades at f=0.5 collapse to 48 non-overlapping
+  (pair, 14-day) blocks; the lower bounds become +39.77 / +9.40 / +2.24 / +1.43.
+  The four splits are nested — one observation, not four.
+- **Multiplicity settles it.** Best label-permutation p across splits is 0.0399,
+  at f=0.8, which was not the headline. × the 48 configurations this document
+  itself discloses = 1.0.
+- The positive count is **456**, not the 464 stated below.
+- The independent replication found the operator's own +28.86 has LB **−27.93**
+  once holds stop overlapping, that 10% of trades carry 72% of the gap, that the
+  gap decays +92.1 → +4.6 across the sample halves, and that all of it is in the
+  195 longs — the 261 shorts contribute +6.51.
+
+---
+
 # Operator entry model v1 — frozen, pre-registered forward test
 
 The first candidate in this project to survive every check that killed the

@@ -162,3 +162,91 @@ GBP_JPY  score 0.1021 / thr 0.2201  -> no-trade
 AUD_JPY  score 0.1242 / thr 0.2201  -> no-trade
 CAD_JPY  score 0.0895 / thr 0.2201  -> no-trade
 no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.0019 / thr 0.2201  -> no-trade
+EUR_USD  score 0.0011 / thr 0.2201  -> no-trade
+GBP_USD  score 0.0010 / thr 0.2201  -> no-trade
+AUD_USD  score 0.0009 / thr 0.2201  -> no-trade
+NZD_USD  score 0.0008 / thr 0.2201  -> no-trade
+USD_CAD  score 0.0022 / thr 0.2201  -> no-trade
+USD_CHF  score 0.0035 / thr 0.2201  -> no-trade
+EUR_JPY  score 0.0008 / thr 0.2201  -> no-trade
+GBP_JPY  score 0.0015 / thr 0.2201  -> no-trade
+AUD_JPY  score 0.0021 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.0013 / thr 0.2201  -> no-trade
+no signal this cycle
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 3 counted (1 blocked)  resolved 0 / 60 required  open 3
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.3979 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 158.462  exit 2026-09-03T01:13  spread 0.8p
+EUR_USD  score 0.2040 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1342 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1998 / thr 0.2201  -> no-trade
+NZD_USD  score 0.2131 / thr 0.2201  -> no-trade
+USD_CAD  score 0.3602 / thr 0.2201  -> FIRE  LONG
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CAD signal — not recorded
+USD_CHF  score 0.3765 / thr 0.2201  -> FIRE  LONG
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CHF signal — not recorded
+EUR_JPY  score 0.2297 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 184.938  exit 2026-09-03T01:13  spread 2.2p
+GBP_JPY  score 0.2684 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 215.438  exit 2026-09-03T01:13  spread 2.8p
+AUD_JPY  score 0.2615 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 112.778  exit 2026-09-03T01:13  spread 1.6p
+CAD_JPY  score 0.3329 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 95% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 114.752  exit 2026-09-03T01:13  spread 2.5p
+resolved 0
+
+=== operator model v1 / exit 336h / margin cap 30% ===
+signals 8 counted (1 blocked)  resolved 0 / 60 required  open 8
+
+  registration: research/operator_model/PREREGISTRATION_V1.md — frozen; do not retune
+USD_JPY  score 0.4488 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_JPY signal — not recorded
+EUR_USD  score 0.1685 / thr 0.2201  -> no-trade
+GBP_USD  score 0.1803 / thr 0.2201  -> no-trade
+AUD_USD  score 0.1599 / thr 0.2201  -> no-trade
+NZD_USD  score 0.2988 / thr 0.2201  -> FIRE  SHORT
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   logged  short @ 0.59489  exit 2026-09-03T02:14  spread 1.6p
+USD_CAD  score 0.3581 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CAD signal — not recorded
+USD_CHF  score 0.3110 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing USD_CHF signal — not recorded
+EUR_JPY  score 0.3142 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing EUR_JPY signal — not recorded
+GBP_JPY  score 0.3156 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing GBP_JPY signal — not recorded
+AUD_JPY  score 0.1920 / thr 0.2201  -> no-trade
+CAD_JPY  score 0.2452 / thr 0.2201  -> FIRE  SHORT
+   blocked: SAME_BLOCK_1477  (recorded, not counted)
+   paper only: margin 96% over the 30% execution cap — the signal still counts toward the 60
+   same 336h block as an existing CAD_JPY signal — not recorded
