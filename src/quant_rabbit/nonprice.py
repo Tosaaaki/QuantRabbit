@@ -46,9 +46,12 @@ CONTRACTS = {
 # being long yen futures IS being short dollars — the dollar's skew is the
 # open-interest-weighted negative of the rest, which is how it is derived here
 # rather than left as a zero that would silently blank every USD pair.
-# Tuesday snapshot, released the following Friday at 15:30 ET (19:30 UTC).
+# Tuesday snapshot, released the following Friday at 15:30 ET. That is 19:30 UTC
+# under EDT but 20:30 under EST, so a single hardcoded 20:00 stamps 27 of 84
+# reports (every Nov-Mar one) thirty minutes early. 21:00 is late enough for
+# both; a release guard should err late, never early.
 RELEASE_LAG_DAYS = 3
-RELEASE_HOUR_UTC = 20
+RELEASE_HOUR_UTC = 21
 
 
 def _fetch(name: str, since: str = "2025-01-01") -> list[dict]:
@@ -148,13 +151,16 @@ def features(pair: str, at: datetime, cot: dict | None = None) -> dict:
         # z-score of the differential against the trailing 52 reports
         hb, hq = cot[base], cot[quote]
         cut = at
-        sb = [r["skew"] for r in hb
-              if datetime.fromisoformat(r["release_utc"].replace("Z", "+00:00")) < cut][-52:]
-        sq = [r["skew"] for r in hq
-              if datetime.fromisoformat(r["release_utc"].replace("Z", "+00:00")) < cut][-52:]
-        n = min(len(sb), len(sq))
+        # join on report date, not position: a positional zip silently
+        # misaligns the legs the moment one currency misses a week
+        mb = {r["report_utc"]: r["skew"] for r in hb
+              if datetime.fromisoformat(r["release_utc"].replace("Z", "+00:00")) < cut}
+        mq = {r["report_utc"]: r["skew"] for r in hq
+              if datetime.fromisoformat(r["release_utc"].replace("Z", "+00:00")) < cut}
+        shared = sorted(set(mb) & set(mq))[-52:]
+        n = len(shared)
         if n >= 20:
-            diff = [a - b for a, b in zip(sb[-n:], sq[-n:])]
+            diff = [mb[d] - mq[d] for d in shared]
             mu = sum(diff) / n
             sd = (sum((d - mu) ** 2 for d in diff) / n) ** 0.5
             out["cot_z"] = round((out["cot_skew"] - mu) / sd, 4) if sd > 0 else 0.0

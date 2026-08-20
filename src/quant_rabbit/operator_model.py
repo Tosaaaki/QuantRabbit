@@ -58,6 +58,27 @@ def pip_size(pair: str) -> float:
     return 0.01 if pair.endswith("_JPY") else 0.0001
 
 
+def closed_by(candle: dict, at: datetime, granularity: timedelta) -> bool:
+    """True only if this bar had finished before `at`.
+
+    OANDA stamps a candle with its OPEN time, so the bar labelled 09:00 covers
+    09:00-10:00. Filtering on `time < at` therefore admits the bar straddling the
+    decision — at 09:30 it hands back the 10:00 close, thirty minutes of future.
+    Historical bars come back `complete: true` regardless of the `to` parameter,
+    so completeness is not the guard; the bar's END has to be compared.
+
+    This was live for the whole first build. It leaked a mean of 9.09 pips into
+    `px` (max 183.80) across 98.4% of rows, and through `px` into all 52
+    features and the entry price of the label. It did NOT affect the live path,
+    where the forming bar is genuinely incomplete — so it was a train/live
+    mismatch that made the backtest optimistic, which is the exact failure the
+    shared-feature design in this module was written to prevent.
+    """
+    if not candle.get("complete"):
+        return False
+    return parse_time(candle["time"]) + granularity <= at
+
+
 def _atr(highs, lows, closes, n) -> float:
     tr = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
           for i in range(1, len(closes))]
@@ -69,8 +90,7 @@ def price_block(pair: str, at: datetime) -> dict | None:
     payload = _get(f"/v3/instruments/{pair}/candles",
                    {"granularity": "H1", "to": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "count": "400", "price": "M"})
-    bars = [c for c in payload.get("candles", [])
-            if c.get("complete") and parse_time(c["time"]) < at]
+    bars = [c for c in payload.get("candles", []) if closed_by(c, at, timedelta(hours=1))]
     if len(bars) < 200:
         return None
     h = [float(c["mid"]["h"]) for c in bars]
@@ -107,8 +127,7 @@ def level_block(pair: str, at: datetime) -> dict | None:
     payload = _get(f"/v3/instruments/{pair}/candles",
                    {"granularity": "M15", "to": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "count": "600", "price": "M"})
-    bars = [c for c in payload.get("candles", [])
-            if c.get("complete") and parse_time(c["time"]) < at]
+    bars = [c for c in payload.get("candles", []) if closed_by(c, at, timedelta(minutes=15))]
     if len(bars) < 300:
         return None
     pip = pip_size(pair)
