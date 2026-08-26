@@ -1,0 +1,52 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "cycle_id": "V25",
+  "effective_bet_days": 80,
+  "embedded_result_sha256": "85b0e9836652993850d317ba09ebfa29e2c0c30d54faf4eafa8c556c186cff11",
+  "ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+  "official_execution_ordinal": 1,
+  "official_seal_sha256": "07867edb4fd250f68c3c6ebac434afa4f88a6ddf003f004076773637329bb45b",
+  "preregistration_sha256": "a4438b847761fbe8f1b1c51eacdc92a1696249792b209021b627614919ce143d",
+  "recovered_without_rerun": false,
+  "registry_sha256": "4a0f1b41bd1724cf6c63c14dacff60a08573797fa91a7f0709a6d4e6f27e2d93",
+  "result_file_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+  "schema_version": 2,
+  "script_sha256": "ff5cba95ba071056c7282a321e2f17922ddc2fd81074280274873701e0735d75",
+  "signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+  "signals": 500,
+  "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+  "strategy_profit_gate": {
+    "adoption_authorized": false,
+    "adverse_2x_pass": false,
+    "adverse_monthly_multiples": {
+      "MONTH_2026_05": 0.9975372601433768,
+      "MONTH_2026_06": 0.993207023745714
+    },
+    "initial_equity_jpy": 200000,
+    "normal_2x_pass": false,
+    "normal_monthly_multiples": {
+      "MONTH_2026_05": 1.000889954212436,
+      "MONTH_2026_06": 0.9960796381638591
+    },
+    "passed": false,
+    "stretch_3x_pass": false,
+    "unopened_holdout_reproduced": false
+  },
+  "system_acceptance": {
+    "external_orders": 0,
+    "holdout_state": "UNOPENED",
+    "paper_only": true,
+    "passed": true,
+    "restart_safe_seal": true
+  },
+  "test_sha256": "13f599c3829a42463810705df07130ff6d274353f9dcc6445f919ad279b3db47"
+}

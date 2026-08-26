@@ -1,0 +1,18 @@
+{
+  "cycles": {
+    "V25": {
+      "official_attempts": 1,
+      "official_result_file_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+      "official_seal_file_sha256": "913fe2200731563705246e4e59e37a1e2bd60e9fdcac3831a2a79630872068c4",
+      "official_seal_sha256": "07867edb4fd250f68c3c6ebac434afa4f88a6ddf003f004076773637329bb45b",
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-26T22:20:32.579317+00:00",
+      "status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "c8571d00c88fcd7c21a5643458fd504573beb0c790b1b45ea16ac4625a846a0f",
+      "strategy_profit_pass": false,
+      "subprocess_returncode": 0
+    }
+  },
+  "schema_version": 2
+}
