@@ -1,0 +1,30 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_GEOMETRY_H96_V8",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_GEOMETRY_H24_V7",
+  "single_changed_variable": "fixed exit horizon changes from 24 to 96 M5 bars",
+  "reason": "test whether the same completed-bar failed-auction reading unfolds across an eight-hour session window, increasing expected move relative to unchanged round-trip cost",
+  "unchanged": [
+    "same V7 signal_id, pair, direction, and fill timestamp",
+    "same cost-blind causal entry gate",
+    "same next executable BID/ASK open",
+    "same RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS assumptions",
+    "same tuning diagnostic, walk-forward, and reserved date boundaries",
+    "no TP, no price SL, fixed finite exit, terminal inventory zero"
+  ],
+  "horizon_m5_bars": 96,
+  "development_admission": [
+    "at least 20 walk-forward proposals with a recorded fixed exit",
+    "walk-forward RAW_SIGNAL mean return is positive",
+    "walk-forward EXECUTABLE_BASE mean return is positive",
+    "walk-forward ADVERSE_STRESS mean return is positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

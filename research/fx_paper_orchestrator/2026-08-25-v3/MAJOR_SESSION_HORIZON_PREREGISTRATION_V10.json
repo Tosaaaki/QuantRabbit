@@ -1,0 +1,29 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_LIQUID_MAJORS_H192_V10",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_H96_LIQUID_MAJORS_V9",
+  "single_changed_variable": "fixed exit horizon changes from 96 to 192 M5 bars",
+  "reason": "V9 reached normal-cost break-even with 3.008 bp gross edge versus approximately 3.026 bp realized normal cost; test whether the unchanged failed-auction reading develops over a finite sixteen-hour major-session handoff",
+  "unchanged": [
+    "same seven-pair universe",
+    "same V9 signal_id, causal entry gate, direction, and fill",
+    "same RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS assumptions",
+    "same period boundaries",
+    "no signal-level cost gate, leverage change, TP, or price SL"
+  ],
+  "horizon_m5_bars": 192,
+  "development_admission": [
+    "at least 20 walk-forward proposals with an observed fixed exit",
+    "walk-forward RAW_SIGNAL mean return is positive",
+    "walk-forward EXECUTABLE_BASE mean return is positive",
+    "walk-forward ADVERSE_STRESS mean return is positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

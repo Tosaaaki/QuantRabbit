@@ -1,0 +1,219 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "commit_push_deploy": false,
+    "credential_access": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "cycles": [
+    {
+      "admission_passed": false,
+      "cycle_id": "V4_COUNTERPARTY_RESPONSE_MODELS",
+      "embedded_result_sha256": "b35b90e976b03f9994392ed2ea95e39795b3345999c191b669a32bd3ba88afc8",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_counterparty_models_v4_001/result_counterparty_models_v4.json",
+      "result_file_sha256": "062d122b0dfa5db7946e11703473d2c1af8b556a9df838833a0c0bbc1113df35",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V5_HOURLY_INTERNAL_NETTING_EXACT_SHORT",
+      "embedded_result_sha256": "a04db6f799b41bcf6960d79d788768316233538f6e390f20399a08d3c8715084",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_counterparty_hourly_netting_v5_003/result_hourly_netting_v5.json",
+      "result_file_sha256": "59aedef1ae760da8682a481078665d9e74f8097de4f7feaf22371aac3059a649",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V6_FINITE_INVENTORY_PERSISTENCE_12H",
+      "embedded_result_sha256": "110f9eb45aafb121421b7f43db193e55c565f92773cbdbd6dcacc4c8326bb677",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_inventory_persistence_v6_001/result_inventory_persistence_v6.json",
+      "result_file_sha256": "25ccc7ea195dfe7de1e67a8f072e5d351773c95765ca860b77a937e01706b95d",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V7_AUCTION_TRAP_GEOMETRY_H24",
+      "embedded_result_sha256": "77843fd9404922876dc0df2073a36b02d4e3630ac5e1769b47c5d2916f2a0383",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_auction_trap_geometry_v7_002/result_auction_trap_geometry_v7.json",
+      "result_file_sha256": "f3bfe39662fd5918afc7e3110473ece10ff3f70b6c611b4b05abccb385796383",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V8_AUCTION_TRAP_GEOMETRY_H96",
+      "embedded_result_sha256": "462d81d8f88bf6199b3a056f85aa5fed324af02ea8e7923435ad52d3f7a7305d",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_auction_trap_horizon_v8_002/result_auction_trap_horizon_v8.json",
+      "result_file_sha256": "2310b90a7be7274ade1e1fa5e75bb26ead95673ca427d84e8ad97b181a5e8aaa",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V9_AUCTION_TRAP_H96_LIQUID_MAJORS",
+      "embedded_result_sha256": "03481bebbd4548d47436e335af96c40fd44a969393a6c75a748faee267557c12",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_liquid_major_universe_v9_002/result_liquid_major_universe_v9.json",
+      "result_file_sha256": "86e60452ffdad0c0f7503a9e5a92429833001f02e0673705461800940812585d",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V10_AUCTION_TRAP_LIQUID_MAJORS_H192",
+      "embedded_result_sha256": "302d0206ef3508698e87bbecfe1a3f7820d3b628bc5f33ab5ecbdd406f4a5a4d",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_major_session_horizon_v10_002/result_major_session_horizon_v10.json",
+      "result_file_sha256": "5c4a9fc4590556f1dffe66b624aa3977ef05f1b22c5002f3ebc1c21447855d52",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V11_AUCTION_TRAP_LIQUID_MAJORS_H384",
+      "embedded_result_sha256": "363afb90e3ce5c2140bed328e960b7b87a98234f28b5edf2e7ff412c1d5ae711",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_multi_session_horizon_v11_002/result_multi_session_horizon_v11.json",
+      "result_file_sha256": "d23f101d2541048abb8effe1e6205c3618cf895d43c0c652133cd5a280b5d23b",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V12_AUCTION_TRAP_CAUSAL_HARVEST_Q35",
+      "embedded_result_sha256": "265e4f85e6e59baf37cb2694f5430740d074fdbc7aad2f0fb1208cc1b107a906",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_causal_harvest_exit_v12_001/result_causal_harvest_exit_v12.json",
+      "result_file_sha256": "c5a3e3b8cc57ca8dbbdcde6f45cbcd8d4ab1e5413c6dc43d396a2102cbb2f62e",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V13_ACTUAL_LLM_STALE_UNWIND_AT_192",
+      "embedded_result_sha256": "9dd4204d456e6cf2210239b8837d2a7ff6716f5a91de687b643bb12ae57d309b",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_actual_llm_stale_unwind_v13_001/result_actual_llm_stale_unwind_v13.json",
+      "result_file_sha256": "ae309c91090901df458c913bb89e12f43f8175ebc2ce37c671f9916529cd4cf7",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V14_AUCTION_TRAP_LIQUID_MAJORS_H576",
+      "embedded_result_sha256": "a903ea88c2feeb61e244470790ba83c0835dd49547201681e12404d2df36f001",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_two_day_horizon_v14_001/result_two_day_horizon_v14.json",
+      "result_file_sha256": "573b99fbbb46b3ff27b17532bd23a40b6fc45e453ac002d55a8c9cb346aec340",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V15_AUCTION_TRAP_H384_EPISODE_NETTING",
+      "embedded_result_sha256": "0592eaadfe9b3425003f7b67319cde1c40fe414eea5e380b4d00bd2e9374b479",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_portfolio_episode_netting_v15_001/result_portfolio_episode_netting_v15.json",
+      "result_file_sha256": "3754cc06abf6cec7a49f87fb868aa1e1dfcb1955dd8b47eb535cb9efd7951b62",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V16_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY",
+      "embedded_result_sha256": "d92cab0f6faaad9cc0a7601d5e4658070a72b430f77681de99883f9b4173692c",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_opposite_close_only_v16_001/result_opposite_close_only_v16.json",
+      "result_file_sha256": "8a2a6a4ace50efb1999e5057091683173549fb39524f5532d962afceacbffdcf",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V17_AUCTION_TRAP_TUNING_WORKER_ADMISSION",
+      "embedded_result_sha256": "26d8f0aa8b8d87a5c7f33b1a8b060cf154c025ae47dabf0cd700173136ae643d",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_tuning_worker_admission_v17_001/result_tuning_worker_admission_v17.json",
+      "result_file_sha256": "25c08f731be268fb1341eb3a4d17ebfbaaa8065e35dd4288669ecd972753e9d0",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V18_CURRENCY_NETWORK_DISCONFIRMATION",
+      "embedded_result_sha256": "479d9ddb4315e58a85a12526fc75351f331b531d901f21c3cb93fe8077610618",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_currency_network_disconfirmation_v18_001/result_currency_network_disconfirmation_v18.json",
+      "result_file_sha256": "4a5bd002fad81731967a44eea15f5c82ba539f5c154e88de3f144243203648e3",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V19_CURRENCY_NETWORK_EXHAUSTION",
+      "embedded_result_sha256": "42478c010dba2ba052b9ad3e6b27f1dceaf42412c38ba159ee4d7559afde0720",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_currency_network_exhaustion_v19_001/result_currency_network_exhaustion_v19.json",
+      "result_file_sha256": "880c53690d225fb4fbebfcf860f9605dbcda598e26ebcaec63e279f3e89f6e6e",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V20_CURRENCY_NETWORK_EXHAUSTION_INTENSITY",
+      "embedded_result_sha256": "c1655f4421a0b274654dbfd19f730f447a653b83692a894c055062ba66df829a",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_currency_network_exhaustion_intensity_v20_001/result_currency_network_exhaustion_intensity_v20.json",
+      "result_file_sha256": "59842be6c1141fbcca6e6bb02fb9a4e32960ccae9d127203a91055dc2304a675",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V21_H4_COUNTERTREND_SWEEP_RECLAIM",
+      "embedded_result_sha256": "62f6cea25e22ba0ae656855d12b0f762976c20ea0218c62afa14b7a54b8a5b59",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_h4_countertrend_sweep_reclaim_v21_001/result_h4_countertrend_sweep_reclaim_v21.json",
+      "result_file_sha256": "f8c10e7a3c731ee3a2351807c077525f32b664d92adfc0885558c8b63d18352e",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V22_H4_RECLAIM_EXIT_ONLY",
+      "embedded_result_sha256": "570058cf231b6095a31985e473889849cac951c22cda5b7cc0a0aaa699f3f1c1",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_h4_reclaim_exit_only_v22_001/result_h4_reclaim_exit_only_v22.json",
+      "result_file_sha256": "b45ed61b47b95193c3ae98e689ae72501b7fb0da0a933a3d6c0175208a31d885",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V23_H4_OPPOSING_COHERENCE_EXIT",
+      "embedded_result_sha256": "5f876b28d4155221292e1a8b11e346aceba5a33dc0e7b2c08967ad670448b5bb",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_h4_opposing_coherence_exit_v23_001/result_h4_opposing_coherence_exit_v23.json",
+      "result_file_sha256": "a3dc52eb61f34244f682158ada12c2de8d5f1a908a642f37e4d8b487b83a6175",
+      "status": "REJECTED_DEVELOPMENT"
+    },
+    {
+      "admission_passed": false,
+      "cycle_id": "V24_ASIAN_BOX_SWEEP_RECLAIM",
+      "embedded_result_sha256": "ee4c1b6d30549b3f8e2312134031162013685bfa0dc0d26d041bbca8b2ec1333",
+      "result": "/Users/tossaki/.codex/worktrees/1e7a/QuantRabbit/research/fx_paper_orchestrator/2026-08-25-v3/evidence/run_asian_box_sweep_reclaim_v24_001/result_asian_box_sweep_reclaim_v24.json",
+      "result_file_sha256": "84d035247a742b43c8bd27ca9e7f20828642085cd43d7de8370e2777af15b7d5",
+      "status": "REJECTED_DEVELOPMENT"
+    }
+  ],
+  "final_admission_proven": false,
+  "next_work_order": {
+    "last_cycle_id": "V24_ASIAN_BOX_SWEEP_RECLAIM",
+    "llm_policy_surface": {
+      "may_not_change": [
+        "fills",
+        "cost arms",
+        "leverage after results",
+        "hard guards",
+        "opened holdout labels"
+      ],
+      "may_propose": [
+        "new causal feature family",
+        "one preregistered state transition",
+        "worker enable/freeze/unwind mode"
+      ]
+    },
+    "proposal_mean_gross_return": -0.00014940447858438505,
+    "reason_code": "PROPOSAL_RAW_EDGE_ABSENT_DESPITE_PORTFOLIO_PATH",
+    "single_next_change": "do not optimize execution for this entry; test the causal feature as exit-only or replace the signal family",
+    "walk_forward_equity": {
+      "ADVERSE_STRESS": 0.978345264591798,
+      "EXECUTABLE_BASE": 0.9856902445480232,
+      "RAW_SIGNAL": 0.9945150951337436
+    },
+    "walk_forward_mean_return": {
+      "ADVERSE_STRESS": null,
+      "EXECUTABLE_BASE": null,
+      "RAW_SIGNAL": null
+    }
+  },
+  "profit_proven": false,
+  "reconciled_at": "2026-08-26T10:53:21.694720+00:00",
+  "registry_id": "FX_PAPER_RESEARCH_ORCHESTRATOR_V1",
+  "registry_sha256": "868d5a939d179e31f8fb6b8bc06bea7bcbd241e2edd9f1aa7ceba458197cfc52",
+  "schema_version": 1,
+  "snapshot_sha256": "57332974b3bcb83e9339c716e1a3ef4f85ee415bc493b0ac721431abd4986ba9",
+  "system_status": "READY_FOR_NEXT_PREREGISTRATION"
+}

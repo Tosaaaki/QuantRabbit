@@ -1,0 +1,82 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_raw_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_AUCTION_TRAP_GEOMETRY_H96_V8",
+  "external_orders": 0,
+  "final_admitted": false,
+  "horizon_m5_bars": 96,
+  "live_authority": false,
+  "periods": {
+    "TUNING_DIAGNOSTIC_ONLY": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.7137035008589364,
+          "mean_return": -0.0005821398865081047,
+          "median_return": -0.0005572816460501994,
+          "positive_rate": 0.34910277324632955,
+          "signals": 1226
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": -0.4690720648336426,
+          "mean_return": -0.000382603641789268,
+          "median_return": -0.00037124628558621493,
+          "positive_rate": 0.399673735725938,
+          "signals": 1226
+        },
+        "RAW_SIGNAL": {
+          "additive_return": -0.0023997942710168862,
+          "mean_return": -1.9574178393286184e-06,
+          "median_return": -2.2647465309943993e-05,
+          "positive_rate": 0.49429037520391517,
+          "signals": 1226
+        }
+      },
+      "end": "2026-05-01",
+      "start": "2026-03-11"
+    },
+    "WALK_FORWARD": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.768882272224319,
+          "mean_return": -0.0005234052227531103,
+          "median_return": -0.0005045786208350488,
+          "positive_rate": 0.3723621511232131,
+          "signals": 1469
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": -0.4706829408765335,
+          "mean_return": -0.0003204104430745633,
+          "median_return": -0.0003172271235185616,
+          "positive_rate": 0.41933287950987064,
+          "signals": 1469
+        },
+        "RAW_SIGNAL": {
+          "additive_return": 0.08737912273434689,
+          "mean_return": 5.948204406694819e-05,
+          "median_return": 3.745438590851968e-05,
+          "positive_rate": 0.5085091899251192,
+          "signals": 1469
+        }
+      },
+      "end": "2026-07-01",
+      "start": "2026-05-01"
+    }
+  },
+  "proposal_ledger": "evidence/run_auction_trap_horizon_v8_002/proposal_ledger_auction_trap_h96_v8.jsonl",
+  "proposal_ledger_sha256": "16cb16571d1e096fac65c602f05a8c33fb131b732197e615b47078b8b0460059",
+  "rescored_signals": 3039,
+  "result_sha256": "462d81d8f88bf6199b3a056f85aa5fed324af02ea8e7923435ad52d3f7a7305d",
+  "same_source_signal_id_all_cost_arms": true,
+  "single_changed_variable": "fixed_horizon_24_to_96_m5_bars",
+  "source_ledger": "evidence/run_auction_trap_geometry_v7_002/proposal_ledger_auction_trap_geometry_v7.jsonl",
+  "source_ledger_sha256": "1dc05097f9bf7a1fe05a992164cdc0b324ae43a44bafcd04437075c3880723c6",
+  "source_signals": 3045,
+  "terminal_inventory_mtm_hidden": false,
+  "terminal_open_inventory": 0
+}

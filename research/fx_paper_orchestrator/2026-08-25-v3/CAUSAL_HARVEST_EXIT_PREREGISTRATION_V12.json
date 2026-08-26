@@ -1,0 +1,35 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_CAUSAL_HARVEST_Q35_V12",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_H96_LIQUID_MAJORS_V9_CORRECTED",
+  "single_changed_variable": "fixed-horizon exit is replaced by a frozen causal harvest target with 384-bar max age",
+  "entry_contract": "same seven-pair V9 signal_id, direction, and next executable BID/ASK fill; source score/outcome fields are ignored",
+  "target_training": {
+    "data": "only tuning entries whose complete 384-bar observation and next executable exit are before 2026-05-01",
+    "statistic": "per-pair nearest-rank Q35 of maximum favorable signed mid-close ratio within 384 completed M5 bars",
+    "fallback": "global Q35 only if a pair has fewer than 20 eligible tuning entries",
+    "cost_used": false,
+    "walk_forward_used": false
+  },
+  "exit_contract": {
+    "harvest": "when a completed M5 close first reaches the entry-time frozen target, exit at the next recorded BID/ASK open",
+    "max_age": "if never reached, exit at the next recorded BID/ASK open after 384 completed M5 bars",
+    "individual_price_sl": false,
+    "target_changes_after_entry": false,
+    "terminal_inventory": 0
+  },
+  "cost_arms": "same V7-V11 RAW_SIGNAL, EXECUTABLE_BASE, ADVERSE_STRESS assumptions",
+  "period_membership": "both fill and exit must be inside the declared period",
+  "development_admission": [
+    "at least 20 walk-forward proposals",
+    "walk-forward RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS mean returns are all positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

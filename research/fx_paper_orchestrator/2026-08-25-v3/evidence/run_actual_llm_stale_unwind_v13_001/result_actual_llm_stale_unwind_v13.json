@@ -1,0 +1,150 @@
+{
+  "actual_llm_decision": "ACTUAL_LLM_INVENTORY_DECISION_V13.json",
+  "actual_llm_decision_sha256": "0a688b33f11ce559cf5dca88acef508d136270bafe47b6c9b272172fa9c4d810",
+  "actual_llm_policy": {
+    "impulse_rule": "unwind at next executable open when signed completed-close log-return sum is nonpositive",
+    "impulse_window_m5_bars": 12,
+    "individual_price_sl": false,
+    "max_age_m5_bars": 384,
+    "mode": "UNWIND_STALE_INVENTORY",
+    "policy_id": "STALE_DIRECTIONAL_IMPULSE_UNWIND_AT_192",
+    "stale_check_age_m5_bars": 192,
+    "target_policy": "retain entry-time frozen V12 pair Q35 target"
+  },
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_raw_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_ACTUAL_LLM_STALE_UNWIND_V13",
+  "external_orders": 0,
+  "final_admitted": false,
+  "individual_price_sl": false,
+  "live_authority": false,
+  "period_membership_requires_contained_exit": true,
+  "periods": {
+    "TUNING_DIAGNOSTIC_ONLY": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.1828449577125834,
+          "mean_return": -0.0006460952569349237,
+          "median_return": 0.0010743712095097574,
+          "positive_rate": 0.6360424028268551,
+          "signals": 283
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": -0.11568094589275495,
+          "mean_return": -0.00040876659326061817,
+          "median_return": 0.0012269132990740629,
+          "positive_rate": 0.6466431095406361,
+          "signals": 283
+        },
+        "RAW_SIGNAL": {
+          "additive_return": -0.029095550929358338,
+          "mean_return": -0.0001028111340260012,
+          "median_return": 0.0014156703089049927,
+          "positive_rate": 0.657243816254417,
+          "signals": 283
+        }
+      },
+      "end": "2026-05-01",
+      "exit_reason_counts": {
+        "HARVEST": 178,
+        "MAX_AGE": 32,
+        "STALE_UNWIND": 73
+      },
+      "start": "2026-03-11"
+    },
+    "WALK_FORWARD": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.09399502852288934,
+          "mean_return": -0.00025404061762943065,
+          "median_return": 0.0010474762116704237,
+          "positive_rate": 0.6486486486486487,
+          "signals": 370
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": 0.00047760721522837886,
+          "mean_return": 1.290830311428051e-06,
+          "median_return": 0.0012198177857902083,
+          "positive_rate": 0.6594594594594595,
+          "signals": 370
+        },
+        "RAW_SIGNAL": {
+          "additive_return": 0.11779202883633932,
+          "mean_return": 0.000318356834692809,
+          "median_return": 0.0014272826904734304,
+          "positive_rate": 0.672972972972973,
+          "signals": 370
+        }
+      },
+      "end": "2026-07-01",
+      "exit_reason_counts": {
+        "HARVEST": 232,
+        "MAX_AGE": 52,
+        "STALE_UNWIND": 86
+      },
+      "start": "2026-05-01"
+    }
+  },
+  "proposal_ledger": "evidence/run_actual_llm_stale_unwind_v13_001/proposal_ledger_actual_llm_stale_unwind_v13.jsonl",
+  "proposal_ledger_sha256": "98f7c37a5d088cecca842254d3eaee8f6565c795add493c37c9c2d6da7240ec1",
+  "result_sha256": "9dd4204d456e6cf2210239b8837d2a7ff6716f5a91de687b643bb12ae57d309b",
+  "same_signal_id_all_cost_arms": true,
+  "scored_signals": 740,
+  "single_changed_variable": "actual_llm_selected_stale_unwind_at_192",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "source_fields_consumed": [
+    "signal_id",
+    "pair",
+    "fill_time",
+    "direction",
+    "target_return"
+  ],
+  "source_ledger": "evidence/run_causal_harvest_exit_v12_001/proposal_ledger_causal_harvest_exit_v12.jsonl",
+  "source_ledger_sha256": "a448a9c4b2b2b5a7c8b0744cd027b85d9a87810255ad1570f2772cc351d65fe9",
+  "source_outcome_fields_consumed": false,
+  "source_signals": 740,
+  "terminal_inventory_mtm_hidden": false,
+  "terminal_open_inventory": 0
+}

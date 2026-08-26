@@ -1,0 +1,65 @@
+{
+  "artifact_id": "FX_H4_OPPOSING_COHERENCE_EXIT_V23",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "H4_CONTEXT_SHORT_TIMEFRAME_EXECUTION",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "problem_contract": {
+    "desired": "retain the V16 entry stream while improving standalone-month adverse inventory outcomes with materially fewer auxiliary exits than V22",
+    "as_is": "V22 consumed 3299 walk auxiliary signals and made 272 auxiliary exits; base was 1.0003273200 and adverse was 0.9918473609",
+    "gap": "the M5 auxiliary exit reacted too frequently and paid more execution cost without producing stable monthly protection",
+    "fact": "V22 adverse was 0.9991704799 in May and 0.9927199804 in June",
+    "hypothesis": "a distribution-frozen, completed-H4 opposing-coherence event can identify a lower-frequency inventory exit state",
+    "counter_hypothesis": "H4 confirmation is late or directionally wrong and will preserve losses without improving executable outcomes",
+    "minimum_test": "one frozen Q75 feature-distribution threshold, the same V16 entries, and the same three cost arms",
+    "stop_condition": "reject if base or adverse standalone-month admission fails; do not tune the opened months or increase leverage"
+  },
+  "single_changed_variable": "replace V22 M5 auxiliary exits with a completed-H4 two-block coherence auxiliary exit",
+  "indicator": {
+    "name": "H4 Opposing Coherence Exit",
+    "aggregation": "causal 48-M5-bar UTC H4 blocks; decisions only after a block is complete",
+    "candidate": "the latest two non-overlapping completed H4 blocks have strictly same-sign log returns",
+    "coherence": "absolute 96-bar log return divided by the square root of the sum of squared 5-minute log returns",
+    "threshold_period": [
+      "2026-03-11",
+      "2026-05-01"
+    ],
+    "threshold": "nearest-rank Q75 of candidate coherence values in the tuning period, independent of outcomes and costs",
+    "decision": "completed H4 close",
+    "virtual_fill": "following M5 executable BID/ASK open",
+    "cost_used_for_signal": false,
+    "future_outcome_used_for_signal": false,
+    "walk_forward_used_for_threshold": false
+  },
+  "inventory_policy": {
+    "trigger": "close an existing same-pair position only when it faces opposite the frozen H4 direction",
+    "flat": "no action",
+    "same_direction": "no action",
+    "authority": "the auxiliary event cannot open, add, reverse, resize, or extend inventory",
+    "same_timestamp_order": "apply auxiliary exit first, then the unchanged V16 primary signal",
+    "max_age": "retain the V16 H384 finite expiry and terminal liquidation"
+  },
+  "evaluation": {
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "universe": "same seven USD majors as V16",
+    "allocation": "seven fixed 1/7 sleeves; gross cap 1.0; no leverage tuning",
+    "cost_gate": false,
+    "comparison": "V16 and V22 on the same periods, costs, entries, and terminal-zero contract"
+  },
+  "development_admission": [
+    "normal and adverse equity multiples exceed 1.0 in the full walk and each standalone month",
+    "the auxiliary event stream and actual exit count are reported separately",
+    "terminal inventory is zero"
+  ],
+  "multiplicity": "Count V23 as the third hypothesis in the H4-context short-timeframe family.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

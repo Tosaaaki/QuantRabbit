@@ -1,0 +1,137 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_raw_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_AUCTION_TRAP_LIQUID_MAJORS_H576_V14",
+  "external_orders": 0,
+  "family_stop_rule": "stop fixed-horizon extension if adverse mean is not positive",
+  "final_admitted": false,
+  "horizon_m5_bars": 576,
+  "live_authority": false,
+  "period_membership_requires_contained_exit": true,
+  "periods": {
+    "TUNING_DIAGNOSTIC_ONLY": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.4001876697223618,
+          "mean_return": -0.001439523991807057,
+          "median_return": -0.0017951582589484383,
+          "positive_rate": 0.4028776978417266,
+          "signals": 278
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": -0.2776197255429895,
+          "mean_return": -0.0009986321062697464,
+          "median_return": -0.0012757433544879355,
+          "positive_rate": 0.4136690647482014,
+          "signals": 278
+        },
+        "RAW_SIGNAL": {
+          "additive_return": -0.1656051155056445,
+          "mean_return": -0.0005957018543368507,
+          "median_return": -0.0008477623689918667,
+          "positive_rate": 0.4316546762589928,
+          "signals": 278
+        }
+      },
+      "end": "2026-05-01",
+      "start": "2026-03-11"
+    },
+    "WALK_FORWARD": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.09381095352118403,
+          "mean_return": -0.00025914628044525976,
+          "median_return": 6.974783200983266e-05,
+          "positive_rate": 0.5082872928176796,
+          "signals": 362
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": 0.07046181316627295,
+          "mean_return": 0.00019464589272451092,
+          "median_return": 0.0005488324654664312,
+          "positive_rate": 0.5303867403314917,
+          "signals": 362
+        },
+        "RAW_SIGNAL": {
+          "additive_return": 0.22310075172069443,
+          "mean_return": 0.0006163004191179404,
+          "median_return": 0.0009246533580318239,
+          "positive_rate": 0.56353591160221,
+          "signals": 362
+        }
+      },
+      "end": "2026-07-01",
+      "start": "2026-05-01"
+    }
+  },
+  "proposal_ledger": "evidence/run_two_day_horizon_v14_001/proposal_ledger_two_day_h576_v14.jsonl",
+  "proposal_ledger_sha256": "a8bf8a6ffec9135fb054df4f9ca6563c779d618db572fb31c244196882d57faa",
+  "rescored_signals": 734,
+  "result_sha256": "a903ea88c2feeb61e244470790ba83c0835dd49547201681e12404d2df36f001",
+  "same_signal_id_all_cost_arms": true,
+  "single_changed_variable": "fixed_horizon_384_to_576_m5_bars",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "source_fields_consumed": [
+    "signal_id",
+    "pair",
+    "fill_time",
+    "direction"
+  ],
+  "source_ledger": "evidence/run_liquid_major_universe_v9_002/proposal_ledger_liquid_major_universe_v9.jsonl",
+  "source_ledger_sha256": "ae9cf78cd767854335de0aa6124020065c2593f34151fcbda552339fa4364f93",
+  "source_outcome_fields_consumed": false,
+  "source_signals": 747,
+  "terminal_inventory_mtm_hidden": false,
+  "terminal_open_inventory": 0,
+  "universe": [
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "USD_JPY"
+  ]
+}

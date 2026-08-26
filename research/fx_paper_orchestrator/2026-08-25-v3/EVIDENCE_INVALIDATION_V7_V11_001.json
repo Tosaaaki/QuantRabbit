@@ -1,0 +1,34 @@
+{
+  "artifact_id": "EVIDENCE_INVALIDATION_V7_V11_001",
+  "action": "SUPERSEDE_WITHOUT_DELETION",
+  "reason": "The _001 summaries assigned a proposal to a period from fill_time alone, allowing some positions to exit after the period boundary. They are retained as an audit trail but are not comparable standalone-month evidence.",
+  "invalidated": [
+    {
+      "path": "evidence/run_auction_trap_geometry_v7_001/result_auction_trap_geometry_v7.json",
+      "sha256": "b22967c2473ed7bb7cf7f7bc95568c9adf9b08d3b70f23696b40d048b6b9be8e",
+      "replacement": "evidence/run_auction_trap_geometry_v7_002/result_auction_trap_geometry_v7.json"
+    },
+    {
+      "path": "evidence/run_auction_trap_horizon_v8_001/result_auction_trap_horizon_v8.json",
+      "sha256": "d06f748f612ee86937501b9700c80eefb15e796ef7222ecfaa987c5844cdfb3f",
+      "replacement": "evidence/run_auction_trap_horizon_v8_002/result_auction_trap_horizon_v8.json"
+    },
+    {
+      "path": "evidence/run_liquid_major_universe_v9_001/result_liquid_major_universe_v9.json",
+      "sha256": "ac0e6ea7f825110ff62903fa71f5c0a521b1ed4c40fe1669440894bb27965aa2",
+      "replacement": "evidence/run_liquid_major_universe_v9_002/result_liquid_major_universe_v9.json"
+    },
+    {
+      "path": "evidence/run_major_session_horizon_v10_001/result_major_session_horizon_v10.json",
+      "sha256": "e4d36c3958b6c211c2bce64614c2adb103761925e17f4a2fe77087ac29a1e55f",
+      "replacement": "evidence/run_major_session_horizon_v10_002/result_major_session_horizon_v10.json"
+    },
+    {
+      "path": "evidence/run_multi_session_horizon_v11_001/result_multi_session_horizon_v11.json",
+      "sha256": "0f1f14a96f559072a25f7961c8a2ab9018def8d23c500cbed7750d36bf0d1f0b",
+      "replacement": "evidence/run_multi_session_horizon_v11_002/result_multi_session_horizon_v11.json"
+    }
+  ],
+  "replacement_rule": "fill_time and exit_time must both be contained in the evaluated period",
+  "deleted_files": 0
+}

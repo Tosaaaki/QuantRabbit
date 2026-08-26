@@ -1,0 +1,77 @@
+{
+  "artifact_id": "FX_ASIAN_BOX_SWEEP_RECLAIM_V24",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "FX_SESSION_AUCTION_GEOMETRY",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "problem_contract": {
+    "desired": "find a low-turnover FX-specific gross entry edge whose expected move can survive observed BID/ASK costs",
+    "as_is": "V21 had negative proposal-level gross edge; V22 and V23 exit-only variants reduced or changed turnover but remained negative under adverse cost",
+    "gap": "the prior families reacted to rolling bars without a fixed session auction structure capable of concentrating edge per decision",
+    "fact": "V23 used 158 walk auxiliary events and 49 actual exits but produced base 0.9983839638 and adverse 0.9905174416",
+    "hypothesis": "a first failed break of a fully completed Asian-session box during the European morning concentrates stop-sweep reversal behavior into at most one decision per pair per UTC day",
+    "counter_hypothesis": "the Asian box has no stable reversal edge in this corpus, or the executable spread consumes the gross move",
+    "minimum_test": "one fixed session definition, first unambiguous reclaim only, same three cost arms, and same seven-pair fixed allocation",
+    "stop_condition": "reject if proposal gross edge is nonpositive, base/adverse standalone months fail, or density falls below 20 signals per standalone month"
+  },
+  "single_changed_variable": "replace prior rolling signal families with a fixed UTC Asian-box first-sweep reclaim entry",
+  "indicator": {
+    "name": "Asian Box Sweep Reclaim",
+    "box": "all 72 contiguous completed M5 bars with timestamps 00:00 through 05:55 UTC",
+    "box_high": "maximum completed mid high in the box",
+    "box_low": "minimum completed mid low in the box",
+    "observation_window": "completed M5 bars with timestamps 06:00 through 11:55 UTC",
+    "long": "the first observation bar trades strictly below box_low, does not also trade above box_high, and closes strictly back above box_low",
+    "short": "the first observation bar trades strictly above box_high, does not also trade below box_low, and closes strictly back below box_high",
+    "ambiguous_same_bar_two_sided_sweep": "reject",
+    "entry": "the following M5 executable BID/ASK open",
+    "exit": "the completed close of the 15:55 UTC M5 bar, corresponding to 16:00 UTC",
+    "maximum_signals": "one per pair per UTC day",
+    "cost_used_for_signal": false,
+    "future_outcome_used_for_signal": false
+  },
+  "evaluation": {
+    "universe": [
+      "AUD_USD",
+      "EUR_USD",
+      "GBP_USD",
+      "NZD_USD",
+      "USD_CAD",
+      "USD_CHF",
+      "USD_JPY"
+    ],
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "signal_identity": "the exact same signal_id, entry, direction, and exit are used by all arms",
+    "inventory": "one position per pair; no add, no martingale, no overlap across UTC days, finite same-day exit",
+    "allocation": "seven fixed 1/7 sleeves; gross cap 1.0; no leverage tuning",
+    "cost_gate": false,
+    "metrics": [
+      "signals",
+      "mean and median gross return",
+      "direction accuracy",
+      "MFE and MAE",
+      "break-even round-trip cost",
+      "base and adverse equity",
+      "turnover",
+      "drawdown",
+      "terminal inventory"
+    ]
+  },
+  "development_admission": [
+    "at least 20 source signals in the full walk and each standalone month",
+    "proposal-level mean gross return is strictly positive in the full walk and each standalone month",
+    "normal and adverse equity multiples exceed 1.0 in the full walk and each standalone month",
+    "terminal inventory is zero"
+  ],
+  "multiplicity": "Count V24 as the first hypothesis in the FX session-auction family.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

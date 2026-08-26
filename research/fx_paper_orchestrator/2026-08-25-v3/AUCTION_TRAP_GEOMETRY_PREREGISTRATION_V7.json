@@ -1,0 +1,56 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_GEOMETRY_H24_V7",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "hypothesis": "a one-bar rail escape followed by completed-bar re-entry is a stop-hunt-like failed auction; requiring prior boundary crowding, abnormal completed-bar energy, opposite response, and spread relaxation selects reversals with more raw movement per decision",
+  "independent_family": true,
+  "causal_chronology": {
+    "history": "24 completed M5 bars ending before event bar i",
+    "event": "completed M5 bar i crosses exactly one 24-bar rail",
+    "response": "completed M5 bar i+1 must remain inside the prior rail and close opposite the escape",
+    "decision": "only after i+1 is complete",
+    "fill": "next recorded executable BID/ASK open at i+2",
+    "exit": "fixed close of i+26, equal to 24 M5 bars after fill",
+    "same_bar_path_assumption": false
+  },
+  "original_indicator": {
+    "name": "Auction Trap Geometry",
+    "direction": "opposite the escape side",
+    "fixed_structural_gate": [
+      "CONFIRMED_REJECTION is present",
+      "at least 2 of the previous 24 bars touched the escaped rail within 0.25 causal scale",
+      "event squared close-return energy is at least the median squared close-return energy of the previous 23 returns",
+      "escape distance is at least 0.10 causal scale",
+      "response close remains at least 0.10 causal scale inside the rail",
+      "response close-to-close return is opposite the escape",
+      "response closing spread is no wider than event closing spread"
+    ],
+    "future_outcome_used_by_gate": false,
+    "cost_used_by_gate": false
+  },
+  "horizon_m5_bars": 24,
+  "cost_arms": {
+    "RAW_SIGNAL": "mid-open to mid-close exact directional ratio; zero execution cost",
+    "EXECUTABLE_BASE": "observed BID/ASK plus 0.3 pip one-way slippage and 0.5 bps/day financing",
+    "ADVERSE_STRESS": "observed BID/ASK plus 0.9 pip one-way slippage, 0.2 bps one-way commission, and 1.5 bps/day financing"
+  },
+  "periods": {
+    "TUNING_DIAGNOSTIC_ONLY": ["2026-03-11", "2026-05-01"],
+    "WALK_FORWARD": ["2026-05-01", "2026-07-01"],
+    "RESERVED_UNOPENED": ["2026-07-01", "2026-07-15"]
+  },
+  "development_admission": [
+    "at least 20 walk-forward proposals",
+    "walk-forward RAW_SIGNAL mean return is positive",
+    "walk-forward EXECUTABLE_BASE mean return is positive",
+    "walk-forward ADVERSE_STRESS mean return is positive",
+    "terminal inventory is zero"
+  ],
+  "final_admission": "not available from opened development data; requires untouched full comparable months with normal and adverse equity at least 2.0x",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

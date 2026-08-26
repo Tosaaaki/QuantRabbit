@@ -1,0 +1,126 @@
+{
+  "schema_version": 2,
+  "registry_id": "FX_PAPER_RESEARCH_ORCHESTRATOR_V2",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "legacy_evidence": {
+    "registry": "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json",
+    "registry_sha256": "b2f8521c8ff90de5e2e96ab9823069446b2fe50f0c2aa71b4c1d195cb2be4ce4",
+    "sealed_cycles": ["V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15", "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24"],
+    "policy": "READ_ONLY_MIGRATION_EVIDENCE_NO_RESULT_REWRITE"
+  },
+  "profit_gate": {
+    "initial_equity_jpy": 200000,
+    "full_comparable_month_required": true,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "unopened_holdout_reproduction_required": true,
+    "strategy_adoption_is_separate_gate": true,
+    "forbidden": [
+      "lookahead",
+      "evaluation_period_tuning",
+      "post_hoc_leverage",
+      "hidden_unrealized_loss",
+      "numeric_tampering"
+    ]
+  },
+  "cycles": [
+    {
+      "cycle_id": "V25",
+      "registered_before_official_execution": true,
+      "depends_on_legacy_cycle": "V24",
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "ASIAN_USD_COHERENCE_PERSISTENCE_PREREGISTRATION_V25.json",
+      "preregistration_sha256": "a4438b847761fbe8f1b1c51eacdc92a1696249792b209021b627614919ce143d",
+      "script": "run_asian_usd_coherence_persistence_v25.py",
+      "script_sha256": "ff5cba95ba071056c7282a321e2f17922ddc2fd81074280274873701e0735d75",
+      "test": "test_asian_usd_coherence_persistence_v25.py",
+      "test_sha256": "13f599c3829a42463810705df07130ff6d274353f9dcc6445f919ad279b3db47",
+      "dependency_files": [
+        {"path": "paper_replay_compat/fx_original_indicators.py", "sha256": "df3aa1ce651cc05494215e0a571b452b4785fdc2dbff134c6437aa24c96f4300"},
+        {"path": "run_asian_box_sweep_reclaim_v24.py", "sha256": "bf0d2a4b5758cdd12cdb63cd23309f5fcad086ce2e2cffc606d20c56a2aa571d"},
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"}
+      ],
+      "hypothesis_contract": {
+        "independent": true,
+        "frozen_before_replay": true,
+        "baseline": "FX_ASIAN_BOX_SWEEP_RECLAIM_V24",
+        "family": "FX_SESSION_CURRENCY_COHERENCE",
+        "family_hypothesis_number": 1,
+        "single_changed_variable": "cross_pair_usd_oriented_asian_session_coherence_continuation",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5",
+        "price_component": "BID_ASK",
+        "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true,
+        "same_entry_direction_exit": true,
+        "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true,
+        "one_basket_per_utc_day": true,
+        "add_to_position": false,
+        "martingale": false,
+        "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285,
+        "gross_leverage_cap": 1.0,
+        "currency_abs_exposure_cap": 1.0,
+        "finite_max_age_seconds": 21600,
+        "terminal_liquidation_required": true,
+        "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "LLM_ASSISTED_INDEPENDENT_HYPOTHESIS",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "ASIAN_USD_COHERENCE_PERSISTENCE_PREREGISTRATION_V25.json#problem_contract",
+        "model_identity": "LEGACY_TASK_NOT_MACHINE_VERIFIED",
+        "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": ["run_asian_usd_coherence_persistence_v25.py", "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z", "--output-root", "evidence/run_asian_usd_coherence_persistence_v25_official_001"],
+        "pythonpath": ["paper_replay_compat"],
+        "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_asian_usd_coherence_persistence_v25_official_001/result_asian_usd_coherence_persistence_v25.json",
+        "ledger": "evidence/run_asian_usd_coherence_persistence_v25_official_001/proposal_ledger_asian_usd_coherence_persistence_v25.jsonl"
+      }
+    }
+  ]
+}

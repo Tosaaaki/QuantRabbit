@@ -1,0 +1,335 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_source_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_CRS_H12_HOURLY_INTERNAL_NETTING_V5",
+  "external_orders": 0,
+  "final_admitted": false,
+  "live_authority": false,
+  "periods": {
+    "OPENED_DIAGNOSTIC": {
+      "ADVERSE_STRESS": {
+        "checkpoints": 246,
+        "cost_drag_nav_additive": 0.037769341473145535,
+        "equity_multiple": 0.96559625549508,
+        "gross_pnl_nav_additive": 0.0027663889430674035,
+        "max_drawdown": -0.03434587351781526,
+        "mean_interval_return": -0.00014204480983095192,
+        "monthly_multiples": {
+          "2026-07": 0.96559625549508
+        },
+        "persistence_hours": 0,
+        "target_changes": 3497,
+        "terminal_liquidation_cost_nav": 5.992931166306889e-05,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 143.42857142857602
+      },
+      "EXECUTABLE_BASE": {
+        "checkpoints": 246,
+        "cost_drag_nav_additive": 0.026103135468592886,
+        "equity_multiple": 0.9769287095516874,
+        "gross_pnl_nav_additive": 0.0027663889430674035,
+        "max_drawdown": -0.02303407359121601,
+        "mean_interval_return": -9.470996829656082e-05,
+        "monthly_multiples": {
+          "2026-07": 0.9769287095516874
+        },
+        "persistence_hours": 0,
+        "target_changes": 3497,
+        "terminal_liquidation_cost_nav": 3.809432457211316e-05,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 143.42857142857602
+      },
+      "RAW_SIGNAL": {
+        "checkpoints": 246,
+        "cost_drag_nav_additive": 0.0,
+        "equity_multiple": 1.0027680264182595,
+        "gross_pnl_nav_additive": 0.0027663889430674035,
+        "max_drawdown": -0.0015841988202466295,
+        "mean_interval_return": 1.124548350840406e-05,
+        "monthly_multiples": {
+          "2026-07": 1.0027680264182595
+        },
+        "persistence_hours": 0,
+        "target_changes": 3497,
+        "terminal_liquidation_cost_nav": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 143.42857142857602
+      }
+    },
+    "TUNING": {
+      "ADVERSE_STRESS": {
+        "checkpoints": 860,
+        "cost_drag_nav_additive": 0.15304711614671973,
+        "equity_multiple": 0.8712070105439217,
+        "gross_pnl_nav_additive": 0.015219655868358106,
+        "max_drawdown": -0.12875702182919058,
+        "mean_interval_return": -0.0001602164850699168,
+        "monthly_multiples": {
+          "2026-03": 0.9509498462305767,
+          "2026-04": 0.9161440153728994
+        },
+        "persistence_hours": 0,
+        "target_changes": 13377,
+        "terminal_liquidation_cost_nav": 4.128311824471584e-05,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 558.6428571428359
+      },
+      "EXECUTABLE_BASE": {
+        "checkpoints": 860,
+        "cost_drag_nav_additive": 0.10727228098283356,
+        "equity_multiple": 0.9120194310011579,
+        "gross_pnl_nav_additive": 0.015219655868358106,
+        "max_drawdown": -0.08795616445981636,
+        "mean_interval_return": -0.00010700682213677493,
+        "monthly_multiples": {
+          "2026-03": 0.9700646744617443,
+          "2026-04": 0.9401635324028331
+        },
+        "persistence_hours": 0,
+        "target_changes": 13377,
+        "terminal_liquidation_cost_nav": 2.6758076832256212e-05,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 558.6428571428359
+      },
+      "RAW_SIGNAL": {
+        "checkpoints": 860,
+        "cost_drag_nav_additive": 0.0,
+        "equity_multiple": 1.015305439731289,
+        "gross_pnl_nav_additive": 0.015219655868358106,
+        "max_drawdown": -0.004530267405024047,
+        "mean_interval_return": 1.7697274265532838e-05,
+        "monthly_multiples": {
+          "2026-03": 1.015828964860102,
+          "2026-04": 0.9994846326035948
+        },
+        "persistence_hours": 0,
+        "target_changes": 13377,
+        "terminal_liquidation_cost_nav": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 558.6428571428359
+      }
+    },
+    "WALK_FORWARD": {
+      "ADVERSE_STRESS": {
+        "checkpoints": 1008,
+        "cost_drag_nav_additive": 0.16248597820869887,
+        "equity_multiple": 0.8571826883018673,
+        "gross_pnl_nav_additive": 0.008413186324663608,
+        "max_drawdown": -0.14270873281319574,
+        "mean_interval_return": -0.00015272434369811483,
+        "monthly_multiples": {
+          "2026-05": 0.9327759220182558,
+          "2026-06": 0.9189588496743927
+        },
+        "persistence_hours": 0,
+        "target_changes": 14744,
+        "terminal_liquidation_cost_nav": 0.00012665343634412339,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 606.2857142857367
+      },
+      "EXECUTABLE_BASE": {
+        "checkpoints": 1008,
+        "cost_drag_nav_additive": 0.1131354979552009,
+        "equity_multiple": 0.9005526086403521,
+        "gross_pnl_nav_additive": 0.008413186324663608,
+        "max_drawdown": -0.09978605286349018,
+        "mean_interval_return": -0.00010380351483504644,
+        "monthly_multiples": {
+          "2026-05": 0.9557891197819027,
+          "2026-06": 0.942208474653745
+        },
+        "persistence_hours": 0,
+        "target_changes": 14744,
+        "terminal_liquidation_cost_nav": 8.836867679145363e-05,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 606.2857142857367
+      },
+      "RAW_SIGNAL": {
+        "checkpoints": 1008,
+        "cost_drag_nav_additive": 0.0,
+        "equity_multiple": 1.008434344537019,
+        "gross_pnl_nav_additive": 0.008413186324663608,
+        "max_drawdown": -0.005469504950894821,
+        "mean_interval_return": 8.346415004626546e-06,
+        "monthly_multiples": {
+          "2026-05": 1.0105854091455777,
+          "2026-06": 0.9978714667863873
+        },
+        "persistence_hours": 0,
+        "target_changes": 14744,
+        "terminal_liquidation_cost_nav": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 606.2857142857367
+      }
+    }
+  },
+  "portfolio": {
+    "gross_leverage_cap": 1.0,
+    "pair_count": 28,
+    "target_values": [
+      -1,
+      0,
+      1
+    ],
+    "weight_per_pair": 0.03571428571428571
+  },
+  "result_sha256": "a04db6f799b41bcf6960d79d788768316233538f6e390f20399a08d3c8715084",
+  "single_changed_variable": "hourly_same_pair_internal_netting",
+  "source_audit": [
+    {
+      "pair": "AUD_CAD",
+      "rows": 26048,
+      "sha256": "c1182fbbbc4ad0f7b755dd104c2db5a0c85bdc5f7d725c7955316fa98e22a3ff"
+    },
+    {
+      "pair": "AUD_CHF",
+      "rows": 26025,
+      "sha256": "244c43da872854a4f5bca354aca46ee8f2ff335d572a8de2dd05988679bc1876"
+    },
+    {
+      "pair": "AUD_JPY",
+      "rows": 26051,
+      "sha256": "16a18bd499cdc8ab6a0178e52465447a50ae2135eff50f72755467ff26110bca"
+    },
+    {
+      "pair": "AUD_NZD",
+      "rows": 26036,
+      "sha256": "f2aab64ccbe36cbca41c274eaf20b3f618feaa89f5755b6c4ff3221a10d844c8"
+    },
+    {
+      "pair": "AUD_USD",
+      "rows": 26047,
+      "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "pair": "CAD_CHF",
+      "rows": 25957,
+      "sha256": "f15b6e79ee24f137cfa38801a2ce711720c5e3e4a2653c655cf762e0cc702f6e"
+    },
+    {
+      "pair": "CAD_JPY",
+      "rows": 26049,
+      "sha256": "13dd0f030afbe608e78dbfe8cb47cd498869cd371ba70071b93f860d93debc47"
+    },
+    {
+      "pair": "CHF_JPY",
+      "rows": 26008,
+      "sha256": "7b4ca40f9efd60950eb1e9d0cf28731a6c371ebd1b5b71d66d1ddc0087433339"
+    },
+    {
+      "pair": "EUR_AUD",
+      "rows": 26052,
+      "sha256": "64546a7706b14983288ba43dc86daaea8731b204450c8546f7a02ddfc211f979"
+    },
+    {
+      "pair": "EUR_CAD",
+      "rows": 26050,
+      "sha256": "8e828a286216cb5e04ccf245412e51fa2b72197bf27b4621d00ab5be956730b6"
+    },
+    {
+      "pair": "EUR_CHF",
+      "rows": 25989,
+      "sha256": "b70a8537445c89e3dab0c01afcc462403b7210f0c3e46d742e193fa295fc1dd5"
+    },
+    {
+      "pair": "EUR_GBP",
+      "rows": 26051,
+      "sha256": "a94b1cd7cfc07aff749711f2e87ae5120b437ce1aeee8ac504e0c9a6e238544e"
+    },
+    {
+      "pair": "EUR_JPY",
+      "rows": 26039,
+      "sha256": "eaa1935720db89343fca7db7d03b56adefd4efbaae76ca3d996e6d8fb7a35def"
+    },
+    {
+      "pair": "EUR_NZD",
+      "rows": 26050,
+      "sha256": "8ac27e2e69049f3ae1d8e1887d399ca30699f9cce88645c694cfd8ca7817e0a1"
+    },
+    {
+      "pair": "EUR_USD",
+      "rows": 26051,
+      "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "pair": "GBP_AUD",
+      "rows": 26048,
+      "sha256": "d89e41c3420c609bbcb64b6ea60178468e4daeb8580f7917b4f411824c0ae609"
+    },
+    {
+      "pair": "GBP_CAD",
+      "rows": 26048,
+      "sha256": "2ae776d88b233499025cc148f4df079be3d26fe95b1bd1f5e703ae8b356fc2b1"
+    },
+    {
+      "pair": "GBP_CHF",
+      "rows": 26041,
+      "sha256": "9177e2eb1351e02acde241485b418311b2dc1b07dbf2fa0550b0562981a0b1f6"
+    },
+    {
+      "pair": "GBP_JPY",
+      "rows": 26052,
+      "sha256": "16e7e95252c3c9e2c01ab3ff80a18800d081ae6ae5f9c572291be888a34f2de4"
+    },
+    {
+      "pair": "GBP_NZD",
+      "rows": 26035,
+      "sha256": "564659ed01ad1ab12090bb437a3c0e6b03511e78812b3999798060da2a33d325"
+    },
+    {
+      "pair": "GBP_USD",
+      "rows": 26045,
+      "sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "pair": "NZD_CAD",
+      "rows": 26046,
+      "sha256": "fe70b710033fd2e39732759dd303998d11b33536a6fd7d280e7721fc0ef0dcd3"
+    },
+    {
+      "pair": "NZD_CHF",
+      "rows": 26031,
+      "sha256": "50db8f67634c9b7d859ca31ebc9293265cccb454a5920f9607f0eaa97bc4467b"
+    },
+    {
+      "pair": "NZD_JPY",
+      "rows": 26047,
+      "sha256": "2870aeddd718356e8a36e5c34e72c2d21c962a89401a4787f0dc0cf8f9de89f1"
+    },
+    {
+      "pair": "NZD_USD",
+      "rows": 26049,
+      "sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "pair": "USD_CAD",
+      "rows": 26047,
+      "sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "pair": "USD_CHF",
+      "rows": 26018,
+      "sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "pair": "USD_JPY",
+      "rows": 26046,
+      "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "source_candidate": "FX_CRS_MULTINOMIAL_RESPONSE_H12_V4",
+  "source_decision_ledger": "evidence/run_counterparty_models_v4_001/decision_ledger_counterparty_v4.jsonl",
+  "source_decision_ledger_sha256": "18ad38ac16ba4415263ebe0300821700a6e0d19e1aa32f5e3365f4c86a74e087",
+  "target_audit": {
+    "eligible_source_orders": 74212,
+    "pair_hour_targets": 29124,
+    "tie_flat_targets": 5131
+  },
+  "terminal_inventory_mtm_hidden": false
+}

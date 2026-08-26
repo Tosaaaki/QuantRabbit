@@ -1,0 +1,1549 @@
+{
+  "admission_blockers": [
+    "policy was added after the 2026 source was opened",
+    "portfolio inventory and terminal liquidation are not replayed in this proposal-level branch",
+    "future holdout has not elapsed"
+  ],
+  "candidates": [
+    {
+      "candidate_id": "FX_ONLINE_POLARITY_M15_DIRECTION_ALL_H8_V3",
+      "development_admitted": false,
+      "holding_m15_bars": 8,
+      "periods": {
+        "OPENED_DIAGNOSTIC": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 3834,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -2.0508893761035334,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.49293046351518,
+              "effective_currency_time_bets": 35.463814357005944,
+              "effective_net_currency_nodes": 4.498462178506159,
+              "gross_currency_hhi": 0.28629255876844173,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -93.0,
+                "CAD": -152.0,
+                "CHF": 175.0,
+                "EUR": -231.0,
+                "GBP": 3.0,
+                "JPY": -217.0,
+                "NZD": -177.0,
+                "USD": 692.0
+              },
+              "net_currency_hhi": 0.22229818998546702
+            },
+            "family_corrected_cluster_lower_bps": -2.582022413771667,
+            "mean_bps": -0.6335947019590331,
+            "median_bps": -0.0663374244730397,
+            "monthly_mean_bps": {
+              "2026-07": -0.6335947019590331
+            },
+            "n": 3834,
+            "positive_rate": 0.4947835159102765,
+            "week_clusters": 3
+          }
+        },
+        "TUNING": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 5327,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -2.211066733803689,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4955719503331166,
+              "effective_currency_time_bets": 56.81214726309193,
+              "effective_net_currency_nodes": 4.149095307564566,
+              "gross_currency_hhi": 0.28607621705646863,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -192.0,
+                "CAD": -293.0,
+                "CHF": 183.0,
+                "EUR": -334.0,
+                "GBP": -21.0,
+                "JPY": -201.0,
+                "NZD": -281.0,
+                "USD": 1139.0
+              },
+              "net_currency_hhi": 0.24101639655681462
+            },
+            "family_corrected_cluster_lower_bps": -2.818763947462698,
+            "mean_bps": -0.7001086990007892,
+            "median_bps": 0.08561277342611362,
+            "monthly_mean_bps": {
+              "2026-04": -0.7001086990007892
+            },
+            "n": 5327,
+            "positive_rate": 0.5036605969588887,
+            "week_clusters": 4
+          }
+        },
+        "WALK_FORWARD": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 16627,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -0.5108448645474597,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4985137932293857,
+              "effective_currency_time_bets": 146.84370087575442,
+              "effective_net_currency_nodes": 4.819814067569928,
+              "gross_currency_hhi": 0.28583566025530127,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -371.0,
+                "CAD": -522.0,
+                "CHF": 672.0,
+                "EUR": -935.0,
+                "GBP": 173.0,
+                "JPY": -918.0,
+                "NZD": -690.0,
+                "USD": 2591.0
+              },
+              "net_currency_hhi": 0.2074768831288514
+            },
+            "family_corrected_cluster_lower_bps": -0.7424204281369998,
+            "mean_bps": 0.07795063083369598,
+            "median_bps": 0.2873976146000601,
+            "monthly_mean_bps": {
+              "2026-05": -0.19619353646473742,
+              "2026-06": 0.33272211329983115
+            },
+            "n": 16627,
+            "positive_rate": 0.5162085764118602,
+            "week_clusters": 10
+          }
+        }
+      },
+      "ranking_floor_bps": null,
+      "worker": "M15_DIRECTION_ALL"
+    },
+    {
+      "candidate_id": "FX_ONLINE_POLARITY_M15_H1_AGREE_H8_V3",
+      "development_admitted": false,
+      "holding_m15_bars": 8,
+      "periods": {
+        "OPENED_DIAGNOSTIC": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 2422,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -3.7308883281386915,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.489272099249514,
+              "effective_currency_time_bets": 34.97024650511192,
+              "effective_net_currency_nodes": 4.154958227933615,
+              "gross_currency_hhi": 0.2865927252320287,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -96.0,
+                "CAD": -73.0,
+                "CHF": 99.0,
+                "EUR": -267.0,
+                "GBP": 21.0,
+                "JPY": -152.0,
+                "NZD": -156.0,
+                "USD": 624.0
+              },
+              "net_currency_hhi": 0.2406763065094231
+            },
+            "family_corrected_cluster_lower_bps": -4.744557050238551,
+            "mean_bps": -0.9416806457729092,
+            "median_bps": -0.07158147863339792,
+            "monthly_mean_bps": {
+              "2026-07": -0.9416806457729092
+            },
+            "n": 2422,
+            "positive_rate": 0.49380677126341865,
+            "week_clusters": 3
+          }
+        },
+        "TUNING": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 3310,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -3.3473155604865648,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4961593973743303,
+              "effective_currency_time_bets": 55.773548022541355,
+              "effective_net_currency_nodes": 3.768068028797727,
+              "gross_currency_hhi": 0.2860281487025493,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -268.0,
+                "CAD": -234.0,
+                "CHF": 129.0,
+                "EUR": -435.0,
+                "GBP": -35.0,
+                "JPY": -43.0,
+                "NZD": -318.0,
+                "USD": 1204.0
+              },
+              "net_currency_hhi": 0.2653879899082047
+            },
+            "family_corrected_cluster_lower_bps": -4.138328296313862,
+            "mean_bps": -1.5319145121129307,
+            "median_bps": -0.6289253241764658,
+            "monthly_mean_bps": {
+              "2026-04": -1.5319145121129307
+            },
+            "n": 3310,
+            "positive_rate": 0.47129909365558914,
+            "week_clusters": 4
+          }
+        },
+        "WALK_FORWARD": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 9898,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -0.2378277316253845,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4984264198559685,
+              "effective_currency_time_bets": 144.52480713755173,
+              "effective_net_currency_nodes": 3.845439489752918,
+              "gross_currency_hhi": 0.28584279901509846,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -815.0,
+                "CAD": -419.0,
+                "CHF": 386.0,
+                "EUR": -1221.0,
+                "GBP": -27.0,
+                "JPY": -609.0,
+                "NZD": -739.0,
+                "USD": 3444.0
+              },
+              "net_currency_hhi": 0.2600482994634908
+            },
+            "family_corrected_cluster_lower_bps": -0.527388813992546,
+            "mean_bps": 0.3323474614655209,
+            "median_bps": 0.47384124521210325,
+            "monthly_mean_bps": {
+              "2026-05": 0.06935574148479687,
+              "2026-06": 0.584615449396358
+            },
+            "n": 9898,
+            "positive_rate": 0.5281875126288139,
+            "week_clusters": 10
+          }
+        }
+      },
+      "ranking_floor_bps": null,
+      "worker": "M15_H1_AGREE"
+    },
+    {
+      "candidate_id": "FX_ONLINE_POLARITY_M15_H4_AGREE_H8_V3",
+      "development_admitted": false,
+      "holding_m15_bars": 8,
+      "periods": {
+        "OPENED_DIAGNOSTIC": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 1943,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -2.49111536438559,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4932138964300323,
+              "effective_currency_time_bets": 34.035015438707205,
+              "effective_net_currency_nodes": 5.007516719173161,
+              "gross_currency_hhi": 0.2862693295197217,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -126.0,
+                "CAD": -134.0,
+                "CHF": 37.0,
+                "EUR": -169.0,
+                "GBP": 90.0,
+                "JPY": 44.0,
+                "NZD": -173.0,
+                "USD": 431.0
+              },
+              "net_currency_hhi": 0.19969978256310636
+            },
+            "family_corrected_cluster_lower_bps": -3.1205230994276265,
+            "mean_bps": -0.9863907663419137,
+            "median_bps": -0.43242174710744763,
+            "monthly_mean_bps": {
+              "2026-07": -0.9863907663419137
+            },
+            "n": 1943,
+            "positive_rate": 0.4755532681420484,
+            "week_clusters": 3
+          }
+        },
+        "TUNING": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 2598,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -2.3627668000274493,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.492757665500448,
+              "effective_currency_time_bets": 55.442324278591435,
+              "effective_net_currency_nodes": 3.334650180159162,
+              "gross_currency_hhi": 0.28630672258698436,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -88.0,
+                "CAD": -189.0,
+                "CHF": -25.0,
+                "EUR": -185.0,
+                "GBP": -1.0,
+                "JPY": -138.0,
+                "NZD": -176.0,
+                "USD": 802.0
+              },
+              "net_currency_hhi": 0.29988153058749634
+            },
+            "family_corrected_cluster_lower_bps": -3.2240586923556,
+            "mean_bps": -0.3501701488161056,
+            "median_bps": 0.3444879842573467,
+            "monthly_mean_bps": {
+              "2026-04": -0.3501701488161056
+            },
+            "n": 2598,
+            "positive_rate": 0.5169361046959199,
+            "week_clusters": 4
+          }
+        },
+        "WALK_FORWARD": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 8921,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -0.5916030324810347,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4967737193012765,
+              "effective_currency_time_bets": 142.9251784000165,
+              "effective_net_currency_nodes": 4.1674446937852725,
+              "gross_currency_hhi": 0.285977898564114,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -568.0,
+                "CAD": -509.0,
+                "CHF": 466.0,
+                "EUR": -1229.0,
+                "GBP": 72.0,
+                "JPY": -548.0,
+                "NZD": -301.0,
+                "USD": 2617.0
+              },
+              "net_currency_hhi": 0.2399551940044354
+            },
+            "family_corrected_cluster_lower_bps": -0.9041773301865941,
+            "mean_bps": 0.04928253625985615,
+            "median_bps": 0.4741726764456722,
+            "monthly_mean_bps": {
+              "2026-05": -0.03274754005963151,
+              "2026-06": 0.13169972080467174
+            },
+            "n": 8921,
+            "positive_rate": 0.5250532451518888,
+            "week_clusters": 10
+          }
+        }
+      },
+      "ranking_floor_bps": null,
+      "worker": "M15_H4_AGREE"
+    },
+    {
+      "candidate_id": "FX_ONLINE_POLARITY_MTF_UNANIMOUS_H8_V3",
+      "development_admitted": false,
+      "holding_m15_bars": 8,
+      "periods": {
+        "OPENED_DIAGNOSTIC": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 1165,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -4.163686130860098,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4784675751385903,
+              "effective_currency_time_bets": 32.60365619294706,
+              "effective_net_currency_nodes": 4.600354478702063,
+              "gross_currency_hhi": 0.2874829155077456,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -114.0,
+                "CAD": -68.0,
+                "CHF": 0.0,
+                "EUR": -169.0,
+                "GBP": 75.0,
+                "JPY": 46.0,
+                "NZD": -135.0,
+                "USD": 365.0
+              },
+              "net_currency_hhi": 0.21737455333705905
+            },
+            "family_corrected_cluster_lower_bps": -5.180800610933706,
+            "mean_bps": -1.4177056249051374,
+            "median_bps": -0.8844454350209752,
+            "monthly_mean_bps": {
+              "2026-07": -1.4177056249051374
+            },
+            "n": 1165,
+            "positive_rate": 0.4575107296137339,
+            "week_clusters": 3
+          }
+        },
+        "TUNING": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 1661,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -3.7712323177883915,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4911936263328824,
+              "effective_currency_time_bets": 52.40314921744416,
+              "effective_net_currency_nodes": 3.229577205160206,
+              "gross_currency_hhi": 0.28643498672125806,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -138.0,
+                "CAD": -133.0,
+                "CHF": -11.0,
+                "EUR": -235.0,
+                "GBP": -8.0,
+                "JPY": -19.0,
+                "NZD": -187.0,
+                "USD": 731.0
+              },
+              "net_currency_hhi": 0.3096380536753244
+            },
+            "family_corrected_cluster_lower_bps": -4.880498730743146,
+            "mean_bps": -1.3390278046903643,
+            "median_bps": -0.4758192326115296,
+            "monthly_mean_bps": {
+              "2026-04": -1.3390278046903643
+            },
+            "n": 1661,
+            "positive_rate": 0.4786273329319687,
+            "week_clusters": 4
+          }
+        },
+        "WALK_FORWARD": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 5615,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -0.3703768447820791,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4823320788831835,
+              "effective_currency_time_bets": 133.42230770532873,
+              "effective_net_currency_nodes": 3.694202802296545,
+              "gross_currency_hhi": 0.2871638825211378,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -650.0,
+                "CAD": -357.0,
+                "CHF": 259.0,
+                "EUR": -1119.0,
+                "GBP": -45.0,
+                "JPY": -370.0,
+                "NZD": -381.0,
+                "USD": 2663.0
+              },
+              "net_currency_hhi": 0.2706943970099146
+            },
+            "family_corrected_cluster_lower_bps": -0.7198397835973324,
+            "mean_bps": 0.21010789581367187,
+            "median_bps": 0.5689651399443107,
+            "monthly_mean_bps": {
+              "2026-05": 0.1337557719710754,
+              "2026-06": 0.2911987302436348
+            },
+            "n": 5615,
+            "positive_rate": 0.5342831700801425,
+            "week_clusters": 10
+          }
+        }
+      },
+      "ranking_floor_bps": null,
+      "worker": "MTF_UNANIMOUS"
+    },
+    {
+      "candidate_id": "FX_ONLINE_POLARITY_H4_H1_PULLBACK_CONTINUATION_H8_V3",
+      "development_admitted": false,
+      "holding_m15_bars": 8,
+      "periods": {
+        "OPENED_DIAGNOSTIC": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 634,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -1.7035043783553212,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4765415868430494,
+              "effective_currency_time_bets": 32.748574221932536,
+              "effective_net_currency_nodes": 5.5505722961924775,
+              "gross_currency_hhi": 0.2876421797410662,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -15.0,
+                "CAD": 13.0,
+                "CHF": -39.0,
+                "EUR": -36.0,
+                "GBP": 33.0,
+                "JPY": 63.0,
+                "NZD": -17.0,
+                "USD": -2.0
+              },
+              "net_currency_hhi": 0.1801616025587072
+            },
+            "family_corrected_cluster_lower_bps": -2.2786279655813577,
+            "mean_bps": -0.17328383282926027,
+            "median_bps": 0.2922490490042673,
+            "monthly_mean_bps": {
+              "2026-07": -0.17328383282926027
+            },
+            "n": 634,
+            "positive_rate": 0.5110410094637224,
+            "week_clusters": 3
+          }
+        },
+        "TUNING": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 1080,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -2.5182465767867352,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.478406088403524,
+              "effective_currency_time_bets": 52.89675971066416,
+              "effective_net_currency_nodes": 4.423286332542231,
+              "gross_currency_hhi": 0.28748799725651575,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -26.0,
+                "CAD": 3.0,
+                "CHF": -68.0,
+                "EUR": -51.0,
+                "GBP": -7.0,
+                "JPY": 39.0,
+                "NZD": -26.0,
+                "USD": 136.0
+              },
+              "net_currency_hhi": 0.2260762529983588
+            },
+            "family_corrected_cluster_lower_bps": -3.80680236810505,
+            "mean_bps": -0.009113726106368299,
+            "median_bps": -0.7744053350394742,
+            "monthly_mean_bps": {
+              "2026-04": -0.009113726106368299
+            },
+            "n": 1080,
+            "positive_rate": 0.46574074074074073,
+            "week_clusters": 4
+          }
+        },
+        "WALK_FORWARD": {
+          "modes": {
+            "CONTINUE": 0,
+            "FREEZE": 3423,
+            "INVERT": 0
+          },
+          "selected": {
+            "ADVERSE_STRESS": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "EXECUTABLE_BASE": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            },
+            "RAW_SIGNAL": {
+              "cluster_lower_bps": null,
+              "currency_exposure": {
+                "effective_currency_nodes": null,
+                "effective_currency_time_bets": null,
+                "effective_net_currency_nodes": null,
+                "gross_currency_hhi": null,
+                "max_gross_currency_share": null,
+                "net_currency_exposure_units": {},
+                "net_currency_hhi": null
+              },
+              "family_corrected_cluster_lower_bps": null,
+              "mean_bps": null,
+              "median_bps": null,
+              "monthly_mean_bps": {},
+              "n": 0,
+              "positive_rate": null,
+              "week_clusters": 0
+            }
+          },
+          "source_raw": {
+            "cluster_lower_bps": -0.15574571427220074,
+            "currency_exposure": {
+              "effective_currency_nodes": 3.4879385271296255,
+              "effective_currency_time_bets": 136.86082558519834,
+              "effective_net_currency_nodes": 3.8610101957107705,
+              "gross_currency_hhi": 0.2867023005772246,
+              "max_gross_currency_share": 0.5,
+              "net_currency_exposure_units": {
+                "AUD": -362.0,
+                "CAD": -49.0,
+                "CHF": -79.0,
+                "EUR": -396.0,
+                "GBP": -83.0,
+                "JPY": 131.0,
+                "NZD": 31.0,
+                "USD": 807.0
+              },
+              "net_currency_hhi": 0.258999575062223
+            },
+            "family_corrected_cluster_lower_bps": -0.6268080704763612,
+            "mean_bps": 0.3795078978061978,
+            "median_bps": 0.18731034827412785,
+            "monthly_mean_bps": {
+              "2026-05": 0.8829355111248115,
+              "2026-06": -0.054113276471498765
+            },
+            "n": 3423,
+            "positive_rate": 0.5097867367806018,
+            "week_clusters": 10
+          }
+        }
+      },
+      "ranking_floor_bps": null,
+      "worker": "H4_H1_PULLBACK_CONTINUATION"
+    }
+  ],
+  "cost_suppressed_source_signals": 0,
+  "decision_ledger": "evidence/run_online_polarity_h8_v3_001/decision_ledger_online_polarity_v3.jsonl",
+  "decision_ledger_sha256": "235516e906e0bad0a52e5bce487bd0e4d38587c3da3081e8a8e5d328ab8faaed",
+  "development_admitted_count": 0,
+  "evidence_class": "opened_development_not_future_holdout",
+  "expected_order_rows": 0,
+  "experiment": "FX_MATURED_OUTCOME_ONLINE_POLARITY_V3",
+  "external_orders": 0,
+  "family_corrected_z": 2.8070337683438114,
+  "family_tests": 10,
+  "final_admitted_count": 0,
+  "live_authority": false,
+  "policy": {
+    "allowed_modes": [
+      "CONTINUE",
+      "INVERT",
+      "FREEZE"
+    ],
+    "checkpoint": "Monday 00:00 UTC",
+    "cost_in_signal_or_state": false,
+    "interval": "two-sided 90 percent normal interval over daily-cluster RAW means",
+    "lookback_days": 84,
+    "maturity_rule": "exit_time strictly before checkpoint",
+    "minimum_daily_clusters": 20
+  },
+  "result_sha256": "f0d18bb53044b2fb8daf37435493587283c3d3fef3b0f2d4c532de7c60e00bc0",
+  "same_source_signal_id_all_cost_arms": true,
+  "source_audit": {
+    "common_fraction": 0.9978120681713496,
+    "common_rows": 25995,
+    "first": "2026-03-11T00:00:00+00:00",
+    "last": "2026-07-15T10:55:00+00:00",
+    "missing_rows_imputed": 0,
+    "raw_rows_by_pair": {
+      "AUD_USD": 26047,
+      "EUR_USD": 26051,
+      "GBP_USD": 26045,
+      "NZD_USD": 26049,
+      "USD_CAD": 26047,
+      "USD_CHF": 26018,
+      "USD_JPY": 26046
+    },
+    "union_rows": 26052
+  },
+  "source_ledger": "evidence/run_mtf_tension_v3_001/signal_ledger_mtf_tension_v3.jsonl",
+  "source_ledger_sha256": "da1073d039469979094b832cdefce837833d4c3d33fff7f7af6424adbac81aa6",
+  "source_signal_rows": 68458,
+  "state_ledger": "evidence/run_online_polarity_h8_v3_001/state_ledger_online_polarity_v3.jsonl",
+  "state_ledger_sha256": "6a120f9dc4779fb5d31df34c7e4c3a04f64debad7998c6859d5ddd64f45b13dd",
+  "terminal_inventory_mtm_hidden": false
+}

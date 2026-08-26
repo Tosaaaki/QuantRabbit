@@ -1,0 +1,29 @@
+{
+  "artifact_id": "FX_CRS_H12_INVENTORY_PERSISTENCE_V6",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION",
+  "source": "FX_CRS_H12_HOURLY_INTERNAL_NETTING_V5",
+  "single_changed_variable": "when no new pair signal arrives, retain the existing target until an opposite/tie signal or 12-hour max age",
+  "max_age_hours": 12,
+  "why_12_hours": "finite half-day inventory contract that spans the major FX session handoff without becoming overnight-unbounded; it is fixed before this replay and is not selected from outcomes",
+  "unchanged": [
+    "same V4 expected-order ledger",
+    "strictly following UTC-hour checkpoint",
+    "same-pair majority netting",
+    "fixed 1/28 NAV per pair and gross leverage cap 1.0",
+    "RAW/BASE/ADVERSE cost arms",
+    "terminal liquidation"
+  ],
+  "rejection": [
+    "walk-forward RAW multiple is not above 1.0",
+    "walk-forward normal or adverse multiple is not above 1.0",
+    "terminal inventory is nonzero",
+    "max age is changed after observing results"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

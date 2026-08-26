@@ -1,0 +1,27 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_LIQUID_MAJORS_H576_V14",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_LIQUID_MAJORS_H384_V11_CORRECTED",
+  "single_changed_variable": "fixed exit horizon changes from 384 to 576 M5 bars",
+  "reason": "the corrected H192 to H384 sequence increased gross edge and reduced the adverse shortfall; perform one final finite forty-eight-hour horizon test before stopping the simple extension family",
+  "family_stop_rule": "if walk-forward ADVERSE_STRESS mean return is not positive, do not test a longer fixed horizon in this family",
+  "unchanged": [
+    "same corrected V9 seven-pair signal stream, direction, and fill",
+    "same cost arms including elapsed-time financing",
+    "same contained period boundaries",
+    "no cost gate, leverage change, TP, price SL, or LLM inventory decision"
+  ],
+  "horizon_m5_bars": 576,
+  "development_admission": [
+    "at least 20 contained walk-forward proposals",
+    "RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS mean returns are all positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

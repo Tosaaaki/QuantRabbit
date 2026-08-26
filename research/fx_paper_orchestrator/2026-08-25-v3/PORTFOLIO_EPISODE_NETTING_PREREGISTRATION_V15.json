@@ -1,0 +1,40 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_H384_EPISODE_NETTING_V15",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_LIQUID_MAJORS_H384_V11_CORRECTED",
+  "single_changed_variable": "overlapping proposal tickets are converted into one same-pair inventory episode",
+  "inventory_rules": [
+    "start each comparable period flat",
+    "first contained V11 signal opens one fixed 1/7 NAV pair sleeve",
+    "same-direction signal while open is recorded but does not add or extend age",
+    "opposite signal closes at its executable open and opens the new direction at that same recorded open",
+    "unchanged episode exits at its source fixed H384 BID/ASK close",
+    "all remaining inventory is liquidated and marked at the period end"
+  ],
+  "portfolio": {
+    "pairs": 7,
+    "weight_per_pair": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "currency_or_pair_martingale": false,
+    "individual_price_sl": false
+  },
+  "periods": {
+    "WALK_FORWARD": ["2026-05-01", "2026-07-01"],
+    "MONTH_2026_05": ["2026-05-01", "2026-06-01"],
+    "MONTH_2026_06": ["2026-06-01", "2026-07-01"]
+  },
+  "period_membership": "only source proposals whose fill and fixed H384 exit are inside the period; each period is independently flat-start and terminal-liquidated",
+  "development_admission": [
+    "normal and adverse full walk equity multiples exceed 1.0",
+    "normal and adverse individual month equity multiples exceed 1.0",
+    "terminal inventory is zero in every arm and period"
+  ],
+  "final_acceptance": "not available from opened development; untouched full months must reach at least 2.0x in normal and adverse",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

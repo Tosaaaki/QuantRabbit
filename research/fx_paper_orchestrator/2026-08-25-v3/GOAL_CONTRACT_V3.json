@@ -1,0 +1,45 @@
+{
+  "contract_id": "FX_INDICATOR_FACTORY_V3",
+  "goal_order": [
+    "measurement_integrity",
+    "raw_signal_edge",
+    "executable_normal_edge",
+    "adverse_cost_edge",
+    "portfolio_survival_and_terminal_mtm",
+    "future_holdout_replication",
+    "full_month_2x"
+  ],
+  "profit_guarantee": {
+    "unconditional_future_profit_guarantee": false,
+    "reason": "future market distribution and execution conditions are not contractually fixed",
+    "guaranteed_by_system": [
+      "paper-only authority boundary",
+      "same signal identifiers across cost arms",
+      "no lookahead chronology",
+      "multiple-testing correction",
+      "no opened-holdout relabeling",
+      "terminal inventory mark-to-market",
+      "fail-closed input and runtime checks"
+    ]
+  },
+  "primary_acceptance": "new future holdoutで通常・悪化コスト双方のcluster-corrected cost後期待値下限が正",
+  "final_acceptance": "通常・悪化双方のfull comparable monthで実測equity multiple 2.0以上",
+  "upper_target": "full comparable monthで3.0以上",
+  "candidate_policy": {
+    "generate_many": true,
+    "select_best_unadjusted": false,
+    "family_wise_error_rate": 0.05,
+    "raw_signal_cost_gate": false,
+    "minimum_tuning_samples": 20,
+    "minimum_walk_forward_samples": 20,
+    "opened_data_can_prove_final_profit": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "commit_push_deploy": false
+  }
+}

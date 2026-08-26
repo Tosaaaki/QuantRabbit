@@ -1,0 +1,958 @@
+{
+  "arms": {
+    "ADVERSE_STRESS": 0.9,
+    "EXECUTABLE_BASE": 0.3,
+    "RAW_SIGNAL": 0.0
+  },
+  "authority": "paper_only_existing_local_files_no_credentials_no_order_endpoint",
+  "currency_graph_feature_rows": 60468,
+  "evidence_class": "development_opened_data_not_holdout",
+  "generated_at_utc": "2026-08-25T09:39:06.633673+00:00",
+  "horizons_bars": [
+    3,
+    6,
+    12,
+    24
+  ],
+  "input_root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+  "input_rows": 60567,
+  "limitations": [
+    "data have already been opened and are not an untouched holdout",
+    "naive lower95 does not yet correct overlapping horizons or currency clusters",
+    "intentional stop hunting cannot be identified without order-flow/depth evidence",
+    "this signal study is not a portfolio equity or monthly-2x result"
+  ],
+  "lookback_bars": 24,
+  "pair_audit": [
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "AUD_CAD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_CAD/AUD_CAD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 420,
+      "rows": 2167,
+      "sha256": "c1182fbbbc4ad0f7b755dd104c2db5a0c85bdc5f7d725c7955316fa98e22a3ff",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "AUD_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_CHF/AUD_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 477,
+      "rows": 2157,
+      "sha256": "244c43da872854a4f5bca354aca46ee8f2ff335d572a8de2dd05988679bc1876",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "AUD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_JPY/AUD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 449,
+      "rows": 2170,
+      "sha256": "16a18bd499cdc8ab6a0178e52465447a50ae2135eff50f72755467ff26110bca",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "AUD_NZD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_NZD/AUD_NZD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 507,
+      "rows": 2162,
+      "sha256": "f2aab64ccbe36cbca41c274eaf20b3f618feaa89f5755b6c4ff3221a10d844c8",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "AUD_USD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 409,
+      "rows": 2167,
+      "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "CAD_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/CAD_CHF/CAD_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 457,
+      "rows": 2112,
+      "sha256": "f15b6e79ee24f137cfa38801a2ce711720c5e3e4a2653c655cf762e0cc702f6e",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "CAD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/CAD_JPY/CAD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 409,
+      "rows": 2168,
+      "sha256": "13dd0f030afbe608e78dbfe8cb47cd498869cd371ba70071b93f860d93debc47",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "CHF_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/CHF_JPY/CHF_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 446,
+      "rows": 2158,
+      "sha256": "7b4ca40f9efd60950eb1e9d0cf28731a6c371ebd1b5b71d66d1ddc0087433339",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_AUD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_AUD/EUR_AUD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 421,
+      "rows": 2171,
+      "sha256": "64546a7706b14983288ba43dc86daaea8731b204450c8546f7a02ddfc211f979",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_CAD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_CAD/EUR_CAD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 451,
+      "rows": 2169,
+      "sha256": "8e828a286216cb5e04ccf245412e51fa2b72197bf27b4621d00ab5be956730b6",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_CHF/EUR_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 427,
+      "rows": 2144,
+      "sha256": "b70a8537445c89e3dab0c01afcc462403b7210f0c3e46d742e193fa295fc1dd5",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_GBP",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_GBP/EUR_GBP_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 394,
+      "rows": 2170,
+      "sha256": "a94b1cd7cfc07aff749711f2e87ae5120b437ce1aeee8ac504e0c9a6e238544e",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_JPY/EUR_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 442,
+      "rows": 2164,
+      "sha256": "eaa1935720db89343fca7db7d03b56adefd4efbaae76ca3d996e6d8fb7a35def",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_NZD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_NZD/EUR_NZD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 489,
+      "rows": 2169,
+      "sha256": "8ac27e2e69049f3ae1d8e1887d399ca30699f9cce88645c694cfd8ca7817e0a1",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "EUR_USD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 424,
+      "rows": 2170,
+      "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_AUD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_AUD/GBP_AUD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 425,
+      "rows": 2168,
+      "sha256": "d89e41c3420c609bbcb64b6ea60178468e4daeb8580f7917b4f411824c0ae609",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_CAD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_CAD/GBP_CAD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 459,
+      "rows": 2169,
+      "sha256": "2ae776d88b233499025cc148f4df079be3d26fe95b1bd1f5e703ae8b356fc2b1",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_CHF/GBP_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 433,
+      "rows": 2167,
+      "sha256": "9177e2eb1351e02acde241485b418311b2dc1b07dbf2fa0550b0562981a0b1f6",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_JPY/GBP_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 432,
+      "rows": 2171,
+      "sha256": "16e7e95252c3c9e2c01ab3ff80a18800d081ae6ae5f9c572291be888a34f2de4",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_NZD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_NZD/GBP_NZD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 471,
+      "rows": 2162,
+      "sha256": "564659ed01ad1ab12090bb437a3c0e6b03511e78812b3999798060da2a33d325",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "GBP_USD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/GBP_USD/GBP_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 430,
+      "rows": 2164,
+      "sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "NZD_CAD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/NZD_CAD/NZD_CAD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 454,
+      "rows": 2166,
+      "sha256": "fe70b710033fd2e39732759dd303998d11b33536a6fd7d280e7721fc0ef0dcd3",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "NZD_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/NZD_CHF/NZD_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 470,
+      "rows": 2160,
+      "sha256": "50db8f67634c9b7d859ca31ebc9293265cccb454a5920f9607f0eaa97bc4467b",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "NZD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/NZD_JPY/NZD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 457,
+      "rows": 2166,
+      "sha256": "2870aeddd718356e8a36e5c34e72c2d21c962a89401a4787f0dc0cf8f9de89f1",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "NZD_USD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/NZD_USD/NZD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 454,
+      "rows": 2168,
+      "sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "USD_CAD",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_CAD/USD_CAD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 464,
+      "rows": 2167,
+      "sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "USD_CHF",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_CHF/USD_CHF_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 466,
+      "rows": 2156,
+      "sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    },
+    {
+      "from": "2026-03-11T00:00:00.000000000Z",
+      "pair": "USD_JPY",
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "raw_breakout_events": 422,
+      "rows": 2165,
+      "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648",
+      "to": "2026-07-15T10:00:00.000000000Z"
+    }
+  ],
+  "pair_count": 28,
+  "raw_breakout_events": 12459,
+  "study_id": "FX_ORIGINAL_GEOMETRY_V2",
+  "summary": [
+    {
+      "adverse_mean_bps": -4.385623399757868,
+      "adverse_naive_lower95_bps": -4.9687623987279705,
+      "base_mean_bps": -3.2320354163882987,
+      "base_naive_lower95_bps": -3.8147125552295376,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5034400948991696,
+      "gross_mae_mean_bps": -16.147312407625925,
+      "gross_mean_bps": 0.17874128964997832,
+      "gross_mfe_mean_bps": 10.067710578351369,
+      "horizon_bars": 3,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -7.157318047451776,
+          "EXECUTABLE_BASE": -6.011967952700199,
+          "RAW_SIGNAL": -5.439292905324411
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -3.8622195755120594,
+          "EXECUTABLE_BASE": -2.6894148372555526,
+          "RAW_SIGNAL": -2.103012468127299
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.406436306143306,
+          "EXECUTABLE_BASE": -2.2527323942097253,
+          "RAW_SIGNAL": -1.675880438242935
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.22347157370958,
+          "EXECUTABLE_BASE": -3.090133017540496,
+          "RAW_SIGNAL": -2.523463739455954
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -4.1274613833687015,
+          "EXECUTABLE_BASE": -2.961498121325163,
+          "RAW_SIGNAL": -2.3785164903033933
+        }
+      },
+      "positive_pairs_base": 0,
+      "signals": 4215,
+      "worker": "ACCEPTED_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -4.099512605942988,
+      "adverse_naive_lower95_bps": -4.837550068457391,
+      "base_mean_bps": -2.9456613683242194,
+      "base_naive_lower95_bps": -3.683544631792107,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5198196059814859,
+      "gross_mae_mean_bps": -20.017949181185536,
+      "gross_mean_bps": 0.6019372973538442,
+      "gross_mfe_mean_bps": 13.816354164251052,
+      "horizon_bars": 6,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -8.710452694849732,
+          "EXECUTABLE_BASE": -7.565102600098155,
+          "RAW_SIGNAL": -6.992427552722367
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -3.429846622092981,
+          "EXECUTABLE_BASE": -2.2570418838364734,
+          "RAW_SIGNAL": -1.67063951470822
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -1.8121219650883655,
+          "EXECUTABLE_BASE": -0.6584180531547851,
+          "RAW_SIGNAL": -0.08156609718799464
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.395683417223347,
+          "EXECUTABLE_BASE": -3.2623448610542636,
+          "RAW_SIGNAL": -2.695675582969721
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -3.3860520318360665,
+          "EXECUTABLE_BASE": -2.2177888900577885,
+          "RAW_SIGNAL": -1.6336573191686492
+        }
+      },
+      "positive_pairs_base": 2,
+      "signals": 4213,
+      "worker": "ACCEPTED_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -4.121056354991879,
+      "adverse_naive_lower95_bps": -5.006169481161941,
+      "base_mean_bps": -2.9672110883900267,
+      "base_naive_lower95_bps": -3.852320165922687,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.508676016163537,
+      "gross_mae_mean_bps": -25.5638957611143,
+      "gross_mean_bps": 0.5050504982211871,
+      "gross_mfe_mean_bps": 19.0969171426798,
+      "horizon_bars": 12,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -7.052297903690763,
+          "EXECUTABLE_BASE": -5.9069478089391865,
+          "RAW_SIGNAL": -5.3342727615633985
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -4.9533405194574796,
+          "EXECUTABLE_BASE": -3.780535781200972,
+          "RAW_SIGNAL": -3.1941334120727185
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.097570270889308,
+          "EXECUTABLE_BASE": -1.9438663589557272,
+          "RAW_SIGNAL": -1.3670144029889368
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -3.6384073423793466,
+          "EXECUTABLE_BASE": -2.505068786210263,
+          "RAW_SIGNAL": -1.9383995081257206
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -1.51255685046446,
+          "EXECUTABLE_BASE": -0.34416773054082817,
+          "RAW_SIGNAL": 0.240026829420988
+        }
+      },
+      "positive_pairs_base": 3,
+      "signals": 4207,
+      "worker": "ACCEPTED_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -7.146435015697338,
+      "adverse_naive_lower95_bps": -8.376755293443608,
+      "base_mean_bps": -5.99183257766198,
+      "base_naive_lower95_bps": -7.222154721856324,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.49748863908155944,
+      "gross_mae_mean_bps": -36.37093852637712,
+      "gross_mean_bps": -2.617302729293749,
+      "gross_mfe_mean_bps": 26.759400152551958,
+      "horizon_bars": 24,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -13.156721341456764,
+          "EXECUTABLE_BASE": -12.011371246705188,
+          "RAW_SIGNAL": -11.438696199329401
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -9.668906754719497,
+          "EXECUTABLE_BASE": -8.49610201646299,
+          "RAW_SIGNAL": -7.909699647334737
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -8.068986423567369,
+          "EXECUTABLE_BASE": -6.91528251163379,
+          "RAW_SIGNAL": -6.338430555666999
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -2.286616221379791,
+          "EXECUTABLE_BASE": -1.153277665210707,
+          "RAW_SIGNAL": -0.5866083871261648
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -1.7998771411174956,
+          "EXECUTABLE_BASE": -0.6238006590466765,
+          "RAW_SIGNAL": -0.03576241801126617
+        }
+      },
+      "positive_pairs_base": 3,
+      "signals": 4181,
+      "worker": "ACCEPTED_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -5.471270760331234,
+      "adverse_naive_lower95_bps": -6.081044077343959,
+      "base_mean_bps": -4.325551723084991,
+      "base_naive_lower95_bps": -4.9337403622690665,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.46662507797878977,
+      "gross_mae_mean_bps": -15.602326190231608,
+      "gross_mean_bps": -0.7226885300591438,
+      "gross_mfe_mean_bps": 8.18332015610318,
+      "horizon_bars": 3,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -6.692773787632069,
+          "EXECUTABLE_BASE": -5.512719949985179,
+          "RAW_SIGNAL": -4.922693031161733
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -5.483233188845859,
+          "EXECUTABLE_BASE": -4.338463986353953,
+          "RAW_SIGNAL": -3.766079385108
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -5.873776500998848,
+          "EXECUTABLE_BASE": -4.745082885006295,
+          "RAW_SIGNAL": -4.180736077010018
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.647696328306107,
+          "EXECUTABLE_BASE": -3.508384662520019,
+          "RAW_SIGNAL": -2.9387288296269745
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -4.617157860713809,
+          "EXECUTABLE_BASE": -3.473459103444979,
+          "RAW_SIGNAL": -2.901609724810564
+        }
+      },
+      "positive_pairs_base": 2,
+      "signals": 3206,
+      "worker": "CONFIRMED_REJECTION"
+    },
+    {
+      "adverse_mean_bps": -5.085398494688661,
+      "adverse_naive_lower95_bps": -5.848765182383208,
+      "base_mean_bps": -3.9400069219912646,
+      "base_naive_lower95_bps": -4.702380245555823,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.49280800500312694,
+      "gross_mae_mean_bps": -19.638161685405386,
+      "gross_mean_bps": -0.13218315079109677,
+      "gross_mfe_mean_bps": 12.083222105887266,
+      "horizon_bars": 6,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -7.514349110857161,
+          "EXECUTABLE_BASE": -6.33429527321027,
+          "RAW_SIGNAL": -5.744268354386825
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -3.8401456390918645,
+          "EXECUTABLE_BASE": -2.6953764365999584,
+          "RAW_SIGNAL": -2.1229918353540054
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -5.03616077853155,
+          "EXECUTABLE_BASE": -3.9074671625389983,
+          "RAW_SIGNAL": -3.3431203545427217
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.740235780267272,
+          "EXECUTABLE_BASE": -3.600924114481184,
+          "RAW_SIGNAL": -3.03126828158814
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -5.032011337023964,
+          "EXECUTABLE_BASE": -3.891440208775808,
+          "RAW_SIGNAL": -3.3211546446517306
+        }
+      },
+      "positive_pairs_base": 3,
+      "signals": 3198,
+      "worker": "CONFIRMED_REJECTION"
+    },
+    {
+      "adverse_mean_bps": -4.819606465548351,
+      "adverse_naive_lower95_bps": -5.801660040872736,
+      "base_mean_bps": -3.6739280414437676,
+      "base_naive_lower95_bps": -4.6552058523708135,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.49483568075117373,
+      "gross_mae_mean_bps": -25.159380706697014,
+      "gross_mean_bps": -0.03729278851397165,
+      "gross_mfe_mean_bps": 17.702750217276105,
+      "horizon_bars": 12,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -8.616538401789759,
+          "EXECUTABLE_BASE": -7.436484564142869,
+          "RAW_SIGNAL": -6.8464576453194255
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -3.4170022137137264,
+          "EXECUTABLE_BASE": -2.2722330112218203,
+          "RAW_SIGNAL": -1.699848409975867
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -2.63169331588858,
+          "EXECUTABLE_BASE": -1.5029996998960278,
+          "RAW_SIGNAL": -0.9386528918997512
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.978514943509592,
+          "EXECUTABLE_BASE": -3.8392032777235046,
+          "RAW_SIGNAL": -3.26954744483046
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -6.225795742943921,
+          "EXECUTABLE_BASE": -5.082547971038161,
+          "RAW_SIGNAL": -4.51092408508528
+        }
+      },
+      "positive_pairs_base": 4,
+      "signals": 3195,
+      "worker": "CONFIRMED_REJECTION"
+    },
+    {
+      "adverse_mean_bps": -3.850675015199996,
+      "adverse_naive_lower95_bps": -5.1796902778471035,
+      "base_mean_bps": -2.704365885362013,
+      "base_naive_lower95_bps": -4.032818279214592,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5121107266435986,
+      "gross_mae_mean_bps": -32.56752789612384,
+      "gross_mean_bps": 0.8713799717446339,
+      "gross_mfe_mean_bps": 26.942859704639034,
+      "horizon_bars": 24,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -10.661725790689067,
+          "EXECUTABLE_BASE": -9.481671953042179,
+          "RAW_SIGNAL": -8.891645034218731
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -0.3772203322075426,
+          "EXECUTABLE_BASE": 0.7675488702843631,
+          "RAW_SIGNAL": 1.3399334715303166
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": 0.19298734768023237,
+          "EXECUTABLE_BASE": 1.3216809636727842,
+          "RAW_SIGNAL": 1.8860277716690605
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -5.120598022174217,
+          "EXECUTABLE_BASE": -3.9812863563881296,
+          "RAW_SIGNAL": -3.411630523495085
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -6.666136210611781,
+          "EXECUTABLE_BASE": -5.516763444652129,
+          "RAW_SIGNAL": -4.942077061672301
+        }
+      },
+      "positive_pairs_base": 7,
+      "signals": 3179,
+      "worker": "CONFIRMED_REJECTION"
+    },
+    {
+      "adverse_mean_bps": -4.137539299143092,
+      "adverse_naive_lower95_bps": -4.465948057386696,
+      "base_mean_bps": -2.9810303062602648,
+      "base_naive_lower95_bps": -3.309113381513017,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5120912669719612,
+      "gross_mae_mean_bps": -15.718327412310273,
+      "gross_mean_bps": 0.5539022290918307,
+      "gross_mfe_mean_bps": 9.931039615116942,
+      "horizon_bars": 3,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -5.742415019695825,
+          "EXECUTABLE_BASE": -4.579805376542066,
+          "RAW_SIGNAL": -3.998500554965186
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -4.085413948178923,
+          "EXECUTABLE_BASE": -2.9285750636127204,
+          "RAW_SIGNAL": -2.3501556213296193
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.6440267755550493,
+          "EXECUTABLE_BASE": -2.478259303847537,
+          "RAW_SIGNAL": -1.895375567993781
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.218550783980931,
+          "EXECUTABLE_BASE": -3.073054164270689,
+          "RAW_SIGNAL": -2.500305854415568
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -2.867667208629691,
+          "EXECUTABLE_BASE": -1.7150286727592037,
+          "RAW_SIGNAL": -1.1387094048239603
+        }
+      },
+      "positive_pairs_base": 0,
+      "signals": 12447,
+      "worker": "IMMEDIATE_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -4.17320180261795,
+      "adverse_naive_lower95_bps": -4.582273508450189,
+      "base_mean_bps": -3.016552407881639,
+      "base_naive_lower95_bps": -3.4254437037256906,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5179705716812736,
+      "gross_mae_mean_bps": -19.764379126203448,
+      "gross_mean_bps": 0.6922206324365131,
+      "gross_mfe_mean_bps": 13.641567719022186,
+      "horizon_bars": 6,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -6.458770015880948,
+          "EXECUTABLE_BASE": -5.296160372727189,
+          "RAW_SIGNAL": -4.7148555511503085
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -3.939747262831818,
+          "EXECUTABLE_BASE": -2.7829083782656165,
+          "RAW_SIGNAL": -2.204488935982515
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.1179268494248134,
+          "EXECUTABLE_BASE": -1.9521593777173019,
+          "RAW_SIGNAL": -1.3692756418635454
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.597347006668508,
+          "EXECUTABLE_BASE": -3.451850386958266,
+          "RAW_SIGNAL": -2.879102077103145
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -2.7323907196599055,
+          "EXECUTABLE_BASE": -1.578568903621948,
+          "RAW_SIGNAL": -1.0016579956029688
+        }
+      },
+      "positive_pairs_base": 1,
+      "signals": 12437,
+      "worker": "IMMEDIATE_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -4.419328713262212,
+      "adverse_naive_lower95_bps": -4.931019369803853,
+      "base_mean_bps": -3.262600789971187,
+      "base_naive_lower95_bps": -3.7742393057294525,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5123600934052661,
+      "gross_mae_mean_bps": -25.426263488183224,
+      "gross_mean_bps": 0.35332712211274625,
+      "gross_mfe_mean_bps": 18.86672155794081,
+      "horizon_bars": 12,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -5.320339499349701,
+          "EXECUTABLE_BASE": -4.157729856195942,
+          "RAW_SIGNAL": -3.5764250346190627
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -6.1413910656085635,
+          "EXECUTABLE_BASE": -4.984552181042361,
+          "RAW_SIGNAL": -4.40613273875926
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.9144740901447688,
+          "EXECUTABLE_BASE": -2.748706618437257,
+          "RAW_SIGNAL": -2.165822882583501
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.026579862877154,
+          "EXECUTABLE_BASE": -2.8810832431669122,
+          "RAW_SIGNAL": -2.308334933311791
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -1.298497401023171,
+          "EXECUTABLE_BASE": -0.1440269185259656,
+          "RAW_SIGNAL": 0.4332083227226374
+        }
+      },
+      "positive_pairs_base": 2,
+      "signals": 12419,
+      "worker": "IMMEDIATE_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -6.155640001758066,
+      "adverse_naive_lower95_bps": -6.852680561633351,
+      "base_mean_bps": -4.9982867401529925,
+      "base_naive_lower95_bps": -5.69535299365732,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.4966839210611453,
+      "gross_mae_mean_bps": -35.207156889313865,
+      "gross_mean_bps": -1.4818052136051376,
+      "gross_mfe_mean_bps": 26.381604458715827,
+      "horizon_bars": 24,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -7.251793555107366,
+          "EXECUTABLE_BASE": -6.089183911953607,
+          "RAW_SIGNAL": -5.507879090376727
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -9.881407217317614,
+          "EXECUTABLE_BASE": -8.724568332751412,
+          "RAW_SIGNAL": -8.146148890468313
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -7.351848950457229,
+          "EXECUTABLE_BASE": -6.186081478749718,
+          "RAW_SIGNAL": -5.603197742895962
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -2.868419655388525,
+          "EXECUTABLE_BASE": -1.7229230356782839,
+          "RAW_SIGNAL": -1.1501747258231625
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -1.0633123654998817,
+          "EXECUTABLE_BASE": 0.09671105398364323,
+          "RAW_SIGNAL": 0.6767227637254063
+        }
+      },
+      "positive_pairs_base": 2,
+      "signals": 12364,
+      "worker": "IMMEDIATE_ESCAPE"
+    },
+    {
+      "adverse_mean_bps": -4.025893700212966,
+      "adverse_naive_lower95_bps": -4.625622108721327,
+      "base_mean_bps": -2.8801746629667226,
+      "base_naive_lower95_bps": -3.4796596216864977,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5318153462258266,
+      "gross_mae_mean_bps": -14.822011699778166,
+      "gross_mean_bps": 0.7226885300591438,
+      "gross_mfe_mean_bps": 9.173980738802836,
+      "horizon_bars": 3,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -3.2258283096326035,
+          "EXECUTABLE_BASE": -2.045774471985713,
+          "RAW_SIGNAL": -1.4557475531622681
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -4.360844593812747,
+          "EXECUTABLE_BASE": -3.21607539132084,
+          "RAW_SIGNAL": -2.6436907900748867
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -3.2522843437019486,
+          "EXECUTABLE_BASE": -2.1235907277093964,
+          "RAW_SIGNAL": -1.5592439197131198
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.550305468642384,
+          "EXECUTABLE_BASE": -3.4109938028562965,
+          "RAW_SIGNAL": -2.841337969963252
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -4.8755101756037265,
+          "EXECUTABLE_BASE": -3.731811418334896,
+          "RAW_SIGNAL": -3.1599620397004813
+        }
+      },
+      "positive_pairs_base": 1,
+      "signals": 3206,
+      "worker": "SWEEP_RECOVERY"
+    },
+    {
+      "adverse_mean_bps": -4.821032193106435,
+      "adverse_naive_lower95_bps": -5.581030934993548,
+      "base_mean_bps": -3.675640620409037,
+      "base_naive_lower95_bps": -4.4349586407865775,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.5046904315196998,
+      "gross_mae_mean_bps": -19.299293426318272,
+      "gross_mean_bps": 0.13218315079109677,
+      "gross_mfe_mean_bps": 12.70265505994217,
+      "horizon_bars": 6,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -2.728820234290761,
+          "EXECUTABLE_BASE": -1.548766396643871,
+          "RAW_SIGNAL": -0.9587394778204257
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -6.705378521964752,
+          "EXECUTABLE_BASE": -5.560609319472846,
+          "RAW_SIGNAL": -4.988224718226892
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -4.355225425973802,
+          "EXECUTABLE_BASE": -3.226531809981249,
+          "RAW_SIGNAL": -2.662185001984973
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.843940583803649,
+          "EXECUTABLE_BASE": -3.704628918017561,
+          "RAW_SIGNAL": -3.1349730851245172
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -4.676003179037839,
+          "EXECUTABLE_BASE": -3.5354320507896846,
+          "RAW_SIGNAL": -2.9651464866656068
+        }
+      },
+      "positive_pairs_base": 1,
+      "signals": 3198,
+      "worker": "SWEEP_RECOVERY"
+    },
+    {
+      "adverse_mean_bps": -4.7450208885203695,
+      "adverse_naive_lower95_bps": -5.719321621742868,
+      "base_mean_bps": -3.5993424644157863,
+      "base_naive_lower95_bps": -4.573348936754811,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.504225352112676,
+      "gross_mae_mean_bps": -25.004474257888216,
+      "gross_mean_bps": 0.03729278851397165,
+      "gross_mfe_mean_bps": 18.071437136127244,
+      "horizon_bars": 12,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": -1.3415494992773809,
+          "EXECUTABLE_BASE": -0.16149566163049128,
+          "RAW_SIGNAL": 0.4285312571929541
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -6.68694676302069,
+          "EXECUTABLE_BASE": -5.542177560528784,
+          "RAW_SIGNAL": -4.96979295928283
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -6.242770995343243,
+          "EXECUTABLE_BASE": -5.11407737935069,
+          "RAW_SIGNAL": -4.549730571354415
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.321411533623295,
+          "EXECUTABLE_BASE": -3.1820998678372074,
+          "RAW_SIGNAL": -2.6124440349441627
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -3.5141708866315775,
+          "EXECUTABLE_BASE": -2.3709231147258163,
+          "RAW_SIGNAL": -1.7992992287729357
+        }
+      },
+      "positive_pairs_base": 3,
+      "signals": 3195,
+      "worker": "SWEEP_RECOVERY"
+    },
+    {
+      "adverse_mean_bps": -5.593434958689239,
+      "adverse_naive_lower95_bps": -6.919848092356684,
+      "base_mean_bps": -4.447125828851255,
+      "base_naive_lower95_bps": -5.773291084674095,
+      "evaluated_pairs": 28,
+      "gross_direction_accuracy": 0.48726014469959106,
+      "gross_mae_mean_bps": -34.2537718718594,
+      "gross_mean_bps": -0.8713799717446339,
+      "gross_mfe_mean_bps": 25.46793420775231,
+      "horizon_bars": 24,
+      "monthly_mean_bps": {
+        "2026-03": {
+          "ADVERSE_STRESS": 0.8856521323278602,
+          "EXECUTABLE_BASE": 2.0657059699747493,
+          "RAW_SIGNAL": 2.655732888798195
+        },
+        "2026-04": {
+          "ADVERSE_STRESS": -9.552376068458912,
+          "EXECUTABLE_BASE": -8.407606865967006,
+          "RAW_SIGNAL": -7.835222264721051
+        },
+        "2026-05": {
+          "ADVERSE_STRESS": -9.002520366684253,
+          "EXECUTABLE_BASE": -7.8738267506917,
+          "RAW_SIGNAL": -7.309479942695426
+        },
+        "2026-06": {
+          "ADVERSE_STRESS": -4.0918311133069265,
+          "EXECUTABLE_BASE": -2.952519447520839,
+          "RAW_SIGNAL": -2.382863614627795
+        },
+        "2026-07": {
+          "ADVERSE_STRESS": -2.9942712821147026,
+          "EXECUTABLE_BASE": -1.8448985161550495,
+          "RAW_SIGNAL": -1.2702121331752225
+        }
+      },
+      "positive_pairs_base": 5,
+      "signals": 3179,
+      "worker": "SWEEP_RECOVERY"
+    }
+  ],
+  "timeframe_minutes": 60
+}

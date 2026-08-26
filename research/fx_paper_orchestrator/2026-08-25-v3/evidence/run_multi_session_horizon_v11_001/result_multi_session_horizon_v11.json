@@ -1,0 +1,128 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_raw_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_AUCTION_TRAP_LIQUID_MAJORS_H384_V11",
+  "external_orders": 0,
+  "final_admitted": false,
+  "horizon_m5_bars": 384,
+  "live_authority": false,
+  "periods": {
+    "TUNING_DIAGNOSTIC_ONLY": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.32444053518708027,
+          "mean_return": -0.0011423962506587333,
+          "median_return": -0.0012807733604205938,
+          "positive_rate": 0.39436619718309857,
+          "signals": 284
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": -0.22724551201209484,
+          "mean_return": -0.0008001602535637143,
+          "median_return": -0.0008729598678239273,
+          "positive_rate": 0.4295774647887324,
+          "signals": 284
+        },
+        "RAW_SIGNAL": {
+          "additive_return": -0.1266127899200371,
+          "mean_return": -0.00044581968281703205,
+          "median_return": -0.00041838666542920455,
+          "positive_rate": 0.4507042253521127,
+          "signals": 284
+        }
+      },
+      "end": "2026-05-01",
+      "start": "2026-03-11"
+    },
+    "WALK_FORWARD": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "additive_return": -0.03904145312476624,
+          "mean_return": -0.00010328426752583662,
+          "median_return": -0.00012324969595410164,
+          "positive_rate": 0.47883597883597884,
+          "signals": 378
+        },
+        "EXECUTABLE_BASE": {
+          "additive_return": 0.09571744793337207,
+          "mean_return": 0.0002532207617284975,
+          "median_return": 0.0001740789548960657,
+          "positive_rate": 0.5105820105820106,
+          "signals": 378
+        },
+        "RAW_SIGNAL": {
+          "additive_return": 0.23740026245448365,
+          "mean_return": 0.0006280430223663589,
+          "median_return": 0.0004742431436539629,
+          "positive_rate": 0.5529100529100529,
+          "signals": 378
+        }
+      },
+      "end": "2026-07-01",
+      "start": "2026-05-01"
+    }
+  },
+  "proposal_ledger": "evidence/run_multi_session_horizon_v11_001/proposal_ledger_multi_session_h384_v11.jsonl",
+  "proposal_ledger_sha256": "ece1a6f5ba0bf2bcf1c13176c7d75b0722e72af1bf27b1f7f5631c17c4a61bc7",
+  "rescored_signals": 740,
+  "result_sha256": "72b4c02ecee19255a1b4affe3fa3ec645b26dc2a01aee4c852be18f683765865",
+  "same_signal_id_all_cost_arms": true,
+  "single_changed_variable": "fixed_horizon_192_to_384_m5_bars",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "source_ledger": "evidence/run_major_session_horizon_v10_001/proposal_ledger_major_session_h192_v10.jsonl",
+  "source_ledger_sha256": "26c0bc9b58ca285edc2caa0f8e21c4043a11c54a92cd1d2d80f2580629ee089f",
+  "source_signals": 743,
+  "terminal_inventory_mtm_hidden": false,
+  "terminal_open_inventory": 0,
+  "universe": [
+    "AUD_USD",
+    "EUR_USD",
+    "GBP_USD",
+    "NZD_USD",
+    "USD_CAD",
+    "USD_CHF",
+    "USD_JPY"
+  ]
+}

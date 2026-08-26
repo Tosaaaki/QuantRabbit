@@ -1,0 +1,28 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_H96_LIQUID_MAJORS_V9",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "source": "FX_AUCTION_TRAP_GEOMETRY_H96_V8",
+  "single_changed_variable": "universe changes from all 28 crosses to seven predefined USD majors",
+  "universe": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_CAD", "USD_CHF", "USD_JPY"],
+  "selection_timing": "predefined market-structure universe; no V8 walk-forward outcome or per-signal cost is consulted",
+  "unchanged": [
+    "same V8 signal_id, entry gate, direction, fill, and 96 M5-bar exit",
+    "same RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS scores from the immutable V8 ledger",
+    "same period boundaries",
+    "no signal-level cost gate, leverage change, TP, or price SL"
+  ],
+  "development_admission": [
+    "at least 20 walk-forward proposals",
+    "walk-forward RAW_SIGNAL mean return is positive",
+    "walk-forward EXECUTABLE_BASE mean return is positive",
+    "walk-forward ADVERSE_STRESS mean return is positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

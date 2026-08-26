@@ -1,0 +1,89 @@
+{
+  "artifact_id": "FX_COUNTERPARTY_RESPONSE_SURFACE_V4_PREREGISTRATION",
+  "created_at": "2026-08-25T00:00:00+09:00",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION",
+  "purpose": "Measure the market response after a completed-bar boundary excursion instead of treating every breakout as continuation.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  },
+  "event_clock": {
+    "source": "completed M5 BID/ASK bars",
+    "event_formation": "bars t-2 through t are completed",
+    "decision_time": "close of t",
+    "first_fill": "first positive-spread executable BID/ASK open strictly after decision_time",
+    "lookahead_fields": []
+  },
+  "original_fx_indicators": {
+    "counterparty_response_surface": [
+      "signed boundary excursion divided by causal ATR",
+      "area outside the boundary across three completed bars",
+      "opposing-wick absorption multiplied by causal volume anomaly",
+      "reclaim velocity and second-difference curvature",
+      "spread shock and completed-bar spread recovery",
+      "leave-one-pair-out currency graph propagation"
+    ],
+    "path_torsion_reclaim": [
+      "arc-to-chord path efficiency",
+      "signed triangle area of the last three normalized closes",
+      "turning angle between pre-break, excursion, and reclaim vectors",
+      "distance from the causal session price centroid"
+    ],
+    "liquidity_strain_recovery": [
+      "spread z-score",
+      "tick-volume anomaly",
+      "missing-bar flag",
+      "range energy and jerk",
+      "cross-currency breadth and covariance concentration"
+    ]
+  },
+  "mutually_exclusive_states": [
+    "CONTINUATION_RESPONSE",
+    "FAILED_AUCTION_REVERSAL",
+    "UNRESOLVED_NO_ORDER"
+  ],
+  "fixed_models": [
+    "regularized multinomial logistic response classifier",
+    "ridge forward-return estimator"
+  ],
+  "fixed_horizons_m5_bars": [
+    3,
+    12,
+    48
+  ],
+  "cost_arms": {
+    "RAW_SIGNAL": "generate every structural event without consulting cost",
+    "EXECUTABLE_BASE": "apply observed BID/ASK, 0.3 pip one-way slippage, and frozen financing after signal generation",
+    "ADVERSE_STRESS": "apply 0.9 pip one-way slippage, 0.2 bp commission one-way, and adverse financing after signal generation"
+  },
+  "selection_control": {
+    "single_joint_feature_set": true,
+    "no_pairwise_indicator_search": true,
+    "family_tests": 6,
+    "family_definition": "two fixed models times three fixed horizons",
+    "opened_2026_data_is_development_only": true,
+    "future_holdout_required": true
+  },
+  "admission": {
+    "raw_signal_not_cost_suppressed": true,
+    "tuning_raw_family_corrected_lower_bound_gt_zero": true,
+    "walk_forward_base_family_corrected_lower_bound_gt_zero": true,
+    "walk_forward_adverse_family_corrected_lower_bound_gt_zero": true,
+    "terminal_inventory_liquidated": true,
+    "full_month_normal_equity_multiple_gte": 2.0,
+    "full_month_adverse_equity_multiple_gte": 2.0,
+    "untouched_future_holdout_required": true,
+    "stretch_full_month_multiple": 3.0
+  },
+  "automatic_rejection": [
+    "proposal density collapses because of a cost gate",
+    "positive result depends on terminal open inventory",
+    "gross edge vanishes after currency-time clustering",
+    "only an opened diagnostic period is positive",
+    "result requires leverage change after outcomes are known",
+    "lookahead or same-bar ambiguous fill is detected"
+  ]
+}

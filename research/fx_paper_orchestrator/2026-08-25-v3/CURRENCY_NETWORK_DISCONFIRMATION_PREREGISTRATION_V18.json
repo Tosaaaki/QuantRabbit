@@ -1,0 +1,31 @@
+{
+  "artifact_id": "FX_CURRENCY_NETWORK_DISCONFIRMATION_V18",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "single_changed_variable": "cost-blind entry admission requires the breakout to be disconfirmed by an excluding-self seven-major currency network",
+  "original_indicator": {
+    "name": "Currency Network Disconfirmation",
+    "measurement": "for each signal, use only the 12 completed M5 bars before fill; normalize each of the other six major-pair returns by its realized path energy, convert pair returns to base/quote currency-node strengths, and compute the target pair direction implied without its own return",
+    "gate": "escape_side times excluding-self implied target-pair direction must be nonpositive",
+    "minimum_other_pairs": 4,
+    "cost_used": false,
+    "future_used": false
+  },
+  "unchanged": [
+    "same V7 Auction Trap Geometry source candidates and reversal direction",
+    "same seven-pair universe, H384 fixed exit, and V16 opposite-close-only inventory",
+    "same 1/7 sleeves, gross cap 1.0, costs, contained periods, and terminal liquidation"
+  ],
+  "development_admission": [
+    "at least 20 signals remain in each standalone walk-forward month",
+    "normal and adverse full walk and each month equity multiple exceed 1.0",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

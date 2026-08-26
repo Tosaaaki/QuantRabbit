@@ -1,0 +1,1789 @@
+{
+  "admission_blockers": [
+    "the source period is opened development evidence",
+    "future holdout has not elapsed",
+    "full comparable months do not meet 2x in normal and adverse arms"
+  ],
+  "candidates": [
+    {
+      "candidate_id": "GRAPH_NET_TOP7_REB6_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -3.8690183469487014,
+      "rebalance_h4_bars": 6,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -8.108012522062454,
+            "cost_drag_fraction": 0.0050242350012006005,
+            "family_corrected_cluster_lower_bps": -10.193316209946152,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.024252610675897235,
+            "mean_interval_bps": -3.359690728781723,
+            "monthly_multiples": {
+              "2026-07": 0.9813129614253335
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00020029384150171376,
+            "total_multiple": 0.9813129614253335,
+            "turnover_units": 14.85714285714287,
+            "worst_month_multiple": 0.9813129614253335
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -7.687775106582962,
+            "cost_drag_fraction": 0.0023707339931508427,
+            "family_corrected_cluster_lower_bps": -9.791467568893154,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.022131142106916468,
+            "mean_interval_bps": -2.885851263058551,
+            "monthly_multiples": {
+              "2026-07": 0.9839217812280531
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011741835458175174,
+            "total_multiple": 0.9839217812280531,
+            "turnover_units": 14.85714285714287,
+            "worst_month_multiple": 0.9839217812280531
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -7.258906559981606,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -9.35652186396631,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.02033776051464009,
+            "mean_interval_bps": -2.4625059071387576,
+            "monthly_multiples": {
+              "2026-07": 0.9862577640580111
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9862577640580111,
+            "turnover_units": 14.85714285714287,
+            "worst_month_multiple": 0.9862577640580111
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -2.1066578889742,
+            "cost_drag_fraction": 0.014485309990101558,
+            "family_corrected_cluster_lower_bps": -2.637928617106234,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.025049823381013914,
+            "mean_interval_bps": -0.9887574038522039,
+            "monthly_multiples": {
+              "2026-03": 0.9930454937267537,
+              "2026-04": 0.9866977689948713
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019245562751038178,
+            "total_multiple": 0.9798357731705982,
+            "turnover_units": 35.99999999999995,
+            "worst_month_multiple": 0.9866977689948713
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -1.7394469352871964,
+            "cost_drag_fraction": 0.006514425978128874,
+            "family_corrected_cluster_lower_bps": -2.2821075700532427,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.017953171068781026,
+            "mean_interval_bps": -0.5980277954221732,
+            "monthly_multiples": {
+              "2026-03": 0.9964045934125935,
+              "2026-04": 0.9912411466934025
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0001096746993814628,
+            "total_multiple": 0.9876772317448717,
+            "turnover_units": 35.99999999999995,
+            "worst_month_multiple": 0.9912411466934025
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.439766449169934,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -1.9920809556449566,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.013649606862232377,
+            "mean_interval_bps": -0.27869318865114984,
+            "monthly_multiples": {
+              "2026-03": 0.9992129855576405,
+              "2026-04": 0.9949152509331672
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.994132238261758,
+            "turnover_units": 35.99999999999995,
+            "worst_month_multiple": 0.9949152509331672
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -3.0353726385185578,
+            "cost_drag_fraction": 0.015614337954837946,
+            "family_corrected_cluster_lower_bps": -3.8690183469487014,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.03028894679073535,
+            "mean_interval_bps": -0.7856241976690898,
+            "monthly_multiples": {
+              "2026-05": 0.9733933974822396,
+              "2026-06": 1.0080283460266974
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019658228550237662,
+            "total_multiple": 0.9812081364973301,
+            "turnover_units": 33.71428571428567,
+            "worst_month_multiple": 0.9733933974822396
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.629101968073689,
+            "cost_drag_fraction": 0.006768093233293327,
+            "family_corrected_cluster_lower_bps": -3.459709262330885,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.02569126127093757,
+            "mean_interval_bps": -0.4154884352613679,
+            "monthly_multiples": {
+              "2026-05": 0.9780011666455634,
+              "2026-06": 1.0121957406358313
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011322245667992612,
+            "total_multiple": 0.9899286152155143,
+            "turnover_units": 33.71428571428567,
+            "worst_month_multiple": 0.9780011666455634
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -2.3105511674897055,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.1345106289789157,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.022190769800208177,
+            "mean_interval_bps": -0.13230461796875997,
+            "monthly_multiples": {
+              "2026-05": 0.9816644833255153,
+              "2026-06": 1.0152679112783651
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9966524495620492,
+            "turnover_units": 33.71428571428567,
+            "worst_month_multiple": 0.9816644833255153
+          }
+        }
+      },
+      "top_k": 7
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP7_REB1_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -4.079843422999993,
+      "rebalance_h4_bars": 1,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -5.488447135310615,
+            "cost_drag_fraction": 0.013532990721639151,
+            "family_corrected_cluster_lower_bps": -6.673823485964521,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.018511332192864827,
+            "mean_interval_bps": -2.837187927333977,
+            "monthly_multiples": {
+              "2026-07": 0.9842031412282547
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00020029384150171378,
+            "total_multiple": 0.9842031412282547,
+            "turnover_units": 58.57142857142844,
+            "worst_month_multiple": 0.9842031412282547
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -4.189931344388555,
+            "cost_drag_fraction": 0.007253786529119326,
+            "family_corrected_cluster_lower_bps": -5.303723929250888,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.013305407453181983,
+            "mean_interval_bps": -1.7159014643840087,
+            "monthly_multiples": {
+              "2026-07": 0.9904032049985088
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011741835458175176,
+            "total_multiple": 0.9904032049985088,
+            "turnover_units": 58.57142857142844,
+            "worst_month_multiple": 0.9904032049985088
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -2.7335414357494985,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.7849032916390266,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.007340105341915426,
+            "mean_interval_bps": -0.4205824413269863,
+            "monthly_multiples": {
+              "2026-07": 0.9976125157040081
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9976125157040081,
+            "turnover_units": 58.57142857142844,
+            "worst_month_multiple": 0.9976125157040081
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -3.8040045296889,
+            "cost_drag_fraction": 0.04734510819572414,
+            "family_corrected_cluster_lower_bps": -4.655023467119583,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.052333148072851166,
+            "mean_interval_bps": -1.9271652335079104,
+            "monthly_multiples": {
+              "2026-03": 0.9840405613715348,
+              "2026-04": 0.9768327539325048
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019245562751038178,
+            "total_multiple": 0.9612430515458447,
+            "turnover_units": 199.14285714285637,
+            "worst_month_multiple": 0.9768327539325048
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.69313685726298,
+            "cost_drag_fraction": 0.025516964930370225,
+            "family_corrected_cluster_lower_bps": -3.5260158936637445,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.03447431831800429,
+            "mean_interval_bps": -0.8571582106964448,
+            "monthly_multiples": {
+              "2026-03": 0.9929068210452767,
+              "2026-04": 0.9894784152661251
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00010967469938146281,
+            "total_multiple": 0.9824598677948067,
+            "turnover_units": 199.14285714285637,
+            "worst_month_multiple": 0.9894784152661251
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.3993563284227293,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -2.2123778621234664,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.018187220384902503,
+            "mean_interval_bps": 0.3936734035373898,
+            "monthly_multiples": {
+              "2026-03": 1.0033430366092995,
+              "2026-04": 1.004492752565204
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.007850808610806,
+            "turnover_units": 199.14285714285637,
+            "worst_month_multiple": 1.0033430366092995
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -3.5022576497677123,
+            "cost_drag_fraction": 0.05588652577832944,
+            "family_corrected_cluster_lower_bps": -4.079843422999993,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.0522676848458109,
+            "mean_interval_bps": -2.214527691739367,
+            "monthly_multiples": {
+              "2026-05": 0.9927607840405029,
+              "2026-06": 0.955239969072913
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019658228550237665,
+            "total_multiple": 0.9483247806436514,
+            "turnover_units": 239.7142857142838,
+            "worst_month_multiple": 0.955239969072913
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.35127400516295,
+            "cost_drag_fraction": 0.029889804421447157,
+            "family_corrected_cluster_lower_bps": -2.9108454530682404,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.03362046631830928,
+            "mean_interval_bps": -1.1267987646731608,
+            "monthly_multiples": {
+              "2026-05": 1.0045075870483913,
+              "2026-06": 0.9689375977601962
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011322245667992612,
+            "total_multiple": 0.9733051683265587,
+            "turnover_units": 239.7142857142838,
+            "worst_month_multiple": 0.9689375977601962
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.0300178827197155,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -1.5639133684323672,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.022012398937500177,
+            "mean_interval_bps": 0.12382066718655277,
+            "monthly_multiples": {
+              "2026-05": 1.0178923034296847,
+              "2026-06": 0.985208388260049
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0028360356842696,
+            "turnover_units": 239.7142857142838,
+            "worst_month_multiple": 0.985208388260049
+          }
+        }
+      },
+      "top_k": 7
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP4_REB6_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -4.342472330834971,
+      "rebalance_h4_bars": 6,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -10.444747210802785,
+            "cost_drag_fraction": 0.005794358329712888,
+            "family_corrected_cluster_lower_bps": -13.358521140685236,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.03014596040413209,
+            "mean_interval_bps": -3.8916633227941806,
+            "monthly_multiples": {
+              "2026-07": 0.9783729956216584
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0001710030228231038,
+            "total_multiple": 0.9783729956216584,
+            "turnover_units": 18.0,
+            "worst_month_multiple": 0.9783729956216584
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -9.9647119984777,
+            "cost_drag_fraction": 0.002808244772387202,
+            "family_corrected_cluster_lower_bps": -12.895668665513991,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.027793114946922604,
+            "mean_interval_bps": -3.358428758986021,
+            "monthly_multiples": {
+              "2026-07": 0.9813006456751908
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 9.8909746698032e-05,
+            "total_multiple": 0.9813006456751908,
+            "turnover_units": 18.0,
+            "worst_month_multiple": 0.9813006456751908
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -9.462919559203964,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -12.388362838982133,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.025611230240169647,
+            "mean_interval_bps": -2.856956478202592,
+            "monthly_multiples": {
+              "2026-07": 0.9840608418609555
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9840608418609555,
+            "turnover_units": 18.0,
+            "worst_month_multiple": 0.9840608418609555
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -3.677128199796703,
+            "cost_drag_fraction": 0.017331980812505723,
+            "family_corrected_cluster_lower_bps": -4.501470851821065,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.041011713949501316,
+            "mean_interval_bps": -1.784198792825058,
+            "monthly_multiples": {
+              "2026-03": 0.9884573965337631,
+              "2026-04": 0.9751599413469364
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00019767539536234418,
+            "total_multiple": 0.9639040568278104,
+            "turnover_units": 48.0,
+            "worst_month_multiple": 0.9751599413469364
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -3.2537520297708733,
+            "cost_drag_fraction": 0.008178350862528836,
+            "family_corrected_cluster_lower_bps": -4.089067919137527,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.03240527459261422,
+            "mean_interval_bps": -1.3354914423359971,
+            "monthly_multiples": {
+              "2026-03": 0.9920881412962481,
+              "2026-04": 0.9805260695338625
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011083076961538037,
+            "total_multiple": 0.972768285816365,
+            "turnover_units": 48.0,
+            "worst_month_multiple": 0.9805260695338625
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -2.8759309318131376,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.720845371322601,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.0260176668052563,
+            "mean_interval_bps": -0.9345918902512507,
+            "monthly_multiples": {
+              "2026-03": 0.9952765676201918,
+              "2026-04": 0.9854114836380213
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9807569591287705,
+            "turnover_units": 48.0,
+            "worst_month_multiple": 0.9854114836380213
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -3.3959618489749586,
+            "cost_drag_fraction": 0.019294247316303453,
+            "family_corrected_cluster_lower_bps": -4.342472330834971,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.03517796925612382,
+            "mean_interval_bps": -0.7802642825251092,
+            "monthly_multiples": {
+              "2026-05": 0.9684850968010168,
+              "2026-06": 1.0131703619658912
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00019713023459366904,
+            "total_multiple": 0.9812403960844563,
+            "turnover_units": 50.0,
+            "worst_month_multiple": 0.9684850968010168
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.928209199273602,
+            "cost_drag_fraction": 0.008872879750344462,
+            "family_corrected_cluster_lower_bps": -3.8716431299486835,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.029791500122334558,
+            "mean_interval_bps": -0.3442237985937732,
+            "monthly_multiples": {
+              "2026-05": 0.97382703132885,
+              "2026-06": 1.018171157119666
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011319540387227513,
+            "total_multiple": 0.9915225953225044,
+            "turnover_units": 50.0,
+            "worst_month_multiple": 0.97382703132885
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -2.5267808517202126,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.4629658415736633,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.025244846610089522,
+            "mean_interval_bps": 0.027026400165408675,
+            "monthly_multiples": {
+              "2026-05": 0.9784844775281341,
+              "2026-06": 1.022357578489402
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.000361021035132,
+            "turnover_units": 50.0,
+            "worst_month_multiple": 0.9784844775281341
+          }
+        }
+      },
+      "top_k": 4
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP4_REB1_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -5.034168206952232,
+      "rebalance_h4_bars": 1,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -8.066140060016073,
+            "cost_drag_fraction": 0.01835663682903287,
+            "family_corrected_cluster_lower_bps": -10.051130773213968,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.02562665669680586,
+            "mean_interval_bps": -3.857649497192358,
+            "monthly_multiples": {
+              "2026-07": 0.9785689665819357
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0002199483827353618,
+            "total_multiple": 0.9785689665819357,
+            "turnover_units": 79.5,
+            "worst_month_multiple": 0.9785689665819357
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -6.378814261304957,
+            "cost_drag_fraction": 0.010047029128634836,
+            "family_corrected_cluster_lower_bps": -8.276670328944856,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.018714395816858964,
+            "mean_interval_bps": -2.373790979264137,
+            "monthly_multiples": {
+              "2026-07": 0.9867363161651918
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00013081886740403629,
+            "total_multiple": 0.9867363161651918,
+            "turnover_units": 79.5,
+            "worst_month_multiple": 0.9867363161651918
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.383422931334318,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -6.195600512637302,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.010914896222704695,
+            "mean_interval_bps": -0.5796786348650604,
+            "monthly_multiples": {
+              "2026-07": 0.9966998510858823
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9966998510858823,
+            "turnover_units": 79.5,
+            "worst_month_multiple": 0.9966998510858823
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -5.386718963562521,
+            "cost_drag_fraction": 0.06464593033486773,
+            "family_corrected_cluster_lower_bps": -6.553667589084434,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.07029065626739628,
+            "mean_interval_bps": -2.715523657471416,
+            "monthly_multiples": {
+              "2026-03": 0.9709279740527159,
+              "2026-04": 0.9741067205325196
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00020537629713896562,
+            "total_multiple": 0.9457874646777753,
+            "turnover_units": 281.0,
+            "worst_month_multiple": 0.9709279740527159
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -3.9025083614391027,
+            "cost_drag_fraction": 0.03551109335251366,
+            "family_corrected_cluster_lower_bps": -5.047899774850925,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.04645643276772604,
+            "mean_interval_bps": -1.2873453740226863,
+            "monthly_multiples": {
+              "2026-03": 0.9827688216315241,
+              "2026-04": 0.9908277289892552
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011706982146981605,
+            "total_multiple": 0.9737545996586102,
+            "turnover_units": 281.0,
+            "worst_month_multiple": 0.9827688216315241
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -2.097244604628582,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.2178362958578677,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.0219016971822944,
+            "mean_interval_bps": 0.4533944961985705,
+            "monthly_multiples": {
+              "2026-03": 0.9973652382166159,
+              "2026-04": 1.0116196551263212
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0089542783196743,
+            "turnover_units": 281.0,
+            "worst_month_multiple": 0.9973652382166159
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -4.2783589186636695,
+            "cost_drag_fraction": 0.07341057016321277,
+            "family_corrected_cluster_lower_bps": -5.034168206952232,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.05646804402423844,
+            "mean_interval_bps": -2.2766340639696754,
+            "monthly_multiples": {
+              "2026-05": 0.9906483277482686,
+              "2026-06": 0.9557588185612353
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00021540716884304074,
+            "total_multiple": 0.9468208753383489,
+            "turnover_units": 317.5,
+            "worst_month_multiple": 0.9557588185612353
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.781685497518147,
+            "cost_drag_fraction": 0.04004679344417834,
+            "family_corrected_cluster_lower_bps": -3.507285936781762,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.03386747656399636,
+            "mean_interval_bps": -0.8806601426711627,
+            "monthly_multiples": {
+              "2026-05": 1.0060328045091342,
+              "2026-06": 0.9730768302935571
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00012544649639034772,
+            "total_multiple": 0.9789472125830855,
+            "turnover_units": 317.5,
+            "worst_month_multiple": 0.9730768302935571
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.0223349146432272,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -1.720610326901555,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.022917109541791714,
+            "mean_interval_bps": 0.7949379093865091,
+            "monthly_multiples": {
+              "2026-05": 1.024529759494013,
+              "2026-06": 0.9945474829963253
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0189434935595998,
+            "turnover_units": 317.5,
+            "worst_month_multiple": 0.9945474829963253
+          }
+        }
+      },
+      "top_k": 4
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP7_REB3_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -5.095666900090976,
+      "rebalance_h4_bars": 3,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -5.327178395169309,
+            "cost_drag_fraction": 0.005384223030316153,
+            "family_corrected_cluster_lower_bps": -6.881570334639849,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.01581741849557372,
+            "mean_interval_bps": -1.7066144140677753,
+            "monthly_multiples": {
+              "2026-07": 0.9904425175065138
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00020029384150171376,
+            "total_multiple": 0.9904425175065138,
+            "turnover_units": 16.571428571428587,
+            "worst_month_multiple": 0.9904425175065138
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -4.824964004474131,
+            "cost_drag_fraction": 0.0025911880247729783,
+            "family_corrected_cluster_lower_bps": -6.378569249318247,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.01375639528221817,
+            "mean_interval_bps": -1.207858163077922,
+            "monthly_multiples": {
+              "2026-07": 0.9932140005108708
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011741835458175174,
+            "total_multiple": 0.9932140005108708,
+            "turnover_units": 16.571428571428587,
+            "worst_month_multiple": 0.9932140005108708
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.279814552085783,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -5.800484042893607,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.011890735798488317,
+            "mean_interval_bps": -0.7451460157970329,
+            "monthly_multiples": {
+              "2026-07": 0.9957914133061064
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9957914133061064,
+            "turnover_units": 16.571428571428587,
+            "worst_month_multiple": 0.9957914133061064
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -0.536192147327934,
+            "cost_drag_fraction": 0.020171525267606013,
+            "family_corrected_cluster_lower_bps": -1.0930636536273686,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.014011901621259537,
+            "mean_interval_bps": 0.5677266837876911,
+            "monthly_multiples": {
+              "2026-03": 1.0060715978737518,
+              "2026-04": 1.005317589775135
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019245562751038178,
+            "total_multiple": 1.0114214739156593,
+            "turnover_units": 63.99999999999985,
+            "worst_month_multiple": 1.005317589775135
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -0.01692208061288114,
+            "cost_drag_fraction": 0.009800679554999307,
+            "family_corrected_cluster_lower_bps": -0.571224424664738,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.01305249844112144,
+            "mean_interval_bps": 1.0761014736213517,
+            "monthly_multiples": {
+              "2026-03": 1.0103133578205568,
+              "2026-04": 1.011534477028198
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0001096746993814628,
+            "total_multiple": 1.021966794037619,
+            "turnover_units": 63.99999999999985,
+            "worst_month_multiple": 1.0103133578205568
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": 0.47375320434443036,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -0.07834568868623304,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.012197199958959404,
+            "mean_interval_bps": 1.5565269420036694,
+            "monthly_multiples": {
+              "2026-03": 1.014285742603789,
+              "2026-04": 1.0174965602974995
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0320322542581488,
+            "turnover_units": 63.99999999999985,
+            "worst_month_multiple": 1.014285742603789
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -4.389812093450251,
+            "cost_drag_fraction": 0.026495915520081032,
+            "family_corrected_cluster_lower_bps": -5.095666900090976,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.05725813092126686,
+            "mean_interval_bps": -2.416836551609132,
+            "monthly_multiples": {
+              "2026-05": 0.9702334845574296,
+              "2026-06": 0.972640953158975
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00019658228550237665,
+            "total_multiple": 0.9436888212066916,
+            "turnover_units": 89.4285714285718,
+            "worst_month_multiple": 0.9702334845574296
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -3.746072413495694,
+            "cost_drag_fraction": 0.013011405113624785,
+            "family_corrected_cluster_lower_bps": -4.438230223176208,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.04729413886496481,
+            "mean_interval_bps": -1.8526310952720517,
+            "monthly_multiples": {
+              "2026-05": 0.9769541644310106,
+              "2026-06": 0.9790689933886291
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.00011322245667992612,
+            "total_multiple": 0.956505530356298,
+            "turnover_units": 89.4285714285718,
+            "worst_month_multiple": 0.9769541644310106
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -3.1341216282248654,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -3.8165914500783966,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.03804012325260686,
+            "mean_interval_bps": -1.3082208394718533,
+            "monthly_multiples": {
+              "2026-05": 0.9835287811544738,
+              "2026-06": 0.9852631035271747
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 0.9999999999999998,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9690346193285561,
+            "turnover_units": 89.4285714285718,
+            "worst_month_multiple": 0.9835287811544738
+          }
+        }
+      },
+      "top_k": 7
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP2_REB6_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -5.662084555058758,
+      "rebalance_h4_bars": 6,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -12.023215680809066,
+            "cost_drag_fraction": 0.006111934209990009,
+            "family_corrected_cluster_lower_bps": -15.468274183350044,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.033267199709827944,
+            "mean_interval_bps": -4.2739081375262655,
+            "monthly_multiples": {
+              "2026-07": 0.9762714347186338
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00019408274413338194,
+            "total_multiple": 0.9762714347186338,
+            "turnover_units": 19.0,
+            "worst_month_multiple": 0.9762714347186338
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -11.564319569086928,
+            "cost_drag_fraction": 0.0029899872978732915,
+            "family_corrected_cluster_lower_bps": -15.045550413709108,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.03088389446131312,
+            "mean_interval_bps": -3.716417617505422,
+            "monthly_multiples": {
+              "2026-07": 0.979325696469024
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011077992808488507,
+            "total_multiple": 0.979325696469024,
+            "turnover_units": 19.0,
+            "worst_month_multiple": 0.979325696469024
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -11.085446292240533,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -14.585138833298458,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.028666864481585508,
+            "mean_interval_bps": -3.182491314313763,
+            "monthly_multiples": {
+              "2026-07": 0.9822586275740587
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9822586275740587,
+            "turnover_units": 19.0,
+            "worst_month_multiple": 0.9822586275740587
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -2.732089887571294,
+            "cost_drag_fraction": 0.01933541480147835,
+            "family_corrected_cluster_lower_bps": -3.071935111548447,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.04455730925970458,
+            "mean_interval_bps": -1.9496939146583168,
+            "monthly_multiples": {
+              "2026-03": 0.9815159334437908,
+              "2026-04": 0.9786335415464247
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00025466306866839153,
+            "total_multiple": 0.9605444140303421,
+            "turnover_units": 54.0,
+            "worst_month_multiple": 0.9786335415464247
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -2.277508820308608,
+            "cost_drag_fraction": 0.00933944940823449,
+            "family_corrected_cluster_lower_bps": -2.633739412010602,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.035131934970885625,
+            "mean_interval_bps": -1.4596956110679333,
+            "monthly_multiples": {
+              "2026-03": 0.9855177213726353,
+              "2026-04": 0.984450748721836
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00014218726077102145,
+            "total_multiple": 0.9701936586839294,
+            "turnover_units": 54.0,
+            "worst_month_multiple": 0.984450748721836
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.8650335403072051,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -2.241808521186015,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.026272810362693688,
+            "mean_interval_bps": -1.0018794636054598,
+            "monthly_multiples": {
+              "2026-03": 0.9892266722213613,
+              "2026-04": 0.9899617796095848
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9792965968695273,
+            "turnover_units": 54.0,
+            "worst_month_multiple": 0.9892266722213613
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -4.491511616883052,
+            "cost_drag_fraction": 0.022897503880497654,
+            "family_corrected_cluster_lower_bps": -5.662084555058758,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.05294571052975994,
+            "mean_interval_bps": -1.3310503520208536,
+            "monthly_multiples": {
+              "2026-05": 0.9514225788481313,
+              "2026-06": 1.0177334731402248
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.000238179715794014,
+            "total_multiple": 0.968294605595139,
+            "turnover_units": 62.0,
+            "worst_month_multiple": 0.9514225788481313
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -3.958204204883088,
+            "cost_drag_fraction": 0.010960233675490906,
+            "family_corrected_cluster_lower_bps": -5.12465243228513,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.04738710582625327,
+            "mean_interval_bps": -0.8315829794264306,
+            "monthly_multiples": {
+              "2026-05": 0.9570840404511214,
+              "2026-06": 1.0238660699366262
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00013771645518459333,
+            "total_multiple": 0.9799258750957562,
+            "turnover_units": 62.0,
+            "worst_month_multiple": 0.9570840404511214
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -3.4655960529733374,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -4.622624050601029,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.04238788666008553,
+            "mean_interval_bps": -0.372995796351499,
+            "monthly_multiples": {
+              "2026-05": 0.9622023079503706,
+              "2026-06": 1.0296445057355514
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9907263197871671,
+            "turnover_units": 62.0,
+            "worst_month_multiple": 0.9622023079503706
+          }
+        }
+      },
+      "top_k": 2
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP2_REB1_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -5.91946085651311,
+      "rebalance_h4_bars": 1,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -7.840514749182624,
+            "cost_drag_fraction": 0.022125449955398203,
+            "family_corrected_cluster_lower_bps": -9.622352367761238,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.02726983159422358,
+            "mean_interval_bps": -4.112010963583304,
+            "monthly_multiples": {
+              "2026-07": 0.9771599261713996
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00023452732289807893,
+            "total_multiple": 0.9771599261713996,
+            "turnover_units": 93.0,
+            "worst_month_multiple": 0.9771599261713996
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -5.980622654746766,
+            "cost_drag_fraction": 0.012232426490110053,
+            "family_corrected_cluster_lower_bps": -7.721379946397341,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.019544489573667057,
+            "mean_interval_bps": -2.3453996304961358,
+            "monthly_multiples": {
+              "2026-07": 0.9868774069001185
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00014158532469524338,
+            "total_multiple": 0.9868774069001185,
+            "turnover_units": 93.0,
+            "worst_month_multiple": 0.9868774069001185
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -3.7390756887074685,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -5.457585809361642,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.011037491521454723,
+            "mean_interval_bps": -0.16103775726219816,
+            "monthly_multiples": {
+              "2026-07": 0.9990232920858779
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9990232920858779,
+            "turnover_units": 93.0,
+            "worst_month_multiple": 0.9990232920858779
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -8.114378978945425,
+            "cost_drag_fraction": 0.08032490090602411,
+            "family_corrected_cluster_lower_bps": -9.888234486755914,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.09045439335243721,
+            "mean_interval_bps": -3.6785645213550753,
+            "monthly_multiples": {
+              "2026-03": 0.9482701676776595,
+              "2026-04": 0.9777434027802225
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00019567447420595248,
+            "total_multiple": 0.9271649005001268,
+            "turnover_units": 336.0,
+            "worst_month_multiple": 0.9482701676776595
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -6.313905520698489,
+            "cost_drag_fraction": 0.04448880368714215,
+            "family_corrected_cluster_lower_bps": -8.072107265305357,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.058483550318224053,
+            "mean_interval_bps": -1.9218930890569426,
+            "monthly_multiples": {
+              "2026-03": 0.9623934937288432,
+              "2026-04": 0.9985575697649968
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011193963060956713,
+            "total_multiple": 0.9610053082555191,
+            "turnover_units": 336.0,
+            "worst_month_multiple": 0.9623934937288432
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.083440534586434,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -5.824614632111787,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.034777057049181326,
+            "mean_interval_bps": 0.25893062109708587,
+            "monthly_multiples": {
+              "2026-03": 0.9801659589125834,
+              "2026-04": 1.0250605376712916
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0047294448500288,
+            "turnover_units": 336.0,
+            "worst_month_multiple": 0.9801659589125834
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -4.953017364062507,
+            "cost_drag_fraction": 0.08706822741394764,
+            "family_corrected_cluster_lower_bps": -5.91946085651311,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.06291897241305344,
+            "mean_interval_bps": -2.478934652938792,
+            "monthly_multiples": {
+              "2026-05": 0.9884063292630921,
+              "2026-06": 0.9532013952636723
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00027561575768445803,
+            "total_multiple": 0.9421502921410241,
+            "turnover_units": 360.0,
+            "worst_month_multiple": 0.9532013952636723
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -3.2369800262126276,
+            "cost_drag_fraction": 0.047981871005945635,
+            "family_corrected_cluster_lower_bps": -4.177516601100244,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.04610441165583101,
+            "mean_interval_bps": -0.8435222509303422,
+            "monthly_multiples": {
+              "2026-05": 1.006892003457115,
+              "2026-06": 0.973005891480676
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00015946335148578033,
+            "total_multiple": 0.9797118514485542,
+            "turnover_units": 360.0,
+            "worst_month_multiple": 0.973005891480676
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -1.1711004172947044,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -2.089165841294049,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.028653120896670048,
+            "mean_interval_bps": 1.1640874145903966,
+            "monthly_multiples": {
+              "2026-05": 1.029830048311438,
+              "2026-06": 0.998091034597126
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.027864138378372,
+            "turnover_units": 360.0,
+            "worst_month_multiple": 0.998091034597126
+          }
+        }
+      },
+      "top_k": 2
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP4_REB3_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -6.504306823434547,
+      "rebalance_h4_bars": 3,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -6.37628396000457,
+            "cost_drag_fraction": 0.007191045908395346,
+            "family_corrected_cluster_lower_bps": -8.587810888759718,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.016920622358060133,
+            "mean_interval_bps": -1.140478099489385,
+            "monthly_multiples": {
+              "2026-07": 0.9935649790200144
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0001710030228231038,
+            "total_multiple": 0.9935649790200144,
+            "turnover_units": 24.5,
+            "worst_month_multiple": 0.9935649790200144
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -5.702801926038331,
+            "cost_drag_fraction": 0.0036333554726747297,
+            "family_corrected_cluster_lower_bps": -7.900634830103588,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.014328829405703347,
+            "mean_interval_bps": -0.5051762359678459,
+            "monthly_multiples": {
+              "2026-07": 0.9971076630323786
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 9.8909746698032e-05,
+            "total_multiple": 0.9971076630323786,
+            "turnover_units": 24.5,
+            "worst_month_multiple": 0.9971076630323786
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.92554296058486,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -7.073656864000421,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.012166394708737815,
+            "mean_interval_bps": 0.14363724129549849,
+            "monthly_multiples": {
+              "2026-07": 1.0007375545708581
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0007375545708581,
+            "turnover_units": 24.5,
+            "worst_month_multiple": 1.0007375545708581
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -0.7812688091355209,
+            "cost_drag_fraction": 0.025941916463046628,
+            "family_corrected_cluster_lower_bps": -1.4667763400269926,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.020010128338589617,
+            "mean_interval_bps": 0.6135621227852391,
+            "monthly_multiples": {
+              "2026-03": 1.0047537401906812,
+              "2026-04": 1.007411743275561
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00017041827977064841,
+            "total_multiple": 1.0122007169681337,
+            "turnover_units": 89.5,
+            "worst_month_multiple": 1.0047537401906812
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -0.12914440892124102,
+            "cost_drag_fraction": 0.013143688659998804,
+            "family_corrected_cluster_lower_bps": -0.8051157113065666,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.017575565542302996,
+            "mean_interval_bps": 1.2409262307777775,
+            "monthly_multiples": {
+              "2026-03": 1.0099276690613677,
+              "2026-04": 1.0151633313462676
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 9.783200296561669e-05,
+            "total_multiple": 1.0252415369431085,
+            "turnover_units": 89.5,
+            "worst_month_multiple": 1.0099276690613677
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": 0.5410026160845693,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -0.12457902590748482,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.016230811359768116,
+            "mean_interval_bps": 1.8852246945032074,
+            "monthly_multiples": {
+              "2026-03": 1.0151754472639087,
+              "2026-04": 1.023278235874727
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0388069407795502,
+            "turnover_units": 89.5,
+            "worst_month_multiple": 1.0151754472639087
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -5.4997557382699895,
+            "cost_drag_fraction": 0.032039708614202134,
+            "family_corrected_cluster_lower_bps": -6.504306823434547,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.0639506094243657,
+            "mean_interval_bps": -2.57907504742284,
+            "monthly_multiples": {
+              "2026-05": 0.9683448770436592,
+              "2026-06": 0.9706817051334372
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00021147060882272575,
+            "total_multiple": 0.9399546564059679,
+            "turnover_units": 112.0,
+            "worst_month_multiple": 0.9683448770436592
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -4.751897011017992,
+            "cost_drag_fraction": 0.016221856847747882,
+            "family_corrected_cluster_lower_bps": -5.740018650825352,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.05297460757586048,
+            "mean_interval_bps": -1.917240245479148,
+            "monthly_multiples": {
+              "2026-05": 0.9760354539566337,
+              "2026-06": 0.9783938889101209
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0001228596140912899,
+            "total_multiple": 0.9549471235107865,
+            "turnover_units": 112.0,
+            "worst_month_multiple": 0.9760354539566337
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.0115618839339495,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -4.991815631489857,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.041801036944342784,
+            "mean_interval_bps": -1.238501465238653,
+            "monthly_multiples": {
+              "2026-05": 0.9839668143619917,
+              "2026-06": 0.9863816843946877
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9705668437388565,
+            "turnover_units": 112.0,
+            "worst_month_multiple": 0.9839668143619917
+          }
+        }
+      },
+      "top_k": 4
+    },
+    {
+      "candidate_id": "GRAPH_NET_TOP2_REB3_H4",
+      "development_admitted": false,
+      "gross_leverage": 1.0,
+      "ranking_floor_bps": -7.0920379425446285,
+      "rebalance_h4_bars": 3,
+      "results": {
+        "OPENED_DIAGNOSTIC": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -6.993956891766296,
+            "cost_drag_fraction": 0.008466360821814988,
+            "family_corrected_cluster_lower_bps": -9.56841399590259,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.016913229771152838,
+            "mean_interval_bps": -0.7696542152992891,
+            "monthly_multiples": {
+              "2026-07": 0.9956071306054041
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00019408274413338194,
+            "total_multiple": 0.9956071306054041,
+            "turnover_units": 30.0,
+            "worst_month_multiple": 0.9956071306054041
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -6.225485714752821,
+            "cost_drag_fraction": 0.004368098929375694,
+            "family_corrected_cluster_lower_bps": -8.789251858951065,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.014502905411626021,
+            "mean_interval_bps": -0.0378217345065578,
+            "monthly_multiples": {
+              "2026-07": 0.9996979511275026
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00011077992808488507,
+            "total_multiple": 0.9996979511275026,
+            "turnover_units": 30.0,
+            "worst_month_multiple": 0.9996979511275026
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -5.316889859826004,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -7.833659199630416,
+            "final_inventory_units": 0.0,
+            "intervals": 56,
+            "max_drawdown": -0.01191680105453874,
+            "mean_interval_bps": 0.7421959314533877,
+            "monthly_multiples": {
+              "2026-07": 1.0040754150110032
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0040754150110032,
+            "turnover_units": 30.0,
+            "worst_month_multiple": 1.0040754150110032
+          }
+        },
+        "TUNING": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -1.7401272702913682,
+            "cost_drag_fraction": 0.03059618732585623,
+            "family_corrected_cluster_lower_bps": -2.6393190008199467,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.025935173072503037,
+            "mean_interval_bps": 0.14851985463418005,
+            "monthly_multiples": {
+              "2026-03": 0.9934794662111356,
+              "2026-04": 1.0090601136998707
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0001472657511110114,
+            "total_multiple": 1.0024805031334947,
+            "turnover_units": 104.0,
+            "worst_month_multiple": 0.9934794662111356
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -0.9761556389645023,
+            "cost_drag_fraction": 0.0158421645824215,
+            "family_corrected_cluster_lower_bps": -1.8576809981598956,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.02197355508367771,
+            "mean_interval_bps": 0.8717562636260777,
+            "monthly_multiples": {
+              "2026-03": 0.9994231724728173,
+              "2026-04": 1.0179716440178157
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 8.25368543244209e-05,
+            "total_multiple": 1.0173844499516531,
+            "turnover_units": 104.0,
+            "worst_month_multiple": 0.9994231724728173
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -0.15907310883243309,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -1.0221051291807517,
+            "final_inventory_units": 0.0,
+            "intervals": 204,
+            "max_drawdown": -0.017953078909528908,
+            "mean_interval_bps": 1.648332958842815,
+            "monthly_multiples": {
+              "2026-03": 1.0057331060110104,
+              "2026-04": 1.0277393249623377
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 1.0336314634640311,
+            "turnover_units": 104.0,
+            "worst_month_multiple": 1.0057331060110104
+          }
+        },
+        "WALK_FORWARD": {
+          "ADVERSE_STRESS": {
+            "cluster_lower_bps": -5.967110381953553,
+            "cost_drag_fraction": 0.03877978459112911,
+            "family_corrected_cluster_lower_bps": -7.0920379425446285,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.07918319041445554,
+            "mean_interval_bps": -2.967724111449168,
+            "monthly_multiples": {
+              "2026-05": 0.9567753221913149,
+              "2026-06": 0.9732023449172609
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00027561575768445803,
+            "total_multiple": 0.9311359871155559,
+            "turnover_units": 132.0,
+            "worst_month_multiple": 0.9567753221913149
+          },
+          "EXECUTABLE_BASE": {
+            "cluster_lower_bps": -5.134554462651427,
+            "cost_drag_fraction": 0.02018243920156405,
+            "family_corrected_cluster_lower_bps": -6.2516099219449695,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.06627726309009141,
+            "mean_interval_bps": -2.1895925051912144,
+            "monthly_multiples": {
+              "2026-05": 0.9657900533539127,
+              "2026-06": 0.9822234883034625
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.00015946335148578033,
+            "total_multiple": 0.9486216751740686,
+            "turnover_units": 132.0,
+            "worst_month_multiple": 0.9657900533539127
+          },
+          "RAW_SIGNAL": {
+            "cluster_lower_bps": -4.2708383358529804,
+            "cost_drag_fraction": 0.0,
+            "family_corrected_cluster_lower_bps": -5.390789760402148,
+            "final_inventory_units": 0.0,
+            "intervals": 239,
+            "max_drawdown": -0.052333362103981096,
+            "mean_interval_bps": -1.3451389821132214,
+            "monthly_multiples": {
+              "2026-05": 0.9756247200318336,
+              "2026-06": 0.9921475843654506
+            },
+            "months_at_or_above_2x": 0,
+            "terminal_inventory_mtm_hidden": false,
+            "terminal_inventory_units_before_liquidation": 1.0,
+            "terminal_liquidation_cost_fraction": 0.0,
+            "total_multiple": 0.9679637092268022,
+            "turnover_units": 132.0,
+            "worst_month_multiple": 0.9756247200318336
+          }
+        }
+      },
+      "top_k": 2
+    }
+  ],
+  "development_admitted_count": 0,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_GRAPH_INTERNAL_NETTING_INVENTORY_V3",
+  "external_orders": 0,
+  "family_corrected_z": 2.7729212946086625,
+  "family_tests": 9,
+  "final_admitted_count": 0,
+  "live_authority": false,
+  "proposal_stream_count": 501,
+  "raw_signal_cost_gate": false,
+  "result_sha256": "98a6bde941435ce8ee2906fd5cfb4f5b929d53522d36d103c75011489d051c0c",
+  "same_target_stream_all_cost_arms": true,
+  "source_sha256_by_pair": {
+    "AUD_CAD": "c1182fbbbc4ad0f7b755dd104c2db5a0c85bdc5f7d725c7955316fa98e22a3ff",
+    "AUD_CHF": "244c43da872854a4f5bca354aca46ee8f2ff335d572a8de2dd05988679bc1876",
+    "AUD_JPY": "16a18bd499cdc8ab6a0178e52465447a50ae2135eff50f72755467ff26110bca",
+    "AUD_NZD": "f2aab64ccbe36cbca41c274eaf20b3f618feaa89f5755b6c4ff3221a10d844c8",
+    "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+    "CAD_CHF": "f15b6e79ee24f137cfa38801a2ce711720c5e3e4a2653c655cf762e0cc702f6e",
+    "CAD_JPY": "13dd0f030afbe608e78dbfe8cb47cd498869cd371ba70071b93f860d93debc47",
+    "CHF_JPY": "7b4ca40f9efd60950eb1e9d0cf28731a6c371ebd1b5b71d66d1ddc0087433339",
+    "EUR_AUD": "64546a7706b14983288ba43dc86daaea8731b204450c8546f7a02ddfc211f979",
+    "EUR_CAD": "8e828a286216cb5e04ccf245412e51fa2b72197bf27b4621d00ab5be956730b6",
+    "EUR_CHF": "b70a8537445c89e3dab0c01afcc462403b7210f0c3e46d742e193fa295fc1dd5",
+    "EUR_GBP": "a94b1cd7cfc07aff749711f2e87ae5120b437ce1aeee8ac504e0c9a6e238544e",
+    "EUR_JPY": "eaa1935720db89343fca7db7d03b56adefd4efbaae76ca3d996e6d8fb7a35def",
+    "EUR_NZD": "8ac27e2e69049f3ae1d8e1887d399ca30699f9cce88645c694cfd8ca7817e0a1",
+    "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+    "GBP_AUD": "d89e41c3420c609bbcb64b6ea60178468e4daeb8580f7917b4f411824c0ae609",
+    "GBP_CAD": "2ae776d88b233499025cc148f4df079be3d26fe95b1bd1f5e703ae8b356fc2b1",
+    "GBP_CHF": "9177e2eb1351e02acde241485b418311b2dc1b07dbf2fa0550b0562981a0b1f6",
+    "GBP_JPY": "16e7e95252c3c9e2c01ab3ff80a18800d081ae6ae5f9c572291be888a34f2de4",
+    "GBP_NZD": "564659ed01ad1ab12090bb437a3c0e6b03511e78812b3999798060da2a33d325",
+    "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+    "NZD_CAD": "fe70b710033fd2e39732759dd303998d11b33536a6fd7d280e7721fc0ef0dcd3",
+    "NZD_CHF": "50db8f67634c9b7d859ca31ebc9293265cccb454a5920f9607f0eaa97bc4467b",
+    "NZD_JPY": "2870aeddd718356e8a36e5c34e72c2d21c962a89401a4787f0dc0cf8f9de89f1",
+    "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+    "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+    "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+    "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+  },
+  "terminal_inventory_mtm_hidden": false
+}

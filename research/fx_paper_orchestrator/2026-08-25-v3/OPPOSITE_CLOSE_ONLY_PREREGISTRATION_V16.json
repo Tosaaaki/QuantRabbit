@@ -1,0 +1,24 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "baseline": "FX_AUCTION_TRAP_H384_EPISODE_NETTING_V15",
+  "single_changed_variable": "opposite signal closes the existing pair episode to flat but does not reopen the opposite direction on that same signal",
+  "reason": "V15 is normal-positive and adverse-near-break-even; remove the immediate second one-way execution and avoid locking the old thesis by stacking an opposite position",
+  "unchanged": [
+    "same corrected V11 source signal stream",
+    "same seven 1/7 NAV sleeves and gross cap 1.0",
+    "same same-direction ignore rule and fixed H384 expiry",
+    "same cost arms, contained periods, terminal liquidation, and zero price SL"
+  ],
+  "development_admission": [
+    "normal and adverse full walk and each standalone month equity multiple exceed 1.0",
+    "terminal inventory is zero in every arm and period"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

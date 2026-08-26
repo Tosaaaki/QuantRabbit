@@ -1,0 +1,32 @@
+{
+  "artifact_id": "FX_CURRENCY_NETWORK_EXHAUSTION_V19",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "V18_V19_MUTUALLY_EXCLUSIVE_CURRENCY_NETWORK",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "single_changed_variable": "cost-blind entry admission requires the breakout to be positively aligned with the excluding-self currency network before its completed-bar failure",
+  "original_indicator": {
+    "name": "Currency Network Exhaustion",
+    "measurement": "identical excluding-self 12-bar currency-node graph as V18",
+    "gate": "escape_side times excluding-self implied target-pair direction must be strictly positive",
+    "interpretation": "the wider currency network supported the impulse, yet the target auction returned inside its rail; test coordinated-move exhaustion rather than an idiosyncratic sweep",
+    "cost_used": false,
+    "future_used": false
+  },
+  "multiplicity": "V18 and V19 are two mutually exclusive branches and must be counted together in family correction",
+  "unchanged": [
+    "same V7 source candidates, seven pairs, reversal direction, H384, and V16 close-only inventory",
+    "same costs, 1/7 sleeves, gross cap, period containment, and terminal liquidation"
+  ],
+  "development_admission": [
+    "at least 20 signals remain in each standalone month",
+    "normal and adverse full walk and each month equity multiple exceed 1.0",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

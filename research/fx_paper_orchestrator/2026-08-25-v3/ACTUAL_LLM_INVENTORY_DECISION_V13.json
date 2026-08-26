@@ -1,0 +1,46 @@
+{
+  "decision_id": "ACTUAL_LLM_INVENTORY_V13_20260826T100930Z",
+  "decision_time_utc": "2026-08-26T10:09:30Z",
+  "decision_maker": {
+    "kind": "actual_llm_in_owner_task",
+    "runtime_profile": "advanced",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high"
+  },
+  "frozen_input": {
+    "artifact": "evidence/run_causal_harvest_exit_v12_001/result_causal_harvest_exit_v12.json",
+    "file_sha256": "c5a3e3b8cc57ca8dbbdcde6f45cbcd8d4ab1e5413c6dc43d396a2102cbb2f62e",
+    "embedded_result_sha256": "265e4f85e6e59baf37cb2694f5430740d074fdbc7aad2f0fb1208cc1b107a906",
+    "summary": {
+      "walk_forward_signals": 369,
+      "tp_hit_rate": 0.6775067750677507,
+      "max_age_liquidations": 119,
+      "mean_age_m5_bars": 208.2520325203252,
+      "raw_mean_return": 0.0004296089680751917,
+      "normal_mean_return": 0.00010389624606644071,
+      "adverse_mean_return": -0.000169288523690504
+    }
+  },
+  "allowed_policy_ids": [
+    "HOLD_TO_Q35_OR_384",
+    "STALE_DIRECTIONAL_IMPULSE_UNWIND_AT_192",
+    "FREEZE_NEW_ADDS_ONLY"
+  ],
+  "structured_decision": {
+    "policy_id": "STALE_DIRECTIONAL_IMPULSE_UNWIND_AT_192",
+    "mode": "UNWIND_STALE_INVENTORY",
+    "stale_check_age_m5_bars": 192,
+    "impulse_window_m5_bars": 12,
+    "impulse_rule": "unwind at next executable open when signed completed-close log-return sum is nonpositive",
+    "target_policy": "retain entry-time frozen V12 pair Q35 target",
+    "max_age_m5_bars": 384,
+    "individual_price_sl": false
+  },
+  "reason": "V12 has high TP hit and median profitability but 119 max-age lots dominate the tail; use a single mid-contract thesis check that depends on direction coherence rather than a loss magnitude, while retaining finite max age",
+  "forbidden_changes": [
+    "entry signal", "direction", "individual order", "fill", "cost arm", "leverage",
+    "hard guard", "target after entry", "opened period labels"
+  ],
+  "live_authority": false,
+  "external_orders": 0
+}

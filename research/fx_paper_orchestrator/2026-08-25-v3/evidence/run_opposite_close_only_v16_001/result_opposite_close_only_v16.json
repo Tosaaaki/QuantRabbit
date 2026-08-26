@@ -1,0 +1,834 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout is unavailable",
+    "monthly 2.0x normal/adverse acceptance has not been demonstrated"
+  ],
+  "cost_suppressed_raw_signals": 0,
+  "development_admitted": false,
+  "evidence_class": "opened_development_not_future_holdout",
+  "experiment": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "external_orders": 0,
+  "final_admitted": false,
+  "live_authority": false,
+  "periods": {
+    "MONTH_2026_05": {
+      "ADVERSE_STRESS": {
+        "equity_multiple": 0.9953706434849382,
+        "ignored_same_direction": 50,
+        "max_drawdown": -0.00815958698124275,
+        "opposite_close_only": 46,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 12,
+            "ignored_same_direction": 10,
+            "opens": 12,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0137059933798689,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 11,
+            "ignored_same_direction": 11,
+            "opens": 11,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 0.9950331782252652,
+            "source_signals": 28,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 0.9682800072342609,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 18,
+            "ignored_same_direction": 5,
+            "opens": 18,
+            "opposite_close_only": 11,
+            "sleeve_equity_multiple": 0.9842907674402654,
+            "source_signals": 34,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 11,
+            "ignored_same_direction": 5,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 0.992225988176206,
+            "source_signals": 24,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 4,
+            "opens": 13,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.002890143758981,
+            "source_signals": 25,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 9,
+            "ignored_same_direction": 5,
+            "opens": 9,
+            "opposite_close_only": 2,
+            "sleeve_equity_multiple": 1.0111684261797194,
+            "source_signals": 16,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 87,
+        "position_opens": 87,
+        "source_signals": 183,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.857142857142858
+      },
+      "EXECUTABLE_BASE": {
+        "equity_multiple": 0.9991785145731461,
+        "ignored_same_direction": 50,
+        "max_drawdown": -0.006423365569131367,
+        "opposite_close_only": 46,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 12,
+            "ignored_same_direction": 10,
+            "opens": 12,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0182117903988608,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 11,
+            "ignored_same_direction": 11,
+            "opens": 11,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 0.9982847732158311,
+            "source_signals": 28,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 0.9719101013261746,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 18,
+            "ignored_same_direction": 5,
+            "opens": 18,
+            "opposite_close_only": 11,
+            "sleeve_equity_multiple": 0.990776964293944,
+            "source_signals": 34,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 11,
+            "ignored_same_direction": 5,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 0.9946666272996377,
+            "source_signals": 24,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 4,
+            "opens": 13,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.0066785724101908,
+            "source_signals": 25,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 9,
+            "ignored_same_direction": 5,
+            "opens": 9,
+            "opposite_close_only": 2,
+            "sleeve_equity_multiple": 1.0137207730673834,
+            "source_signals": 16,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 87,
+        "position_opens": 87,
+        "source_signals": 183,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.857142857142858
+      },
+      "RAW_SIGNAL": {
+        "equity_multiple": 1.0036226177782115,
+        "ignored_same_direction": 50,
+        "max_drawdown": -0.005806291562581611,
+        "opposite_close_only": 46,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 12,
+            "ignored_same_direction": 10,
+            "opens": 12,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.022538080610226,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 11,
+            "ignored_same_direction": 11,
+            "opens": 11,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 1.0016600789214407,
+            "source_signals": 28,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 0.9756180631255622,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 18,
+            "ignored_same_direction": 5,
+            "opens": 18,
+            "opposite_close_only": 11,
+            "sleeve_equity_multiple": 1.0003676938007375,
+            "source_signals": 34,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 11,
+            "ignored_same_direction": 5,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 0.9971510977659015,
+            "source_signals": 24,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 4,
+            "opens": 13,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.0120182150762007,
+            "source_signals": 25,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 9,
+            "ignored_same_direction": 5,
+            "opens": 9,
+            "opposite_close_only": 2,
+            "sleeve_equity_multiple": 1.0160050951474118,
+            "source_signals": 16,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 87,
+        "position_opens": 87,
+        "source_signals": 183,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.857142857142858
+      }
+    },
+    "MONTH_2026_06": {
+      "ADVERSE_STRESS": {
+        "equity_multiple": 1.0050717217204261,
+        "ignored_same_direction": 40,
+        "max_drawdown": -0.004266358677021076,
+        "opposite_close_only": 50,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 14,
+            "ignored_same_direction": 3,
+            "opens": 14,
+            "opposite_close_only": 10,
+            "sleeve_equity_multiple": 1.0178503623989352,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 10,
+            "ignored_same_direction": 5,
+            "opens": 10,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0068907864714538,
+            "source_signals": 20,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 11,
+            "ignored_same_direction": 4,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.0069136989600211,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 11,
+            "ignored_same_direction": 7,
+            "opens": 11,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0210762448112958,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 12,
+            "ignored_same_direction": 4,
+            "opens": 12,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 1.0068048877542664,
+            "source_signals": 22,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 7,
+            "opens": 13,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 0.9805803320049028,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 7,
+            "sleeve_equity_multiple": 0.9953857396421079,
+            "source_signals": 30,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 84,
+        "position_opens": 84,
+        "source_signals": 174,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.0
+      },
+      "EXECUTABLE_BASE": {
+        "equity_multiple": 1.0086425390628935,
+        "ignored_same_direction": 40,
+        "max_drawdown": -0.003735616802300834,
+        "opposite_close_only": 50,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 14,
+            "ignored_same_direction": 3,
+            "opens": 14,
+            "opposite_close_only": 10,
+            "sleeve_equity_multiple": 1.0223190161333675,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 10,
+            "ignored_same_direction": 5,
+            "opens": 10,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0096165749091626,
+            "source_signals": 20,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 11,
+            "ignored_same_direction": 4,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.0098871650777563,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 11,
+            "ignored_same_direction": 7,
+            "opens": 11,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0255199154740602,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 12,
+            "ignored_same_direction": 4,
+            "opens": 12,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 1.0100094047564685,
+            "source_signals": 22,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 7,
+            "opens": 13,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 0.9845507774619519,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 7,
+            "sleeve_equity_multiple": 0.998594919627488,
+            "source_signals": 30,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 84,
+        "position_opens": 84,
+        "source_signals": 174,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.0
+      },
+      "RAW_SIGNAL": {
+        "equity_multiple": 1.0128394943792929,
+        "ignored_same_direction": 40,
+        "max_drawdown": -0.002903991859071753,
+        "opposite_close_only": 50,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 14,
+            "ignored_same_direction": 3,
+            "opens": 14,
+            "opposite_close_only": 10,
+            "sleeve_equity_multiple": 1.0271740046693625,
+            "source_signals": 27,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 10,
+            "ignored_same_direction": 5,
+            "opens": 10,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0124094872076512,
+            "source_signals": 20,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 11,
+            "ignored_same_direction": 4,
+            "opens": 11,
+            "opposite_close_only": 8,
+            "sleeve_equity_multiple": 1.0140228055939267,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 11,
+            "ignored_same_direction": 7,
+            "opens": 11,
+            "opposite_close_only": 5,
+            "sleeve_equity_multiple": 1.0326250810167028,
+            "source_signals": 23,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 12,
+            "ignored_same_direction": 4,
+            "opens": 12,
+            "opposite_close_only": 6,
+            "sleeve_equity_multiple": 1.0133230264395363,
+            "source_signals": 22,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 13,
+            "ignored_same_direction": 7,
+            "opens": 13,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 0.9891752152189563,
+            "source_signals": 29,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 13,
+            "ignored_same_direction": 10,
+            "opens": 13,
+            "opposite_close_only": 7,
+            "sleeve_equity_multiple": 1.001146840508915,
+            "source_signals": 30,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 84,
+        "position_opens": 84,
+        "source_signals": 174,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.0
+      }
+    },
+    "WALK_FORWARD": {
+      "ADVERSE_STRESS": {
+        "equity_multiple": 1.000395611458128,
+        "ignored_same_direction": 93,
+        "max_drawdown": -0.008942681703759447,
+        "opposite_close_only": 99,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 26,
+            "ignored_same_direction": 14,
+            "opens": 26,
+            "opposite_close_only": 15,
+            "sleeve_equity_multiple": 1.0313616427862127,
+            "source_signals": 55,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 22,
+            "ignored_same_direction": 16,
+            "opens": 22,
+            "opposite_close_only": 12,
+            "sleeve_equity_multiple": 0.9995577341449355,
+            "source_signals": 50,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 24,
+            "ignored_same_direction": 14,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 0.9749744037132857,
+            "source_signals": 52,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 30,
+            "ignored_same_direction": 13,
+            "opens": 30,
+            "opposite_close_only": 17,
+            "sleeve_equity_multiple": 1.0127845880270812,
+            "source_signals": 60,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 24,
+            "ignored_same_direction": 9,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 0.9963265223715576,
+            "source_signals": 47,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 27,
+            "ignored_same_direction": 11,
+            "opens": 27,
+            "opposite_close_only": 18,
+            "sleeve_equity_multiple": 0.983200120997453,
+            "source_signals": 56,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 23,
+            "ignored_same_direction": 16,
+            "opens": 23,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 1.0045642681663698,
+            "source_signals": 48,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 176,
+        "position_opens": 176,
+        "source_signals": 368,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.285714285714285
+      },
+      "EXECUTABLE_BASE": {
+        "equity_multiple": 1.0080968338632392,
+        "ignored_same_direction": 93,
+        "max_drawdown": -0.006423365569131367,
+        "opposite_close_only": 99,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 26,
+            "ignored_same_direction": 14,
+            "opens": 26,
+            "opposite_close_only": 15,
+            "sleeve_equity_multiple": 1.040857368789689,
+            "source_signals": 55,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 22,
+            "ignored_same_direction": 16,
+            "opens": 22,
+            "opposite_close_only": 12,
+            "sleeve_equity_multiple": 1.0057110996462855,
+            "source_signals": 50,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 24,
+            "ignored_same_direction": 14,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 0.9815195369387256,
+            "source_signals": 52,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 30,
+            "ignored_same_direction": 13,
+            "opens": 30,
+            "opposite_close_only": 17,
+            "sleeve_equity_multiple": 1.0242102768663388,
+            "source_signals": 60,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 24,
+            "ignored_same_direction": 9,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 1.0024184697580598,
+            "source_signals": 47,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 27,
+            "ignored_same_direction": 11,
+            "opens": 27,
+            "opposite_close_only": 18,
+            "sleeve_equity_multiple": 0.9911601440326527,
+            "source_signals": 56,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 23,
+            "ignored_same_direction": 16,
+            "opens": 23,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 1.0108009410109229,
+            "source_signals": 48,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 176,
+        "position_opens": 176,
+        "source_signals": 368,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.285714285714285
+      },
+      "RAW_SIGNAL": {
+        "equity_multiple": 1.0170636953018115,
+        "ignored_same_direction": 93,
+        "max_drawdown": -0.005806291562581611,
+        "opposite_close_only": 99,
+        "pair_audit": {
+          "AUD_USD": {
+            "closes": 26,
+            "ignored_same_direction": 14,
+            "opens": 26,
+            "opposite_close_only": 15,
+            "sleeve_equity_multiple": 1.0504418521983663,
+            "source_signals": 55,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "EUR_USD": {
+            "closes": 22,
+            "ignored_same_direction": 16,
+            "opens": 22,
+            "opposite_close_only": 12,
+            "sleeve_equity_multiple": 1.012095295229733,
+            "source_signals": 50,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "GBP_USD": {
+            "closes": 24,
+            "ignored_same_direction": 14,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 0.9892989655586948,
+            "source_signals": 52,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "NZD_USD": {
+            "closes": 30,
+            "ignored_same_direction": 13,
+            "opens": 30,
+            "opposite_close_only": 17,
+            "sleeve_equity_multiple": 1.0416569734413446,
+            "source_signals": 60,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CAD": {
+            "closes": 24,
+            "ignored_same_direction": 9,
+            "opens": 24,
+            "opposite_close_only": 14,
+            "sleeve_equity_multiple": 1.0085703693621375,
+            "source_signals": 47,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_CHF": {
+            "closes": 27,
+            "ignored_same_direction": 11,
+            "opens": 27,
+            "opposite_close_only": 18,
+            "sleeve_equity_multiple": 1.0014018305344514,
+            "source_signals": 56,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          },
+          "USD_JPY": {
+            "closes": 23,
+            "ignored_same_direction": 16,
+            "opens": 23,
+            "opposite_close_only": 9,
+            "sleeve_equity_multiple": 1.0159805807879523,
+            "source_signals": 48,
+            "terminal_closes": 0,
+            "terminal_open_inventory": 0
+          }
+        },
+        "position_closes": 176,
+        "position_opens": 176,
+        "source_signals": 368,
+        "terminal_closes": 0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.285714285714285
+      }
+    }
+  },
+  "portfolio": {
+    "gross_leverage_cap": 1.0,
+    "pair_count": 7,
+    "weight_per_pair": 0.14285714285714285
+  },
+  "result_sha256": "d92cab0f6faaad9cc0a7601d5e4658070a72b430f77681de99883f9b4173692c",
+  "same_signal_stream_all_cost_arms": true,
+  "single_changed_variable": "opposite_signal_close_only_no_same_signal_reopen",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "source_fields_consumed": [
+    "signal_id",
+    "pair",
+    "fill_time",
+    "exit_time",
+    "direction"
+  ],
+  "source_ledger": "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+  "source_ledger_sha256": "ece1a6f5ba0bf2bcf1c13176c7d75b0722e72af1bf27b1f7f5631c17c4a61bc7",
+  "source_outcome_fields_consumed": false,
+  "terminal_inventory_mtm_hidden": false
+}

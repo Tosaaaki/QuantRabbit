@@ -1,0 +1,40 @@
+{
+  "artifact_id": "FX_CRS_H12_HOURLY_INTERNAL_NETTING_V5",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION",
+  "source_candidate": "FX_CRS_MULTINOMIAL_RESPONSE_H12_V4",
+  "single_changed_variable": "replace every ticket execution with one causal hourly pair target and differential turnover",
+  "signal_rule": "all expected V4 orders remain in the source ledger; no signal is removed because of cost",
+  "checkpoint_rule": "a source fill timestamp becomes eligible only at the strictly following UTC hour checkpoint",
+  "target_rule": "per pair target is sign of the prior hour selected-direction sum; an exact tie is flat",
+  "persistence_rule": "same pair and same target direction carries without close and reopen",
+  "flat_rule": "no eligible signal for the checkpoint means flat for the following interval",
+  "sizing": "fixed 1/28 NAV notional per pair; portfolio gross leverage never exceeds 1.0",
+  "cost_arms": [
+    "RAW_SIGNAL",
+    "EXECUTABLE_BASE",
+    "ADVERSE_STRESS"
+  ],
+  "execution": {
+    "price": "first recorded M5 BID/ASK open at checkpoint",
+    "normal_slippage_pips_one_way": 0.3,
+    "normal_financing_bps_per_day": 0.5,
+    "adverse_slippage_pips_one_way": 0.9,
+    "adverse_commission_bps_one_way": 0.2,
+    "adverse_financing_bps_per_day": 1.5,
+    "terminal_liquidation": true
+  },
+  "rejection": [
+    "walk-forward RAW total multiple is not above 1.0",
+    "walk-forward normal or adverse total multiple is not above 1.0",
+    "terminal inventory is nonzero",
+    "target construction reads signals from the current or future checkpoint hour",
+    "result relies on leverage above 1.0"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

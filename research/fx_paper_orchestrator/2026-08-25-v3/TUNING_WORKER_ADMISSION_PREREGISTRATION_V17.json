@@ -1,0 +1,32 @@
+{
+  "artifact_id": "FX_AUCTION_TRAP_TUNING_WORKER_ADMISSION_V17",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "single_changed_variable": "pair workers are enabled by a frozen tuning-only economic admission rule",
+  "tuning_rule": {
+    "period": ["2026-03-11", "2026-05-01"],
+    "contained_exit_required": true,
+    "minimum_source_signals": 20,
+    "raw_sleeve_equity_multiple": ">1.0",
+    "adverse_sleeve_equity_multiple": ">1.0",
+    "walk_forward_fields_used": false
+  },
+  "allocation": "each enabled pair retains exactly 1/7 initial NAV; disabled sleeves remain cash, so gross exposure cannot increase",
+  "unchanged": [
+    "same corrected V11 signal stream and V16 close-only inventory rule",
+    "same H384, cost arms, monthly boundaries, terminal liquidation, and price-SL absence",
+    "same signal ids in every arm"
+  ],
+  "development_admission": [
+    "at least two workers are admitted from tuning",
+    "normal and adverse full walk and each standalone month equity multiple exceed 1.0",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

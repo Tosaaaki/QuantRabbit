@@ -1,0 +1,516 @@
+{
+  "schema_version": 1,
+  "registry_id": "FX_PAPER_RESEARCH_ORCHESTRATOR_V1",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "commit_push_deploy": false
+  },
+  "acceptance": {
+    "system": "every registered cycle is hash-verified, restart-safe, terminal, and advances even when rejected",
+    "development": "all RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS gates pass without terminal inventory concealment",
+    "final": "untouched full comparable months are at least 2.0x in normal and adverse arms",
+    "stretch": "untouched full comparable months are at least 3.0x",
+    "opened_development_can_prove_final_profit": false
+  },
+  "cycles": [
+    {
+      "cycle_id": "V4_COUNTERPARTY_RESPONSE_MODELS",
+      "depends_on": [],
+      "preregistration": "COUNTERPARTY_RESPONSE_PREREGISTRATION_V4.json",
+      "preregistration_sha256": "1ca333febd1fda8b2e1b777c16a501524ec7e0a0723b2aeb3794c08ebb5e22e6",
+      "script": "run_counterparty_response_models_v4.py",
+      "script_sha256": "4082d7e988790d8a3ff4015d53f40ef801c507fbf81b7e3f815800f7c54ae03b",
+      "result": "evidence/run_counterparty_models_v4_001/result_counterparty_models_v4.json",
+      "result_file_sha256": "062d122b0dfa5db7946e11703473d2c1af8b556a9df838833a0c0bbc1113df35",
+      "admission_field": "development_admitted_count",
+      "admission_operator": "GT_ZERO"
+    },
+    {
+      "cycle_id": "V5_HOURLY_INTERNAL_NETTING_EXACT_SHORT",
+      "depends_on": ["V4_COUNTERPARTY_RESPONSE_MODELS"],
+      "preregistration": "HOURLY_INTERNAL_NETTING_PREREGISTRATION_V5.json",
+      "preregistration_sha256": "b6d64ba6d712bec9eaf98784405c576ac9f4b69f0850948cc4bc688e31beb00d",
+      "script": "run_counterparty_hourly_netting_v5.py",
+      "script_sha256": "17cc5f87ab846d2833003cda05c4dd3f3287f1a23ce5fe6f7522d6a6b9363e19",
+      "result": "evidence/run_counterparty_hourly_netting_v5_003/result_hourly_netting_v5.json",
+      "result_file_sha256": "59aedef1ae760da8682a481078665d9e74f8097de4f7feaf22371aac3059a649",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE"
+    },
+    {
+      "cycle_id": "V6_FINITE_INVENTORY_PERSISTENCE_12H",
+      "depends_on": ["V5_HOURLY_INTERNAL_NETTING_EXACT_SHORT"],
+      "preregistration": "INVENTORY_PERSISTENCE_PREREGISTRATION_V6.json",
+      "preregistration_sha256": "2990caf148fa1829b9833913b52c2281e2c65c8954328f7fba020dc1ee43b592",
+      "script": "run_inventory_persistence_v6.py",
+      "script_sha256": "337491120d426aead894f0737d76868ee58b5e53a12f57e359894c9f6378b3b5",
+      "result": "evidence/run_inventory_persistence_v6_001/result_inventory_persistence_v6.json",
+      "result_file_sha256": "25ccc7ea195dfe7de1e67a8f072e5d351773c95765ca860b77a937e01706b95d",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE"
+    },
+    {
+      "cycle_id": "V7_AUCTION_TRAP_GEOMETRY_H24",
+      "depends_on": ["V6_FINITE_INVENTORY_PERSISTENCE_12H"],
+      "preregistration": "AUCTION_TRAP_GEOMETRY_PREREGISTRATION_V7.json",
+      "preregistration_sha256": "99233b58d886aa6238935daeffd1c613d43ffa5929a834776316e506bbe96e90",
+      "script": "run_auction_trap_geometry_v7.py",
+      "script_sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e",
+      "result": "evidence/run_auction_trap_geometry_v7_002/result_auction_trap_geometry_v7.json",
+      "result_file_sha256": "f3bfe39662fd5918afc7e3110473ece10ff3f70b6c611b4b05abccb385796383",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE"
+    },
+    {
+      "cycle_id": "V8_AUCTION_TRAP_GEOMETRY_H96",
+      "depends_on": ["V7_AUCTION_TRAP_GEOMETRY_H24"],
+      "preregistration": "AUCTION_TRAP_HORIZON_PREREGISTRATION_V8.json",
+      "preregistration_sha256": "19fcfed00d5d8cd74cefed989103b4add7433d9339ad309082ede46a4adb9801",
+      "script": "run_auction_trap_horizon_v8.py",
+      "script_sha256": "55e94cec5e09fe927a3e8808bef1702e5ea32557a6d94e712a8da3afc8c03f7c",
+      "dependency_files": [{"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"}],
+      "result": "evidence/run_auction_trap_horizon_v8_002/result_auction_trap_horizon_v8.json",
+      "result_file_sha256": "2310b90a7be7274ade1e1fa5e75bb26ead95673ca427d84e8ad97b181a5e8aaa",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_auction_trap_geometry_v7_002/proposal_ledger_auction_trap_geometry_v7.jsonl",
+        "--output-root",
+        "evidence/run_auction_trap_horizon_v8_002"
+      ]
+    },
+    {
+      "cycle_id": "V9_AUCTION_TRAP_H96_LIQUID_MAJORS",
+      "depends_on": ["V8_AUCTION_TRAP_GEOMETRY_H96"],
+      "preregistration": "LIQUID_MAJOR_UNIVERSE_PREREGISTRATION_V9.json",
+      "preregistration_sha256": "15bce26eb05f4a6a2148f129fe0308cf4d656e0596adc653a037c9d6ae611fbb",
+      "script": "run_liquid_major_universe_v9.py",
+      "script_sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6",
+      "dependency_files": [{"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"}],
+      "result": "evidence/run_liquid_major_universe_v9_002/result_liquid_major_universe_v9.json",
+      "result_file_sha256": "86e60452ffdad0c0f7503a9e5a92429833001f02e0673705461800940812585d",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--source-ledger",
+        "evidence/run_auction_trap_horizon_v8_002/proposal_ledger_auction_trap_h96_v8.jsonl",
+        "--output-root",
+        "evidence/run_liquid_major_universe_v9_002"
+      ]
+    },
+    {
+      "cycle_id": "V10_AUCTION_TRAP_LIQUID_MAJORS_H192",
+      "depends_on": ["V9_AUCTION_TRAP_H96_LIQUID_MAJORS"],
+      "preregistration": "MAJOR_SESSION_HORIZON_PREREGISTRATION_V10.json",
+      "preregistration_sha256": "b7d121e73b1f0d2bf8eb285801a5ac1ee8dece32c0c2967c8f4b8214211464f0",
+      "script": "run_major_session_horizon_v10.py",
+      "script_sha256": "6aa1ca926dac0ce94b4c760b2738a4f88cf8f0345344f3db158441d3a967f76d",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"}
+      ],
+      "result": "evidence/run_major_session_horizon_v10_002/result_major_session_horizon_v10.json",
+      "result_file_sha256": "5c4a9fc4590556f1dffe66b624aa3977ef05f1b22c5002f3ebc1c21447855d52",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_liquid_major_universe_v9_002/proposal_ledger_liquid_major_universe_v9.jsonl",
+        "--output-root",
+        "evidence/run_major_session_horizon_v10_002"
+      ]
+    },
+    {
+      "cycle_id": "V11_AUCTION_TRAP_LIQUID_MAJORS_H384",
+      "depends_on": ["V10_AUCTION_TRAP_LIQUID_MAJORS_H192"],
+      "preregistration": "MULTI_SESSION_HORIZON_PREREGISTRATION_V11.json",
+      "preregistration_sha256": "5d3500a06854178bc277dd8bee89c7c37425f5e311e81facc3586b5a8da14342",
+      "script": "run_multi_session_horizon_v11.py",
+      "script_sha256": "a8b9d02167ebc29fc4ca902d7903021eae6c05499c25da10b7b388e4a10c4378",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_major_session_horizon_v10.py", "sha256": "6aa1ca926dac0ce94b4c760b2738a4f88cf8f0345344f3db158441d3a967f76d"}
+      ],
+      "result": "evidence/run_multi_session_horizon_v11_002/result_multi_session_horizon_v11.json",
+      "result_file_sha256": "d23f101d2541048abb8effe1e6205c3618cf895d43c0c652133cd5a280b5d23b",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_major_session_horizon_v10_002/proposal_ledger_major_session_h192_v10.jsonl",
+        "--output-root",
+        "evidence/run_multi_session_horizon_v11_002"
+      ]
+    },
+    {
+      "cycle_id": "V12_AUCTION_TRAP_CAUSAL_HARVEST_Q35",
+      "depends_on": ["V11_AUCTION_TRAP_LIQUID_MAJORS_H384"],
+      "preregistration": "CAUSAL_HARVEST_EXIT_PREREGISTRATION_V12.json",
+      "preregistration_sha256": "580d7c83a9e4a583da20067c130d63ddbd3af79703074b72814eea95ca6d88c2",
+      "script": "run_causal_harvest_exit_v12.py",
+      "script_sha256": "c4c7802e75740bc01b078a789cdc9fdb3699f701a513fb2b1f81f8551e23a470",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"}
+      ],
+      "result": "evidence/run_causal_harvest_exit_v12_001/result_causal_harvest_exit_v12.json",
+      "result_file_sha256": "c5a3e3b8cc57ca8dbbdcde6f45cbcd8d4ab1e5413c6dc43d396a2102cbb2f62e",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_liquid_major_universe_v9_002/proposal_ledger_liquid_major_universe_v9.jsonl",
+        "--output-root",
+        "evidence/run_causal_harvest_exit_v12_001"
+      ]
+    },
+    {
+      "cycle_id": "V13_ACTUAL_LLM_STALE_UNWIND_AT_192",
+      "depends_on": ["V12_AUCTION_TRAP_CAUSAL_HARVEST_Q35"],
+      "preregistration": "ACTUAL_LLM_STALE_UNWIND_PREREGISTRATION_V13.json",
+      "preregistration_sha256": "b765e18bc92c24f5f40e9633439b7e4eb0ecfa07d09847113acfbca92d29f55a",
+      "script": "run_actual_llm_stale_unwind_v13.py",
+      "script_sha256": "af7233466381d5e99d7588f0f642abc9cd046dcf6e9d0894213834475a7ab469",
+      "dependency_files": [
+        {"path": "ACTUAL_LLM_INVENTORY_DECISION_V13.json", "sha256": "0a688b33f11ce559cf5dca88acef508d136270bafe47b6c9b272172fa9c4d810"},
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_causal_harvest_exit_v12.py", "sha256": "c4c7802e75740bc01b078a789cdc9fdb3699f701a513fb2b1f81f8551e23a470"}
+      ],
+      "result": "evidence/run_actual_llm_stale_unwind_v13_001/result_actual_llm_stale_unwind_v13.json",
+      "result_file_sha256": "ae309c91090901df458c913bb89e12f43f8175ebc2ce37c671f9916529cd4cf7",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_causal_harvest_exit_v12_001/proposal_ledger_causal_harvest_exit_v12.jsonl",
+        "--llm-decision",
+        "ACTUAL_LLM_INVENTORY_DECISION_V13.json",
+        "--output-root",
+        "evidence/run_actual_llm_stale_unwind_v13_001"
+      ]
+    },
+    {
+      "cycle_id": "V14_AUCTION_TRAP_LIQUID_MAJORS_H576",
+      "depends_on": ["V13_ACTUAL_LLM_STALE_UNWIND_AT_192"],
+      "preregistration": "TWO_DAY_HORIZON_PREREGISTRATION_V14.json",
+      "preregistration_sha256": "c57d856ea9c9867112ed3f9c1b9ed4664f0948e81889041031049e7d56231e02",
+      "script": "run_two_day_horizon_v14.py",
+      "script_sha256": "8c6ca0119cabe10579be09db64fefc692706943e0c25618b958a48ea2b22025b",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_major_session_horizon_v10.py", "sha256": "6aa1ca926dac0ce94b4c760b2738a4f88cf8f0345344f3db158441d3a967f76d"}
+      ],
+      "result": "evidence/run_two_day_horizon_v14_001/result_two_day_horizon_v14.json",
+      "result_file_sha256": "573b99fbbb46b3ff27b17532bd23a40b6fc45e453ac002d55a8c9cb346aec340",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_liquid_major_universe_v9_002/proposal_ledger_liquid_major_universe_v9.jsonl",
+        "--output-root",
+        "evidence/run_two_day_horizon_v14_001"
+      ]
+    },
+    {
+      "cycle_id": "V15_AUCTION_TRAP_H384_EPISODE_NETTING",
+      "depends_on": ["V14_AUCTION_TRAP_LIQUID_MAJORS_H576"],
+      "preregistration": "PORTFOLIO_EPISODE_NETTING_PREREGISTRATION_V15.json",
+      "preregistration_sha256": "328987f07b7247dd35db1c2755b3a652a6731a8acfb91c1f14e0c90b75dfd598",
+      "script": "run_portfolio_episode_netting_v15.py",
+      "script_sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"}
+      ],
+      "result": "evidence/run_portfolio_episode_netting_v15_001/result_portfolio_episode_netting_v15.json",
+      "result_file_sha256": "3754cc06abf6cec7a49f87fb868aa1e1dfcb1955dd8b47eb535cb9efd7951b62",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+        "--output-root",
+        "evidence/run_portfolio_episode_netting_v15_001"
+      ]
+    },
+    {
+      "cycle_id": "V16_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY",
+      "depends_on": ["V15_AUCTION_TRAP_H384_EPISODE_NETTING"],
+      "preregistration": "OPPOSITE_CLOSE_ONLY_PREREGISTRATION_V16.json",
+      "preregistration_sha256": "e6df68e2ce594adbc5cabb6730c127e8f6d58c409c42d9df6d3de4d8e734024d",
+      "script": "run_opposite_close_only_v16.py",
+      "script_sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"}
+      ],
+      "result": "evidence/run_opposite_close_only_v16_001/result_opposite_close_only_v16.json",
+      "result_file_sha256": "8a2a6a4ace50efb1999e5057091683173549fb39524f5532d962afceacbffdcf",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+        "--output-root",
+        "evidence/run_opposite_close_only_v16_001"
+      ]
+    },
+    {
+      "cycle_id": "V17_AUCTION_TRAP_TUNING_WORKER_ADMISSION",
+      "depends_on": ["V16_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY"],
+      "preregistration": "TUNING_WORKER_ADMISSION_PREREGISTRATION_V17.json",
+      "preregistration_sha256": "3b75686cbcdd9c6eabc40e81ddda81b4a88b83cc3f4a7d248123915b468967bc",
+      "script": "run_tuning_worker_admission_v17.py",
+      "script_sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_opposite_close_only_v16.py", "sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31"}
+      ],
+      "result": "evidence/run_tuning_worker_admission_v17_001/result_tuning_worker_admission_v17.json",
+      "result_file_sha256": "25c08f731be268fb1341eb3a4d17ebfbaaa8065e35dd4288669ecd972753e9d0",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+        "--output-root",
+        "evidence/run_tuning_worker_admission_v17_001"
+      ]
+    },
+    {
+      "cycle_id": "V18_CURRENCY_NETWORK_DISCONFIRMATION",
+      "depends_on": ["V17_AUCTION_TRAP_TUNING_WORKER_ADMISSION"],
+      "preregistration": "CURRENCY_NETWORK_DISCONFIRMATION_PREREGISTRATION_V18.json",
+      "preregistration_sha256": "dfaf89e290a63131046c30cae8d5dee9524033812c248cdde5904e177deee900",
+      "script": "run_currency_network_disconfirmation_v18.py",
+      "script_sha256": "52750d84cf10e7c963e010ed211f92ce57391106f9bd1e6fdbd6a1d924bd8b1a",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_opposite_close_only_v16.py", "sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31"},
+        {"path": "run_tuning_worker_admission_v17.py", "sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d"}
+      ],
+      "result": "evidence/run_currency_network_disconfirmation_v18_001/result_currency_network_disconfirmation_v18.json",
+      "result_file_sha256": "4a5bd002fad81731967a44eea15f5c82ba539f5c154e88de3f144243203648e3",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_auction_trap_geometry_v7_002/proposal_ledger_auction_trap_geometry_v7.jsonl",
+        "--output-root",
+        "evidence/run_currency_network_disconfirmation_v18_001"
+      ]
+    },
+    {
+      "cycle_id": "V19_CURRENCY_NETWORK_EXHAUSTION",
+      "depends_on": ["V18_CURRENCY_NETWORK_DISCONFIRMATION"],
+      "preregistration": "CURRENCY_NETWORK_EXHAUSTION_PREREGISTRATION_V19.json",
+      "preregistration_sha256": "87fa22bac174dc77a86af52707e2fd8ba4bb2fd47c3947e9a60746e09ab0f771",
+      "script": "run_currency_network_exhaustion_v19.py",
+      "script_sha256": "2dee8266db5117c76e846529d38c059a7b0bda6e9b38c2054760ccdc1c86ed2d",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_opposite_close_only_v16.py", "sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31"},
+        {"path": "run_tuning_worker_admission_v17.py", "sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d"},
+        {"path": "run_currency_network_disconfirmation_v18.py", "sha256": "52750d84cf10e7c963e010ed211f92ce57391106f9bd1e6fdbd6a1d924bd8b1a"}
+      ],
+      "result": "evidence/run_currency_network_exhaustion_v19_001/result_currency_network_exhaustion_v19.json",
+      "result_file_sha256": "880c53690d225fb4fbebfcf860f9605dbcda598e26ebcaec63e279f3e89f6e6e",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_auction_trap_geometry_v7_002/proposal_ledger_auction_trap_geometry_v7.jsonl",
+        "--output-root",
+        "evidence/run_currency_network_exhaustion_v19_001"
+      ]
+    },
+    {
+      "cycle_id": "V20_CURRENCY_NETWORK_EXHAUSTION_INTENSITY",
+      "depends_on": ["V19_CURRENCY_NETWORK_EXHAUSTION"],
+      "preregistration": "CURRENCY_NETWORK_EXHAUSTION_INTENSITY_PREREGISTRATION_V20.json",
+      "preregistration_sha256": "0f8f484520b1b85d6831f52f2a4f88b2cfaff7de85bd525504f16a9d5ad677f2",
+      "script": "run_currency_network_exhaustion_intensity_v20.py",
+      "script_sha256": "a14a5e0defdf6173ab640d1bc9585f4e328778263d1a50b3ddd2620fb4fa9e13",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_opposite_close_only_v16.py", "sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31"},
+        {"path": "run_tuning_worker_admission_v17.py", "sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d"},
+        {"path": "run_currency_network_disconfirmation_v18.py", "sha256": "52750d84cf10e7c963e010ed211f92ce57391106f9bd1e6fdbd6a1d924bd8b1a"}
+      ],
+      "result": "evidence/run_currency_network_exhaustion_intensity_v20_001/result_currency_network_exhaustion_intensity_v20.json",
+      "result_file_sha256": "59842be6c1141fbcca6e6bb02fb9a4e32960ccae9d127203a91055dc2304a675",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_auction_trap_geometry_v7_002/proposal_ledger_auction_trap_geometry_v7.jsonl",
+        "--output-root",
+        "evidence/run_currency_network_exhaustion_intensity_v20_001"
+      ]
+    },
+    {
+      "cycle_id": "V21_H4_COUNTERTREND_SWEEP_RECLAIM",
+      "depends_on": ["V20_CURRENCY_NETWORK_EXHAUSTION_INTENSITY"],
+      "preregistration": "H4_COUNTERTREND_SWEEP_RECLAIM_PREREGISTRATION_V21.json",
+      "preregistration_sha256": "e5e53b020deb82f80d914ca7f3b2781237191178cf08c54164fddfe9c41f6f3d",
+      "script": "run_h4_countertrend_sweep_reclaim_v21.py",
+      "script_sha256": "10123a2c4931a9ca92ffec19bd4c52931506181afc8fc942f12b92635486c37e",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_opposite_close_only_v16.py", "sha256": "08fcd0f6c616c5e8624d2a39cdc5c974d98c100f5fbb250e25eb29386b6a9f31"},
+        {"path": "run_tuning_worker_admission_v17.py", "sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d"}
+      ],
+      "result": "evidence/run_h4_countertrend_sweep_reclaim_v21_001/result_h4_countertrend_sweep_reclaim_v21.json",
+      "result_file_sha256": "f8c10e7a3c731ee3a2351807c077525f32b664d92adfc0885558c8b63d18352e",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--output-root",
+        "evidence/run_h4_countertrend_sweep_reclaim_v21_001"
+      ]
+    },
+    {
+      "cycle_id": "V22_H4_RECLAIM_EXIT_ONLY",
+      "depends_on": ["V21_H4_COUNTERTREND_SWEEP_RECLAIM"],
+      "preregistration": "H4_RECLAIM_EXIT_ONLY_PREREGISTRATION_V22.json",
+      "preregistration_sha256": "534a45856c1a96803e96b9c0d73117e2524d10bdbcfec10a598cc3f758ad4ed5",
+      "script": "run_h4_reclaim_exit_only_v22.py",
+      "script_sha256": "9a8fc75a09eb52b3d2a09200c07a66ba069f49878a99c1244dc161ef42a75411",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl", "sha256": "ece1a6f5ba0bf2bcf1c13176c7d75b0722e72af1bf27b1f7f5631c17c4a61bc7"},
+        {"path": "evidence/run_h4_countertrend_sweep_reclaim_v21_001/proposal_ledger_h4_countertrend_sweep_reclaim_v21.jsonl", "sha256": "919f92b1f319feabaaf88c890a112f7c2175f3f937088bbe61d97812cba0ac1e"}
+      ],
+      "result": "evidence/run_h4_reclaim_exit_only_v22_001/result_h4_reclaim_exit_only_v22.json",
+      "result_file_sha256": "b45ed61b47b95193c3ae98e689ae72501b7fb0da0a933a3d6c0175208a31d885",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+        "--auxiliary-ledger",
+        "evidence/run_h4_countertrend_sweep_reclaim_v21_001/proposal_ledger_h4_countertrend_sweep_reclaim_v21.jsonl",
+        "--output-root",
+        "evidence/run_h4_reclaim_exit_only_v22_001"
+      ]
+    },
+    {
+      "cycle_id": "V23_H4_OPPOSING_COHERENCE_EXIT",
+      "depends_on": ["V22_H4_RECLAIM_EXIT_ONLY"],
+      "preregistration": "H4_OPPOSING_COHERENCE_EXIT_PREREGISTRATION_V23.json",
+      "preregistration_sha256": "a97e8fc41c7aa84eef62c3f055c3b8b2f44b0b24c1071e5b2d4994339bb7855e",
+      "script": "run_h4_opposing_coherence_exit_v23.py",
+      "script_sha256": "66e132083a259a6dfc62bd8939e7c8024e4509e031518df83f2710d875a10295",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_tuning_worker_admission_v17.py", "sha256": "4a03a524332d8b1c84fe7d5defcefc479ea9e191743922ee3ec11e7ce767194d"},
+        {"path": "run_h4_reclaim_exit_only_v22.py", "sha256": "9a8fc75a09eb52b3d2a09200c07a66ba069f49878a99c1244dc161ef42a75411"},
+        {"path": "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl", "sha256": "ece1a6f5ba0bf2bcf1c13176c7d75b0722e72af1bf27b1f7f5631c17c4a61bc7"}
+      ],
+      "result": "evidence/run_h4_opposing_coherence_exit_v23_001/result_h4_opposing_coherence_exit_v23.json",
+      "result_file_sha256": "a3dc52eb61f34244f682158ada12c2de8d5f1a908a642f37e4d8b487b83a6175",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--source-ledger",
+        "evidence/run_multi_session_horizon_v11_002/proposal_ledger_multi_session_h384_v11.jsonl",
+        "--output-root",
+        "evidence/run_h4_opposing_coherence_exit_v23_001"
+      ]
+    },
+    {
+      "cycle_id": "V24_ASIAN_BOX_SWEEP_RECLAIM",
+      "depends_on": ["V23_H4_OPPOSING_COHERENCE_EXIT"],
+      "preregistration": "ASIAN_BOX_SWEEP_RECLAIM_PREREGISTRATION_V24.json",
+      "preregistration_sha256": "bfe0a0f5d12d8a496258476860434904b82efbaac1da87304ecc8f289970c2ca",
+      "script": "run_asian_box_sweep_reclaim_v24.py",
+      "script_sha256": "bf0d2a4b5758cdd12cdb63cd23309f5fcad086ce2e2cffc606d20c56a2aa571d",
+      "dependency_files": [
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"}
+      ],
+      "result": "evidence/run_asian_box_sweep_reclaim_v24_001/result_asian_box_sweep_reclaim_v24.json",
+      "result_file_sha256": "84d035247a742b43c8bd27ca9e7f20828642085cd43d7de8370e2777af15b7d5",
+      "admission_field": "development_admitted",
+      "admission_operator": "IS_TRUE",
+      "execution_class": "LOCAL_REPLAY_ONLY",
+      "arguments": [
+        "--input-root",
+        "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "--output-root",
+        "evidence/run_asian_box_sweep_reclaim_v24_001"
+      ]
+    }
+  ]
+}

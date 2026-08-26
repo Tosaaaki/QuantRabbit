@@ -1,0 +1,30 @@
+{
+  "artifact_id": "FX_ACTUAL_LLM_STALE_UNWIND_V13",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "baseline": "FX_AUCTION_TRAP_CAUSAL_HARVEST_Q35_V12",
+  "actual_llm_decision": "ACTUAL_LLM_INVENTORY_DECISION_V13.json",
+  "single_changed_variable": "one completed-data STALE unwind checkpoint at age 192 selected by the actual LLM from a frozen discrete policy set",
+  "bot_owned": [
+    "same V12 signal_id, entry, direction, pair target, fill, and cost arms",
+    "completed-bar calculation and next BID/ASK execution",
+    "384-bar max age and terminal liquidation",
+    "all accounting and hard guards"
+  ],
+  "llm_owned": [
+    "select exactly one inventory policy id from the allowlist using only the frozen V12 summary"
+  ],
+  "stale_rule": "at age 192, if Q35 target is unhit and direction times the sum of the last 12 completed close log returns is nonpositive, exit at the next recorded executable open; otherwise continue to target or max age",
+  "individual_price_sl": false,
+  "development_admission": [
+    "same contained walk-forward proposal stream as V12",
+    "RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS mean returns are all positive",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

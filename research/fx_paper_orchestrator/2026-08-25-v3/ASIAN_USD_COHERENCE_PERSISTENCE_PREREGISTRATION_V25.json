@@ -1,0 +1,78 @@
+{
+  "artifact_id": "FX_ASIAN_USD_COHERENCE_PERSISTENCE_V25",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "FX_SESSION_CURRENCY_COHERENCE",
+  "baseline": "FX_ASIAN_BOX_SWEEP_RECLAIM_V24",
+  "problem_contract": {
+    "desired": "find a low-turnover FX-specific gross entry edge whose expected move can survive observed BID/ASK costs",
+    "as_is": "V24 generated sufficient density but its reversal direction had negative proposal gross edge before costs",
+    "gap": "a single pair boundary event did not distinguish a market-wide USD impulse from idiosyncratic pair noise",
+    "fact": "V24 walk proposal mean gross return was -0.0001494045 across 259 signals",
+    "hypothesis": "when at least five of seven liquid majors complete the Asian session with the same USD-oriented sign, aligned pairs carry that common currency impulse through the London morning",
+    "counter_hypothesis": "Asian-session breadth is noise or reverses before London, and observable execution costs dominate",
+    "minimum_test": "one fixed breadth threshold, one fixed London-morning horizon, identical signals in three cost arms, and effective bet days reported separately from tickets",
+    "stop_condition": "reject if gross expectancy is nonpositive, any standalone development month loses after normal or adverse cost, or effective bet density is insufficient"
+  },
+  "single_changed_variable": "replace pair-local sweep reversal with a cross-pair USD-oriented Asian-session coherence continuation signal",
+  "indicator": {
+    "name": "Asian USD Coherence Persistence",
+    "asian_measurement": "for every pair, log(mid close at completed 05:55 UTC bar / mid open at 00:00 UTC bar)",
+    "usd_orientation": "retain sign for USD_BASE pairs and invert sign for USD_QUOTE pairs",
+    "coherence_gate": "at least five of the exact seven pairs have the same nonzero USD-oriented sign",
+    "eligible_pairs": "only pairs whose own USD-oriented sign agrees with the majority; minority pairs remain cash",
+    "direction": "continue the common USD impulse in each eligible pair's native quote convention",
+    "decision": "after the completed 05:55 UTC M5 bar",
+    "entry": "06:00 UTC M5 executable BID/ASK open",
+    "exit": "completed close of the 11:55 UTC M5 bar, corresponding to 12:00 UTC",
+    "cost_used_for_signal": false,
+    "future_outcome_used_for_signal": false
+  },
+  "evaluation": {
+    "universe": [
+      "AUD_USD",
+      "EUR_USD",
+      "GBP_USD",
+      "NZD_USD",
+      "USD_CAD",
+      "USD_CHF",
+      "USD_JPY"
+    ],
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "signal_identity": "the exact same signal_id, entry, direction, and exit are used by all arms",
+    "inventory": "at most one position per pair and one coherent USD basket per UTC day; no add, martingale, or overlap",
+    "allocation": "each eligible pair receives its fixed 1/7 sleeve; unused sleeves remain cash; gross cap 1.0",
+    "independence": "effective bet count is the number of coherent UTC days, not the number of pair tickets",
+    "cost_gate": false,
+    "metrics": [
+      "signals and effective bet days",
+      "coherence distribution",
+      "mean and median gross return",
+      "direction accuracy",
+      "MFE and MAE",
+      "break-even round-trip cost",
+      "base and adverse equity",
+      "turnover",
+      "drawdown",
+      "terminal inventory"
+    ]
+  },
+  "development_admission": [
+    "at least 20 source signals in the full walk and each standalone month",
+    "at least 10 coherent UTC days in the full walk and at least 3 in each standalone month",
+    "proposal-level mean gross return is strictly positive in the full walk and each standalone month",
+    "normal and adverse equity multiples exceed 1.0 in the full walk and each standalone month",
+    "terminal inventory is zero"
+  ],
+  "multiplicity": "Count V25 as the first hypothesis in the FX session-currency coherence family.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

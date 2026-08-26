@@ -1,0 +1,41 @@
+{
+  "artifact_id": "FX_H4_RECLAIM_EXIT_ONLY_V22",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "H4_CONTEXT_SHORT_TIMEFRAME_EXECUTION",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "single_changed_variable": "use the frozen V21 H4/M15/M5 signal only as an additional exit for inventory facing against its H4 direction",
+  "entry_policy": "identical V16 source entries; V21 signals can never open, add, reverse, or extend a position",
+  "exit_policy": {
+    "trigger": "at the V21 executable fill open, close an existing same-pair position only when its direction is opposite the frozen V21 H4 direction",
+    "same_direction": "no action",
+    "flat": "no action",
+    "same_timestamp_order": "apply the auxiliary exit first, then apply the V16 primary signal",
+    "price": "the first executable BID/ASK open already frozen by the V21 completed-bar decision",
+    "max_age": "retain V16 H384 expiry for inventory not closed by an earlier permitted event"
+  },
+  "rationale": "V21 had no proposal-level entry edge. This arm tests the user's entry-versus-exit separation without pretending the same feature is a profitable entry signal.",
+  "evaluation": {
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "universe": "same seven USD majors as V16",
+    "allocation": "seven fixed 1/7 sleeves; gross cap 1.0; no leverage tuning",
+    "cost_gate": false,
+    "terminal_inventory": "always liquidated and required to be zero"
+  },
+  "development_admission": [
+    "normal and adverse equity multiples exceed 1.0 in the full walk and each standalone month",
+    "turnover and exit counts are reported",
+    "terminal inventory is zero"
+  ],
+  "multiplicity": "Count V22 as the second hypothesis in the H4-context short-timeframe family.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

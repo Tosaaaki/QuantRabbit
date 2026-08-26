@@ -1,0 +1,54 @@
+{
+  "artifact_id": "FX_H4_COUNTERTREND_SWEEP_RECLAIM_V21",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "H4_CONTEXT_SHORT_TIMEFRAME_EXECUTION",
+  "baseline": "FX_AUCTION_TRAP_H384_OPPOSITE_CLOSE_ONLY_V16",
+  "purpose": "test a new FX-specific signal family after stopping the V18-V20 currency-network family",
+  "indicator": {
+    "name": "H4 Countertrend Sweep Reclaim",
+    "completed_bar_index": "t",
+    "h4_direction": "sign(log(mid_close_t / mid_close_t_minus_48))",
+    "countertrend_m15": "h4_direction times log(mid_close_t_minus_1 / mid_close_t_minus_4) is strictly negative",
+    "m5_sweep": "bar t-1 trades beyond the opposite-side rail made from completed bars t-13 through t-2",
+    "m5_reclaim": "bar t closes back inside that frozen rail and its close-to-close return is in the H4 direction",
+    "entry": "next M5 executable BID/ASK open at t+1",
+    "direction": "frozen H4 direction",
+    "expiry": "192 M5 bars after entry",
+    "cost_used_for_signal": false,
+    "future_outcome_used_for_signal": false
+  },
+  "rationale": "Do not chase a breakout. Treat the short-timeframe break against the H4 context as a possible liquidity sweep and enter only after a completed-bar reclaim in the H4 direction.",
+  "evaluation": {
+    "universe": [
+      "AUD_USD",
+      "EUR_USD",
+      "GBP_USD",
+      "NZD_USD",
+      "USD_CAD",
+      "USD_CHF",
+      "USD_JPY"
+    ],
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "inventory": "same one-position-per-pair opposite-close-only state machine as V16",
+    "allocation": "seven fixed 1/7 sleeves; gross cap 1.0; no leverage tuning",
+    "period_containment": "fill and expiry must both be inside each evaluated period",
+    "terminal_inventory": "always liquidated and required to be zero"
+  },
+  "development_admission": [
+    "at least 20 source signals in the full walk and in each standalone month",
+    "normal and adverse equity multiples exceed 1.0 in the full walk and each standalone month",
+    "terminal inventory is zero"
+  ],
+  "multiplicity": "Count V21 as the first hypothesis in a new family; opened development evidence is never final admission.",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

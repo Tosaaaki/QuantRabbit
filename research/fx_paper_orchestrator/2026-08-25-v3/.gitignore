@@ -1,0 +1,11 @@
+# Legacy handoff ledgers are preserved locally and covered by the root-relative
+# handoff seal, but exceed a practical Git/GitHub object budget.  Result JSON,
+# preregistrations, scripts, tests, registry seals and new V25 evidence remain
+# versioned.  These exact paths are evidence payloads, not executable inputs.
+evidence/run_counterparty_models_v4_001/decision_ledger_counterparty_v4.jsonl
+evidence/run_counterparty_source_v4_001/source_ledger_counterparty_v4.jsonl.gz
+evidence/run_online_polarity_h16_v3_001/decision_ledger_online_polarity_v3.jsonl
+evidence/run_online_polarity_h8_v3_001/decision_ledger_online_polarity_v3.jsonl
+evidence/run_graph_residual_v3_001/signal_ledger_graph_v3.jsonl.gz
+evidence/run_mtf_tension_h16_v3_001/signal_ledger_mtf_tension_v3.jsonl
+evidence/run_mtf_tension_v3_001/signal_ledger_mtf_tension_v3.jsonl

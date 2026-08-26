@@ -1,0 +1,39 @@
+{
+  "artifact_id": "FX_CURRENCY_NETWORK_EXHAUSTION_INTENSITY_V20",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_AND_REPLAY",
+  "family": "V18_V20_CURRENCY_NETWORK",
+  "baseline": "FX_CURRENCY_NETWORK_EXHAUSTION_V19",
+  "single_changed_variable": "replace alignment greater than zero with a tuning-only median-positive-alignment gate",
+  "original_indicator": {
+    "name": "Currency Network Exhaustion Intensity",
+    "measurement": "identical excluding-self 12-completed-M5-bar currency-node graph as V18 and V19",
+    "tuning_period": [
+      "2026-03-11",
+      "2026-05-01"
+    ],
+    "threshold": "median of strictly positive network_alignment values in the tuning period only",
+    "gate": "network_alignment must be greater than or equal to the frozen tuning median",
+    "interpretation": "retain only failed auctions whose preceding impulse was at least a typical coordinated positive currency-network move, testing whether weak network alignment caused the V19 monthly instability",
+    "cost_used": false,
+    "future_outcome_used": false,
+    "walk_forward_used_for_threshold": false
+  },
+  "multiplicity": "V20 is a third hypothesis in the V18/V19/V20 currency-network family",
+  "unchanged": [
+    "same V7 source candidates, seven pairs, reversal direction, H384, and V16 close-only inventory",
+    "same RAW_SIGNAL, EXECUTABLE_BASE, and ADVERSE_STRESS signal ids",
+    "same costs, 1/7 sleeves, gross cap, period containment, and terminal liquidation"
+  ],
+  "development_admission": [
+    "at least 20 signals remain in each standalone month",
+    "normal and adverse full walk and each month equity multiple exceed 1.0",
+    "terminal inventory is zero"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_credentials": false,
+    "order_endpoints": false,
+    "external_orders": 0
+  }
+}

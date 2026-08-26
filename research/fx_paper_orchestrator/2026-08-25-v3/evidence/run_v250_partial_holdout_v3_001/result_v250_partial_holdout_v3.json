@@ -1,0 +1,142 @@
+{
+  "account_results": {
+    "adverse": {
+      "final_equity": 200234.0509878691,
+      "forced_terminal_or_margin_positions": 0,
+      "full_comparable_months": {
+        "2026-05": 0.9948188709221863,
+        "2026-06": 1.0
+      },
+      "full_month_minimum_multiple": 0.9948188709221863,
+      "full_months_at_or_above_2x": 0,
+      "margin_closeouts": 0,
+      "max_drawdown": -0.016701216108822137,
+      "maximum_monthly_multiple": 1.0063844627427216,
+      "minimum_monthly_multiple": 0.9948188709221863,
+      "monthly_multiples": {
+        "2026-05": 0.9948188709221863,
+        "2026-06": 1.0,
+        "2026-07": 1.0063844627427216
+      },
+      "months": 3,
+      "positive_months": 1,
+      "rejected_entries": 0,
+      "total_multiple": 1.0011702549393455
+    },
+    "normal": {
+      "final_equity": 200689.12977052887,
+      "forced_terminal_or_margin_positions": 0,
+      "full_comparable_months": {
+        "2026-05": 0.996448383188783,
+        "2026-06": 1.0
+      },
+      "full_month_minimum_multiple": 0.996448383188783,
+      "full_months_at_or_above_2x": 0,
+      "margin_closeouts": 0,
+      "max_drawdown": -0.015107855375876666,
+      "maximum_monthly_multiple": 1.0070222058482037,
+      "minimum_monthly_multiple": 0.996448383188783,
+      "monthly_multiples": {
+        "2026-05": 0.996448383188783,
+        "2026-06": 1.0,
+        "2026-07": 1.0070222058482037
+      },
+      "months": 3,
+      "positive_months": 1,
+      "rejected_entries": 0,
+      "total_multiple": 1.0034456488526444
+    }
+  },
+  "admission_blockers": [
+    "original V250 family admitted no candidate",
+    "reserved holdout source ends before 2026-08-01",
+    "a partial opened holdout cannot certify future returns",
+    "full comparable months do not meet 2x in both cost arms"
+  ],
+  "admitted": false,
+  "authority": "local_paper_replay_only_no_credentials_no_broker_no_order_endpoint",
+  "candidate": "M15_H8:ridge:P0.0",
+  "decisions": 16,
+  "evidence_class": "reserved_holdout_opened_partial_not_complete",
+  "experiment": "V3_FROZEN_V250_PARTIAL_RESERVED_HOLDOUT",
+  "external_orders": 0,
+  "frozen_actual_llm_decision_sha256": "2c16e321187821f7f6ffd62c25399bfefacf348e78b34ed7579a8a0f88a830ab",
+  "frozen_actual_llm_policy": {
+    "confidence": 0.68,
+    "decision_id": "V252_ACTUAL_LLM_001",
+    "development_walk_seen": false,
+    "enabled_workers": [
+      "M15_H8:ridge:P0.0"
+    ],
+    "gross_cap": 12,
+    "hard_guard_changes": [],
+    "individual_price_sl": false,
+    "individual_tp": false,
+    "input_prompt": "research/llm_paper_experiment/2026-08-24-v252/actual_llm_prompt_v252_001.json",
+    "max_age": "2 hours",
+    "mode": "ADD_WITHIN_CAP",
+    "model": "OpenAI Codex (GPT-5)",
+    "policy": "H8_ONLY",
+    "profit_guarantee": false,
+    "reason": "H8_ONLY at 12x preserves nearly all validation capital in its weakest month while retaining most of the 20x total gain; 20x adds only modest total return but materially worsens the weakest month and drawdown. H4 and equal policies have weaker validation totals and weaker minimum months at the same cap.",
+    "reserved_holdout_seen": false,
+    "weights": {
+      "M15_H4:ridge:P0.0": 0.0,
+      "M15_H8:ridge:P0.0": 1.0
+    }
+  },
+  "frozen_model_sha256": "bda842f8e7ccb4459ec6686e1399724096906dcb99b589754fb435a6707e1a8f",
+  "holdout_contract": {
+    "available_end_exclusive": "2026-07-15T11:00:00+00:00",
+    "complete": false,
+    "opened_now": true,
+    "planned_end": "2026-08-01T00:00:00+00:00",
+    "start": "2026-05-01T00:00:00+00:00"
+  },
+  "ledger": "evidence/run_v250_partial_holdout_v3_001/decision_ledger_v250_partial_holdout_v3.jsonl.gz",
+  "ledger_sha256": "5e89687f258cc3c6be85ac1df8fab242c15ef424ebdf4ea5aec9bf6bb47b4968",
+  "live_authority": false,
+  "monthly_2x_proven": false,
+  "profit_guaranteed": false,
+  "result_sha256": "77b0f7ad93166987b3e9c488bb3b29769e572f88023a8cb9dea16a2f0fdf7e85",
+  "signal_summary": {
+    "adverse_mean_return": 6.992098038516694e-05,
+    "best_month_mean": 0.0014610093161217083,
+    "calibration_gap": -3.821345787718901e-05,
+    "decisions": 16,
+    "decisions_per_day": 0.2157000421289145,
+    "direction_accuracy": 0.4375,
+    "family_corrected_lcb": null,
+    "months": 2,
+    "normal_mean_return": 0.00020006872208892064,
+    "positive_months": 1,
+    "predicted_mean_return": 0.00010813443826235595,
+    "worst_month_mean": -0.0003937751315270135
+  },
+  "source_audit": {
+    "common_fraction": 0.9978120681713496,
+    "common_rows": 25995,
+    "first": "2026-03-11T00:00:00+00:00",
+    "last": "2026-07-15T10:55:00+00:00",
+    "missing_rows_imputed": 0,
+    "raw_rows_by_pair": {
+      "AUD_USD": 26047,
+      "EUR_USD": 26051,
+      "GBP_USD": 26045,
+      "NZD_USD": 26049,
+      "USD_CAD": 26047,
+      "USD_CHF": 26018,
+      "USD_JPY": 26046
+    },
+    "union_rows": 26052
+  },
+  "source_sha256_by_pair": {
+    "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+    "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+    "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+    "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+    "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+    "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+    "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+  }
+}
