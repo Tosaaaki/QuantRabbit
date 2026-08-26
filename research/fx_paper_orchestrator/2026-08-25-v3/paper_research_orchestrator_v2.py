@@ -37,6 +37,11 @@ AUTHORITY = {
 }
 ARMS = ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"]
 PERIODS = ["WALK_FORWARD", "MONTH_2026_05", "MONTH_2026_06"]
+PERIOD_BOUNDS = {
+    "WALK_FORWARD": ("2026-05-01", "2026-07-01"),
+    "MONTH_2026_05": ("2026-05-01", "2026-06-01"),
+    "MONTH_2026_06": ("2026-06-01", "2026-07-01"),
+}
 
 
 class ContractError(RuntimeError):
@@ -196,16 +201,40 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
     if signal["same_entry_direction_exit"] is not True or signal["raw_cost_gate"] is not False:
         raise ContractError("RAW signal must be identical and independent of costs")
     tree = ast.parse(within(root, cycle["script"]).read_text(encoding="utf-8"))
-    detectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-                 and node.name == "detect_day_signals"]
-    if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
-        raise ContractError("signal detector exposes cost or outcome inputs")
-    simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-                       and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
-    if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
-        raise ContractError("cost-arm simulation call is not structurally unique")
-    if not isinstance(simulator_calls[0].args[1], ast.Name) or simulator_calls[0].args[1].id != "rows":
-        raise ContractError("cost arms do not consume the same RAW_SIGNAL ledger")
+    raw_source = signal.get("raw_signal_source", "GENERATED_IN_CYCLE")
+    if raw_source == "GENERATED_IN_CYCLE":
+        detectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name == "detect_day_signals"]
+        if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
+            raise ContractError("signal detector exposes cost or outcome inputs")
+        simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                           and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
+        if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
+            raise ContractError("cost-arm simulation call is not structurally unique")
+        if not isinstance(simulator_calls[0].args[1], ast.Name) or simulator_calls[0].args[1].id != "rows":
+            raise ContractError("cost arms do not consume the same RAW_SIGNAL ledger")
+    elif raw_source == "SEALED_PARENT_V25_LEDGER":
+        require_keys(signal, {
+            "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
+            "same_decision_timestamps", "same_execution_mask_all_arms",
+        }, "parent signal_contract")
+        if signal["parent_cycle_id"] != "V25" or signal["same_decision_timestamps"] is not True:
+            raise ContractError("V26 parent RAW identity contract mismatch")
+        if signal["same_execution_mask_all_arms"] is not True:
+            raise ContractError("V26 cost arms must share one execution mask")
+        parent_ledger = within(root, signal["parent_ledger"])
+        if not parent_ledger.is_file() or sha256_file(parent_ledger) != signal["parent_ledger_sha256"]:
+            raise ContractError("V26 sealed parent ledger dependency mismatch")
+        selectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name == "apply_rule"]
+        scorers = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                   and node.name == "causal_score"]
+        if len(selectors) != 1 or [arg.arg for arg in selectors[0].args.args] != ["parent_rows", "corpus"]:
+            raise ContractError("V26 deterministic execution selector contract mismatch")
+        if len(scorers) != 1 or [arg.arg for arg in scorers[0].args.args] != ["row", "bars", "time_index"]:
+            raise ContractError("V26 causal cost score contract mismatch")
+    else:
+        raise ContractError(f"unsupported raw signal source: {raw_source}")
 
     inventory = require_keys(cycle["inventory_contract"], {
         "currencies", "one_position_per_pair", "one_basket_per_utc_day", "add_to_position",
@@ -357,8 +386,15 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
     sleeve = float(cycle["inventory_contract"]["fixed_pair_sleeve"])
     currency_cap = float(cycle["inventory_contract"]["currency_abs_exposure_cap"])
     by_day: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
+    inventory_rows = [row for row in rows if row.get("execution_selected", True) is True]
+    for row in inventory_rows:
         by_day.setdefault(row["utc_day"], []).append(row)
+    selected_per_basket = cycle["inventory_contract"].get("selected_positions_per_basket")
+    if selected_per_basket is not None:
+        raw_days = {row["utc_day"] for row in rows}
+        if selected_per_basket != 1 or set(by_day) != raw_days \
+                or any(len(day_rows) != 1 for day_rows in by_day.values()):
+            raise ContractError("deterministic representative rule did not select exactly one position per basket")
     for day, day_rows in by_day.items():
         if len(day_rows) * sleeve > cycle["inventory_contract"]["gross_leverage_cap"] + 1e-12:
             raise ContractError(f"gross inventory cap exceeded on {day}")
@@ -374,6 +410,37 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
     source_audit = {item["pair"]: item["source_sha256"] for item in payload.get("source_audit", [])}
     if source_audit != cycle["source_contract"]["files"]:
         raise ContractError("result source BID/ASK manifest differs from preregistration")
+    raw_source = cycle.get("signal_contract", {}).get("raw_signal_source", "GENERATED_IN_CYCLE")
+    if raw_source == "SEALED_PARENT_V25_LEDGER":
+        parent_rows = [json.loads(line) for line in within(
+            root, cycle["signal_contract"]["parent_ledger"]
+        ).read_text(encoding="utf-8").splitlines() if line]
+        identity_fields = ("signal_id", "pair", "utc_day", "direction", "decision_time", "fill_time", "exit_time")
+        if [[row[field] for field in identity_fields] for row in rows] != [
+                [row[field] for field in identity_fields] for row in parent_rows]:
+            raise ContractError("V26 ledger changed V25 RAW identity, direction, or timestamps")
+        if hashlib.sha256(canonical_bytes(sorted(ids))).hexdigest() \
+                != cycle["signal_contract"]["parent_signal_id_set_sha256"]:
+            raise ContractError("V26 ledger signal-id set differs from V25")
+        if payload.get("parent_ledger_sha256") != cycle["signal_contract"]["parent_ledger_sha256"]:
+            raise ContractError("V26 parent ledger hash mismatch in result")
+        if payload.get("parent_signal_id_set_sha256") != cycle["signal_contract"]["parent_signal_id_set_sha256"]:
+            raise ContractError("V26 parent signal-id hash mismatch in result")
+        if payload.get("same_parent_signal_id_set") is not True \
+                or payload.get("same_parent_decision_timestamps") is not True:
+            raise ContractError("V26 changed the V25 RAW signal identity or decision timestamps")
+        if payload.get("same_execution_mask_all_cost_arms") is not True:
+            raise ContractError("V26 cost arms do not share one execution mask")
+        mask = []
+        for row in rows:
+            actions = row.get("arm_actions")
+            if not isinstance(actions, dict) or set(actions) != set(ARMS) \
+                    or len(set(actions.values())) != 1:
+                raise ContractError("V26 ledger arm execution actions differ")
+            mask.append([row["signal_id"], row.get("execution_selected") is True])
+        if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
+            raise ContractError("V26 execution mask hash mismatch")
+
     periods = payload.get("periods", {})
     if set(periods) != set(PERIODS):
         raise ContractError("walk-forward or comparable-month set changed")
@@ -387,6 +454,16 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             metrics = period.get(arm)
             if not isinstance(metrics, dict) or metrics.get("source_signals") != raw_count:
                 raise ContractError(f"signal set/count mismatch in {period_name}/{arm}")
+            if raw_source == "SEALED_PARENT_V25_LEDGER":
+                start, end = PERIOD_BOUNDS[period_name]
+                selected_count = sum(
+                    row.get("execution_selected") is True
+                    and start <= row["fill_time"][:10] < end
+                    and row["exit_time"][:10] < end
+                    for row in rows
+                )
+                if metrics.get("executed_signals") != selected_count:
+                    raise ContractError(f"V26 executed signal count mismatch in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
@@ -446,7 +523,14 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     raw = walk["RAW_SIGNAL"]["equity_multiple"]
     base = walk["EXECUTABLE_BASE"]["equity_multiple"]
     adverse = walk["ADVERSE_STRESS"]["equity_multiple"]
-    if raw <= 1:
+    result_reason = verified["result"].get("automatic_rejection", {}).get("reason_code")
+    if result_reason == "EXECUTION_SUBSET_RAW_EDGE_ABSENT":
+        reason = result_reason
+        variable = "one_preregistered_causal_basket_hold_rule_that_preserves_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
+        reason = result_reason
+        variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"
+    elif raw <= 1:
         reason = "RAW_EDGE_ABSENT"
         variable = "replace_the_signal_family_without_changing_costs_or_leverage"
     elif base <= 1:
@@ -458,9 +542,11 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     else:
         reason = "DEVELOPMENT_EDGE_NOT_FINAL"
         variable = "one_preregistered_causal_regime_partition_on_development_data_only"
+    next_number = int(cycle["cycle_id"].removeprefix("V")) + 1
     return {
         "schema_version": 1,
         "parent_cycle": cycle["cycle_id"],
+        "proposed_cycle": f"V{next_number}",
         "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE",
         "reason_code": reason,
         "single_next_changed_variable": variable,
@@ -476,15 +562,19 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     }
 
 
-def state_paths(root: Path) -> dict[str, Path]:
+def state_paths(root: Path, cycle_id: str = "V25") -> dict[str, Path]:
     base = within(root, "evidence/orchestrator_state_v2")
+    try:
+        next_number = int(cycle_id.removeprefix("V")) + 1
+    except ValueError as error:
+        raise ContractError(f"invalid cycle id: {cycle_id}") from error
     return {
         "base": base,
         "state": base / "state.json",
         "journal": base / "failure_and_event_journal.jsonl",
         "lock": base / "orchestrator.lock",
-        "seal": base / "official_seal_v25.json",
-        "work_order": base / "next_hypothesis_work_order_v26.json",
+        "seal": base / f"official_seal_{cycle_id.lower()}.json",
+        "work_order": base / f"next_hypothesis_work_order_v{next_number}.json",
     }
 
 
@@ -571,10 +661,11 @@ def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], 
 
 
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
-    paths = state_paths(root)
-    state = read_state(paths["state"])
+    shared_paths = state_paths(root)
+    state = read_state(shared_paths["state"])
     reports = []
     for cycle in registry["cycles"]:
+        paths = state_paths(root, cycle["cycle_id"])
         source_audit = validate_source(cycle)
         cycle_state = state.get("cycles", {}).get(cycle["cycle_id"])
         result_path = within(root, cycle["execution"]["result"])
@@ -591,6 +682,8 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             status = "RECOVERABLE_RESULT_NOT_YET_SEALED"
         elif cycle_state and cycle_state.get("status") == "ATTEMPT_STARTED":
             status = "FAIL_CLOSED_UNCERTAIN_EXECUTION_NO_RESULT"
+        elif cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN":
+            status = "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN"
         else:
             status = "REGISTERED_PREFLIGHT_PASS_PENDING"
         reports.append({"cycle_id": cycle["cycle_id"], "status": status,
@@ -599,12 +692,21 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
-    paths = state_paths(root)
-    with exclusive_lock(paths["lock"], paths["journal"]):
-        state = read_state(paths["state"])
-        cycle = registry["cycles"][0]
+    shared_paths = state_paths(root)
+    with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
+        state = read_state(shared_paths["state"])
+        cycle = next((item for item in registry["cycles"]
+                      if not state.get("cycles", {}).get(item["cycle_id"], {}).get("status", "").startswith("SEALED")), None)
+        if cycle is None:
+            raise ContractError("every registered cycle already has its one official sealed execution")
         cycle_id = cycle["cycle_id"]
+        paths = state_paths(root, cycle_id)
         current = state["cycles"].get(cycle_id)
+        parent_cycle = cycle.get("depends_on_cycle")
+        if parent_cycle:
+            parent = state.get("cycles", {}).get(parent_cycle, {})
+            if not parent.get("status", "").startswith("SEALED"):
+                raise ContractError(f"parent cycle {parent_cycle} is not sealed")
         result_path = within(root, cycle["execution"]["result"])
         if current and current.get("status", "").startswith("SEALED"):
             raise ContractError(f"{cycle_id} already has its one official sealed execution")
@@ -643,6 +745,8 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         state["cycles"][cycle_id]["stderr_sha256"] = hashlib.sha256(completed.stderr.encode()).hexdigest()
         atomic_json(paths["state"], state)
         if completed.returncode != 0:
+            state["cycles"][cycle_id]["status"] = "FAILED_OFFICIAL_EXECUTION_NO_RERUN"
+            atomic_json(paths["state"], state)
             append_journal(paths["journal"], "OFFICIAL_EXECUTION_FAILED", cycle_id=cycle_id,
                            returncode=completed.returncode,
                            stdout_sha256=state["cycles"][cycle_id]["stdout_sha256"],

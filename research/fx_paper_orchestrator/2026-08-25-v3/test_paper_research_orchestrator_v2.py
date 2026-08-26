@@ -99,6 +99,21 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertTrue(cycle["registered_before_official_execution"])
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
+    def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26"])
+        cycle = self.registry["cycles"][1]
+        self.assertEqual(cycle["depends_on_cycle"], "V25")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(cycle["signal_contract"]["raw_signal_source"], "SEALED_PARENT_V25_LEDGER")
+        self.assertTrue(cycle["signal_contract"]["same_decision_timestamps"])
+        self.assertTrue(cycle["signal_contract"]["same_execution_mask_all_arms"])
+
+    def test_real_audit_preserves_v25_seal_and_exposes_v26_terminal_failure(self):
+        report = orchestrator.audit(ROOT, self.registry)
+        statuses = {item["cycle_id"]: item["status"] for item in report["cycles"]}
+        self.assertEqual(statuses["V25"], "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN")
+        self.assertEqual(statuses["V26"], "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN")
+
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)
 
@@ -251,6 +266,47 @@ class ResultAndRestartAcceptanceTest(unittest.TestCase):
             seal = orchestrator.execute_next(root, registry)
         self.assertTrue(seal["recovered_without_rerun"])
         run.assert_not_called()
+
+    def test_execute_next_skips_sealed_parent_and_runs_only_pending_child(self):
+        temporary, root, parent, registry = self.setup_root()
+        self.addCleanup(temporary.cleanup)
+        child = copy.deepcopy(parent)
+        child["cycle_id"] = "V26"
+        child["depends_on_cycle"] = "V25"
+        child["execution"]["result"] = "evidence/run-v26/result.json"
+        child["execution"]["ledger"] = "evidence/run-v26/ledger.jsonl"
+        registry["cycles"] = [parent, child]
+        paths = orchestrator.state_paths(root)
+        orchestrator.atomic_json(paths["state"], {
+            "schema_version": 2,
+            "cycles": {"V25": {"status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN"}},
+        })
+
+        def fake_run(*_args, **_kwargs):
+            write_synthetic_result(root, child)
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+        with mock.patch.object(orchestrator, "validate_source", return_value={}), \
+                mock.patch.object(orchestrator.subprocess, "run", side_effect=fake_run) as run:
+            seal = orchestrator.execute_next(root, registry)
+        self.assertEqual(seal["cycle_id"], "V26")
+        self.assertEqual(run.call_count, 1)
+        self.assertTrue(orchestrator.state_paths(root, "V26")["seal"].is_file())
+
+    def test_failed_official_subprocess_is_terminal_and_rerun_is_forbidden(self):
+        temporary, root, cycle, registry = self.setup_root()
+        self.addCleanup(temporary.cleanup)
+        with mock.patch.object(orchestrator, "validate_source", return_value={}), \
+                mock.patch.object(orchestrator.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=1, stdout="", stderr="fixture failure"
+                )) as run:
+            with self.assertRaisesRegex(orchestrator.ContractError, "rerun forbidden"):
+                orchestrator.execute_next(root, registry)
+            with self.assertRaisesRegex(orchestrator.ContractError, "unexpected cycle state"):
+                orchestrator.execute_next(root, registry)
+        self.assertEqual(run.call_count, 1)
+        state = json.loads(orchestrator.state_paths(root)["state"].read_text())
+        self.assertEqual(state["cycles"]["V25"]["status"], "FAILED_OFFICIAL_EXECUTION_NO_RERUN")
 
 
 if __name__ == "__main__":

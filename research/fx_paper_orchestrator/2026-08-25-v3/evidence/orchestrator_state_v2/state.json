@@ -12,6 +12,15 @@
       "stdout_sha256": "c8571d00c88fcd7c21a5643458fd504573beb0c790b1b45ea16ac4625a846a0f",
       "strategy_profit_pass": false,
       "subprocess_returncode": 0
+    },
+    "V26": {
+      "official_attempts": 1,
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-26T22:44:41.854800+00:00",
+      "status": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+      "stderr_sha256": "c0b2fb2a77b3d8d77f5849038c237d09c910fea26b52b85b0b205f3e84a67bef",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "subprocess_returncode": 1
     }
   },
   "schema_version": 2

@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V26",
+  "experiment": "FX_CAUSAL_MIN_SPREAD_REPRESENTATIVE_V26",
+  "registered_before_official_execution": true,
+  "parent_cycle": "V25",
+  "parent_reason_code": "RAW_EDGE_COST_DOMINANT",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "parent_evidence": {
+    "official_result_file_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "official_seal_sha256": "07867edb4fd250f68c3c6ebac434afa4f88a6ddf003f004076773637329bb45b",
+    "proposal_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+    "raw_signals": 500,
+    "effective_bet_days": 80
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "baseline": "FX_ASIAN_USD_COHERENCE_PERSISTENCE_V25",
+    "family": "FX_SESSION_CURRENCY_COHERENCE",
+    "family_hypothesis_number": 2,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_causal_minimum_spread_representative_execution_per_raw_signal_basket",
+    "null": "Keeping the V25 RAW signal definition and fixed 1/7 sleeves while executing one causally cheapest representative per basket does not make both normal and adverse full comparable months reach 2.0x.",
+    "alternative": "The one-rule execution mask reduces realized cost and turnover enough for both normal and adverse full comparable months to reach at least 2.0x without leverage, period, or holdout changes."
+  },
+  "training_only_rule_selection": {
+    "window_start": "2026-03-11",
+    "window_end_exclusive": "2026-05-01",
+    "outcome_fields_read": false,
+    "candidate_rules_evaluated": 1,
+    "selected_rule": "CAUSAL_MIN_SPREAD_REPRESENTATIVE",
+    "selection_basis": "V25 identified cost dominance. Training-only quote-spread inputs showed a defined causal ordering for every observed basket; no return, direction-accuracy, drawdown, monthly-multiple, or future-exit outcome was consulted.",
+    "observations": {
+      "raw_signal_rows": 202,
+      "basket_days": 33,
+      "missing_scores": 0,
+      "strict_score_dispersion_days": 33,
+      "median_within_basket_score_range_bps": 2.9641198518880687,
+      "selected_pair_counts_diagnostic_only": {
+        "EUR_USD": 3,
+        "USD_JPY": 30
+      }
+    },
+    "parameters_optimized_on_returns": false
+  },
+  "deterministic_rule": {
+    "name": "CAUSAL_MIN_SPREAD_REPRESENTATIVE",
+    "purpose": "execution_and_inventory_turnover_reduction_only",
+    "lookback_bars": 20,
+    "bar_granularity": "M5",
+    "lookback_minutes": 100,
+    "input_price_component": "completed_BID_ASK_close",
+    "score_formula": "score_s_bps = median_k(2 * 10000 * (ask_close_k - bid_close_k) / ((ask_close_k + bid_close_k) / 2)) for the 20 completed same-pair M5 bars ending at decision_time_s",
+    "score_units": "roundtrip_quoted_spread_proxy_basis_points_of_notional_return",
+    "basket_key": "utc_day",
+    "selection_formula": "selected_signal_id_d = argmin over V25 RAW signals in basket d of (score_s_bps, signal_id_s)",
+    "tie_break": "lexicographically_smallest_signal_id",
+    "threshold": null,
+    "selected_per_nonempty_basket": 1,
+    "nonselected_action": "CASH_NO_POSITION",
+    "entry_use": "The selected V25 signal keeps its original pair, direction, decision_time and 06:00 fill_time.",
+    "exit_use": "The selected V25 signal keeps its original 11:55 exit_time and finite max-age.",
+    "inventory_use": "Only the selected signal opens one fixed 1/7 sleeve; six sleeves remain cash and are not reallocated.",
+    "direction_use": "The rule never creates, flips, or ranks direction; direction is inherited byte-for-byte from V25 RAW_SIGNAL.",
+    "cost_arm_use": "The execution-selected mask is computed once and reused unchanged by RAW_SIGNAL, EXECUTABLE_BASE and ADVERSE_STRESS. Cost is never used to suppress or alter the RAW signal ledger.",
+    "chronology": "Every score input row is complete and has timestamp <= decision_time. Fill and exit bars and any later outcome are unavailable to the selector.",
+    "missing_or_invalid_input": "FAIL_CLOSED_BEFORE_REPLAY"
+  },
+  "signal_contract": {
+    "raw_signal_source": "SEALED_PARENT_V25_LEDGER",
+    "raw_signal_definition_changed": false,
+    "raw_signal_id_set_changed": false,
+    "decision_timestamps_changed": false,
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "same_signal_id_set": true,
+    "same_entry_direction_exit": true,
+    "same_execution_mask_all_arms": true,
+    "raw_cost_gate": false,
+    "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+    "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+  },
+  "inventory_contract": {
+    "currencies": [
+      "AUD",
+      "CAD",
+      "CHF",
+      "EUR",
+      "GBP",
+      "JPY",
+      "NZD",
+      "USD"
+    ],
+    "one_position_per_pair": true,
+    "one_basket_per_utc_day": true,
+    "selected_positions_per_basket": 1,
+    "add_to_position": false,
+    "martingale": false,
+    "overlap": false,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "unallocated_sleeves_remain_cash": true,
+    "gross_leverage_cap": 1.0,
+    "rule_max_gross_leverage": 0.14285714285714285,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 21600,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false
+  },
+  "evaluation_contract": {
+    "walk_forward": {
+      "start": "2026-05-01",
+      "end_exclusive": "2026-07-01"
+    },
+    "full_comparable_months": [
+      "MONTH_2026_05",
+      "MONTH_2026_06"
+    ],
+    "holdout": {
+      "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+      "state": "UNOPENED",
+      "may_execute": false
+    },
+    "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT",
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "leverage_changed": false,
+    "evaluation_period_changed": false
+  },
+  "required_comparison_metrics": [
+    "gross_edge_bps",
+    "realized_cost_bps",
+    "net_edge_bps",
+    "turnover_nav",
+    "break_even_cost_bps",
+    "direction_accuracy",
+    "monthly_equity_multiple",
+    "max_drawdown",
+    "terminal_inventory_mtm",
+    "max_inventory_age_seconds",
+    "N_eff_days"
+  ],
+  "rejection_conditions": {
+    "system_fail": [
+      "parent V25 seal, result, ledger or signal-id hash mismatch",
+      "any RAW signal id, definition, pair, direction, decision_time, fill_time or exit_time change",
+      "any score input after decision_time or any incomplete BID/ASK row",
+      "execution mask differs across cost arms",
+      "source BID/ASK hash or completed chronology mismatch",
+      "inventory, max-age, terminal liquidation, terminal MTM, restart safety or zero-authority failure",
+      "holdout opened or label changed",
+      "evaluation period, leverage or profit thresholds changed"
+    ],
+    "profit_reject": "Automatically reject if either full comparable month is below 2.0x in EXECUTABLE_BASE or ADVERSE_STRESS, or unopened holdout reproduction is absent.",
+    "stretch_not_required_for_minimum": "3.0x is reported separately and never substituted for the 2.0x minimum."
+  },
+  "llm_policy": {
+    "actual_llm_used": false,
+    "individual_order_direction_fill_authority": false,
+    "inventory_cap_or_mode_override": false,
+    "hard_guards_owned_by_bot": true
+  },
+  "forbidden": [
+    "multiple_candidate_sweep",
+    "lookahead",
+    "evaluation_period_tuning",
+    "post_hoc_leverage",
+    "hidden_unrealized_loss",
+    "numeric_tampering",
+    "holdout_opening",
+    "live_or_broker_side_effect"
+  ]
+}
