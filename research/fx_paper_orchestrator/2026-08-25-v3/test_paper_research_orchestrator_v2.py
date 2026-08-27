@@ -108,15 +108,15 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertTrue(cycle["signal_contract"]["same_decision_timestamps"])
         self.assertTrue(cycle["signal_contract"]["same_execution_mask_all_arms"])
 
-    def test_real_audit_preserves_v25_seal_and_exposes_v26_terminal_failure(self):
+    def test_real_audit_preserves_v25_seal_and_exposes_authorized_v26_recovery(self):
         report = orchestrator.audit(ROOT, self.registry)
         statuses = {item["cycle_id"]: item["status"] for item in report["cycles"]}
         self.assertEqual(statuses["V25"], "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN")
-        self.assertEqual(statuses["V26"], "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN")
+        self.assertEqual(statuses["V26"], "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING")
         v26 = next(item for item in report["cycles"] if item["cycle_id"] == "V26")
-        self.assertEqual(v26["recovery"]["status"], "AWAITING_EXPLICIT_USER_AUTHORIZATION_NOT_EXECUTABLE")
-        self.assertFalse(v26["recovery"]["authorization_recorded"])
-        self.assertFalse(v26["recovery"]["execution_allowed"])
+        self.assertEqual(v26["recovery"]["status"], "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING")
+        self.assertTrue(v26["recovery"]["authorization_recorded"])
+        self.assertTrue(v26["recovery"]["execution_allowed"])
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)
@@ -311,6 +311,81 @@ class ResultAndRestartAcceptanceTest(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         state = json.loads(orchestrator.state_paths(root)["state"].read_text())
         self.assertEqual(state["cycles"]["V25"]["status"], "FAILED_OFFICIAL_EXECUTION_NO_RERUN")
+
+    def recovery_fixture(self) -> tuple[tempfile.TemporaryDirectory, Path, dict, dict]:
+        temporary, root, cycle, registry = self.setup_root()
+        cycle["cycle_id"] = "V26"
+        state = {
+            "schema_version": 2,
+            "cycles": {"V26": {
+                "status": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+                "official_attempts": 1,
+                "stdout_sha256": "out",
+                "stderr_sha256": "err",
+            }},
+        }
+        orchestrator.atomic_json(orchestrator.state_paths(root)["state"], state)
+        return temporary, root, cycle, registry
+
+    def test_authorized_recovery_executes_once_and_seals(self):
+        temporary, root, cycle, registry = self.recovery_fixture()
+        self.addCleanup(temporary.cleanup)
+
+        def fake_run(*_args, **_kwargs):
+            write_synthetic_result(root, cycle)
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+        authorization = {
+            "authorization_sha256": orchestrator.V26_RECOVERY_AUTHORIZATION_SHA256,
+        }
+        with mock.patch.object(orchestrator, "validate_source", return_value={}), \
+                mock.patch.object(orchestrator, "validate_v26_recovery_work_order"), \
+                mock.patch.object(orchestrator, "validate_v26_recovery_authorization",
+                                  return_value=authorization), \
+                mock.patch.object(orchestrator.subprocess, "run", side_effect=fake_run) as run:
+            seal = orchestrator.execute_v26_recovery(root, registry)
+            self.assertTrue(seal["authorized_recovery_execution"])
+            self.assertEqual(seal["authorized_recovery_ordinal"], 1)
+            self.assertFalse(seal["recovered_without_rerun"])
+            with self.assertRaisesRegex(orchestrator.ContractError, "already has"):
+                orchestrator.execute_v26_recovery(root, registry)
+        self.assertEqual(run.call_count, 1)
+
+    def test_authorized_recovery_started_result_seals_without_second_subprocess(self):
+        temporary, root, cycle, registry = self.recovery_fixture()
+        self.addCleanup(temporary.cleanup)
+        write_synthetic_result(root, cycle)
+        state = json.loads(orchestrator.state_paths(root)["state"].read_text())
+        state["cycles"]["V26"].update({
+            "status": "RECOVERY_ATTEMPT_STARTED",
+            "recovery_attempts": 1,
+            "recovery_authorization_sha256": orchestrator.V26_RECOVERY_AUTHORIZATION_SHA256,
+        })
+        orchestrator.atomic_json(orchestrator.state_paths(root)["state"], state)
+        with mock.patch.object(orchestrator.subprocess, "run") as run:
+            seal = orchestrator.execute_v26_recovery(root, registry)
+        self.assertTrue(seal["recovered_without_rerun"])
+        self.assertTrue(seal["authorized_recovery_execution"])
+        run.assert_not_called()
+
+    def test_failed_authorized_recovery_is_terminal(self):
+        temporary, root, _cycle, registry = self.recovery_fixture()
+        self.addCleanup(temporary.cleanup)
+        authorization = {
+            "authorization_sha256": orchestrator.V26_RECOVERY_AUTHORIZATION_SHA256,
+        }
+        with mock.patch.object(orchestrator, "validate_source", return_value={}), \
+                mock.patch.object(orchestrator, "validate_v26_recovery_work_order"), \
+                mock.patch.object(orchestrator, "validate_v26_recovery_authorization",
+                                  return_value=authorization), \
+                mock.patch.object(orchestrator.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=1, stdout="", stderr="recovery fixture failure"
+                )) as run:
+            with self.assertRaisesRegex(orchestrator.ContractError, "rerun forbidden"):
+                orchestrator.execute_v26_recovery(root, registry)
+            with self.assertRaisesRegex(orchestrator.ContractError, "already failed"):
+                orchestrator.execute_v26_recovery(root, registry)
+        self.assertEqual(run.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V26",
+  "authorized": true,
+  "authorized_at": "2026-08-27T00:44:07Z",
+  "authorization_source": {
+    "owner_task_id": "01a03f46-9dfd-7042-bfd1-d3ba26072171",
+    "user_message_utf8_sha256": "2113d7e34b4bfe7e4b037213cee3031eaaf3f8573374223852b24ee1cab35c84",
+    "user_message_exact": "許可"
+  },
+  "scope": "ONE_TIMESTAMP_ONLY_PAPER_RECOVERY_ATTEMPT",
+  "recovery_attempt_limit": 1,
+  "pre_result_failure_binding": {
+    "state": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+    "official_attempts": 1,
+    "result_file_exists": false,
+    "ledger_file_exists": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "c0b2fb2a77b3d8d77f5849038c237d09c910fea26b52b85b0b205f3e84a67bef",
+    "recovery_preparation_commit": "27361ebe96174d6578dd0246c3102f02308aa6ab"
+  },
+  "frozen_strategy_hashes": {
+    "preregistration_sha256": "b4579b78ea045e1cbf778cbc3f643496823276e768dd7b7dad66bb6d14fd9c2d",
+    "original_runner_sha256": "3989c614e92b93bc107995f93952c15bdb75a5f43740882270e2c7d0916e67ab",
+    "original_test_sha256": "3dbe5ba799f5b99241324ab808db6112c9c5223332d01615ab6b813a59d6a8e9",
+    "parent_result_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e"
+  },
+  "repair_hashes": {
+    "work_order_sha256": "9f78f63ec2798bc38f701046ce0d21e1caa9fb65ff9391eca290b77efbec7ad1",
+    "compatibility_module_sha256": "f1b68055a77664e7a33ab9dc04ef068de152f4712c9f0bf81ce929d141886585",
+    "compatibility_test_sha256": "cb26f827885b5ef82f98d886511b2cc783ff23427b198002714f2e3113ff2f5b"
+  },
+  "one_shot_launcher": "run_causal_min_spread_representative_v26_recovery_once.py",
+  "one_shot_launcher_sha256": "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a",
+  "forbidden_changes": [
+    "raw_signal_definition",
+    "signal_id_set",
+    "decision_fill_or_exit_timestamps",
+    "directions",
+    "execution_selection_rule",
+    "execution_mask",
+    "cost_arms",
+    "inventory_or_max_age",
+    "leverage_or_sleeve",
+    "evaluation_periods",
+    "profit_thresholds",
+    "holdout_state",
+    "metric_or_rejection_logic"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

@@ -44,6 +44,10 @@ PERIOD_BOUNDS = {
 }
 V26_RECOVERY_WORK_ORDER = "V26_PRE_RESULT_RECOVERY_WORK_ORDER.json"
 V26_RECOVERY_WORK_ORDER_SHA256 = "9f78f63ec2798bc38f701046ce0d21e1caa9fb65ff9391eca290b77efbec7ad1"
+V26_RECOVERY_AUTHORIZATION = "V26_RECOVERY_AUTHORIZATION.json"
+V26_RECOVERY_AUTHORIZATION_SHA256 = "c34e684ed2203d84025f9f560608c16baf513744e1fb37846c03264ca76d0256"
+V26_RECOVERY_LAUNCHER = "run_causal_min_spread_representative_v26_recovery_once.py"
+V26_RECOVERY_LAUNCHER_SHA256 = "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a"
 
 
 class ContractError(RuntimeError):
@@ -621,7 +625,8 @@ def exclusive_lock(path: Path, journal: Path) -> Iterator[None]:
 
 
 def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], state: dict[str, Any],
-                   paths: dict[str, Path], recovery: bool) -> dict[str, Any]:
+                   paths: dict[str, Path], recovery: bool,
+                   authorized_recovery: bool = False) -> dict[str, Any]:
     verified = validate_result(root, cycle)
     gates = evaluate_gates(registry, cycle, verified)
     seal = {
@@ -629,6 +634,11 @@ def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], 
         "cycle_id": cycle["cycle_id"],
         "official_execution_ordinal": 1,
         "recovered_without_rerun": recovery,
+        "authorized_recovery_execution": authorized_recovery,
+        "authorized_recovery_ordinal": 1 if authorized_recovery else 0,
+        "recovery_authorization_sha256": (
+            V26_RECOVERY_AUTHORIZATION_SHA256 if authorized_recovery else None
+        ),
         "registry_sha256": sha256_file(within(root, "PAPER_RESEARCH_CYCLE_REGISTRY_V2.json")),
         "preregistration_sha256": cycle["preregistration_sha256"],
         "script_sha256": cycle["script_sha256"],
@@ -658,6 +668,7 @@ def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], 
     append_journal(paths["journal"], "OFFICIAL_RESULT_SEALED", cycle_id=cycle["cycle_id"],
                    result_file_sha256=verified["result_file_sha256"],
                    official_seal_sha256=seal["official_seal_sha256"], recovery=recovery,
+                   authorized_recovery=authorized_recovery,
                    system_pass=True, profit_pass=gates["strategy_profit_gate"]["passed"])
     return seal
 
@@ -740,6 +751,69 @@ def validate_v26_recovery_work_order(root: Path, cycle: dict[str, Any],
     }
 
 
+def validate_v26_recovery_authorization(root: Path, cycle: dict[str, Any],
+                                        cycle_state: dict[str, Any]) -> dict[str, Any]:
+    """Bind the user's one-shot permission to the frozen timestamp-only repair."""
+    path = within(root, V26_RECOVERY_AUTHORIZATION)
+    if not path.is_file() or sha256_file(path) != V26_RECOVERY_AUTHORIZATION_SHA256:
+        raise ContractError("V26 recovery authorization is missing or changed")
+    authorization = json.loads(path.read_text(encoding="utf-8"))
+    if authorization.get("schema_version") != 1 or authorization.get("cycle_id") != "V26" \
+            or authorization.get("authorized") is not True:
+        raise ContractError("V26 recovery authorization identity is invalid")
+    if authorization.get("scope") != "ONE_TIMESTAMP_ONLY_PAPER_RECOVERY_ATTEMPT" \
+            or authorization.get("recovery_attempt_limit") != 1:
+        raise ContractError("V26 recovery authorization is not one-shot/timestamp-only")
+    source = authorization.get("authorization_source", {})
+    if source.get("owner_task_id") != "01a03f46-9dfd-7042-bfd1-d3ba26072171" \
+            or source.get("user_message_exact") != "許可" \
+            or source.get("user_message_utf8_sha256") != hashlib.sha256("許可".encode()).hexdigest():
+        raise ContractError("V26 recovery user authorization binding changed")
+    if authorization.get("authority") != AUTHORITY:
+        raise ContractError("V26 recovery authorization exceeds paper-only authority")
+
+    failure = authorization.get("pre_result_failure_binding", {})
+    if failure.get("state") != "FAILED_OFFICIAL_EXECUTION_NO_RERUN" \
+            or failure.get("official_attempts") != 1 \
+            or failure.get("stdout_sha256") != cycle_state.get("stdout_sha256") \
+            or failure.get("stderr_sha256") != cycle_state.get("stderr_sha256"):
+        raise ContractError("V26 recovery authorization is not bound to the failed attempt")
+    if failure.get("result_file_exists") is not False or failure.get("ledger_file_exists") is not False:
+        raise ContractError("V26 recovery authorization is not pre-result")
+
+    frozen = authorization.get("frozen_strategy_hashes", {})
+    expected_frozen = {
+        "preregistration_sha256": cycle["preregistration_sha256"],
+        "original_runner_sha256": cycle["script_sha256"],
+        "original_test_sha256": cycle["test_sha256"],
+        "parent_ledger_sha256": cycle["signal_contract"]["parent_ledger_sha256"],
+        "parent_signal_id_set_sha256": cycle["signal_contract"]["parent_signal_id_set_sha256"],
+    }
+    if any(frozen.get(key) != value for key, value in expected_frozen.items()):
+        raise ContractError("V26 recovery authorization changed a frozen strategy hash")
+    repair = authorization.get("repair_hashes", {})
+    expected_repair = {
+        "work_order_sha256": V26_RECOVERY_WORK_ORDER_SHA256,
+        "compatibility_module_sha256": "f1b68055a77664e7a33ab9dc04ef068de152f4712c9f0bf81ce929d141886585",
+        "compatibility_test_sha256": "cb26f827885b5ef82f98d886511b2cc783ff23427b198002714f2e3113ff2f5b",
+    }
+    if any(repair.get(key) != value for key, value in expected_repair.items()):
+        raise ContractError("V26 recovery authorization changed the timestamp-only repair")
+    launcher = within(root, authorization.get("one_shot_launcher", ""))
+    if authorization.get("one_shot_launcher") != V26_RECOVERY_LAUNCHER \
+            or not launcher.is_file() \
+            or authorization.get("one_shot_launcher_sha256") != V26_RECOVERY_LAUNCHER_SHA256 \
+            or sha256_file(launcher) != V26_RECOVERY_LAUNCHER_SHA256:
+        raise ContractError("V26 recovery one-shot launcher is missing or changed")
+    return {
+        "status": "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING",
+        "authorization_sha256": V26_RECOVERY_AUTHORIZATION_SHA256,
+        "authorization_recorded": True,
+        "execution_allowed": cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+        "recovery_attempt_limit": 1,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -763,15 +837,40 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         elif cycle_state and cycle_state.get("status") == "ATTEMPT_STARTED":
             status = "FAIL_CLOSED_UNCERTAIN_EXECUTION_NO_RESULT"
         elif cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN":
-            status = "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN"
-            recovery = validate_v26_recovery_work_order(root, cycle, cycle_state) \
-                if cycle["cycle_id"] == "V26" else None
+            status = "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING" if cycle["cycle_id"] == "V26" \
+                else "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN"
+            if cycle["cycle_id"] == "V26":
+                validate_v26_recovery_work_order(root, cycle, cycle_state)
+                recovery = validate_v26_recovery_authorization(root, cycle, cycle_state)
+            else:
+                recovery = None
+        elif cycle_state and cycle_state.get("status") == "RECOVERY_ATTEMPT_STARTED":
+            result_exists = result_path.exists()
+            ledger_exists = within(root, cycle["execution"]["ledger"]).exists()
+            status = "RECOVERABLE_AUTHORIZED_RESULT_NOT_YET_SEALED" \
+                if result_exists and ledger_exists else "FAIL_CLOSED_UNCERTAIN_RECOVERY_NO_RESULT"
+            recovery = {
+                "authorization_recorded": True,
+                "execution_allowed": False,
+                "authorization_sha256": cycle_state.get("recovery_authorization_sha256"),
+                "recovery_attempts": cycle_state.get("recovery_attempts"),
+            }
+        elif cycle_state and cycle_state.get("status") == "FAILED_AUTHORIZED_RECOVERY_NO_RERUN":
+            status = "FAILED_AUTHORIZED_RECOVERY_NO_RESULT_RERUN_FORBIDDEN"
+            recovery = {
+                "authorization_recorded": True,
+                "execution_allowed": False,
+                "authorization_sha256": cycle_state.get("recovery_authorization_sha256"),
+                "recovery_attempts": cycle_state.get("recovery_attempts"),
+            }
         else:
             status = "REGISTERED_PREFLIGHT_PASS_PENDING"
         report = {"cycle_id": cycle["cycle_id"], "status": status,
                   "source_rows": {pair: item["rows"] for pair, item in source_audit.items()}}
-        if cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN" \
-                and cycle["cycle_id"] == "V26":
+        if cycle_state and cycle["cycle_id"] == "V26" and cycle_state.get("status") in {
+            "FAILED_OFFICIAL_EXECUTION_NO_RERUN", "RECOVERY_ATTEMPT_STARTED",
+            "FAILED_AUTHORIZED_RECOVERY_NO_RERUN",
+        }:
             report["recovery"] = recovery
         reports.append(report)
     return {"schema_version": 2, "authority": AUTHORITY, "cycles": reports}
@@ -841,6 +940,85 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         return seal_completed(root, registry, cycle, state, paths, recovery=False)
 
 
+def execute_v26_recovery(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
+    """Perform exactly one explicitly authorized, timestamp-only V26 recovery."""
+    shared_paths = state_paths(root)
+    with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
+        state = read_state(shared_paths["state"])
+        cycle = next((item for item in registry["cycles"] if item["cycle_id"] == "V26"), None)
+        if cycle is None:
+            raise ContractError("registered V26 cycle is missing")
+        paths = state_paths(root, "V26")
+        current = state.get("cycles", {}).get("V26", {})
+        result_path = within(root, cycle["execution"]["result"])
+        ledger_path = within(root, cycle["execution"]["ledger"])
+
+        if current.get("status", "").startswith("SEALED"):
+            raise ContractError("V26 already has a sealed result; recovery rerun forbidden")
+        if current.get("status") == "RECOVERY_ATTEMPT_STARTED":
+            if current.get("recovery_attempts") != 1 \
+                    or current.get("recovery_authorization_sha256") != V26_RECOVERY_AUTHORIZATION_SHA256:
+                raise ContractError("V26 recovery state binding changed")
+            if result_path.exists() and ledger_path.exists():
+                return seal_completed(root, registry, cycle, state, paths, recovery=True,
+                                      authorized_recovery=True)
+            append_journal(paths["journal"], "FAIL_CLOSED_UNCERTAIN_AUTHORIZED_RECOVERY_NO_RESULT",
+                           cycle_id="V26", recovery_attempts=current.get("recovery_attempts"))
+            raise ContractError("authorized V26 recovery started without a recoverable result; rerun forbidden")
+        if current.get("status") == "FAILED_AUTHORIZED_RECOVERY_NO_RERUN":
+            raise ContractError("authorized V26 recovery already failed; rerun forbidden")
+        if current.get("status") != "FAILED_OFFICIAL_EXECUTION_NO_RERUN" \
+                or current.get("official_attempts") != 1:
+            raise ContractError("V26 is not in the exact pre-result failed state")
+
+        validate_v26_recovery_work_order(root, cycle, current)
+        authorization = validate_v26_recovery_authorization(root, cycle, current)
+        if result_path.exists() or ledger_path.exists():
+            raise ContractError("V26 recovery outputs exist before recovery intent")
+        source_audit = validate_source(cycle)
+        current.update({
+            "status": "RECOVERY_ATTEMPT_STARTED",
+            "recovery_attempts": 1,
+            "recovery_started_at": datetime.now(timezone.utc).isoformat(),
+            "recovery_authorization_sha256": authorization["authorization_sha256"],
+            "recovery_launcher_sha256": V26_RECOVERY_LAUNCHER_SHA256,
+        })
+        atomic_json(paths["state"], state)
+        append_journal(paths["journal"], "AUTHORIZED_RECOVERY_EXECUTION_STARTED", cycle_id="V26",
+                       official_attempts=1, recovery_attempt=1,
+                       authorization_sha256=authorization["authorization_sha256"],
+                       launcher_sha256=V26_RECOVERY_LAUNCHER_SHA256,
+                       source_rows={pair: item["rows"] for pair, item in source_audit.items()})
+
+        execution = cycle["execution"]
+        argv = [sys.executable, V26_RECOVERY_LAUNCHER, *execution["argv"][1:]]
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": os.pathsep.join(str(within(root, item)) for item in execution["pythonpath"]),
+        }
+        completed = subprocess.run(argv, cwd=root, env=environment, text=True, capture_output=True,
+                                   timeout=execution["timeout_seconds"], check=False)
+        current["recovery_subprocess_returncode"] = completed.returncode
+        current["recovery_stdout_sha256"] = hashlib.sha256(completed.stdout.encode()).hexdigest()
+        current["recovery_stderr_sha256"] = hashlib.sha256(completed.stderr.encode()).hexdigest()
+        atomic_json(paths["state"], state)
+        if completed.returncode != 0:
+            current["status"] = "FAILED_AUTHORIZED_RECOVERY_NO_RERUN"
+            atomic_json(paths["state"], state)
+            append_journal(paths["journal"], "AUTHORIZED_RECOVERY_EXECUTION_FAILED", cycle_id="V26",
+                           recovery_attempt=1, returncode=completed.returncode,
+                           stdout_sha256=current["recovery_stdout_sha256"],
+                           stderr_sha256=current["recovery_stderr_sha256"])
+            raise ContractError(
+                f"authorized V26 recovery failed with exit {completed.returncode}; rerun forbidden"
+            )
+        return seal_completed(root, registry, cycle, state, paths, recovery=False,
+                              authorized_recovery=True)
+
+
 def record_migration_journal(root: Path) -> None:
     paths = state_paths(root)
     if paths["journal"].exists() and "HANDOFF_HASH_DEFINITION_CORRECTED" in paths["journal"].read_text(encoding="utf-8"):
@@ -863,7 +1041,7 @@ def record_migration_journal(root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("audit", "execute-next", "status"))
+    parser.add_argument("command", choices=("audit", "execute-next", "execute-v26-recovery", "status"))
     parser.add_argument("--registry", type=Path, default=Path("PAPER_RESEARCH_CYCLE_REGISTRY_V2.json"))
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
@@ -872,6 +1050,8 @@ def main() -> int:
         record_migration_journal(root)
         if args.command in {"audit", "status"}:
             result = audit(root, registry)
+        elif args.command == "execute-v26-recovery":
+            result = execute_v26_recovery(root, registry)
         else:
             result = execute_next(root, registry)
     except (ContractError, OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired) as error:
