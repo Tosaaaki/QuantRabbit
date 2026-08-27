@@ -327,12 +327,14 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                      and node.name == "detect_day_signals"]
         if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
             raise ContractError("signal detector exposes cost or outcome inputs")
-        simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-                           and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
-        if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
-            raise ContractError("cost-arm simulation call is not structurally unique")
-        if not isinstance(simulator_calls[0].args[1], ast.Name) or simulator_calls[0].args[1].id != "rows":
-            raise ContractError("cost arms do not consume the same RAW_SIGNAL ledger")
+        if cycle["cycle_id"] != "V33":
+            simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                               and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
+            if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
+                raise ContractError("cost-arm simulation call is not structurally unique")
+            if not isinstance(simulator_calls[0].args[1], ast.Name) \
+                    or simulator_calls[0].args[1].id != "rows":
+                raise ContractError("cost arms do not consume the same RAW_SIGNAL ledger")
         if cycle["cycle_id"] == "V32":
             prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
             predecessor = prereg.get("predecessor_disposition", {})
@@ -365,6 +367,32 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     != cycle["inventory_contract"]["finite_max_age_seconds"] \
                     or execution_rule.get("cost_or_outcome_inputs") is not False:
                 raise ContractError("V32 changed the frozen V31 execution state machine")
+        if cycle["cycle_id"] == "V33":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            failure = prereg.get("failed_predecessor", {})
+            runtime = prereg.get("runtime_compatibility_provenance", {})
+            strategy = prereg.get("frozen_v32_signal_family", {})
+            if failure.get("cycle_id") != "V32" \
+                    or failure.get("status") != "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN" \
+                    or failure.get("metrics_available") is not False \
+                    or failure.get("rerun_permitted") is not False:
+                raise ContractError("V33 did not preserve V32 as a terminal pre-result failure")
+            if runtime.get("classification") != "NON_STRATEGY_RUNTIME_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("integer_epoch_nanoseconds_changed") is not False \
+                    or runtime.get("signal_ids_changed") is not False \
+                    or runtime.get("directions_changed") is not False \
+                    or runtime.get("v32_rerun_permitted") is not False:
+                raise ContractError("V33 timestamp recovery changed the unobserved V32 strategy")
+            if strategy.get("source_script_sha256") \
+                    != "349447aa53a1dc8ff837e29960326b9c24b3276083f78a273dfceaf3c685eaca" \
+                    or strategy.get("candidate_signal_families_compared_by_outcome") != 0 \
+                    or strategy.get("cost_or_post_entry_outcome_inputs") is not False:
+                raise ContractError("V33 did not freeze the V32 signal family")
+            canonicalizers = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                              and node.name == "canonical_utc_nine_digits"]
+            if len(canonicalizers) != 1 or [arg.arg for arg in canonicalizers[0].args.args] != ["value"]:
+                raise ContractError("V33 timestamp canonicalizer contract mismatch")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -824,18 +852,19 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     or runtime.get("v26_rerun_permitted") is not False:
                 raise ContractError("V27 result runtime provenance or cycle identity mismatch")
 
-    if cycle["cycle_id"] == "V32":
-        if payload.get("cycle_id") != "V32" \
-                or payload.get("experiment") != "FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_V32" \
+    if cycle["cycle_id"] in {"V32", "V33"}:
+        expected_experiment = f"FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_{cycle['cycle_id']}"
+        if payload.get("cycle_id") != cycle["cycle_id"] \
+                or payload.get("experiment") != expected_experiment \
                 or payload.get("single_changed_variable") \
                 != "fx_specific_asian_displacement_handoff_fade_signal_family" \
                 or payload.get("same_execution_actions_all_cost_arms") is not True \
                 or payload.get("same_execution_state_transitions_all_cost_arms") is not True:
-            raise ContractError("V32 result identity or cost-arm parity mismatch")
+            raise ContractError(f"{cycle['cycle_id']} result identity or cost-arm parity mismatch")
         if payload.get("holdout") != {
                 "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
                 "state": "UNOPENED", "may_execute": False}:
-            raise ContractError("V32 holdout label or unopened state changed")
+            raise ContractError(f"{cycle['cycle_id']} holdout label or unopened state changed")
         indicator = payload.get("indicator", {})
         if indicator.get("training_abs_displacement_quantile") != 0.75 \
                 or indicator.get("direction_formula") \
@@ -843,23 +872,34 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 or indicator.get("cost_used_for_signal") is not False \
                 or indicator.get("post_entry_outcome_used_for_signal") is not False \
                 or indicator.get("evaluation_month_used_for_threshold") is not False:
-            raise ContractError("V32 result signal formula differs from preregistration")
+            raise ContractError(f"{cycle['cycle_id']} result signal formula differs from preregistration")
         execution_rule = payload.get("execution_rule", {})
         if execution_rule.get("changed_from_v31") is not False \
                 or execution_rule.get("required_consecutive_confirmations") != 2 \
                 or execution_rule.get("target_hold_seconds") != 172800 \
                 or execution_rule.get("hard_max_age_seconds") != max_age \
                 or execution_rule.get("cost_or_outcome_inputs") is not False:
-            raise ContractError("V32 result changed the V31 execution state machine")
+            raise ContractError(f"{cycle['cycle_id']} result changed the V31 execution state machine")
         if any(row.get("execution_selected") is not True for row in rows):
-            raise ContractError("V32 dropped a generated RAW signal from the execution ledger")
+            raise ContractError(f"{cycle['cycle_id']} dropped a generated RAW signal from the execution ledger")
         if any(not isinstance(row.get("arm_actions"), dict)
                or set(row["arm_actions"]) != set(ARMS)
                or len(set(row["arm_actions"].values())) != 1 for row in rows):
-            raise ContractError("V32 execution actions differ across cost arms")
+            raise ContractError(f"{cycle['cycle_id']} execution actions differ across cost arms")
         if payload.get("signal_id_set_sha256") \
                 != hashlib.sha256(canonical_bytes(sorted(ids))).hexdigest():
-            raise ContractError("V32 embedded signal-id set hash mismatch")
+            raise ContractError(f"{cycle['cycle_id']} embedded signal-id set hash mismatch")
+        if cycle["cycle_id"] == "V33":
+            runtime = payload.get("runtime_compatibility_provenance", {})
+            if runtime.get("classification") != "NON_STRATEGY_RUNTIME_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("same_unobserved_v32_strategy") is not True \
+                    or runtime.get("v32_rerun_permitted") is not False \
+                    or runtime.get("instant_changed") is not False:
+                raise ContractError("V33 result runtime compatibility provenance mismatch")
+            if any(not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z", row[field])
+                           for field in ("decision_time", "fill_time", "exit_time")) for row in rows):
+                raise ContractError("V33 ledger contains a noncanonical scheduled timestamp")
 
     periods = payload.get("periods", {})
     if set(periods) != set(PERIODS):
@@ -906,7 +946,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
-            if cycle["cycle_id"] == "V32":
+            if cycle["cycle_id"] in {"V32", "V33"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -916,11 +956,11 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     "execution_state_transition_sha256",
                 }
                 if set(metrics) < required_metrics:
-                    raise ContractError(f"V32 required metrics missing in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} required metrics missing in {period_name}/{arm}")
                 if metrics.get("processed_raw_signals") != raw_count or metrics.get("cash_signals") != 0:
-                    raise ContractError(f"V32 did not process the complete RAW ledger in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} did not process the complete RAW ledger in {period_name}/{arm}")
                 if metrics["max_inventory_age_seconds"] > max_age:
-                    raise ContractError(f"V32 max-age exceeded in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} max-age exceeded in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
@@ -938,12 +978,12 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
-        if cycle["cycle_id"] == "V32":
+        if cycle["cycle_id"] in {"V32", "V33"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
             if len(transition_hashes) != 1:
-                raise ContractError("V32 arm transitions differ")
+                raise ContractError(f"{cycle['cycle_id']} arm transitions differ")
     if len({tuple(value) for value in signal_sets.values()}) != 1:
         raise ContractError("same signal_id set assertion failed")
 

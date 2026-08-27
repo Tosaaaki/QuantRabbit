@@ -1,0 +1,134 @@
+{
+  "artifact_id": "FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_V33",
+  "cycle_id": "V33",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "family": "FX_SESSION_HANDOFF_MEAN_REVERSION",
+  "baseline": "FX_CAUSAL_CONSENSUS_RELEASE_PERSISTENCE_V31",
+  "failed_predecessor": {
+    "cycle_id": "V32",
+    "status": "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN",
+    "failure_evidence": "V32_OFFICIAL_EXECUTION_FAILURE.json",
+    "failure_evidence_sha256": "86b073f7ad7604dc444c074d634c95897ca1859fbfbac092e9de37407c13594d",
+    "result_exists": false,
+    "ledger_exists": false,
+    "metrics_available": false,
+    "profit_proven": false,
+    "rerun_permitted": false
+  },
+  "recovery_work_order": {
+    "path": "V33_PRE_RESULT_RECOVERY_WORK_ORDER.json",
+    "sha256": "64b85d6c44bf7d97bf5948da69286f03b1939042d6f4577a4cebe5c016cf502b",
+    "reason_code": "V32_TIMESTAMP_REPRESENTATION_MISMATCH_PRE_RESULT"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+    "same_unobserved_strategy_as_v32": true,
+    "null": "The unchanged Asian tail-displacement handoff fade does not produce positive RAW walk-forward equity or does not make both full comparable months reach 2.0x under both normal and adverse costs.",
+    "alternative": "The unchanged FX session-handoff hypothesis produces sufficient repeatable RAW and cost-adjusted edge under the frozen evaluation contract."
+  },
+  "runtime_compatibility_provenance": {
+    "classification": "NON_STRATEGY_RUNTIME_COMPATIBILITY",
+    "changed_strategy_variables": 0,
+    "single_change": "Serialize computed decision, fill and raw-exit instants as canonical RFC3339 UTC with exactly nine fractional digits before frozen state-plan lookup.",
+    "before_example": "2026-03-11T06:00:00Z",
+    "after_example": "2026-03-11T06:00:00.000000000Z",
+    "integer_epoch_nanoseconds_changed": false,
+    "signal_ids_changed": false,
+    "directions_changed": false,
+    "decision_fill_exit_instants_changed": false,
+    "thresholds_changed": false,
+    "v31_execution_state_machine_changed": false,
+    "costs_leverage_periods_or_holdout_changed": false,
+    "v32_rerun_permitted": false
+  },
+  "frozen_v32_signal_family": {
+    "source_preregistration": "ASIAN_DISPLACEMENT_HANDOFF_FADE_PREREGISTRATION_V32.json",
+    "source_preregistration_sha256": "3e303e749957dcb312af3bbabdcf086ab233ef3b6c979ebffcc6149a363c8680",
+    "source_script_sha256": "349447aa53a1dc8ff837e29960326b9c24b3276083f78a273dfceaf3c685eaca",
+    "name": "PAIR_SPECIFIC_ASIAN_TAIL_DISPLACEMENT_HANDOFF_FADE",
+    "training_window": ["2026-03-11", "2026-05-01"],
+    "measurement_window_utc": "00:00-05:55 completed M5",
+    "threshold_quantile": 0.75,
+    "training_abs_displacement_q75": {
+      "AUD_USD": 0.002602051767152891,
+      "EUR_USD": 0.0016711786566631797,
+      "GBP_USD": 0.0020130857326814042,
+      "NZD_USD": 0.0033787658794393136,
+      "USD_CAD": 0.0009860867272267774,
+      "USD_CHF": 0.001641535012627776,
+      "USD_JPY": 0.0014524649063044073
+    },
+    "entry_inequality": "abs(d[pair,day]) >= q[pair] and d[pair,day] != 0",
+    "direction_formula": "native_pair_direction = -sign(d[pair,day])",
+    "cost_or_post_entry_outcome_inputs": false,
+    "candidate_signal_families_compared_by_outcome": 0
+  },
+  "frozen_execution_contract": {
+    "baseline": "V31 inventory and exit state machine",
+    "changed_from_v31": false,
+    "same_direction": "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION",
+    "opposite_direction": "CLOSE_AT_SIGNAL_EXECUTABLE_OPEN_THEN_OPEN_REVERSE_FIXED_SLEEVE",
+    "peer_scope": "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH",
+    "minimum_peer_signals": 2,
+    "unanimity_required": true,
+    "required_consecutive_confirmations": 2,
+    "target_hold_seconds": 172800,
+    "hard_max_age_seconds": 345600,
+    "terminal_liquidation_required": true,
+    "cost_or_outcome_inputs": false
+  },
+  "cost_arm_contract": {
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "same_signal_id_set": true,
+    "same_execution_state_transitions": true,
+    "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+    "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS",
+    "actual_completed_bid_ask": true,
+    "cost_applied_only_after_signal_and_transition_plan_frozen": true
+  },
+  "inventory_contract": {
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 345600,
+    "add_to_position": false,
+    "martingale": false,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false
+  },
+  "evaluation_contract": {
+    "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+    "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false}
+  },
+  "rejection_contract": {
+    "system_fail": "Any frozen V32 strategy hash, timestamp-instant, source, arm-parity, V31 execution, inventory, max-age, terminal MTM, authority, holdout, period or leverage mismatch fails closed.",
+    "profit_reject": "Automatically reject if either full comparable month is below 2.0x in EXECUTABLE_BASE or ADVERSE_STRESS, or unopened holdout reproduction is absent.",
+    "official_run_limit": 1,
+    "adoption_authorized": false
+  },
+  "proposal_provenance": {
+    "proposal_kind": "UNOBSERVED_V32_STRATEGY_REREGISTERED_WITH_TIMESTAMP_REPRESENTATION_COMPATIBILITY_ONLY",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "policy_provenance": "V32_OFFICIAL_EXECUTION_FAILURE.json plus V33_PRE_RESULT_RECOVERY_WORK_ORDER.json",
+    "model_identity": "NO_ACTUAL_LLM_USED",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

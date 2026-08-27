@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "parent_cycle": "V32",
+  "proposed_cycle": "V33",
+  "status": "PRE_RESULT_RUNTIME_COMPATIBILITY_RECOVERY_REQUIRES_NEW_CYCLE",
+  "reason_code": "V32_TIMESTAMP_REPRESENTATION_MISMATCH_PRE_RESULT",
+  "same_unobserved_v32_strategy": true,
+  "changed_strategy_variables": 0,
+  "single_runtime_change": "canonicalize computed scheduled timestamps to RFC3339 UTC with exactly nine fractional digits without changing integer epoch nanoseconds",
+  "v32_may_not_be_replayed": true,
+  "v33_requires_new_preregistration": true,
+  "constraints": {
+    "same_signal_formula_thresholds_ids_directions_and_instants_as_v32": true,
+    "same_v31_execution_state_machine": true,
+    "same_costs_leverage_periods_and_holdout": true,
+    "holdout_must_remain_unopened": true,
+    "one_official_execution_only": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

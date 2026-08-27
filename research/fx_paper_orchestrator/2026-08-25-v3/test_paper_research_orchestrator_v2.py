@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -233,6 +233,23 @@ class RegistryAcceptanceTest(unittest.TestCase):
         )
         self.assertEqual(reason, "FX_SESSION_HANDOFF_FADE_RAW_EDGE_ABSENT")
         self.assertEqual(variable, orchestrator.SIGNAL_FAMILY_PIVOT_VARIABLE)
+
+    def test_v33_is_new_cycle_with_same_unobserved_v32_strategy_and_runtime_only_change(self):
+        cycle = self.registry["cycles"][8]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V33")
+        self.assertEqual(cycle["depends_on_cycle"], "V31")
+        self.assertTrue(prereg["hypothesis_contract"]["same_unobserved_strategy_as_v32"])
+        runtime = prereg["runtime_compatibility_provenance"]
+        self.assertEqual(runtime["changed_strategy_variables"], 0)
+        self.assertFalse(runtime["integer_epoch_nanoseconds_changed"])
+        self.assertFalse(runtime["signal_ids_changed"])
+        self.assertFalse(runtime["directions_changed"])
+        self.assertFalse(runtime["v32_rerun_permitted"])
+        failure = prereg["failed_predecessor"]
+        self.assertFalse(failure["result_exists"])
+        self.assertFalse(failure["metrics_available"])
+        self.assertFalse(failure["profit_proven"])
 
     def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
         reason, variable = orchestrator.route_next_work_order(
