@@ -56,6 +56,7 @@ V26_RECOVERY_FAILURE_SHA256 = "75cceae96df7be5a51955a0966f587d378a0328ddf4f9c4f4
 TERMINAL_NO_RERUN_STATUSES = {
     "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
     "FAILED_AUTHORIZED_RECOVERY_NO_RERUN",
+    "FAILED_RESULT_VALIDATION_NO_RERUN",
 }
 RAW_EDGE_REFINEMENT_POLICY_PATH = "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json"
 RAW_EDGE_REFINEMENT_BUDGET = 3
@@ -1625,6 +1626,8 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             status = "RECOVERABLE_RESULT_NOT_YET_SEALED"
         elif cycle_state and cycle_state.get("status") == "ATTEMPT_STARTED":
             status = "FAIL_CLOSED_UNCERTAIN_EXECUTION_NO_RESULT"
+        elif cycle_state and cycle_state.get("status") == "FAILED_RESULT_VALIDATION_NO_RERUN":
+            status = "FAILED_RESULT_VALIDATION_NO_RERUN"
         elif cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN":
             status = "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING" if cycle["cycle_id"] == "V26" \
                 else "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN"
@@ -1683,7 +1686,25 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             raise ContractError(f"{cycle_id} already has its one official sealed execution")
         if current and current.get("status") == "ATTEMPT_STARTED":
             if result_path.exists():
-                return seal_completed(root, registry, cycle, state, paths, recovery=True)
+                try:
+                    return seal_completed(root, registry, cycle, state, paths, recovery=True)
+                except (ContractError, ValueError, OSError, json.JSONDecodeError) as error:
+                    message = sanitized_subprocess_excerpt(str(error))
+                    current["status"] = "FAILED_RESULT_VALIDATION_NO_RERUN"
+                    current["result_validation_error_sha256"] = hashlib.sha256(
+                        str(error).encode()
+                    ).hexdigest()
+                    current["sanitized_result_validation_error"] = message
+                    atomic_json(paths["state"], state)
+                    append_journal(
+                        paths["journal"], "OFFICIAL_RESULT_VALIDATION_FAILED",
+                        cycle_id=cycle_id,
+                        result_file_sha256=sha256_file(result_path),
+                        error_sha256=current["result_validation_error_sha256"],
+                        sanitized_error=message,
+                        rerun_permitted=False,
+                    )
+                    raise ContractError("official result failed validation; rerun forbidden") from error
             append_journal(paths["journal"], "FAIL_CLOSED_UNCERTAIN_EXECUTION_NO_RESULT",
                            cycle_id=cycle_id, official_attempts=current.get("official_attempts"))
             raise ContractError("an official subprocess started but no recoverable result exists; rerun forbidden")

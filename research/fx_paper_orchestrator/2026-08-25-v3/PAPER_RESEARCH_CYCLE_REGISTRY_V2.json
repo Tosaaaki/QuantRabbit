@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "6c1b698eb5d425626aa26343dbf6ffc30693f818e6a5075b0e286f6b0bf9bb35",
+    "sha256": "3c2f49fe1a7f0d2793876c18897f1c9b4209e4733468eb29caed39235eb46381",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {

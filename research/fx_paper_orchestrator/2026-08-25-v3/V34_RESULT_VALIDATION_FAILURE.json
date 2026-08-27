@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V34",
+  "status": "FAILED_RESULT_VALIDATION_NO_RERUN",
+  "official_execution_ordinal": 1,
+  "subprocess_returncode": 0,
+  "result_file_sha256": "94c19e80fd09a15867b77e3db7affcc4e4e8164a0c1280007e20150818c2d690",
+  "ledger_file_sha256": "462f711c220d8d09657673623133f88f2a3efeb8ed950e3e3f705871037b1cb3",
+  "result_admitted": false,
+  "official_seal_exists": false,
+  "metrics_admissible": false,
+  "profit_proven": false,
+  "numeric_results_may_not_be_used_for_rule_selection": true,
+  "failure_class": "PREREGISTERED_INVENTORY_CAP_CONTRADICTION",
+  "validation_error": "V34 representative exposure exceeded in WALK_FORWARD/RAW_SIGNAL",
+  "validation_error_sha256": "afac31934006ae7a75f782b0a07738d869988e35942cbc1e69e61f019ee0d908",
+  "structural_root_cause": "Selecting one new representative per UTC day does not cap concurrent inventory at one sleeve because the frozen 48-hour target hold can overlap representatives from later days.",
+  "v34_rerun_permitted": false,
+  "next_cycle_contract": {
+    "proposed_cycle": "V35",
+    "single_changed_variable": "one_preregistered_global_no_overlap_admission_rule_preserving_all_v33_raw_signals_and_v34_daily_representative_ranking",
+    "rule_basis": "Admit a day's frozen representative only when no portfolio sleeve is open after max-age processing; otherwise retain the RAW signal with an explicit cash action.",
+    "outcome_or_cost_used": false,
+    "new_preregistration_required": true
+  },
+  "holdout": {"state": "UNOPENED", "may_execute": false},
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

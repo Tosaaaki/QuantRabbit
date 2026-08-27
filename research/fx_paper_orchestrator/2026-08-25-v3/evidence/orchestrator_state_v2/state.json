@@ -116,6 +116,17 @@
       "stdout_sha256": "ce85abb9e17147cebf7cb923e048c9cc35b7dd5c35a4d3ea4e004a911975af54",
       "strategy_profit_pass": false,
       "subprocess_returncode": 0
+    },
+    "V34": {
+      "official_attempts": 1,
+      "result_validation_error_sha256": "afac31934006ae7a75f782b0a07738d869988e35942cbc1e69e61f019ee0d908",
+      "sanitized_result_validation_error": "V34 representative exposure exceeded in WALK_FORWARD/RAW_SIGNAL",
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-27T03:50:54.879373+00:00",
+      "status": "FAILED_RESULT_VALIDATION_NO_RERUN",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "21a11fd63e79fcefa2f71e651ce41e35ed689582b36a28793f2bfc58067e5588",
+      "subprocess_returncode": 0
     }
   },
   "schema_version": 2

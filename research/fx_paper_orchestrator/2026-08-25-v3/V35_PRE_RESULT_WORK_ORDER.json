@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "parent_cycle": "V34",
+  "proposed_cycle": "V35",
+  "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE",
+  "reason_code": "V34_CONCURRENT_INVENTORY_CAP_CONTRADICTION",
+  "single_next_changed_variable": "one_preregistered_global_no_overlap_admission_rule_preserving_all_v33_raw_signals_and_v34_daily_representative_ranking",
+  "constraints": {
+    "v34_result_metrics_may_not_be_used": true,
+    "v34_may_not_be_replayed": true,
+    "same_v33_raw_signal_ids_directions_timestamps": true,
+    "same_v34_daily_representative_ranking": true,
+    "same_costs_leverage_periods_and_holdout": true,
+    "one_variable_only": true,
+    "holdout_must_remain_unopened": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
