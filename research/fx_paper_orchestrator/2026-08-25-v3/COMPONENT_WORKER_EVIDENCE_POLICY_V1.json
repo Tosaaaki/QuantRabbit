@@ -1,0 +1,71 @@
+{
+  "artifact_id": "FX_COMPONENT_WORKER_EVIDENCE_POLICY_V1",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY",
+  "effective_after_cycle": "V41",
+  "past_seals_mutable": false,
+  "candidate_status": "RESEARCH_COMPONENT_CANDIDATE_UNADMITTED",
+  "minimum_candidate_gate": {
+    "same_raw_base_adverse_contract": true,
+    "terminal_open_inventory": 0,
+    "terminal_inventory_mtm": 0.0,
+    "holdout_state": "UNOPENED",
+    "external_orders": 0,
+    "walk_forward_base_equity_multiple_strictly_greater_than": 1.0,
+    "walk_forward_adverse_equity_multiple_strictly_greater_than": 1.0,
+    "walk_forward_gross_edge_bps_strictly_greater_than": 0.0,
+    "walk_forward_base_net_edge_bps_strictly_greater_than": 0.0,
+    "walk_forward_adverse_net_edge_bps_strictly_greater_than": 0.0,
+    "walk_forward_direction_accuracy_strictly_greater_than": 0.5,
+    "hard_guard_violations": 0
+  },
+  "provisional_only_gate": {
+    "minimum_n_eff_episodes_for_nonprovisional": 100,
+    "multiple_testing_adjustment_required_for_nonprovisional": true,
+    "current_multiple_testing_adjustment": "NONE",
+    "monthly_2x_or_holdout_reproduction_may_be_inferred": false,
+    "strategy_adoption_may_be_inferred": false
+  },
+  "evidence_hashes_required": [
+    "sealed_signal_ledger",
+    "daily_worker_returns_all_cost_arms",
+    "currency_time_exposure_vector",
+    "n_eff",
+    "turnover",
+    "cost_drag",
+    "family",
+    "session",
+    "horizon"
+  ],
+  "deduplication": {
+    "cluster_unit": "SIGNED_CURRENCY_BY_COMPLETED_M5_TIMESTAMP",
+    "pair_ticket_count_is_not_independence_evidence": true,
+    "v39_is_duplicate_carry_variant_of_v38": true,
+    "v39_may_count_as_independent_worker": false
+  },
+  "independence_gate": {
+    "minimum_positive_provisional_candidates": 2,
+    "maximum_absolute_daily_base_return_correlation": 0.35,
+    "maximum_signed_currency_time_jaccard_overlap": 0.25,
+    "same_session_and_same_currency_exposure_may_not_be_counted_as_independent": true
+  },
+  "portfolio_proposal": {
+    "allowed_only_after_independence_gate": true,
+    "allocation_rule": "FIXED_EQUAL_COMPONENT_SLEEVES",
+    "allocation_rule_may_not_be_selected_by_candidate_outcomes": true,
+    "same_evaluation_calendar_bid_ask_and_cost_assumptions_required": true,
+    "gross_and_currency_caps_unchanged": true,
+    "terminal_liquidation_required": true,
+    "normal_and_adverse_arms_required": true,
+    "post_hoc_leverage_forbidden": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

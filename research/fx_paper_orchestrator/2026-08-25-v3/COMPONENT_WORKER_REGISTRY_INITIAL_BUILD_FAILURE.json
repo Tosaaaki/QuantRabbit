@@ -1,0 +1,34 @@
+{
+  "artifact_id": "COMPONENT_WORKER_REGISTRY_INITIAL_BUILD_FAILURE",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_FAILURE_EVIDENCE",
+  "status": "RECOVERED_RESTART_SAFE_WITHOUT_STRATEGY_RERUN",
+  "failed_command": "paper_research_orchestrator_v2.py build-component-registry",
+  "failure": {
+    "return_code": 2,
+    "error": "Invalid isoformat string: '2026-06-04T12:00:00.000000000+00:00'",
+    "cause": "V27 nine-digit timestamp compatibility installer was not invoked before component reconstruction",
+    "partial_component_registry_produced": false
+  },
+  "repair": {
+    "classification": "NON_STRATEGY_RUNTIME_COMPATIBILITY",
+    "changed_strategy_variables": 0,
+    "action": "invoke the frozen V27 timestamp compatibility installer before read-only reconstruction",
+    "v38_v40_results_or_ledgers_rerun": false,
+    "v41_result_ledger_or_seal_changed": false
+  },
+  "recovery": {
+    "same_component_policy": true,
+    "deterministic_build_succeeded": true,
+    "direct_readback_validated": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

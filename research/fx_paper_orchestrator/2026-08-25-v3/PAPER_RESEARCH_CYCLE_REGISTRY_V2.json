@@ -13,13 +13,20 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "9f8a6cab61d98caed4202b5810d1eac94a84d632e2e907e7079ab3d5f72a0c7a",
+    "sha256": "5fa9a87bbfd9254bedcebfe57399a3ae086efe890302b75a77aea6cad1d3b68e",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
     "path": "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json",
     "sha256": "a0549b4d56c233305e26f688f5d52a554bc4ce5ba39c846b88fe8aa38a92d852",
     "classification": "NON_STRATEGY_ORCHESTRATOR_POLICY"
+  },
+  "component_worker_evidence_policy": {
+    "path": "COMPONENT_WORKER_EVIDENCE_POLICY_V1.json",
+    "sha256": "ea81ba37427589576683c4fe42b6e26b2fc0e3a87599d9a1bca579f3442d15d3",
+    "builder_path": "component_worker_evidence_registry_v1.py",
+    "builder_sha256": "018259abc4508acda649e9cddc0f2b4c713962f413be3b20b4763f3634c14003",
+    "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY"
   },
   "legacy_evidence": {
     "registry": "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json",

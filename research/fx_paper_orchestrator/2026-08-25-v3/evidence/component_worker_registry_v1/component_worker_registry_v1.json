@@ -1,0 +1,207 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "candidate_status": "RESEARCH_COMPONENT_CANDIDATE_UNADMITTED",
+      "cycle_id": "V38",
+      "evidence": {
+        "cost_drag_sha256": "c7329aea525f09887e981818589b07b865603272d0d4250d2da911f83c473a01",
+        "currency_time_exposure_path": "evidence/component_worker_registry_v1/v38_currency_time_exposure.jsonl",
+        "currency_time_exposure_sha256": "52d207ccdf47c790392bf5f968f66617036ba2b9599255809f7f25094081d5d1",
+        "daily_worker_returns_path": "evidence/component_worker_registry_v1/v38_daily_worker_returns.jsonl",
+        "daily_worker_returns_sha256": "8e85e7be8af2cf605e5fad690074349172fc0747884dc6cccc3f51b4f868d6c8",
+        "family_session_horizon_sha256": "7cd622f31f5fcf531a78a7483441a23b4a6b8b275baac3d0249d31ecc7741c53",
+        "n_eff_sha256": "d345c364ace53dc82efd952b896a4567099994a23c2317307d69bf45aca592bf",
+        "official_seal_file_sha256": "9c63bdb9d4e68fc286be401449895143f728e69f88e8132bcb12fb44e6db4365",
+        "official_seal_path": "evidence/orchestrator_state_v2/official_seal_v38.json",
+        "result_file_sha256": "3bda87e8b9bfd49b0868c594cbe631050f2cfc68481fa62507760bc36f995a1f",
+        "result_path": "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json",
+        "signal_ledger_path": "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl",
+        "signal_ledger_sha256": "0de7678e59aa2c5759d9ba359193dba9b1b49021d9f5b4a7231ff885ec7410c9",
+        "turnover_sha256": "4b4da5e53bc41bb6082c0b3b4cb6ffdf2cea45e8705a86b5ab7c6c48c895b75b"
+      },
+      "family": "FX_SESSION_RANGE_NORMALIZED_MEAN_REVERSION",
+      "hard_guard_violations": [],
+      "holdout_reproduction_inferred": false,
+      "horizon_seconds": 172800,
+      "minimum_gate_passed": true,
+      "monthly_2x_inferred": false,
+      "qualification": "PROVISIONAL",
+      "session": "LONDON_MORNING_0800_1155_DECISION_1200_FILL",
+      "strategy_adopted": false,
+      "walk_forward": {
+        "ADVERSE_STRESS": {
+          "N_eff_days": 21,
+          "N_eff_episodes": 35,
+          "direction_accuracy": 0.6571428571428571,
+          "equity_multiple": 1.003424809082437,
+          "gross_edge_bps": 16.50441926964479,
+          "net_edge_bps": 7.0102502320809785,
+          "realized_cost_bps": 9.494169037563811,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 10.0
+        },
+        "EXECUTABLE_BASE": {
+          "N_eff_days": 21,
+          "N_eff_episodes": 35,
+          "direction_accuracy": 0.6571428571428571,
+          "equity_multiple": 1.0054413356328307,
+          "gross_edge_bps": 16.50441926964479,
+          "net_edge_bps": 11.036623650039163,
+          "realized_cost_bps": 5.467795619605628,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 10.0
+        },
+        "RAW_SIGNAL": {
+          "N_eff_days": 21,
+          "N_eff_episodes": 35,
+          "direction_accuracy": 0.6571428571428571,
+          "equity_multiple": 1.0081832509786561,
+          "gross_edge_bps": 16.50441926964479,
+          "net_edge_bps": 16.50441926964479,
+          "realized_cost_bps": 0.0,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 10.0
+        }
+      }
+    },
+    {
+      "candidate_status": "RESEARCH_COMPONENT_CANDIDATE_UNADMITTED",
+      "cycle_id": "V40",
+      "evidence": {
+        "cost_drag_sha256": "b5fd0540085ef0d36d78a69c45a61b39742f64b0bb70d012cb2c4b457600b900",
+        "currency_time_exposure_path": "evidence/component_worker_registry_v1/v40_currency_time_exposure.jsonl",
+        "currency_time_exposure_sha256": "59b5a0a4e06033b7bc2713a64f97fa4246e0148ee555b66bd49ffb7dee5df011",
+        "daily_worker_returns_path": "evidence/component_worker_registry_v1/v40_daily_worker_returns.jsonl",
+        "daily_worker_returns_sha256": "90f715cb18019ee825b6383eef326968f985c9bc3f456e1a26de52cd97f74ab3",
+        "family_session_horizon_sha256": "30b14586f59adde85dfd626c0525155faef2ae7412d96e54073fd8c042be9b2a",
+        "n_eff_sha256": "8db22887c1f1329b3d82568be12cc86b4eb9383a3fb545f9e72aea96b4fdb5c8",
+        "official_seal_file_sha256": "a04f30d969170585195732445e7f99bd6ac4264e7db84b24738c8cfd80f8dd6d",
+        "official_seal_path": "evidence/orchestrator_state_v2/official_seal_v40.json",
+        "result_file_sha256": "c5062a2901fd4cb829d0f6a54bcc0fc8159c01d891c453236b92150a020fa927",
+        "result_path": "evidence/run_london_fix_overextension_fade_v40_official_001/result_london_fix_overextension_fade_v40.json",
+        "signal_ledger_path": "evidence/run_london_fix_overextension_fade_v40_official_001/proposal_ledger_london_fix_overextension_fade_v40.jsonl",
+        "signal_ledger_sha256": "55d733918e52add4369da2206730ab5c61d4259d61564087626ddd4447163be7",
+        "turnover_sha256": "7f121ca03da67bcf9c9904b094e216cc366833957787b9abd9250d76d33a4cf8"
+      },
+      "family": "FX_LONDON_FIX_MEAN_REVERSION",
+      "hard_guard_violations": [],
+      "holdout_reproduction_inferred": false,
+      "horizon_seconds": 14100,
+      "minimum_gate_passed": true,
+      "monthly_2x_inferred": false,
+      "qualification": "PROVISIONAL",
+      "session": "LONDON_FIX_PREWINDOW_1200_1555_DECISION_1600_FILL",
+      "strategy_adopted": false,
+      "walk_forward": {
+        "ADVERSE_STRESS": {
+          "N_eff_days": 30,
+          "N_eff_episodes": 77,
+          "direction_accuracy": 0.6103896103896104,
+          "equity_multiple": 1.0014733428327323,
+          "gross_edge_bps": 5.537895557423303,
+          "net_edge_bps": 1.3529270112363985,
+          "realized_cost_bps": 4.184968546186904,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 22.0
+        },
+        "EXECUTABLE_BASE": {
+          "N_eff_days": 30,
+          "N_eff_episodes": 77,
+          "direction_accuracy": 0.6103896103896104,
+          "equity_multiple": 1.0035004058451942,
+          "gross_edge_bps": 5.537895557423303,
+          "net_edge_bps": 3.190826566284483,
+          "realized_cost_bps": 2.3470689911388196,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 22.0
+        },
+        "RAW_SIGNAL": {
+          "N_eff_days": 30,
+          "N_eff_episodes": 77,
+          "direction_accuracy": 0.6103896103896104,
+          "equity_multiple": 1.006095150624114,
+          "gross_edge_bps": 5.537895557423303,
+          "net_edge_bps": 5.537895557423303,
+          "realized_cost_bps": 0.0,
+          "terminal_inventory_mtm": 0.0,
+          "terminal_open_inventory": 0,
+          "turnover_nav": 22.0
+        }
+      }
+    }
+  ],
+  "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE",
+  "cost_assumptions": "FROZEN_V7_RAW_BASE_ADVERSE_ARMS",
+  "deduplicated_variants": [
+    {
+      "canonical_component_cycle": "V38",
+      "counted_as_independent_worker": false,
+      "cycle_id": "V39",
+      "reason": "SAME_SIGNAL_FAMILY_WEAKER_CARRY_VARIANT_NOT_AN_INDEPENDENT_WORKER"
+    }
+  ],
+  "evaluation_calendar": {
+    "end_exclusive": "2026-07-01",
+    "start": "2026-05-01"
+  },
+  "existing_profit_gate_changed": false,
+  "generated_after_cycle": "V41",
+  "initial_build_failure_evidence": {
+    "path": "COMPONENT_WORKER_REGISTRY_INITIAL_BUILD_FAILURE.json",
+    "sha256": "c7dfcd3312e87bd79c1210d7688d3fd628574542b99be548e50b9776868a485d",
+    "status": "RECOVERED_RESTART_SAFE_WITHOUT_STRATEGY_RERUN"
+  },
+  "pairwise_currency_time_independence": [
+    {
+      "calendar_days": 52,
+      "daily_base_return_correlation": -0.4297396534902472,
+      "independence_gate_passed": false,
+      "left_currency_time_clusters": 20418,
+      "left_cycle": "V38",
+      "right_currency_time_clusters": 4982,
+      "right_cycle": "V40",
+      "same_session": false,
+      "shared_currency_time_clusters": 329,
+      "signed_currency_time_cluster_overlap": 0.013122731442702724
+    }
+  ],
+  "policy_path": "COMPONENT_WORKER_EVIDENCE_POLICY_V1.json",
+  "policy_sha256": "ea81ba37427589576683c4fe42b6e26b2fc0e3a87599d9a1bca579f3442d15d3",
+  "portfolio_composition_proposal_allowed": false,
+  "portfolio_proposal_rule_if_allowed": "FIXED_EQUAL_COMPONENT_SLEEVES",
+  "positive_provisional_candidate_count": 2,
+  "registry_id": "FX_COMPONENT_WORKER_EVIDENCE_REGISTRY_V1",
+  "registry_sha256": "719363aa4cc86a3f6a086bd08378203271a6557efe22c27954d730c4246cb8d6",
+  "schema_version": 1,
+  "source_mode": "DIRECT_READBACK_FROM_IMMUTABLE_SEALED_RESULTS_AND_LEDGERS",
+  "strategy_adoption_authorized": false,
+  "v41_artifact_hashes_before_and_after": {
+    "after": {
+      "ledger": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+      "official_seal": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+      "result": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a"
+    },
+    "before": {
+      "ledger": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+      "official_seal": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+      "result": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a"
+    },
+    "unchanged": true
+  }
+}
