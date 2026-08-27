@@ -48,6 +48,8 @@ V26_RECOVERY_AUTHORIZATION = "V26_RECOVERY_AUTHORIZATION.json"
 V26_RECOVERY_AUTHORIZATION_SHA256 = "c34e684ed2203d84025f9f560608c16baf513744e1fb37846c03264ca76d0256"
 V26_RECOVERY_LAUNCHER = "run_causal_min_spread_representative_v26_recovery_once.py"
 V26_RECOVERY_LAUNCHER_SHA256 = "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a"
+V26_RECOVERY_FAILURE = "V26_AUTHORIZED_RECOVERY_FAILURE.json"
+V26_RECOVERY_FAILURE_SHA256 = "75cceae96df7be5a51955a0966f587d378a0328ddf4f9c4f4947c2b3ed154a2b"
 
 
 class ContractError(RuntimeError):
@@ -814,6 +816,74 @@ def validate_v26_recovery_authorization(root: Path, cycle: dict[str, Any],
     }
 
 
+def validate_v26_recovery_failure(root: Path, cycle: dict[str, Any],
+                                  cycle_state: dict[str, Any]) -> dict[str, Any]:
+    """Validate the terminal no-result evidence without inventing strategy metrics."""
+    path = within(root, V26_RECOVERY_FAILURE)
+    if not path.is_file() or sha256_file(path) != V26_RECOVERY_FAILURE_SHA256:
+        raise ContractError("V26 authorized recovery failure evidence is missing or changed")
+    evidence = json.loads(path.read_text(encoding="utf-8"))
+    if evidence.get("cycle_id") != "V26" \
+            or evidence.get("status") != "FAILED_AUTHORIZED_RECOVERY_NO_RESULT_RERUN_FORBIDDEN" \
+            or evidence.get("authority") != AUTHORITY:
+        raise ContractError("V26 authorized recovery failure identity or authority changed")
+    execution = evidence.get("execution_evidence", {})
+    if cycle_state.get("status") != "FAILED_AUTHORIZED_RECOVERY_NO_RERUN" \
+            or cycle_state.get("official_attempts") != 1 \
+            or cycle_state.get("recovery_attempts") != 1 \
+            or execution.get("subprocess_returncode") != cycle_state.get("recovery_subprocess_returncode") \
+            or execution.get("stdout_sha256") != cycle_state.get("recovery_stdout_sha256") \
+            or execution.get("stderr_sha256") != cycle_state.get("recovery_stderr_sha256"):
+        raise ContractError("V26 terminal recovery evidence differs from state")
+    if execution.get("result_file_exists") is not False \
+            or execution.get("ledger_file_exists") is not False \
+            or execution.get("second_recovery_forbidden") is not True:
+        raise ContractError("V26 terminal recovery evidence permits output reuse or rerun")
+    if within(root, cycle["execution"]["result"]).exists() \
+            or within(root, cycle["execution"]["ledger"]).exists():
+        raise ContractError("V26 terminal recovery evidence conflicts with an output file")
+    binding = evidence.get("binding", {})
+    if binding.get("authorization_sha256") != V26_RECOVERY_AUTHORIZATION_SHA256 \
+            or binding.get("launcher_sha256") != V26_RECOVERY_LAUNCHER_SHA256 \
+            or binding.get("preregistration_sha256") != cycle["preregistration_sha256"] \
+            or binding.get("original_runner_sha256") != cycle["script_sha256"] \
+            or binding.get("original_test_sha256") != cycle["test_sha256"]:
+        raise ContractError("V26 terminal recovery evidence changed a frozen binding")
+    classification = evidence.get("cause_classification", {})
+    if classification.get("exact_traceback_available") is not False \
+            or classification.get("classification_strength") \
+            != "INFERRED_FROM_STATIC_CALL_PATH_AND_BOUNDED_SINGLE_FUNCTION_REPRODUCTION" \
+            or classification.get("bounded_reproduction", {}).get("strategy_replay_performed") is not False:
+        raise ContractError("V26 failure classification overstates the available evidence")
+    strategy = evidence.get("strategy_evidence", {})
+    unavailable = (
+        "gross_edge", "realized_cost", "net_edge", "turnover", "break_even_cost",
+        "direction_accuracy", "monthly_multiples", "max_drawdown", "terminal_mtm",
+        "inventory_age", "N_eff",
+    )
+    if strategy.get("result_observed") is not False \
+            or strategy.get("metrics_available") is not False \
+            or strategy.get("profit_proven") is not False \
+            or strategy.get("strategy_adoption_authorized") is not False \
+            or any(strategy.get(field) is not None for field in unavailable):
+        raise ContractError("V26 no-result failure fabricates strategy evidence")
+    work_order = evidence.get("next_work_order", {})
+    if work_order.get("status") != "ENGINEERING_FORENSIC_ONLY_NOT_A_STRATEGY_HYPOTHESIS_NOT_EXECUTABLE" \
+            or work_order.get("v26_may_not_be_replayed") is not True \
+            or work_order.get("future_strategy_cycle_requires_new_preregistration") is not True:
+        raise ContractError("V26 terminal work order is executable or permits a replay")
+    return {
+        "authorization_recorded": True,
+        "authorization_sha256": V26_RECOVERY_AUTHORIZATION_SHA256,
+        "execution_allowed": False,
+        "recovery_attempts": 1,
+        "failure_evidence_sha256": V26_RECOVERY_FAILURE_SHA256,
+        "metrics_available": False,
+        "profit_proven": False,
+        "next_work_order": work_order,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -857,12 +927,7 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             }
         elif cycle_state and cycle_state.get("status") == "FAILED_AUTHORIZED_RECOVERY_NO_RERUN":
             status = "FAILED_AUTHORIZED_RECOVERY_NO_RESULT_RERUN_FORBIDDEN"
-            recovery = {
-                "authorization_recorded": True,
-                "execution_allowed": False,
-                "authorization_sha256": cycle_state.get("recovery_authorization_sha256"),
-                "recovery_attempts": cycle_state.get("recovery_attempts"),
-            }
+            recovery = validate_v26_recovery_failure(root, cycle, cycle_state)
         else:
             status = "REGISTERED_PREFLIGHT_PASS_PENDING"
         report = {"cycle_id": cycle["cycle_id"], "status": status,

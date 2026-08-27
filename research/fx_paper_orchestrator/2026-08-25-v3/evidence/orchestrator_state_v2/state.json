@@ -15,9 +15,16 @@
     },
     "V26": {
       "official_attempts": 1,
+      "recovery_attempts": 1,
+      "recovery_authorization_sha256": "c34e684ed2203d84025f9f560608c16baf513744e1fb37846c03264ca76d0256",
+      "recovery_launcher_sha256": "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a",
+      "recovery_started_at": "2026-08-27T00:50:11.923742+00:00",
+      "recovery_stderr_sha256": "46a447f322a0643a2a84b8407b0e8d2ce5388ad934c1c081f7fd8190bb9e8094",
+      "recovery_stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "recovery_subprocess_returncode": 1,
       "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
       "started_at": "2026-08-26T22:44:41.854800+00:00",
-      "status": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+      "status": "FAILED_AUTHORIZED_RECOVERY_NO_RERUN",
       "stderr_sha256": "c0b2fb2a77b3d8d77f5849038c237d09c910fea26b52b85b0b205f3e84a67bef",
       "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "subprocess_returncode": 1

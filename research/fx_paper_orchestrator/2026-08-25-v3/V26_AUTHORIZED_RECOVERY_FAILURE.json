@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V26",
+  "status": "FAILED_AUTHORIZED_RECOVERY_NO_RESULT_RERUN_FORBIDDEN",
+  "recorded_at": "2026-08-27T00:52:37Z",
+  "execution_evidence": {
+    "official_attempts": 1,
+    "authorized_recovery_attempts": 1,
+    "recovery_started_at": "2026-08-27T00:50:11.923742+00:00",
+    "subprocess_returncode": 1,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "46a447f322a0643a2a84b8407b0e8d2ce5388ad934c1c081f7fd8190bb9e8094",
+    "result_file_exists": false,
+    "ledger_file_exists": false,
+    "second_recovery_forbidden": true
+  },
+  "binding": {
+    "execution_checkpoint_commit": "d00b2b838c5304b9588e40618e7912faa63457ed",
+    "authorization_sha256": "c34e684ed2203d84025f9f560608c16baf513744e1fb37846c03264ca76d0256",
+    "launcher_sha256": "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a",
+    "preregistration_sha256": "b4579b78ea045e1cbf778cbc3f643496823276e768dd7b7dad66bb6d14fd9c2d",
+    "original_runner_sha256": "3989c614e92b93bc107995f93952c15bdb75a5f43740882270e2c7d0916e67ab",
+    "original_test_sha256": "3dbe5ba799f5b99241324ab808db6112c9c5223332d01615ab6b813a59d6a8e9"
+  },
+  "cause_classification": {
+    "failure_class": "PRE_RESULT_DEPENDENCY_TIMESTAMP_PARSE_INCOMPATIBILITY",
+    "exact_traceback_available": false,
+    "classification_strength": "INFERRED_FROM_STATIC_CALL_PATH_AND_BOUNDED_SINGLE_FUNCTION_REPRODUCTION",
+    "stderr_capture_gap": "The coordinator persisted only the stderr SHA-256, not sanitized stderr text.",
+    "confirmed_residual_path": [
+      "run_causal_min_spread_representative_v26.arm_metrics",
+      "run_portfolio_episode_netting_v15.simulate_portfolio",
+      "run_portfolio_episode_netting_v15.roundtrip_return",
+      "run_auction_trap_geometry_v7.timestamp"
+    ],
+    "dependency_hashes": {
+      "run_portfolio_episode_netting_v15.py": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f",
+      "run_auction_trap_geometry_v7.py": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"
+    },
+    "bounded_reproduction": {
+      "input": "2026-05-01T11:55:00.000000000Z",
+      "function": "run_auction_trap_geometry_v7.timestamp",
+      "observed_exception": "ValueError",
+      "observed_message": "Invalid isoformat string: '2026-05-01T11:55:00.000000000+00:00'",
+      "strategy_replay_performed": false
+    }
+  },
+  "strategy_evidence": {
+    "result_observed": false,
+    "metrics_available": false,
+    "profit_proven": false,
+    "profit_gate_evaluated": false,
+    "strategy_adoption_authorized": false,
+    "automatic_strategy_rejection_reason": "NO_VALIDATED_RESULT",
+    "gross_edge": null,
+    "realized_cost": null,
+    "net_edge": null,
+    "turnover": null,
+    "break_even_cost": null,
+    "direction_accuracy": null,
+    "monthly_multiples": null,
+    "max_drawdown": null,
+    "terminal_mtm": null,
+    "inventory_age": null,
+    "N_eff": null
+  },
+  "next_work_order": {
+    "status": "ENGINEERING_FORENSIC_ONLY_NOT_A_STRATEGY_HYPOTHESIS_NOT_EXECUTABLE",
+    "reason_code": "V26_AUTHORIZED_RECOVERY_FAILED_PRE_RESULT",
+    "required_single_engineering_change": "cover every timestamp parser reachable from the V26 cost and portfolio dependency graph and persist sanitized subprocess failure text",
+    "v26_may_not_be_replayed": true,
+    "future_strategy_cycle_requires_new_preregistration": true,
+    "may_not_infer_v26_profit_or_cost_metrics": true,
+    "holdout_must_remain_unopened": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

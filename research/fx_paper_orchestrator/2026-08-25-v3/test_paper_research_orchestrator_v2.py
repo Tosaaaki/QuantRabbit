@@ -108,15 +108,17 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertTrue(cycle["signal_contract"]["same_decision_timestamps"])
         self.assertTrue(cycle["signal_contract"]["same_execution_mask_all_arms"])
 
-    def test_real_audit_preserves_v25_seal_and_exposes_authorized_v26_recovery(self):
+    def test_real_audit_preserves_v25_seal_and_exposes_terminal_v26_recovery_failure(self):
         report = orchestrator.audit(ROOT, self.registry)
         statuses = {item["cycle_id"]: item["status"] for item in report["cycles"]}
         self.assertEqual(statuses["V25"], "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN")
-        self.assertEqual(statuses["V26"], "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING")
+        self.assertEqual(statuses["V26"], "FAILED_AUTHORIZED_RECOVERY_NO_RESULT_RERUN_FORBIDDEN")
         v26 = next(item for item in report["cycles"] if item["cycle_id"] == "V26")
-        self.assertEqual(v26["recovery"]["status"], "AUTHORIZED_ONE_SHOT_RECOVERY_PENDING")
         self.assertTrue(v26["recovery"]["authorization_recorded"])
-        self.assertTrue(v26["recovery"]["execution_allowed"])
+        self.assertFalse(v26["recovery"]["execution_allowed"])
+        self.assertFalse(v26["recovery"]["metrics_available"])
+        self.assertFalse(v26["recovery"]["profit_proven"])
+        self.assertTrue(v26["recovery"]["next_work_order"]["v26_may_not_be_replayed"])
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)
