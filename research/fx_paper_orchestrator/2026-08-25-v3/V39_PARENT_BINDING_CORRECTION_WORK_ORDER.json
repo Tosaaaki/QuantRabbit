@@ -1,0 +1,24 @@
+{
+  "parent_cycle": "V38",
+  "proposed_cycle": "V39",
+  "status": "PRE_RESULT_CORRECTED_WORK_ORDER_NOT_REGISTERED_NOT_EXECUTABLE",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_PARENT_BINDING_CORRECTION",
+  "supersedes_execution_use_of_but_does_not_rewrite": {
+    "path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v39.json",
+    "sha256": "da1f1185bf49ab5d23087114748cd4241cdf359b25d23d169887ea32fa1c6307",
+    "defect": "generic variable names unchanged_v25_raw_signals although the sealed parent generated V38 RAW signals"
+  },
+  "reason_code": "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET",
+  "single_next_changed_variable": "one_preregistered_causal_inventory_carry_duration_rule_preserving_all_v38_raw_signals_costs_leverage_periods_and_holdout",
+  "system_fix_for_future_work_orders": "bind successor variable text and parent_signal_cycle to the actual sealed parent cycle",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

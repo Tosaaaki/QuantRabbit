@@ -324,12 +324,12 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
     tree = ast.parse(within(root, cycle["script"]).read_text(encoding="utf-8"))
     raw_source = signal.get("raw_signal_source", "GENERATED_IN_CYCLE")
     if raw_source == "GENERATED_IN_CYCLE":
-        if cycle["cycle_id"] not in {"V34", "V35"}:
+        if cycle["cycle_id"] not in {"V34", "V35", "V39"}:
             detectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
                          and node.name == "detect_day_signals"]
             if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
                 raise ContractError("signal detector exposes cost or outcome inputs")
-        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36", "V37", "V38"}:
+        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36", "V37", "V38", "V39"}:
             simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                                and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
             if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
@@ -524,6 +524,42 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or rule.get("same_signal_action_state_all_cost_arms") is not True \
                     or rule.get("cost_or_post_entry_outcome_inputs") is not False:
                 raise ContractError("V38 signal family differs from preregistration")
+        if cycle["cycle_id"] == "V39":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_rule_selection", {})
+            rule = prereg.get("carry_rule", {})
+            correction = prereg.get("corrected_work_order", {})
+            if predecessor.get("cycle_id") != "V38" \
+                    or predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET" \
+                    or predecessor.get("result_sha256") \
+                    != "3bda87e8b9bfd49b0868c594cbe631050f2cfc68481fa62507760bc36f995a1f" \
+                    or predecessor.get("ledger_sha256") \
+                    != "0de7678e59aa2c5759d9ba359193dba9b1b49021d9f5b4a7231ff885ec7410c9":
+                raise ContractError("V39 did not preserve V38 sealed evidence")
+            correction_path = within(root, correction.get("path", ""))
+            if correction.get("classification") \
+                    != "NON_STRATEGY_ORCHESTRATOR_PARENT_BINDING_CORRECTION" \
+                    or not correction_path.is_file() \
+                    or sha256_file(correction_path) != correction.get("sha256"):
+                raise ContractError("V39 parent-binding correction is missing or unsealed")
+            if selection.get("candidate_rules_preregistered") != 1 \
+                    or selection.get("candidate_durations_compared_by_outcome") != 0 \
+                    or selection.get("price_return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("evaluation_month_used_for_selection") is not False \
+                    or selection.get("holdout_used") is not False:
+                raise ContractError("V39 carry duration was not one outcome-free preregistered rule")
+            if rule.get("name") != "LONDON_LUNCH_FIXED_RAW_HORIZON_CARRY" \
+                    or rule.get("changed_field_from_v38") != "target_hold_seconds" \
+                    or rule.get("prior_target_hold_seconds") != 172800 \
+                    or rule.get("target_hold_seconds") != 14100 \
+                    or rule.get("hard_max_age_seconds") != 345600 \
+                    or rule.get("same_v38_raw_signal_ids_pair_direction_decision_fill_raw_exit") is not True \
+                    or rule.get("same_costs_leverage_periods_holdout") is not True \
+                    or rule.get("cost_or_outcome_inputs") is not False:
+                raise ContractError("V39 carry rule differs from preregistration")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -1096,6 +1132,30 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                or set(row["arm_actions"]) != set(ARMS)
                or len(set(row["arm_actions"].values())) != 1 for row in rows):
             raise ContractError("V38 execution actions differ across cost arms")
+    if cycle["cycle_id"] == "V39":
+        if payload.get("cycle_id") != "V39" \
+                or payload.get("experiment") != "FX_LONDON_OVEREXTENSION_CARRY_V39" \
+                or payload.get("single_changed_variable") != "target_hold_seconds_from_172800_to_14100" \
+                or payload.get("same_parent_signal_id_set") is not True \
+                or payload.get("same_parent_decision_fill_raw_exit_direction") is not True:
+            raise ContractError("V39 result identity or parent parity mismatch")
+        parent_rows = [json.loads(line) for line in within(
+            root, cycle["signal_contract"]["parent_ledger"]
+        ).read_text(encoding="utf-8").splitlines() if line]
+        identity = ("signal_id", "pair", "utc_day", "decision_time", "fill_time", "exit_time", "direction")
+        if [[row[key] for key in identity] for row in rows] \
+                != [[row[key] for key in identity] for row in parent_rows]:
+            raise ContractError("V39 changed V38 RAW identity")
+        rule = payload.get("carry_rule", {})
+        if rule.get("target_hold_seconds") != 14100 \
+                or rule.get("hard_max_age_seconds") != max_age \
+                or rule.get("changed_field_from_v38") != "target_hold_seconds" \
+                or rule.get("same_signal_ledger") is not True \
+                or rule.get("cost_or_outcome_inputs") is not False:
+            raise ContractError("V39 result carry rule differs from preregistration")
+        if payload.get("parent_result_sha256") != cycle["signal_contract"]["parent_result_sha256"] \
+                or payload.get("parent_ledger_sha256") != cycle["signal_contract"]["parent_ledger_sha256"]:
+            raise ContractError("V39 result parent hashes mismatch")
     if cycle["cycle_id"] in {"V34", "V35"}:
         cycle_id = cycle["cycle_id"]
         expected_experiment = {
@@ -1204,7 +1264,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38"}:
+            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -1230,7 +1290,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36", "V37", "V38"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36", "V37", "V38", "V39"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
@@ -1243,7 +1303,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
-        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38"}:
+        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
@@ -1380,6 +1440,14 @@ def route_next_work_order(
     }:
         reason = result_reason
         variable = SIGNAL_FAMILY_PIVOT_VARIABLE
+    elif result_reason in {
+            "LONDON_OVEREXTENSION_CARRY_RAW_EDGE_ABSENT",
+            "LONDON_OVEREXTENSION_CARRY_COST_DOMINANT",
+            "LONDON_OVEREXTENSION_CARRY_ADVERSE_COST_FRAGILE",
+            "LONDON_OVEREXTENSION_CARRY_MONTHLY_GATE_SHORTFALL",
+    }:
+        reason = result_reason
+        variable = SIGNAL_FAMILY_PIVOT_VARIABLE
     elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
         reason = result_reason
         variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"
@@ -1471,6 +1539,11 @@ def next_work_order(
     reason, variable = route_next_work_order(
         result_reason, raw, base, adverse, len(history), policy_applies,
     )
+    if result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
+        variable = (
+            "one_preregistered_causal_inventory_carry_duration_rule_preserving_all_"
+            f"{cycle['cycle_id'].lower()}_raw_signals_costs_leverage_periods_and_holdout"
+        )
     next_number = int(cycle["cycle_id"].removeprefix("V")) + 1
     return {
         "schema_version": 1,
@@ -1479,6 +1552,7 @@ def next_work_order(
         "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE",
         "reason_code": reason,
         "single_next_changed_variable": variable,
+        "parent_signal_cycle": cycle["cycle_id"],
         "constraints": {
             "one_variable_only": True,
             "same_raw_signal_ids_across_cost_arms": True,

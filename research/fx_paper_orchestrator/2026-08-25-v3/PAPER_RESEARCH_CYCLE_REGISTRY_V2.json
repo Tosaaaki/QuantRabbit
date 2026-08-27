@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "edd10f224e820b5a6196aa0cd56e1e39deb4c07c30e520b7c45e7ad5bb6bd1ba",
+    "sha256": "a9ceb2d84e389a467796993ca722b2e3997e3efd8af5512ff9cdf9ddfc2e4102",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -1469,6 +1469,91 @@
         "official_run_limit": 1,
         "result": "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json",
         "ledger": "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl"
+      }
+    },
+    {
+      "cycle_id": "V39",
+      "registered_before_official_execution": true,
+      "depends_on_cycle": "V38",
+      "depends_on_legacy_cycle": null,
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "LONDON_OVEREXTENSION_CARRY_PREREGISTRATION_V39.json",
+      "preregistration_sha256": "820267ac4bd54f2db6291e63642b83a9b74e6729f2e822305c3b78d20f525e05",
+      "script": "run_london_overextension_carry_v39.py",
+      "script_sha256": "12132fa9ace622087ee16b51bd1c3804874ca53b369d8931e5d9ca796851f6da",
+      "test": "test_london_overextension_carry_v39.py",
+      "test_sha256": "78a147769c8de3665e6b488478aa123ba3b7b199d0f7436a1de7f95354a319f7",
+      "dependency_files": [
+        {"path": "run_london_overextension_fade_v38.py", "sha256": "c1b7c59c0e8ed8869f1f737499f12a508a0b0fba2f69e01e73873c128f995eb5"},
+        {"path": "V39_PARENT_BINDING_CORRECTION_WORK_ORDER.json", "sha256": "6b0ddf34d61e002f97745d012b44488896a2c5c45f60c70bc76b594f924f54a4"},
+        {"path": "evidence/orchestrator_state_v2/official_seal_v38.json", "sha256": "9c63bdb9d4e68fc286be401449895143f728e69f88e8132bcb12fb44e6db4365"},
+        {"path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v39.json", "sha256": "da1f1185bf49ab5d23087114748cd4241cdf359b25d23d169887ea32fa1c6307"},
+        {"path": "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json", "sha256": "3bda87e8b9bfd49b0868c594cbe631050f2cfc68481fa62507760bc36f995a1f"},
+        {"path": "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl", "sha256": "0de7678e59aa2c5759d9ba359193dba9b1b49021d9f5b4a7231ff885ec7410c9"}
+      ],
+      "hypothesis_contract": {
+        "independent": true, "frozen_before_replay": true,
+        "baseline": "FX_LONDON_OVEREXTENSION_FADE_V38",
+        "family": "FX_SESSION_RANGE_NORMALIZED_MEAN_REVERSION",
+        "family_hypothesis_number": 2,
+        "single_changed_variable": "one_preregistered_causal_inventory_carry_duration_rule_preserving_all_v38_raw_signals_costs_leverage_periods_and_holdout",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5", "price_component": "BID_ASK", "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "raw_signal_source": "GENERATED_IN_CYCLE",
+        "parent_cycle_id": "V38",
+        "parent_result": "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json",
+        "parent_result_sha256": "3bda87e8b9bfd49b0868c594cbe631050f2cfc68481fa62507760bc36f995a1f",
+        "parent_ledger": "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl",
+        "parent_ledger_sha256": "0de7678e59aa2c5759d9ba359193dba9b1b49021d9f5b4a7231ff885ec7410c9",
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true, "same_entry_direction_exit": true,
+        "same_execution_state_transitions_all_arms": true, "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true, "one_basket_per_utc_day": true,
+        "add_to_position": false, "martingale": false, "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285, "gross_leverage_cap": 1.0,
+        "rule_max_gross_leverage": 1.0, "currency_abs_exposure_cap": 1.0,
+        "target_hold_seconds": 14100, "finite_max_age_seconds": 345600,
+        "terminal_liquidation_required": true, "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "DETERMINISTIC_SINGLE_CAUSAL_CARRY_DURATION_FROM_FROZEN_SIGNAL_CHRONOLOGY",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "LONDON_OVEREXTENSION_CARRY_PREREGISTRATION_V39.json#training_only_rule_selection",
+        "model_identity": "NO_ACTUAL_LLM_USED", "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": ["run_london_overextension_carry_v39.py", "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z", "--parent-result", "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json", "--parent-ledger", "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl", "--output-root", "evidence/run_london_overextension_carry_v39_official_001"],
+        "pythonpath": ["paper_replay_compat", "."], "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_london_overextension_carry_v39_official_001/result_london_overextension_carry_v39.json",
+        "ledger": "evidence/run_london_overextension_carry_v39_official_001/proposal_ledger_london_overextension_carry_v39.jsonl"
       }
     }
   ]

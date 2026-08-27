@@ -116,13 +116,22 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35", "V36", "V37", "V38"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
         self.assertEqual(cycle["signal_contract"]["raw_signal_source"], "SEALED_PARENT_V25_LEDGER")
         self.assertTrue(cycle["signal_contract"]["same_decision_timestamps"])
         self.assertTrue(cycle["signal_contract"]["same_execution_mask_all_arms"])
+
+    def test_monthly_shortfall_work_order_binds_actual_parent_signal_cycle(self):
+        cycle = self.registry["cycles"][-1]
+        self.assertEqual(cycle["cycle_id"], "V39")
+        self.assertEqual(cycle["signal_contract"]["parent_cycle_id"], "V38")
+        self.assertIn("v38_raw_signals", cycle["hypothesis_contract"]["single_changed_variable"])
+        correction = json.loads((ROOT / "V39_PARENT_BINDING_CORRECTION_WORK_ORDER.json").read_text())
+        self.assertEqual(correction["classification"],
+                         "NON_STRATEGY_ORCHESTRATOR_PARENT_BINDING_CORRECTION")
 
     def test_v27_is_new_cycle_with_same_unobserved_strategy_and_runtime_only_migration(self):
         cycle = self.registry["cycles"][2]
