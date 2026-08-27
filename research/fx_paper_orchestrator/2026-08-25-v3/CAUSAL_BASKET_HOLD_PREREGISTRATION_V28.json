@@ -1,0 +1,205 @@
+{
+  "artifact_id": "FX_CAUSAL_BASKET_HOLD_V28",
+  "cycle_id": "V28",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "family": "FX_SESSION_CURRENCY_COHERENCE",
+  "baseline": "FX_ASIAN_USD_COHERENCE_PERSISTENCE_V25",
+  "predecessor_cycle": "V27",
+  "predecessor_disposition": {
+    "status": "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN",
+    "remote_checkpoint": "9f1ee66e3b05e0c280b45a1b658b8894c7279b86",
+    "reason_code": "EXECUTION_SUBSET_RAW_EDGE_ABSENT",
+    "work_order": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v28.json",
+    "work_order_sha256": "1fbeb4cfbaafa484d6916202cb11052bdc63fa969f0d58696f059a453dcce2a4"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_basket_hold_rule_that_preserves_all_v25_raw_signals_and_fixed_sleeves",
+    "null": "Aggregating same-pair/same-direction V25 signals into one bounded inventory episode does not produce positive RAW walk-forward equity or does not make both full comparable months reach 2.0x under both normal and adverse costs.",
+    "alternative": "One bounded no-add basket-hold rule preserves all 500 V25 RAW signals while reducing ticket turnover enough for both full comparable months to reach at least 2.0x under both normal and adverse costs without changing leverage, period, signal direction, or holdout state."
+  },
+  "training_only_rule_selection": {
+    "window_start": "2026-03-11",
+    "window_end_exclusive": "2026-05-01",
+    "candidate_rules_compared": 1,
+    "selection_basis": "The generated V28 work order named one causal basket-hold rule. The first candidate was accepted structurally because it aggregates repeated same-direction narratives without adding units and has a deterministic opposite, expiry, and terminal state machine.",
+    "training_signals": 202,
+    "training_effective_days": 33,
+    "training_state_action_counts": {
+      "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 49,
+      "MAX_AGE_CLOSE_THEN_OPEN": 45,
+      "OPEN_FIXED_ONE_SEVENTH": 59,
+      "REVERSE_FIXED_ONE_SEVENTH": 49
+    },
+    "training_episode_count": 153,
+    "training_max_observed_inventory_age_seconds": 313200.0,
+    "return_outcome_consulted": false,
+    "cost_consulted": false,
+    "direction_accuracy_consulted": false,
+    "drawdown_consulted": false,
+    "monthly_multiple_consulted": false,
+    "walk_forward_used_for_rule_selection": false,
+    "holdout_used": false
+  },
+  "raw_signal_invariants": {
+    "parent_cycle": "V25",
+    "raw_signal_count": 500,
+    "parent_result_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+    "same_signal_id": true,
+    "same_pair": true,
+    "same_utc_day": true,
+    "same_decision_timestamp": true,
+    "same_fill_timestamp": true,
+    "same_raw_exit_timestamp": true,
+    "same_direction": true,
+    "same_fixed_pair_sleeve": 0.14285714285714285,
+    "raw_cost_gate": false
+  },
+  "execution_rule": {
+    "name": "CAUSAL_BASKET_HOLD_NO_ADD",
+    "state_scope": "one independent inventory state per pair",
+    "units": "one fixed 1/7 NAV sleeve per pair; no unit increase",
+    "chronology": "Sort completed source bars by exact integer epoch nanoseconds. At each completed executable bar: close inventory whose 48-hour target has elapsed at the current open; then apply any V25 signal at that same open; then mark remaining inventory at completed close.",
+    "flat_signal": "OPEN_FIXED_ONE_SEVENTH",
+    "same_pair_same_direction_signal": "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION",
+    "same_direction_add_units": 0,
+    "same_direction_expiry_extension_seconds": 0,
+    "opposite_direction_signal": "Close the existing sleeve at that signal's executable open and open one reverse fixed 1/7 sleeve at the same open.",
+    "target_hold_seconds": 172800,
+    "target_hold_unit": "elapsed UTC seconds from episode entry",
+    "missing_target_bar": "Use the first completed executable open at or after the 48-hour target; this depends on timestamp availability only, never price or outcome.",
+    "hard_max_age_seconds": 345600,
+    "hard_max_age_rationale": "Four UTC days is a finite safety ceiling that covers one known closed-market weekend around the single 48-hour target without outcome-based tuning.",
+    "terminal_liquidation": "Close every remaining sleeve at the last completed bar close of each evaluation period and realize the terminal MTM.",
+    "inventory_use": "Repeated same-direction RAW signals are narrative evidence attached to the existing episode; they never create another ticket or add exposure.",
+    "inputs_allowed_for_transitions": [
+      "completed source timestamp",
+      "pair",
+      "signal_id",
+      "direction",
+      "fill_time"
+    ],
+    "inputs_forbidden_for_transitions": [
+      "quoted or realized cost",
+      "future price",
+      "return",
+      "direction accuracy",
+      "drawdown",
+      "monthly multiple",
+      "holdout data"
+    ]
+  },
+  "cost_arm_contract": {
+    "arms": [
+      "RAW_SIGNAL",
+      "EXECUTABLE_BASE",
+      "ADVERSE_STRESS"
+    ],
+    "same_500_signal_ledger": true,
+    "same_execution_state_transitions": true,
+    "raw_price": "mid open/close with no spread, slippage, commission, or financing",
+    "base_price": "frozen V7 executable BID/ASK, slippage, commission, and financing",
+    "adverse_price": "frozen V7 adverse BID/ASK, slippage, commission, and financing",
+    "cost_applied_only_after_transition_plan_frozen": true
+  },
+  "inventory_contract": {
+    "currencies": [
+      "AUD",
+      "CAD",
+      "CHF",
+      "EUR",
+      "GBP",
+      "JPY",
+      "NZD",
+      "USD"
+    ],
+    "one_position_per_pair": true,
+    "one_basket_per_utc_day": true,
+    "add_to_position": false,
+    "martingale": false,
+    "overlapping_tickets_same_pair": false,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "rule_max_gross_leverage": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 345600,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false,
+    "margin_method": "NOTIONAL_AT_1X_CONSERVATIVE_NO_BROKER_MARGIN_ASSUMPTION"
+  },
+  "evaluation_contract": {
+    "walk_forward": {
+      "start": "2026-05-01",
+      "end_exclusive": "2026-07-01"
+    },
+    "full_comparable_months": [
+      "MONTH_2026_05",
+      "MONTH_2026_06"
+    ],
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "leverage_changed": false,
+    "evaluation_period_changed": false,
+    "profit_threshold_changed": false,
+    "holdout": {
+      "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+      "state": "UNOPENED",
+      "may_execute": false
+    },
+    "required_metrics": [
+      "gross edge",
+      "realized cost",
+      "net edge",
+      "turnover",
+      "break-even cost",
+      "direction accuracy",
+      "monthly multiple",
+      "drawdown",
+      "margin",
+      "terminal MTM",
+      "inventory age",
+      "N_eff"
+    ]
+  },
+  "rejection_contract": {
+    "system_fail": "Any frozen hash, RAW identity, completed chronology, arm-transition parity, source, inventory cap, finite max-age, terminal liquidation, MTM, authority, holdout, evaluation-period, leverage, or threshold mismatch fails before or after execution.",
+    "profit_reject": "Automatically reject if either full comparable month is below 2.0x in EXECUTABLE_BASE or ADVERSE_STRESS, or unopened holdout reproduction is absent.",
+    "raw_edge_reason": "BASKET_HOLD_RAW_EDGE_ABSENT when walk-forward RAW equity is at or below 1.0.",
+    "adoption_authorized": false,
+    "official_run_limit": 1
+  },
+  "proposal_provenance": {
+    "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_ONE_RULE_FROM_V27_GENERATED_WORK_ORDER",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "policy_provenance": "next_hypothesis_work_order_v28.json plus this frozen preregistration",
+    "model_identity": "NO_ACTUAL_LLM_USED_FOR_INVENTORY_DIRECTION_FILL_OR_GUARDS",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "forbidden": [
+    "multiple candidate outcome sweep",
+    "lookahead",
+    "evaluation-period tuning",
+    "leverage after results",
+    "unrealized loss hiding",
+    "numeric alteration",
+    "holdout opening",
+    "V27 rewrite or rerun",
+    "live or broker side effect"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

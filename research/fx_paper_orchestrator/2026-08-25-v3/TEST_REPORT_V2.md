@@ -57,3 +57,22 @@ included in this task's commit.
 - strategy profit gate: failed / unproven
 - unopened holdout reproduction: not performed
 - strategy adoption: not authorized
+
+## V28 preregistration checkpoint
+
+V28 added one deterministic, training-only basket-hold rule while preserving
+the frozen V25 500-signal RAW ledger and the rejected V27 evidence. Before any
+official V28 replay, the new rule tests and coordinator acceptance tests passed
+35/35, and coordinator `audit` reported V28 as
+`REGISTERED_PREFLIGHT_PASS_PENDING`.
+
+The dedicated full discovery ran 145 tests: 138 passed and exactly seven
+legacy import errors remained. Five depend on the intentionally absent sibling
+`research/llm_paper_experiment/2026-08-24-v250/run_expectancy_regression_v250.py`
+fixture (`counterparty_response_pipeline_v4`, `mtf_tension_v3`,
+`online_polarity_v3`, `v250_family_partial_holdout_v3`, and
+`v250_partial_holdout_v3`). Two graph tests require the legacy
+`aggregate_bars` export not present in the sealed paper replay compatibility
+module (`graph_inventory_netting_v3` and `graph_residual_v3`). These are
+migration evidence, not V28 strategy or coordinator failures; no legacy result,
+fixture, compatibility seal, or V4-V24 evidence was changed.

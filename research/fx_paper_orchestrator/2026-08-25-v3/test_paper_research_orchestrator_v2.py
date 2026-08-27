@@ -115,7 +115,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
-        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27"])
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -134,6 +134,18 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(runtime["changed_strategy_variables"], 0)
         self.assertFalse(runtime["v26_rerun_permitted"])
         self.assertEqual(runtime["observed_corpus_nonzero_submicrosecond_count"], 0)
+
+    def test_v28_is_one_training_only_causal_basket_hold_rule(self):
+        cycle = self.registry["cycles"][3]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V28")
+        self.assertEqual(cycle["depends_on_cycle"], "V27")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(prereg["training_only_rule_selection"]["candidate_rules_compared"], 1)
+        self.assertFalse(prereg["training_only_rule_selection"]["return_outcome_consulted"])
+        self.assertFalse(prereg["training_only_rule_selection"]["cost_consulted"])
+        self.assertEqual(cycle["inventory_contract"]["finite_max_age_seconds"], 345600)
+        self.assertEqual(cycle["inventory_contract"]["rule_max_gross_leverage"], 1.0)
 
     def test_real_audit_preserves_v25_seal_and_exposes_terminal_v26_recovery_failure(self):
         report = orchestrator.audit(ROOT, self.registry)
@@ -172,6 +184,13 @@ class RegistryAcceptanceTest(unittest.TestCase):
             orchestrator.sha256_file(ROOT / "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json"),
             self.registry["legacy_evidence"]["registry_sha256"],
         )
+
+    def test_coordinator_parser_preserves_nonzero_nanosecond_order_and_elapsed_time(self):
+        left = orchestrator.parse_time("2026-05-01T00:00:00.123456001Z")
+        right = orchestrator.parse_time("2026-05-01T00:00:00.123456789Z")
+        self.assertLess(left, right)
+        self.assertEqual((right - left).value, 788)
+        self.assertEqual((right - left).total_seconds(), 0.000000788)
 
 
 class SourceAcceptanceTest(unittest.TestCase):
