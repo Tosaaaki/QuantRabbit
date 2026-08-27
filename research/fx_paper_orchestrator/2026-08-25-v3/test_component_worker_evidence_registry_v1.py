@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 import component_worker_evidence_registry_v1 as registry
+import component_worker_evidence_registry_v2 as sign_aware_registry
 import paper_research_orchestrator_v2 as orchestrator
 
 
@@ -50,9 +51,9 @@ class ComponentWorkerEvidenceRegistryV1Test(unittest.TestCase):
         self.assertFalse(next(item for item in payload["deduplicated_variants"]
                               if item["cycle_id"] == "V39")["counted_as_independent_worker"])
 
-    def test_current_independence_gate_continues_signal_family_search(self):
-        self.assertFalse(orchestrator.component_portfolio_proposal_eligible(ROOT))
+    def test_v1_checkpoint_used_absolute_correlation_and_stopped_portfolio(self):
         payload = registry.validate(ROOT)
+        self.assertFalse(payload["portfolio_composition_proposal_allowed"])
         pair = payload["pairwise_currency_time_independence"][0]
         self.assertGreater(abs(pair["daily_base_return_correlation"]), 0.35)
         self.assertFalse(pair["independence_gate_passed"])
@@ -64,10 +65,10 @@ class ComponentWorkerEvidenceRegistryV1Test(unittest.TestCase):
             "strategy_adoption_authorized": False,
             "existing_profit_gate_changed": False,
         }
-        with mock.patch.object(registry, "validate", return_value=eligible):
+        with mock.patch.object(sign_aware_registry, "validate", return_value=eligible):
             self.assertTrue(orchestrator.component_portfolio_proposal_eligible(ROOT))
         insufficient = {**eligible, "positive_provisional_candidate_count": 1}
-        with mock.patch.object(registry, "validate", return_value=insufficient):
+        with mock.patch.object(sign_aware_registry, "validate", return_value=insufficient):
             self.assertFalse(orchestrator.component_portfolio_proposal_eligible(ROOT))
 
     def test_v41_signal_action_result_and_seal_hashes_are_unchanged(self):

@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "5fa9a87bbfd9254bedcebfe57399a3ae086efe890302b75a77aea6cad1d3b68e",
+    "sha256": "14a34b3b6120ae826edbab98a8b98ec99929ce5e118b05da472a3d03809b5cf9",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -26,6 +26,13 @@
     "sha256": "ea81ba37427589576683c4fe42b6e26b2fc0e3a87599d9a1bca579f3442d15d3",
     "builder_path": "component_worker_evidence_registry_v1.py",
     "builder_sha256": "018259abc4508acda649e9cddc0f2b4c713962f413be3b20b4763f3634c14003",
+    "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY"
+  },
+  "component_worker_independence_policy": {
+    "path": "COMPONENT_WORKER_INDEPENDENCE_POLICY_V2.json",
+    "sha256": "8b65ee7c9b70c722a3c8dfdf48eb220bcc36387e0b52d0fbc40be63067c06dba",
+    "builder_path": "component_worker_evidence_registry_v2.py",
+    "builder_sha256": "6108314b8e48fc82982f0aeaee2e043bfe5241fb5b15d86dca11a68a7fa3efd0",
     "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY"
   },
   "legacy_evidence": {

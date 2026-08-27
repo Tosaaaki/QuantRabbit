@@ -1,0 +1,59 @@
+{
+  "artifact_id": "FX_COMPONENT_WORKER_SIGN_AWARE_INDEPENDENCE_POLICY_V2",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY",
+  "supersedes_for_future_proposals": "COMPONENT_WORKER_EVIDENCE_POLICY_V1.json#independence_gate",
+  "preserves_v1_checkpoint": true,
+  "effective_after_cycle": "V41",
+  "correlation_routing": {
+    "positive_duplicate_if_strictly_greater_than": 0.35,
+    "negative_complementarity_review_if_strictly_less_than": -0.35,
+    "middle_route": "LOW_CORRELATION_INDEPENDENCE_REVIEW",
+    "absolute_correlation_rejection_forbidden": true
+  },
+  "complementarity_review": {
+    "maximum_signal_timestamp_jaccard_overlap": 0.1,
+    "maximum_pair_event_jaccard_overlap": 0.1,
+    "mechanical_signal_inversion_minimum_pair_event_overlap": 0.5,
+    "mechanical_signal_inversion_minimum_opposite_direction_rate": 0.8,
+    "maximum_downside_co_loss_rate": 0.5,
+    "adverse_tail_fraction": 0.2,
+    "maximum_adverse_tail_co_loss_rate": 0.5,
+    "minimum_equal_sleeve_adverse_cvar_improvement_fraction": 0.05,
+    "minimum_currency_time_cluster_n_eff_gain_fraction": 0.1,
+    "identical_session_horizon_and_family_is_duplicate": true,
+    "same_event_netting_is_duplicate": true,
+    "tail_simultaneous_loss_without_cvar_improvement_is_duplicate": true
+  },
+  "portfolio_diagnostic": {
+    "allocation_rule": "FIXED_EQUAL_COMPONENT_SLEEVES",
+    "allocation_rule_selected_by_outcome": false,
+    "same_evaluation_calendar": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+    "same_bid_ask_and_cost_assumptions": "FROZEN_V7_RAW_BASE_ADVERSE_ARMS",
+    "gross_leverage_cap": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "terminal_liquidation_required": true,
+    "post_hoc_leverage_forbidden": true,
+    "observed_sealed_returns_only": true,
+    "oracle_or_outcome_selected_weights_forbidden": true,
+    "linear_worker_count_extrapolation_is_diagnostic_only": true,
+    "linear_worker_count_extrapolation_may_not_pass_profit_gate": true
+  },
+  "admission_boundary": {
+    "candidate_status": "RESEARCH_COMPONENT_CANDIDATE_UNADMITTED",
+    "qualification": "PROVISIONAL",
+    "strategy_adoption_authorized": false,
+    "monthly_2x_may_be_inferred": false,
+    "holdout_reproduction_may_be_inferred": false,
+    "existing_profit_gate_changed": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

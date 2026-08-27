@@ -72,7 +72,8 @@ SIGNAL_FAMILY_PIVOT_VARIABLE = (
     "one_preregistered_causal_fx_specific_signal_family_replacement_"
     "preserving_costs_leverage_periods_and_holdout"
 )
-COMPONENT_REGISTRY_PATH = "evidence/component_worker_registry_v1/component_worker_registry_v1.json"
+COMPONENT_REGISTRY_V1_PATH = "evidence/component_worker_registry_v1/component_worker_registry_v1.json"
+COMPONENT_REGISTRY_PATH = "evidence/component_worker_registry_v2/component_worker_registry_v2.json"
 COMPONENT_PORTFOLIO_REASON = "INDEPENDENT_PROVISIONAL_COMPONENTS_AVAILABLE"
 COMPONENT_PORTFOLIO_VARIABLE = (
     "one_preregistered_fixed_equal_component_sleeve_portfolio_composition_"
@@ -213,6 +214,15 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         artifact = within(root, component_ref[path_key])
         if not artifact.is_file() or sha256_file(artifact) != component_ref[hash_key]:
             raise ContractError(f"component evidence policy artifact changed: {path_key}")
+    independence_ref = require_keys(registry.get("component_worker_independence_policy"), {
+        "path", "sha256", "builder_path", "builder_sha256", "classification",
+    }, "component_worker_independence_policy")
+    if independence_ref["classification"] != "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY":
+        raise ContractError("sign-aware independence policy classification changed")
+    for path_key, hash_key in (("path", "sha256"), ("builder_path", "builder_sha256")):
+        artifact = within(root, independence_ref[path_key])
+        if not artifact.is_file() or sha256_file(artifact) != independence_ref[hash_key]:
+            raise ContractError(f"sign-aware independence policy artifact changed: {path_key}")
     cycles = registry.get("cycles")
     if not isinstance(cycles, list) or not cycles:
         raise ContractError("registry has no cycles")
@@ -1732,7 +1742,7 @@ def component_portfolio_proposal_eligible(root: Path) -> bool:
     if not path.exists():
         return False
     try:
-        import component_worker_evidence_registry_v1 as component_registry
+        import component_worker_evidence_registry_v2 as component_registry
         payload = component_registry.validate(root)
     except (ImportError, OSError, ValueError, RuntimeError) as error:
         raise ContractError(f"component registry validation failed: {error}") from error
@@ -2114,11 +2124,11 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         }:
             report["recovery"] = recovery
         reports.append(report)
-    component_summary = {"status": "NOT_BUILT", "portfolio_composition_proposal_allowed": False}
+    component_summary = {"status": "V2_NOT_BUILT", "portfolio_composition_proposal_allowed": False}
     component_path = within(root, COMPONENT_REGISTRY_PATH)
     if component_path.exists():
         try:
-            import component_worker_evidence_registry_v1 as component_registry
+            import component_worker_evidence_registry_v2 as component_registry
             component = component_registry.validate(root)
         except (ImportError, OSError, ValueError, RuntimeError) as error:
             raise ContractError(f"component registry validation failed: {error}") from error
@@ -2178,6 +2188,48 @@ def build_component_registry_checkpoint(root: Path) -> dict[str, Any]:
                 registry_file_sha256=sha256_file(registry_path),
                 embedded_registry_sha256=validated["registry_sha256"],
                 positive_provisional_candidate_count=validated["positive_provisional_candidate_count"],
+                portfolio_composition_proposal_allowed=validated["portfolio_composition_proposal_allowed"],
+                strategy_adoption_authorized=False, recovered_without_strategy_rerun=recovered,
+            )
+        return validated
+
+
+def build_component_registry_v2_checkpoint(root: Path) -> dict[str, Any]:
+    """Build the sign-aware non-strategy independence evidence under the shared lock."""
+    import component_worker_evidence_registry_v2 as component_registry
+    paths = state_paths(root)
+    with exclusive_lock(paths["lock"], paths["journal"]):
+        registry_path = within(root, component_registry.REGISTRY_PATH)
+        if registry_path.exists():
+            built = component_registry.validate(root)
+            recovered = True
+        else:
+            append_journal(paths["journal"], "COMPONENT_REGISTRY_V2_BUILD_STARTED",
+                           classification="NON_STRATEGY_SIGN_AWARE_INDEPENDENCE_EVIDENCE")
+            try:
+                built = component_registry.build(root)
+                recovered = False
+            except (OSError, ValueError, RuntimeError) as error:
+                append_journal(
+                    paths["journal"], "COMPONENT_REGISTRY_V2_BUILD_FAILED",
+                    error_sha256=hashlib.sha256(str(error).encode()).hexdigest(),
+                    error_excerpt=sanitized_subprocess_excerpt(str(error), limit=500),
+                    strategy_rerun=False,
+                )
+                raise
+        validated = component_registry.validate(root)
+        if built["registry_sha256"] != validated["registry_sha256"]:
+            raise ContractError("component registry V2 build/readback mismatch")
+        journal_events = [json.loads(line) for line in paths["journal"].read_text(encoding="utf-8").splitlines()
+                          if line.strip()] if paths["journal"].is_file() else []
+        current_file_hash = sha256_file(registry_path)
+        if not any(event.get("event") == "COMPONENT_REGISTRY_V2_SEALED"
+                   and event.get("registry_file_sha256") == current_file_hash
+                   for event in journal_events):
+            append_journal(
+                paths["journal"], "COMPONENT_REGISTRY_V2_SEALED",
+                registry_file_sha256=current_file_hash,
+                embedded_registry_sha256=validated["registry_sha256"],
                 portfolio_composition_proposal_allowed=validated["portfolio_composition_proposal_allowed"],
                 strategy_adoption_authorized=False, recovered_without_strategy_rerun=recovered,
             )
@@ -2373,7 +2425,8 @@ def record_migration_journal(root: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=(
-        "audit", "build-component-registry", "execute-next", "execute-v26-recovery", "status",
+        "audit", "build-component-registry", "build-component-registry-v2",
+        "execute-next", "execute-v26-recovery", "status",
     ))
     parser.add_argument("--registry", type=Path, default=Path("PAPER_RESEARCH_CYCLE_REGISTRY_V2.json"))
     args = parser.parse_args()
@@ -2391,6 +2444,17 @@ def main() -> int:
                 "registry_file_sha256": sha256_file(within(root, component_registry.REGISTRY_PATH)),
                 "positive_provisional_candidate_count": built["positive_provisional_candidate_count"],
                 "portfolio_composition_proposal_allowed": built["portfolio_composition_proposal_allowed"],
+                "strategy_adoption_authorized": False,
+                "authority": AUTHORITY,
+            }
+        elif args.command == "build-component-registry-v2":
+            import component_worker_evidence_registry_v2 as component_registry
+            built = build_component_registry_v2_checkpoint(root)
+            result = {
+                "registry_path": component_registry.REGISTRY_PATH,
+                "registry_file_sha256": sha256_file(within(root, component_registry.REGISTRY_PATH)),
+                "portfolio_composition_proposal_allowed": built["portfolio_composition_proposal_allowed"],
+                "pair_classifications": [item["classification"] for item in built["sign_aware_pair_reviews"]],
                 "strategy_adoption_authorized": False,
                 "authority": AUTHORITY,
             }

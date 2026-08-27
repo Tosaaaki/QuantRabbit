@@ -1,0 +1,166 @@
+{
+  "achievability_diagnostic": {
+    "allocation": "FIXED_EQUAL_COMPONENT_SLEEVES",
+    "conservative_max_gross_exposure_nav": 1.0,
+    "currency_cap": 1.0,
+    "currency_cap_pass": true,
+    "current_independent_worker_candidates": 2,
+    "gross_cap": 1.0,
+    "gross_cap_pass": true,
+    "holdout_reproduction_inferred": false,
+    "max_currency_abs_exposure_nav": 0.4999999999999999,
+    "monthly": {
+      "MONTH_2026_05": {
+        "ADVERSE_STRESS": {
+          "cost_after_average_daily_log_growth": 5.178715658940205e-05,
+          "current_independent_worker_count": 2,
+          "fixed_equal_sleeve_multiple": 1.001347372963753,
+          "gap_to_2x_log_growth": 0.6918007144886206,
+          "gap_to_2x_multiple_points": 0.998652627036247,
+          "linear_additive_uncapped_worker_lower_bound": 516,
+          "linear_worker_count_is_diagnostic_only": true,
+          "linear_worker_count_may_not_pass_profit_gate": true,
+          "required_independent_worker_count_linear_diagnostic": 516
+        },
+        "EXECUTABLE_BASE": {
+          "cost_after_average_daily_log_growth": 8.262630786295733e-05,
+          "current_independent_worker_count": 2,
+          "fixed_equal_sleeve_multiple": 1.00215059321984,
+          "gap_to_2x_log_growth": 0.690998896555508,
+          "gap_to_2x_multiple_points": 0.99784940678016,
+          "linear_additive_uncapped_worker_lower_bound": 323,
+          "linear_worker_count_is_diagnostic_only": true,
+          "linear_worker_count_may_not_pass_profit_gate": true,
+          "required_independent_worker_count_linear_diagnostic": 323
+        }
+      },
+      "MONTH_2026_06": {
+        "ADVERSE_STRESS": {
+          "cost_after_average_daily_log_growth": 4.293968924856322e-05,
+          "current_independent_worker_count": 2,
+          "fixed_equal_sleeve_multiple": 1.0011170553625677,
+          "gap_to_2x_log_growth": 0.6920307486394828,
+          "gap_to_2x_multiple_points": 0.9988829446374323,
+          "linear_additive_uncapped_worker_lower_bound": 630,
+          "linear_worker_count_is_diagnostic_only": true,
+          "linear_worker_count_may_not_pass_profit_gate": true,
+          "required_independent_worker_count_linear_diagnostic": 630
+        },
+        "EXECUTABLE_BASE": {
+          "cost_after_average_daily_log_growth": 8.958026550069716e-05,
+          "current_independent_worker_count": 2,
+          "fixed_equal_sleeve_multiple": 1.0023318013328908,
+          "gap_to_2x_log_growth": 0.6908180936569274,
+          "gap_to_2x_multiple_points": 0.9976681986671092,
+          "linear_additive_uncapped_worker_lower_bound": 300,
+          "linear_worker_count_is_diagnostic_only": true,
+          "linear_worker_count_may_not_pass_profit_gate": true,
+          "required_independent_worker_count_linear_diagnostic": 300
+        }
+      }
+    },
+    "observed_sealed_component_returns_only": true,
+    "oracle_used": false,
+    "post_hoc_leverage_used": false,
+    "profit_gate_pass_inferred": false,
+    "terminal_liquidation_required": true
+  },
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "candidate_cycles": [
+    "V38",
+    "V40"
+  ],
+  "candidate_qualification": "PROVISIONAL",
+  "candidate_status": "RESEARCH_COMPONENT_CANDIDATE_UNADMITTED",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE",
+  "existing_profit_gate_changed": false,
+  "fixed_equal_sleeve_daily_returns_path": "evidence/component_worker_registry_v2/fixed_equal_sleeve_daily_returns.jsonl",
+  "fixed_equal_sleeve_daily_returns_sha256": "d946ec904ef642bdf95938fca51f740b3035e310e6242fbd5b79a9d644643ec1",
+  "holdout_state": "UNOPENED",
+  "policy_path": "COMPONENT_WORKER_INDEPENDENCE_POLICY_V2.json",
+  "policy_sha256": "8b65ee7c9b70c722a3c8dfdf48eb220bcc36387e0b52d0fbc40be63067c06dba",
+  "portfolio_composition_proposal_allowed": true,
+  "portfolio_proposal_allocation_if_allowed": "FIXED_EQUAL_COMPONENT_SLEEVES",
+  "positive_provisional_candidate_count": 2,
+  "protected_strategy_artifact_hashes": {
+    "after": {
+      "v41_official_seal": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+      "v41_result": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a",
+      "v41_signal_action_ledger": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+      "v42_work_order": "29d541646f57efffe543007d94ce0958a2fa3cc68180cf521101886a8b09b524"
+    },
+    "before": {
+      "v41_official_seal": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+      "v41_result": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a",
+      "v41_signal_action_ledger": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+      "v42_work_order": "29d541646f57efffe543007d94ce0958a2fa3cc68180cf521101886a8b09b524"
+    },
+    "unchanged": true
+  },
+  "registry_id": "FX_COMPONENT_WORKER_SIGN_AWARE_EVIDENCE_REGISTRY_V2",
+  "registry_sha256": "fdb8b22402019ecc904f9af3de6fe10edbd4a6a1f535dc56046ac9c4aa2b5beb",
+  "schema_version": 2,
+  "sign_aware_pair_reviews": [
+    {
+      "adverse_tail": {
+        "co_loss_rate": 0.15,
+        "correlation": -0.7470775201315727,
+        "cvar_improvement_fraction": 0.28191917613120976,
+        "fixed_equal_sleeve_cvar_contribution": {
+          "V38": 0.00047584068834292823,
+          "V40": 0.00010918700200943351,
+          "sum": 0.0005850276903523618
+        },
+        "fixed_equal_sleeve_cvar_loss": 0.0005850276903523618,
+        "fraction": 0.2,
+        "individual_mean_cvar_loss": 0.0008147100868122607,
+        "observations": 20
+      },
+      "classification": "DIVERSIFYING_INDEPENDENT",
+      "complementarity_checks": {
+        "adverse_cvar_improvement_pass": true,
+        "adverse_tail_co_loss_pass": true,
+        "currency_time_cluster_n_eff_gain_pass": true,
+        "downside_co_loss_pass": true,
+        "mechanical_signal_inversion_absent": true,
+        "pair_event_overlap_pass": true,
+        "same_event_netting_absent": true,
+        "same_structure_duplicate_absent": true,
+        "signal_timestamp_overlap_pass": true
+      },
+      "currency_exposure_sign_inversion_rate_at_common_timestamps": 0.7586206896551724,
+      "currency_time_cluster_n_eff": {
+        "combined": 60,
+        "gain_over_larger_individual_fraction": 1.0,
+        "left": 30,
+        "right": 30
+      },
+      "daily_base_return_correlation": -0.4297396534902472,
+      "daily_downside_co_loss_rate": 0.09523809523809523,
+      "independence_gate_passed": true,
+      "left_cycle": "V38",
+      "opposite_direction_rate_on_shared_pair_events": 0.0,
+      "pair_event_jaccard_overlap": 0.0,
+      "right_cycle": "V40",
+      "routing": "COMPLEMENTARITY_REVIEW",
+      "same_family": false,
+      "same_horizon": false,
+      "same_session": false,
+      "shared_pair_events": 0,
+      "signal_timestamp_jaccard_overlap": 0.0
+    }
+  ],
+  "strategy_adoption_authorized": false,
+  "v1_checkpoint_embedded_sha256": "719363aa4cc86a3f6a086bd08378203271a6557efe22c27954d730c4246cb8d6",
+  "v1_checkpoint_file_sha256": "2662c5f1cce9e558929c4e8fcd55f58cbec6384b8654c97a85b22f252f6d0f80",
+  "v1_checkpoint_path": "evidence/component_worker_registry_v1/component_worker_registry_v1.json"
+}
