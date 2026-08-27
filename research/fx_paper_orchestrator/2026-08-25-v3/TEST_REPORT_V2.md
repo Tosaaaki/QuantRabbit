@@ -76,3 +76,14 @@ fixture (`counterparty_response_pipeline_v4`, `mtf_tension_v3`,
 module (`graph_inventory_netting_v3` and `graph_residual_v3`). These are
 migration evidence, not V28 strategy or coordinator failures; no legacy result,
 fixture, compatibility seal, or V4-V24 evidence was changed.
+
+## V28 official replay
+
+After the preregistration commit and remote SHA readback, coordinator official
+execution ordinal 1 completed once and sealed V28. Post-run targeted tests
+remained 35/35 and coordinator audit returned
+`SEALED_SYSTEM_PASS_PROFIT_UNPROVEN`. The strategy was automatically rejected
+with `BASKET_HOLD_RAW_EDGE_ABSENT`; walk-forward multiples were RAW
+0.9826974228, BASE 0.9705364475, and ADVERSE 0.9616665442. Terminal inventory
+and terminal MTM were zero, the holdout remained unopened, and external orders
+remained zero. The generated V29 work order is proposal-only and not executable.
