@@ -115,7 +115,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
-        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28", "V29"])
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28", "V29", "V30"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -159,6 +159,29 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertFalse(selection["return_outcome_consulted"])
         self.assertFalse(selection["cost_consulted"])
         rule = prereg["execution_rule"]
+        self.assertEqual(rule["minimum_peer_signals"], 2)
+        self.assertTrue(rule["unanimity_required"])
+        self.assertEqual(rule["hard_max_age_seconds"], 345600)
+
+    def test_v30_changes_only_one_training_only_causal_peer_scope(self):
+        cycle = self.registry["cycles"][5]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V30")
+        self.assertEqual(cycle["depends_on_cycle"], "V29")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(cycle["hypothesis_contract"]["single_changed_variable"],
+                         "one_preregistered_causal_consensus_release_scope_rule_preserving_all_v25_raw_signals_and_fixed_sleeves")
+        selection = prereg["training_only_scope_selection"]
+        self.assertEqual(selection["scope_count_preregistered"], 1)
+        self.assertEqual(selection["candidate_scopes_compared_by_outcome"], 0)
+        self.assertEqual(selection["selected_scope_structural_release_count"], 11)
+        self.assertTrue(selection["membership_structurally_distinct_from_v29"])
+        self.assertFalse(selection["price_consulted"])
+        self.assertFalse(selection["return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        rule = prereg["peer_scope_rule"]
+        self.assertEqual(rule["name"], "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH")
+        self.assertEqual(rule["only_changed_field_from_v29"], "peer membership scope")
         self.assertEqual(rule["minimum_peer_signals"], 2)
         self.assertTrue(rule["unanimity_required"])
         self.assertEqual(rule["hard_max_age_seconds"], 345600)

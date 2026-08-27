@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "66aa827cdba084909c089c48c4a795364abfb2c4920b0e09551b481adfa89097",
+    "sha256": "7d4189ab8def970217014b6ef042790e9eae41e946bd86ce6f90e59c44e3924f",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "legacy_evidence": {
@@ -567,6 +567,120 @@
         "official_run_limit": 1,
         "result": "evidence/run_causal_basket_consensus_release_v29_official_001/result_causal_basket_consensus_release_v29.json",
         "ledger": "evidence/run_causal_basket_consensus_release_v29_official_001/proposal_ledger_causal_basket_consensus_release_v29.jsonl"
+      }
+    },
+    {
+      "cycle_id": "V30",
+      "registered_before_official_execution": true,
+      "depends_on_legacy_cycle": null,
+      "depends_on_cycle": "V29",
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "CAUSAL_CONSENSUS_RELEASE_SCOPE_PREREGISTRATION_V30.json",
+      "preregistration_sha256": "07d912c4d577d9c6886bc6010a1c188876fd71b2aba0593c407f3c8697a357ab",
+      "script": "run_causal_consensus_release_scope_v30.py",
+      "script_sha256": "4166e11f1cf15eb13f5602df0caaa9b3c3b869d5af390d24f00a3b4569556baa",
+      "test": "test_causal_consensus_release_scope_v30.py",
+      "test_sha256": "a131316cc0c6d5a5c507fef1d36ca6fa18cae0917c37cb3a5cb6e9e3ccbda2c0",
+      "dependency_files": [
+        {"path": "paper_replay_compat/fx_original_indicators.py", "sha256": "df3aa1ce651cc05494215e0a571b452b4785fdc2dbff134c6437aa24c96f4300"},
+        {"path": "run_auction_trap_geometry_v7.py", "sha256": "928f3cb7fcabd9b9169667b672847e6b0a9dc10dc6c3eaa7b604315cc9848f1e"},
+        {"path": "run_liquid_major_universe_v9.py", "sha256": "d863fb5863cc9f5e0e3f845b2eb343c24a09ebdc68fded1415d7825857593cf6"},
+        {"path": "run_portfolio_episode_netting_v15.py", "sha256": "1995d8bc4e32f7345b2206038dde5e43d2c60bfa2287d93b2d90c996c451395f"},
+        {"path": "run_causal_min_spread_representative_v26.py", "sha256": "3989c614e92b93bc107995f93952c15bdb75a5f43740882270e2c7d0916e67ab"},
+        {"path": "run_causal_min_spread_representative_v27.py", "sha256": "a72880146b5be5295b3f41ab7818f266552eac840b485c3f59aa94dbeb3e050d"},
+        {"path": "run_causal_basket_hold_v28.py", "sha256": "257cb68ef6989b4b0f0905e3e502f65321bc013497fe7e08f3aeb530912d1bd5"},
+        {"path": "run_causal_basket_consensus_release_v29.py", "sha256": "3f2740ada60d584416bf9f032762facb12d63a9c07d634e72442e40243e56e9e"},
+        {"path": "evidence/run_asian_usd_coherence_persistence_v25_official_001/result_asian_usd_coherence_persistence_v25.json", "sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45"},
+        {"path": "evidence/run_asian_usd_coherence_persistence_v25_official_001/proposal_ledger_asian_usd_coherence_persistence_v25.jsonl", "sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db"},
+        {"path": "evidence/run_causal_basket_consensus_release_v29_official_001/result_causal_basket_consensus_release_v29.json", "sha256": "87124a2588bd583127c45026e6b09852040893ba2dc3d6011f19a193f8ad4303"},
+        {"path": "evidence/run_causal_basket_consensus_release_v29_official_001/proposal_ledger_causal_basket_consensus_release_v29.jsonl", "sha256": "63410e258c884f9e29cdfefc59e4f7c1c2583e74d6fe8220c1fe4386c55dab90"},
+        {"path": "evidence/orchestrator_state_v2/official_seal_v29.json", "sha256": "d819a6698072a0a5c64ad08888a019d581672d8361becc527953da155734ca6d"},
+        {"path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v30.json", "sha256": "9de766c0a1b30716bdc8c70913ba88048172dfdb9bc6650fe565e077908279f9"}
+      ],
+      "hypothesis_contract": {
+        "independent": true,
+        "frozen_before_replay": true,
+        "baseline": "FX_CAUSAL_BASKET_CONSENSUS_RELEASE_V29",
+        "family": "FX_SESSION_CURRENCY_COHERENCE",
+        "family_hypothesis_number": 5,
+        "single_changed_variable": "one_preregistered_causal_consensus_release_scope_rule_preserving_all_v25_raw_signals_and_fixed_sleeves",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5",
+        "price_component": "BID_ASK",
+        "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "raw_signal_source": "SEALED_PARENT_V25_LEDGER",
+        "parent_cycle_id": "V25",
+        "parent_ledger": "evidence/run_asian_usd_coherence_persistence_v25_official_001/proposal_ledger_asian_usd_coherence_persistence_v25.jsonl",
+        "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+        "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+        "same_decision_timestamps": true,
+        "same_execution_mask_all_arms": true,
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true,
+        "same_entry_direction_exit": true,
+        "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true,
+        "one_basket_per_utc_day": true,
+        "add_to_position": false,
+        "martingale": false,
+        "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285,
+        "gross_leverage_cap": 1.0,
+        "rule_max_gross_leverage": 1.0,
+        "currency_abs_exposure_cap": 1.0,
+        "finite_max_age_seconds": 345600,
+        "terminal_liquidation_required": true,
+        "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_ONE_SCOPE_FROM_V29_GENERATED_WORK_ORDER",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "CAUSAL_CONSENSUS_RELEASE_SCOPE_PREREGISTRATION_V30.json#training_only_scope_selection",
+        "model_identity": "NO_ACTUAL_LLM_USED",
+        "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": [
+          "run_causal_consensus_release_scope_v30.py",
+          "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+          "--parent-ledger", "evidence/run_asian_usd_coherence_persistence_v25_official_001/proposal_ledger_asian_usd_coherence_persistence_v25.jsonl",
+          "--parent-result", "evidence/run_asian_usd_coherence_persistence_v25_official_001/result_asian_usd_coherence_persistence_v25.json",
+          "--v29-result", "evidence/run_causal_basket_consensus_release_v29_official_001/result_causal_basket_consensus_release_v29.json",
+          "--v29-ledger", "evidence/run_causal_basket_consensus_release_v29_official_001/proposal_ledger_causal_basket_consensus_release_v29.jsonl",
+          "--output-root", "evidence/run_causal_consensus_release_scope_v30_official_001"
+        ],
+        "pythonpath": ["paper_replay_compat", "."],
+        "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_causal_consensus_release_scope_v30_official_001/result_causal_consensus_release_scope_v30.json",
+        "ledger": "evidence/run_causal_consensus_release_scope_v30_official_001/proposal_ledger_causal_consensus_release_scope_v30.jsonl"
       }
     }
   ]

@@ -315,6 +315,39 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or rule.get("same_direction_expiry_extension_seconds") != 0 \
                     or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"]:
                 raise ContractError("V29 consensus release rule differs from preregistration")
+        elif cycle["cycle_id"] == "V30":
+            builders = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "build_execution_ledger"]
+            scopes = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and node.name == "scoped_peer_signals"]
+            if len(builders) != 1 or [arg.arg for arg in builders[0].args.args] != ["parent_rows", "corpus"]:
+                raise ContractError("V30 deterministic scoped-release builder contract mismatch")
+            if len(scopes) != 1 or [arg.arg for arg in scopes[0].args.args] != [
+                    "simultaneous_signals", "target_pair", "position_snapshot"]:
+                raise ContractError("V30 deterministic peer-scope contract mismatch")
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_scope_selection", {})
+            rule = prereg.get("peer_scope_rule", {})
+            if predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT":
+                raise ContractError("V30 did not preserve V29 as frozen rejected evidence")
+            if selection.get("scope_count_preregistered") != 1 \
+                    or selection.get("candidate_scopes_compared_by_outcome") != 0 \
+                    or selection.get("price_consulted") is not False \
+                    or selection.get("return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("evaluation_month_used_for_scope_selection") is not False:
+                raise ContractError("V30 scope was not selected as one training-only outcome-free candidate")
+            if rule.get("name") != "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH" \
+                    or rule.get("only_changed_field_from_v29") != "peer membership scope" \
+                    or rule.get("minimum_peer_signals") != 2 \
+                    or rule.get("unanimity_required") is not True \
+                    or rule.get("same_timestamp_required") is not True \
+                    or rule.get("self_pair_excluded") is not True \
+                    or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"] \
+                    or rule.get("cost_or_outcome_inputs") is not False:
+                raise ContractError("V30 peer scope differs from preregistration")
         else:
             raise ContractError(f"unsupported sealed-parent execution cycle: {cycle['cycle_id']}")
         if cycle["cycle_id"] == "V27":
@@ -570,10 +603,11 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             mask = [[row["signal_id"], row.get("execution_selected") is True] for row in rows]
             if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
                 raise ContractError("V26/V27 execution mask hash mismatch")
-        elif cycle["cycle_id"] in {"V28", "V29"}:
+        elif cycle["cycle_id"] in {"V28", "V29", "V30"}:
             expected_experiment = {
                 "V28": "FX_CAUSAL_BASKET_HOLD_V28",
                 "V29": "FX_CAUSAL_BASKET_CONSENSUS_RELEASE_V29",
+                "V30": "FX_CAUSAL_CONSENSUS_RELEASE_SCOPE_V30",
             }[cycle["cycle_id"]]
             if payload.get("cycle_id") != cycle["cycle_id"] \
                     or payload.get("experiment") != expected_experiment \
@@ -594,6 +628,16 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     or rule.get("unanimity_required") is not True
                     or rule.get("own_pair_signal_prevents_consensus_release") is not True):
                 raise ContractError("V29 result consensus rule differs from preregistration")
+            if cycle["cycle_id"] == "V30" and (
+                    rule.get("peer_scope") != "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH"
+                    or rule.get("only_changed_field_from_v29") != "peer_membership_scope"
+                    or rule.get("minimum_peer_signals") != 2
+                    or rule.get("unanimity_required") is not True
+                    or rule.get("same_timestamp_required") is not True
+                    or rule.get("self_pair_excluded") is not True
+                    or rule.get("direction_formula_changed_from_v29") is not False
+                    or rule.get("own_pair_signal_prevents_consensus_release") is not True):
+                raise ContractError("V30 result peer scope differs from preregistration")
         if cycle["cycle_id"] == "V27":
             runtime = payload.get("runtime_compatibility_provenance", {})
             if payload.get("cycle_id") != "V27" \
@@ -626,7 +670,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 )
                 if metrics.get("executed_signals") != selected_count:
                     raise ContractError(f"V26/V27 executed signal count mismatch in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V28", "V29"}:
+            if cycle["cycle_id"] in {"V28", "V29", "V30"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -641,18 +685,20 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     raise ContractError(f"{cycle['cycle_id']} max-age exceeded in {period_name}/{arm}")
                 if cycle["cycle_id"] == "V29" and not isinstance(metrics.get("basket_consensus_releases"), int):
                     raise ContractError(f"V29 consensus release count missing in {period_name}/{arm}")
+                if cycle["cycle_id"] == "V30" and not isinstance(metrics.get("scope_release_count"), int):
+                    raise ContractError(f"V30 scoped release count missing in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
                 if metrics["max_gross_exposure_nav"] < 0 \
                         or metrics["max_gross_exposure_nav"] > cycle["inventory_contract"]["rule_max_gross_leverage"]:
                     raise ContractError(f"margin exposure exceeds preregistration in {period_name}/{arm}")
-        if cycle["cycle_id"] in {"V28", "V29"}:
+        if cycle["cycle_id"] in {"V28", "V29", "V30"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
@@ -735,6 +781,15 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     elif result_reason == "BASKET_CONSENSUS_RELEASE_ADVERSE_COST_FRAGILE":
         reason = result_reason
         variable = "one_preregistered_causal_consensus_release_cost_robustness_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "CONSENSUS_RELEASE_SCOPE_COST_DOMINANT":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_scope_turnover_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "CONSENSUS_RELEASE_SCOPE_ADVERSE_COST_FRAGILE":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_scope_cost_robustness_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
     elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
         reason = result_reason
         variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"

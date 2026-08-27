@@ -133,3 +133,32 @@ one variable only:
 Post-run V29 plus coordinator tests passed 35/35 and the mechanical result
 verification passed. Dedicated full discovery ran 154 tests: 147 passed and
 the same seven documented legacy import errors remained; no V29 test failed.
+
+## V30 preregistration checkpoint
+
+V30 freezes exactly one training-only, completed-data-only, cost-independent
+change to V29: peer membership is restricted to simultaneous signals attached
+to already-open inventory with the same signed USD exposure as the target.
+Direction, unanimity, the two-peer minimum, exact timestamp requirement,
+self-pair exclusion, own-signal handling, fixed 1/7 sleeves, 48-hour nominal
+hold, 96-hour hard max-age, terminal liquidation, all 500 V25 RAW identities,
+cost arms, evaluation periods, leverage, and unopened holdout remain frozen.
+
+Plain USD-node adjacency was rejected structurally because all seven pairs are
+USD crosses and would reproduce V29's market-wide peer set. The selected
+inventory-induced subgraph inspected no price, return, cost, accuracy,
+drawdown, monthly multiple, walk-forward outcome, or holdout data. In the
+training window it preserves 202 signals and 11 releases while removing
+market-wide peer members at 6 of those 11 release timestamps, proving that the
+scope is not a naming-only change.
+
+Before official execution, V30 targeted rule tests passed 9/9 and the
+coordinator acceptance suite passed 28/28. Coordinator `audit` reported V30 as
+`REGISTERED_PREFLIGHT_PASS_PENDING`. The official replay remains blocked until
+this preregistration checkpoint is committed, pushed, and read back by remote
+SHA.
+
+Dedicated full discovery ran 164 tests: 157 passed and the same seven
+documented legacy import errors remained. Five require the absent sibling V250
+fixture and two require the legacy `aggregate_bars` compatibility export. No
+V30 or coordinator test failed, and no frozen legacy artifact was changed.
