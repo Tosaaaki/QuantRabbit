@@ -1,0 +1,62 @@
+{
+  "artifact_id": "FX_LONDON_OPEN_FALSE_BREAK_RECLAIM_V41",
+  "cycle_id": "V41",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "predecessor_disposition": {
+    "cycle_id": "V40",
+    "status": "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN",
+    "reason_code": "LONDON_FIX_FADE_MONTHLY_GATE_SHORTFALL",
+    "work_order_path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v41.json",
+    "work_order_sha256": "91d32d0cc086a07d3b2cd42be8c0c3a746080e544d72eda9296900a2f8926f8c"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout"
+  },
+  "training_only_family_selection": {
+    "candidate_signal_families_preregistered": 1,
+    "candidate_signal_families_compared_by_outcome": 0,
+    "selection_basis": "FX London-open stop-run and completed range-reclaim structure with strict observed range boundaries; no fitted parameter.",
+    "post_entry_return_outcome_consulted": false,
+    "cost_consulted": false,
+    "evaluation_month_used_for_selection": false,
+    "walk_forward_used_for_selection": false,
+    "holdout_used": false
+  },
+  "signal_family_rule": {
+    "name": "LONDON_OPEN_SINGLE_ASIAN_RANGE_SWEEP_RECLAIM",
+    "asian_range": "00:00-05:55 completed midpoint high/low",
+    "opening_sweep_window": "06:00-08:30 completed midpoint high/low",
+    "eligibility_formula": "xor(max(H_0600_0830)>H_asian,min(L_0600_0830)<L_asian) and L_asian<C0855<H_asian",
+    "direction_formula": "-1_if_upper_only_sweep_else_+1_if_lower_only_sweep",
+    "decision": "08:55 completed M5 close",
+    "fill": "09:00 next M5 executable open",
+    "raw_exit": "12:55 completed M5 close",
+    "tie_missing_or_both_sides_default": "NO_SIGNAL_FAIL_CLOSED",
+    "maximum_signals_per_pair_utc_day": 1,
+    "same_signal_action_state_all_cost_arms": true,
+    "cost_or_post_entry_outcome_inputs": false
+  },
+  "fixed_contracts": {
+    "target_hold_seconds": 14100,
+    "hard_max_age_seconds": 345600,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "costs_leverage_periods_changed": false,
+    "holdout": {"state": "UNOPENED", "may_execute": false},
+    "official_run_limit": 1
+  },
+  "proposal_provenance": {"model_identity": "NO_ACTUAL_LLM_USED", "unverified_identity_may_not_be_inferred": true},
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

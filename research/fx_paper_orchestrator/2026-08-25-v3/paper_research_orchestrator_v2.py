@@ -329,7 +329,7 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                          and node.name == "detect_day_signals"]
             if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
                 raise ContractError("signal detector exposes cost or outcome inputs")
-        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40"}:
+        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40", "V41"}:
             simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                                and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
             if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
@@ -591,6 +591,38 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or fixed.get("target_hold_seconds") != 14100 \
                     or fixed.get("costs_leverage_periods_changed") is not False:
                 raise ContractError("V40 signal family or fixed carry differs from preregistration")
+        if cycle["cycle_id"] == "V41":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_family_selection", {})
+            rule = prereg.get("signal_family_rule", {})
+            fixed = prereg.get("fixed_contracts", {})
+            if predecessor.get("cycle_id") != "V40" \
+                    or predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "LONDON_FIX_FADE_MONTHLY_GATE_SHORTFALL" \
+                    or predecessor.get("work_order_sha256") \
+                    != "91d32d0cc086a07d3b2cd42be8c0c3a746080e544d72eda9296900a2f8926f8c":
+                raise ContractError("V41 did not preserve V40 and its signal-family work order")
+            if selection.get("candidate_signal_families_preregistered") != 1 \
+                    or selection.get("candidate_signal_families_compared_by_outcome") != 0 \
+                    or selection.get("post_entry_return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("evaluation_month_used_for_selection") is not False \
+                    or selection.get("walk_forward_used_for_selection") is not False \
+                    or selection.get("holdout_used") is not False:
+                raise ContractError("V41 signal family was not one outcome-free preregistered candidate")
+            if rule.get("name") != "LONDON_OPEN_SINGLE_ASIAN_RANGE_SWEEP_RECLAIM" \
+                    or rule.get("eligibility_formula") \
+                    != "xor(max(H_0600_0830)>H_asian,min(L_0600_0830)<L_asian) and L_asian<C0855<H_asian" \
+                    or rule.get("direction_formula") \
+                    != "-1_if_upper_only_sweep_else_+1_if_lower_only_sweep" \
+                    or rule.get("tie_missing_or_both_sides_default") != "NO_SIGNAL_FAIL_CLOSED" \
+                    or rule.get("maximum_signals_per_pair_utc_day") != 1 \
+                    or rule.get("same_signal_action_state_all_cost_arms") is not True \
+                    or rule.get("cost_or_post_entry_outcome_inputs") is not False \
+                    or fixed.get("target_hold_seconds") != 14100 \
+                    or fixed.get("costs_leverage_periods_changed") is not False:
+                raise ContractError("V41 signal family or fixed carry differs from preregistration")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -1214,6 +1246,34 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                or set(row["arm_actions"]) != set(ARMS)
                or len(set(row["arm_actions"].values())) != 1 for row in rows):
             raise ContractError("V40 execution actions differ across cost arms")
+    if cycle["cycle_id"] == "V41":
+        if payload.get("cycle_id") != "V41" \
+                or payload.get("experiment") != "FX_LONDON_OPEN_FALSE_BREAK_RECLAIM_V41" \
+                or payload.get("family") != "FX_LONDON_OPEN_FALSE_BREAK_RECLAIM" \
+                or payload.get("single_changed_variable") \
+                != "fx_specific_london_open_false_break_reclaim_signal_family" \
+                or payload.get("same_execution_actions_all_cost_arms") is not True \
+                or payload.get("same_execution_state_transitions_all_cost_arms") is not True:
+            raise ContractError("V41 result identity or arm parity mismatch")
+        indicator = payload.get("indicator", {})
+        execution_rule = payload.get("execution_rule", {})
+        if indicator.get("eligibility_formula") \
+                != "xor(max(H_0600_0830)>H_asian,min(L_0600_0830)<L_asian) and L_asian<C0855<H_asian" \
+                or indicator.get("direction_formula") \
+                != "-1_if_upper_only_sweep_else_+1_if_lower_only_sweep" \
+                or indicator.get("decision_utc") != "08:55_COMPLETED_CLOSE" \
+                or indicator.get("fill_utc") != "09:00_EXECUTABLE_OPEN" \
+                or indicator.get("cost_used_for_signal") is not False \
+                or indicator.get("post_entry_outcome_used_for_signal") is not False \
+                or execution_rule.get("target_hold_seconds") != 14100:
+            raise ContractError("V41 result signal formula or fixed carry mismatch")
+        if any(row.get("execution_selected") is not True for row in rows) \
+                or any(row["utc_day"] >= "2026-07-01" for row in rows):
+            raise ContractError("V41 ledger selection or evaluation scope mismatch")
+        if any(not isinstance(row.get("arm_actions"), dict)
+               or set(row["arm_actions"]) != set(ARMS)
+               or len(set(row["arm_actions"].values())) != 1 for row in rows):
+            raise ContractError("V41 execution actions differ across cost arms")
     if cycle["cycle_id"] in {"V34", "V35"}:
         cycle_id = cycle["cycle_id"]
         expected_experiment = {
@@ -1322,7 +1382,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40"}:
+            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40", "V41"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -1348,7 +1408,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36", "V37", "V38", "V39", "V40"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36", "V37", "V38", "V39", "V40", "V41"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
@@ -1361,7 +1421,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
-        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40"}:
+        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40", "V41"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
@@ -1511,6 +1571,14 @@ def route_next_work_order(
             "LONDON_FIX_FADE_COST_DOMINANT",
             "LONDON_FIX_FADE_ADVERSE_COST_FRAGILE",
             "LONDON_FIX_FADE_MONTHLY_GATE_SHORTFALL",
+    }:
+        reason = result_reason
+        variable = SIGNAL_FAMILY_PIVOT_VARIABLE
+    elif result_reason in {
+            "LONDON_OPEN_FALSE_BREAK_RAW_EDGE_ABSENT",
+            "LONDON_OPEN_FALSE_BREAK_COST_DOMINANT",
+            "LONDON_OPEN_FALSE_BREAK_ADVERSE_COST_FRAGILE",
+            "LONDON_OPEN_FALSE_BREAK_MONTHLY_GATE_SHORTFALL",
     }:
         reason = result_reason
         variable = SIGNAL_FAMILY_PIVOT_VARIABLE
