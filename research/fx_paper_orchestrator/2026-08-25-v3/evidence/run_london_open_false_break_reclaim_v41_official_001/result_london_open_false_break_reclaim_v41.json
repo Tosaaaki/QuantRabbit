@@ -1,0 +1,810 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout remains unopened",
+    "both full comparable months must reach 2.0x under normal and adverse costs"
+  ],
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "automatic_rejection": {
+    "numeric_results_preserved": true,
+    "reason_code": "LONDON_OPEN_FALSE_BREAK_RAW_EDGE_ABSENT",
+    "rejected": true
+  },
+  "cost_suppressed_raw_signals": 0,
+  "cycle_id": "V41",
+  "development_admitted": false,
+  "effective_bet_days": 61,
+  "evidence_class": "opened_development_not_future_holdout",
+  "execution_contract": {
+    "actual_bid_ask_for_executable_arms": true,
+    "decision_to_fill_latency_seconds": 300,
+    "finite_max_age_seconds": 345600,
+    "frozen_v31_inventory_and_exit_planner": true,
+    "frozen_v7_slippage_commission_financing": true,
+    "same_actions_all_cost_arms": true,
+    "target_hold_seconds": 14100,
+    "terminal_liquidation_required": true
+  },
+  "execution_rule": {
+    "changed_from_v31": false,
+    "cost_or_outcome_inputs": false,
+    "hard_max_age_seconds": 345600,
+    "minimum_peer_signals": 2,
+    "name": "FROZEN_V31_CAUSAL_CONSENSUS_RELEASE_WITH_TWO_EVENT_PERSISTENCE",
+    "opposite_direction": "CLOSE_AT_SIGNAL_EXECUTABLE_OPEN_THEN_OPEN_REVERSE_FIXED_SLEEVE",
+    "peer_scope": "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH",
+    "required_consecutive_confirmations": 2,
+    "same_direction": "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION",
+    "same_timestamp_required": true,
+    "self_pair_excluded": true,
+    "target_hold_seconds": 14100,
+    "terminal_liquidation": true,
+    "unanimity_required": true
+  },
+  "experiment": "FX_LONDON_OPEN_FALSE_BREAK_RECLAIM_V41",
+  "external_orders": 0,
+  "family": "FX_LONDON_OPEN_FALSE_BREAK_RECLAIM",
+  "family_hypotheses": 1,
+  "final_admitted": false,
+  "holdout": {
+    "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+    "may_execute": false,
+    "state": "UNOPENED"
+  },
+  "indicator": {
+    "asian_range_utc": "00:00-05:55_COMPLETED_MID_HIGH_LOW",
+    "cost_used_for_signal": false,
+    "decision_utc": "08:55_COMPLETED_CLOSE",
+    "direction_formula": "-1_if_upper_only_sweep_else_+1_if_lower_only_sweep",
+    "eligibility_formula": "xor(max(H_0600_0830)>H_asian,min(L_0600_0830)<L_asian) and L_asian<C0855<H_asian",
+    "evaluation_month_used_for_threshold": false,
+    "fill_utc": "09:00_EXECUTABLE_OPEN",
+    "fixed_raw_exit_utc_bar": "12:55_COMPLETED_CLOSE",
+    "opening_sweep_utc": "06:00-08:30_COMPLETED_MID_HIGH_LOW",
+    "post_entry_outcome_used_for_signal": false,
+    "threshold": "STRICT_RANGE_BOUNDARY_NO_FITTED_PARAMETER"
+  },
+  "live_authority": false,
+  "periods": {
+    "MONTH_2026_05": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 34,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.89900975698463,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38235294117647056,
+        "ending_equity_jpy": 199318.13628323787,
+        "equity_multiple": 0.9965906814161893,
+        "executed_signals": 34,
+        "execution_state_transition_sha256": "4bb07932a77fb0e0aaf3d20b75330bbf6ab2dbf45520bf819a031c956ba0bf1d",
+        "gross_edge_bps": -2.89900975698463,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.42857142857142855,
+        "max_drawdown": -0.0039171043743273515,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -7.03371833278503,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "3206e56cfd92b77c5e1f07eaac57d0bcceba5131e084b345cb7a33f3aab374c0"
+          },
+          "EUR_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "eb134574f5f644e826f9a21b14f97279a33ccb6e500355bbb84e744f262e242a"
+          },
+          "GBP_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "8b19017ffc6bde76a1da3b19f30a024dcd88456a394ecac5c0564239c866a819"
+          },
+          "NZD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "0e6d4ca70c91eb96b777e717123c9bc04774689b780e15208a9e086f1e268bb6"
+          },
+          "USD_CAD": {
+            "episodes": 3,
+            "source_signals": 3,
+            "transition_sha256": "5798652c661cd7632eb1e5a2a3feaa356b078dfe59595770dfc552749f8965d2"
+          },
+          "USD_CHF": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "bc5275dd45908765a0a84044d0e03706444f610ad71c6b4b59df1015f3bda21a"
+          },
+          "USD_JPY": {
+            "episodes": 8,
+            "source_signals": 8,
+            "transition_sha256": "70df393792b7922d94c94cc641386cf1cb0b62b8362f5c35cf3cbbe1ffad49e1"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 34,
+        "position_opens": 34,
+        "processed_raw_signals": 34,
+        "realized_cost_bps": 4.134708575800401,
+        "reversals": 0,
+        "source_signals": 34,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 9.714285714285714
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 34,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.89900975698463,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38235294117647056,
+        "ending_equity_jpy": 199493.36184078478,
+        "equity_multiple": 0.9974668092039239,
+        "executed_signals": 34,
+        "execution_state_transition_sha256": "4bb07932a77fb0e0aaf3d20b75330bbf6ab2dbf45520bf819a031c956ba0bf1d",
+        "gross_edge_bps": -2.89900975698463,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.42857142857142855,
+        "max_drawdown": -0.0034121342525933462,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -5.22421132294492,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "3206e56cfd92b77c5e1f07eaac57d0bcceba5131e084b345cb7a33f3aab374c0"
+          },
+          "EUR_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "eb134574f5f644e826f9a21b14f97279a33ccb6e500355bbb84e744f262e242a"
+          },
+          "GBP_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "8b19017ffc6bde76a1da3b19f30a024dcd88456a394ecac5c0564239c866a819"
+          },
+          "NZD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "0e6d4ca70c91eb96b777e717123c9bc04774689b780e15208a9e086f1e268bb6"
+          },
+          "USD_CAD": {
+            "episodes": 3,
+            "source_signals": 3,
+            "transition_sha256": "5798652c661cd7632eb1e5a2a3feaa356b078dfe59595770dfc552749f8965d2"
+          },
+          "USD_CHF": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "bc5275dd45908765a0a84044d0e03706444f610ad71c6b4b59df1015f3bda21a"
+          },
+          "USD_JPY": {
+            "episodes": 8,
+            "source_signals": 8,
+            "transition_sha256": "70df393792b7922d94c94cc641386cf1cb0b62b8362f5c35cf3cbbe1ffad49e1"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 34,
+        "position_opens": 34,
+        "processed_raw_signals": 34,
+        "realized_cost_bps": 2.3252015659602896,
+        "reversals": 0,
+        "source_signals": 34,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 9.714285714285714
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 34,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.89900975698463,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38235294117647056,
+        "ending_equity_jpy": 199718.68978087459,
+        "equity_multiple": 0.998593448904373,
+        "executed_signals": 34,
+        "execution_state_transition_sha256": "4bb07932a77fb0e0aaf3d20b75330bbf6ab2dbf45520bf819a031c956ba0bf1d",
+        "gross_edge_bps": -2.89900975698463,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.42857142857142855,
+        "max_drawdown": -0.0027689427586604642,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -2.89900975698463,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "3206e56cfd92b77c5e1f07eaac57d0bcceba5131e084b345cb7a33f3aab374c0"
+          },
+          "EUR_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "eb134574f5f644e826f9a21b14f97279a33ccb6e500355bbb84e744f262e242a"
+          },
+          "GBP_USD": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "8b19017ffc6bde76a1da3b19f30a024dcd88456a394ecac5c0564239c866a819"
+          },
+          "NZD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "0e6d4ca70c91eb96b777e717123c9bc04774689b780e15208a9e086f1e268bb6"
+          },
+          "USD_CAD": {
+            "episodes": 3,
+            "source_signals": 3,
+            "transition_sha256": "5798652c661cd7632eb1e5a2a3feaa356b078dfe59595770dfc552749f8965d2"
+          },
+          "USD_CHF": {
+            "episodes": 4,
+            "source_signals": 4,
+            "transition_sha256": "bc5275dd45908765a0a84044d0e03706444f610ad71c6b4b59df1015f3bda21a"
+          },
+          "USD_JPY": {
+            "episodes": 8,
+            "source_signals": 8,
+            "transition_sha256": "70df393792b7922d94c94cc641386cf1cb0b62b8362f5c35cf3cbbe1ffad49e1"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 34,
+        "position_opens": 34,
+        "processed_raw_signals": 34,
+        "realized_cost_bps": 0.0,
+        "reversals": 0,
+        "source_signals": 34,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 9.714285714285714
+      },
+      "raw_diagnostics": {
+        "N_eff_days": 17,
+        "cost_used_for_signal": false,
+        "effective_bet_days": 17,
+        "raw_definition_changed": true,
+        "signals": 34,
+        "tickets_per_effective_bet": 2.0
+      }
+    },
+    "MONTH_2026_06": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 16,
+        "N_eff_episodes": 44,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.431590639750781,
+        "cash_signals": 0,
+        "direction_accuracy": 0.3181818181818182,
+        "ending_equity_jpy": 199176.74771747322,
+        "equity_multiple": 0.9958837385873661,
+        "executed_signals": 44,
+        "execution_state_transition_sha256": "96802c27805c354a6d60e1cd21b67f66e5d06d44a09506b3c6bcde292733368c",
+        "gross_edge_bps": -2.431590639750781,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.004263894729061635,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -6.559640460180445,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "fba10383d079bc5a9dc9c983ec59c57f03320e7be67ec5517cd3b4e548f68e6c"
+          },
+          "EUR_USD": {
+            "episodes": 1,
+            "source_signals": 1,
+            "transition_sha256": "aff752df901d48bc8f82f7c37311204a16e010d37b2d70d24c8cfe59c03f35f1"
+          },
+          "GBP_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "d19359adf101626df595a930bab268d0feb705d85b1cd440b0fbe54aed4a0339"
+          },
+          "NZD_USD": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "fdae31bc85171e52d102cf752f6624ef5f7d27ae6a268d91a8a5084fc6f7ea72"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "29a7290d94d0d74ee7809b97c96483498899a683758755f21083361bef7d9901"
+          },
+          "USD_CHF": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "c9a267d08fa1e41ae98d352becd979e443cfa005d9c630783777df339b90af6d"
+          },
+          "USD_JPY": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "7489d27e365aaaff6141cfef0ea8fff59766d9fae3272674ad6521022c1d243f"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 44,
+        "position_opens": 44,
+        "processed_raw_signals": 44,
+        "realized_cost_bps": 4.128049820429664,
+        "reversals": 0,
+        "source_signals": 44,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 12.571428571428571
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 16,
+        "N_eff_episodes": 44,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.431590639750781,
+        "cash_signals": 0,
+        "direction_accuracy": 0.3181818181818182,
+        "ending_equity_jpy": 199404.8542273957,
+        "equity_multiple": 0.9970242711369786,
+        "executed_signals": 44,
+        "execution_state_transition_sha256": "96802c27805c354a6d60e1cd21b67f66e5d06d44a09506b3c6bcde292733368c",
+        "gross_edge_bps": -2.431590639750781,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.003264225115705899,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -4.737708415417559,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "fba10383d079bc5a9dc9c983ec59c57f03320e7be67ec5517cd3b4e548f68e6c"
+          },
+          "EUR_USD": {
+            "episodes": 1,
+            "source_signals": 1,
+            "transition_sha256": "aff752df901d48bc8f82f7c37311204a16e010d37b2d70d24c8cfe59c03f35f1"
+          },
+          "GBP_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "d19359adf101626df595a930bab268d0feb705d85b1cd440b0fbe54aed4a0339"
+          },
+          "NZD_USD": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "fdae31bc85171e52d102cf752f6624ef5f7d27ae6a268d91a8a5084fc6f7ea72"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "29a7290d94d0d74ee7809b97c96483498899a683758755f21083361bef7d9901"
+          },
+          "USD_CHF": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "c9a267d08fa1e41ae98d352becd979e443cfa005d9c630783777df339b90af6d"
+          },
+          "USD_JPY": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "7489d27e365aaaff6141cfef0ea8fff59766d9fae3272674ad6521022c1d243f"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 44,
+        "position_opens": 44,
+        "processed_raw_signals": 44,
+        "realized_cost_bps": 2.306117775666777,
+        "reversals": 0,
+        "source_signals": 44,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 12.571428571428571
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 16,
+        "N_eff_episodes": 44,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.431590639750781,
+        "cash_signals": 0,
+        "direction_accuracy": 0.3181818181818182,
+        "ending_equity_jpy": 199693.93938908743,
+        "equity_multiple": 0.9984696969454372,
+        "executed_signals": 44,
+        "execution_state_transition_sha256": "96802c27805c354a6d60e1cd21b67f66e5d06d44a09506b3c6bcde292733368c",
+        "gross_edge_bps": -2.431590639750781,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.0024450369420627727,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -2.431590639750781,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "fba10383d079bc5a9dc9c983ec59c57f03320e7be67ec5517cd3b4e548f68e6c"
+          },
+          "EUR_USD": {
+            "episodes": 1,
+            "source_signals": 1,
+            "transition_sha256": "aff752df901d48bc8f82f7c37311204a16e010d37b2d70d24c8cfe59c03f35f1"
+          },
+          "GBP_USD": {
+            "episodes": 5,
+            "source_signals": 5,
+            "transition_sha256": "d19359adf101626df595a930bab268d0feb705d85b1cd440b0fbe54aed4a0339"
+          },
+          "NZD_USD": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "fdae31bc85171e52d102cf752f6624ef5f7d27ae6a268d91a8a5084fc6f7ea72"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "29a7290d94d0d74ee7809b97c96483498899a683758755f21083361bef7d9901"
+          },
+          "USD_CHF": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "c9a267d08fa1e41ae98d352becd979e443cfa005d9c630783777df339b90af6d"
+          },
+          "USD_JPY": {
+            "episodes": 7,
+            "source_signals": 7,
+            "transition_sha256": "7489d27e365aaaff6141cfef0ea8fff59766d9fae3272674ad6521022c1d243f"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 44,
+        "position_opens": 44,
+        "processed_raw_signals": 44,
+        "realized_cost_bps": 0.0,
+        "reversals": 0,
+        "source_signals": 44,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 12.571428571428571
+      },
+      "raw_diagnostics": {
+        "N_eff_days": 16,
+        "cost_used_for_signal": false,
+        "effective_bet_days": 16,
+        "raw_definition_changed": true,
+        "signals": 44,
+        "tickets_per_effective_bet": 2.75
+      }
+    },
+    "WALK_FORWARD": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 33,
+        "N_eff_episodes": 78,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.6353374344424587,
+        "cash_signals": 0,
+        "direction_accuracy": 0.34615384615384615,
+        "ending_equity_jpy": 198499.7646933127,
+        "equity_multiple": 0.9924988234665635,
+        "executed_signals": 78,
+        "execution_state_transition_sha256": "636e0d08e661b83d7d5bc17099d78e94aa44e43c5bf66b631bc9b09a5e2ab986",
+        "gross_edge_bps": -2.6353374344424587,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.008155708052453692,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -6.766289789264495,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 10,
+            "source_signals": 10,
+            "transition_sha256": "88cf8fd11b20b6260e60ca382ed472cc03d78e28a0cef3cf37468ae7c40f4c95"
+          },
+          "EUR_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "20ace5fad6e3e49fc552d3bdc0e8c5d565aa1af84c17c35497cef3ba0f58bb5c"
+          },
+          "GBP_USD": {
+            "episodes": 9,
+            "source_signals": 9,
+            "transition_sha256": "b92626526d69021f30d3d0fa23d1d8815b9334bba13583512c771e2a51ed1943"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 13,
+            "transition_sha256": "81165945733e0504e8644158c8a983d23b7494e57fa99a03b93cb4ff0fd68692"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 14,
+            "transition_sha256": "da4f38d8ad3175b403b33c7c9ebcab9e340e5f0f86f422d68caaf250e781737d"
+          },
+          "USD_CHF": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "d397bffea55c0d68ca24dd86a1718e08eb974a3a97a0a7d88e7122d698ef36c2"
+          },
+          "USD_JPY": {
+            "episodes": 15,
+            "source_signals": 15,
+            "transition_sha256": "0b8e5efab3f04dacc8c7885003b043bb7c0ac9d02b8e704126b86b51fec73b64"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 78,
+        "position_opens": 78,
+        "processed_raw_signals": 78,
+        "realized_cost_bps": 4.130952354822036,
+        "reversals": 0,
+        "source_signals": 78,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 22.285714285714285
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 33,
+        "N_eff_episodes": 78,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.6353374344424587,
+        "cash_signals": 0,
+        "direction_accuracy": 0.34615384615384615,
+        "ending_equity_jpy": 198901.48335284018,
+        "equity_multiple": 0.9945074167642008,
+        "executed_signals": 78,
+        "execution_state_transition_sha256": "636e0d08e661b83d7d5bc17099d78e94aa44e43c5bf66b631bc9b09a5e2ab986",
+        "gross_edge_bps": -2.6353374344424587,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.006628104117894162,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -4.949773785365384,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 10,
+            "source_signals": 10,
+            "transition_sha256": "88cf8fd11b20b6260e60ca382ed472cc03d78e28a0cef3cf37468ae7c40f4c95"
+          },
+          "EUR_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "20ace5fad6e3e49fc552d3bdc0e8c5d565aa1af84c17c35497cef3ba0f58bb5c"
+          },
+          "GBP_USD": {
+            "episodes": 9,
+            "source_signals": 9,
+            "transition_sha256": "b92626526d69021f30d3d0fa23d1d8815b9334bba13583512c771e2a51ed1943"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 13,
+            "transition_sha256": "81165945733e0504e8644158c8a983d23b7494e57fa99a03b93cb4ff0fd68692"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 14,
+            "transition_sha256": "da4f38d8ad3175b403b33c7c9ebcab9e340e5f0f86f422d68caaf250e781737d"
+          },
+          "USD_CHF": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "d397bffea55c0d68ca24dd86a1718e08eb974a3a97a0a7d88e7122d698ef36c2"
+          },
+          "USD_JPY": {
+            "episodes": 15,
+            "source_signals": 15,
+            "transition_sha256": "0b8e5efab3f04dacc8c7885003b043bb7c0ac9d02b8e704126b86b51fec73b64"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 78,
+        "position_opens": 78,
+        "processed_raw_signals": 78,
+        "realized_cost_bps": 2.3144363509229238,
+        "reversals": 0,
+        "source_signals": 78,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 22.285714285714285
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 33,
+        "N_eff_episodes": 78,
+        "aggregated_hold_signals": 0,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -2.6353374344424587,
+        "cash_signals": 0,
+        "direction_accuracy": 0.34615384615384615,
+        "ending_equity_jpy": 199414.35538149154,
+        "equity_multiple": 0.9970717769074577,
+        "executed_signals": 78,
+        "execution_state_transition_sha256": "636e0d08e661b83d7d5bc17099d78e94aa44e43c5bf66b631bc9b09a5e2ab986",
+        "gross_edge_bps": -2.6353374344424587,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 0,
+        "max_currency_abs_exposure_nav": 0.7142857142857142,
+        "max_drawdown": -0.005075316834490473,
+        "max_gross_exposure_nav": 0.7142857142857142,
+        "max_inventory_age_seconds": 14100.0,
+        "max_margin_requirement_jpy_at_1x": 142857.14285714284,
+        "net_edge_bps": -2.6353374344424587,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 10,
+            "source_signals": 10,
+            "transition_sha256": "88cf8fd11b20b6260e60ca382ed472cc03d78e28a0cef3cf37468ae7c40f4c95"
+          },
+          "EUR_USD": {
+            "episodes": 6,
+            "source_signals": 6,
+            "transition_sha256": "20ace5fad6e3e49fc552d3bdc0e8c5d565aa1af84c17c35497cef3ba0f58bb5c"
+          },
+          "GBP_USD": {
+            "episodes": 9,
+            "source_signals": 9,
+            "transition_sha256": "b92626526d69021f30d3d0fa23d1d8815b9334bba13583512c771e2a51ed1943"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 13,
+            "transition_sha256": "81165945733e0504e8644158c8a983d23b7494e57fa99a03b93cb4ff0fd68692"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 14,
+            "transition_sha256": "da4f38d8ad3175b403b33c7c9ebcab9e340e5f0f86f422d68caaf250e781737d"
+          },
+          "USD_CHF": {
+            "episodes": 11,
+            "source_signals": 11,
+            "transition_sha256": "d397bffea55c0d68ca24dd86a1718e08eb974a3a97a0a7d88e7122d698ef36c2"
+          },
+          "USD_JPY": {
+            "episodes": 15,
+            "source_signals": 15,
+            "transition_sha256": "0b8e5efab3f04dacc8c7885003b043bb7c0ac9d02b8e704126b86b51fec73b64"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 78,
+        "position_opens": 78,
+        "processed_raw_signals": 78,
+        "realized_cost_bps": 0.0,
+        "reversals": 0,
+        "source_signals": 78,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 22.285714285714285
+      },
+      "raw_diagnostics": {
+        "N_eff_days": 33,
+        "cost_used_for_signal": false,
+        "effective_bet_days": 33,
+        "raw_definition_changed": true,
+        "signals": 78,
+        "tickets_per_effective_bet": 2.3636363636363638
+      }
+    }
+  },
+  "portfolio": {
+    "currency_abs_exposure_cap": 1.0,
+    "gross_leverage_cap": 1.0,
+    "pair_count": 7,
+    "weight_per_pair": 0.14285714285714285
+  },
+  "proposal_ledger": "evidence/run_london_open_false_break_reclaim_v41_official_001/proposal_ledger_london_open_false_break_reclaim_v41.jsonl",
+  "proposal_ledger_sha256": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+  "raw_signals": 168,
+  "result_sha256": "6c0ab0e86817608ce6faed2db8e86b75dc3eec14c0d8f11bd682ceab4fcbd9d1",
+  "same_execution_actions_all_cost_arms": true,
+  "same_execution_state_transitions_all_cost_arms": true,
+  "same_signal_stream_all_cost_arms": true,
+  "signal_id_set_sha256": "6ed8365051604eafc3518b1d2f5f4a196b7e79ec61f8bf9eef93c0ef73c76aff",
+  "single_changed_variable": "fx_specific_london_open_false_break_reclaim_signal_family",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "terminal_inventory_mtm_hidden": false
+}
