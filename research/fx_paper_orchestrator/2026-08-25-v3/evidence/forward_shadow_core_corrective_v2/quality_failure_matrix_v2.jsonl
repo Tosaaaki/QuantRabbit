@@ -1,0 +1,3 @@
+{"case":"gap_reconnect","error_code":null,"external_order_count":0,"halt_new_actions":true,"invalid_interval_count":1,"lossless":false,"quality_reasons":["HEARTBEAT_FAILURE","RECONNECT_BOUNDARY","SOURCE_OR_ARRIVAL_GAP"],"status":"COMPLETED"}
+{"case":"ordering","error_code":null,"external_order_count":0,"halt_new_actions":true,"invalid_interval_count":2,"lossless":true,"quality_reasons":["CLOCK_REVERSAL","OUT_OF_ORDER_EVENT"],"status":"COMPLETED"}
+{"case":"spread_inversion","error_code":"SPREAD_INVERSION","external_order_count":0,"halt_new_actions":true,"invalid_interval_count":0,"lossless":false,"quality_reasons":[],"status":"FAILED"}

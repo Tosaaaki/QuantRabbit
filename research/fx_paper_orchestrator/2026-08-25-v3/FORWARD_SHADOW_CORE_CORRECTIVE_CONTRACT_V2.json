@@ -1,0 +1,89 @@
+{
+  "schema_version": 2,
+  "contract_id": "CREDENTIAL_FREE_FORWARD_SHADOW_CORE_CORRECTIVE_V2",
+  "classification": "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "supersedes": {
+    "remote_checkpoint": "0567d5cd607b2f99a6ca1d074fed70b978652e99",
+    "prior_evidence_path": "evidence/forward_shadow_core_v1/forward_shadow_core_checkpoint_v1.json",
+    "prior_status": "SUPERSEDED_NOT_ADMISSIBLE",
+    "prior_file_and_git_history_preserved": true
+  },
+  "finalization": {
+    "all_mutation_after_finalization_rejected": true,
+    "repeat_same_cutoff_is_read_only_after_inventory_reconciliation": true,
+    "different_cutoff_after_finalization_rejected": true,
+    "proposal_or_fill_after_requested_cutoff_rejected": true,
+    "future_pnl_in_as_of_summary": false,
+    "terminal_source_and_arrival_staleness_limit_seconds": 90,
+    "stale_terminal_inventory_is_not_zeroed": true
+  },
+  "latency": {
+    "decision_availability": "MAX_ARRIVAL_TS_OF_COMPLETED_DECISION_BAR_INPUTS",
+    "fill_requires_source_ts_strictly_after_decision_source_ts": true,
+    "fill_requires_arrival_ts_gte_decision_arrival_plus_arm_latency": true,
+    "base_latency_ns": 500000000,
+    "adverse_latency_ns": 1500000000
+  },
+  "secure_file_io": {
+    "source_and_state_symlinks_allowed": false,
+    "read_checks": ["LSTAT", "O_NOFOLLOW", "FSTAT", "DEVICE_INODE_RECHECK"],
+    "owner_uid_required": true,
+    "group_or_world_writable_file_allowed": false,
+    "state_root_and_subdirectory_symlinks_allowed": false,
+    "content_addressed_source_blob_required": true,
+    "source_is_never_mutated": true
+  },
+  "restart_cross_binding": {
+    "manifest_to_exact_source_blob": true,
+    "manifest_to_raw_ledger_sequence_range_and_terminal_hash": true,
+    "manifest_to_event_count_duplicate_count_lossless_semantics": true,
+    "checkpoint_to_all_ledger_roots": true,
+    "checkpoint_to_manifest_hash_index": true,
+    "checkpoint_to_full_source_prefix_anchors": true,
+    "proposal_and_fill_ledger_roots_in_checkpoint": true,
+    "one_sided_state_is_startup_failure": true,
+    "self_hash_only_manifest_trust": false,
+    "semantic_reseal_is_startup_failure": true,
+    "same_bytes_hash_mtime_only_change_is_idempotent": true,
+    "same_name_prefix_replacement_is_failure": true
+  },
+  "ingest_failure": {
+    "truncated_source": "DURABLE_PERMANENT_HALT",
+    "empty_source": "DURABLE_PERMANENT_HALT",
+    "invalid_utf8": "DURABLE_PERMANENT_HALT",
+    "symlink_source": "DURABLE_PERMANENT_HALT_WITHOUT_FOLLOWING_TARGET",
+    "structured_failure_manifest_required": true,
+    "new_proposal_or_fill_after_failure": false
+  },
+  "runtime_dependencies": {
+    "standalone_accounting_module": "shadow_jpy_accounting_v1.py",
+    "strategy_runtime_import_chain_present": false,
+    "pythonpath_injection_required": false,
+    "network_process_or_shell_capability_present": false,
+    "transitive_static_import_scan_required": true
+  },
+  "independent_adversarial_evaluation": {
+    "test_implementation": "test_forward_shadow_adversarial_v2.py",
+    "imports_runtime_or_evidence_builder": false,
+    "cli_and_durable_state_only": true,
+    "required_before_registry_or_strategy_execution": true
+  },
+  "research_boundary": {
+    "forward_feed_connected": false,
+    "forward_observation_started": false,
+    "official_strategy_run_performed": false,
+    "profit_evidence_generated": false,
+    "strategy_adoption_authorized": false,
+    "holdout_state": "UNOPENED"
+  }
+}
