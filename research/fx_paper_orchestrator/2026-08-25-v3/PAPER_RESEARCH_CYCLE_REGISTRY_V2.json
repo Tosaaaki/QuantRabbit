@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "a5f5bc9e6c80e2d7ba3e0362d85bb1714506e77c2ca638355e9cf1ca9a981666",
+    "sha256": "6c1b698eb5d425626aa26343dbf6ffc30693f818e6a5075b0e286f6b0bf9bb35",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -1004,6 +1004,112 @@
         "official_run_limit": 1,
         "result": "evidence/run_asian_displacement_handoff_fade_v33_official_001/result_asian_displacement_handoff_fade_v33.json",
         "ledger": "evidence/run_asian_displacement_handoff_fade_v33_official_001/proposal_ledger_asian_displacement_handoff_fade_v33.jsonl"
+      }
+    },
+    {
+      "cycle_id": "V34",
+      "registered_before_official_execution": true,
+      "depends_on_cycle": "V33",
+      "depends_on_legacy_cycle": null,
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "CAUSAL_TAIL_EXCESS_REPRESENTATIVE_PREREGISTRATION_V34.json",
+      "preregistration_sha256": "9fdf33e269e4549dc8a906848cc9a994d9d23119e95c65d28deb6886af086d51",
+      "script": "run_causal_tail_excess_representative_v34.py",
+      "script_sha256": "0401a0f42f65e654ee9e01f87053020c81206d17e0b7ee3b09d07cd023a411f1",
+      "test": "test_causal_tail_excess_representative_v34.py",
+      "test_sha256": "a155742bb584be59a64977b038fd37dd797260a2224fac92e27b72e2625b3edf",
+      "dependency_files": [
+        {"path": "run_asian_displacement_handoff_fade_v32.py", "sha256": "349447aa53a1dc8ff837e29960326b9c24b3276083f78a273dfceaf3c685eaca"},
+        {"path": "run_asian_displacement_handoff_fade_v33.py", "sha256": "d30b3a5e364d1612606fdf9c957122476a763d6a18789f2cf88d78be64ebb1e9"},
+        {"path": "evidence/run_asian_displacement_handoff_fade_v33_official_001/result_asian_displacement_handoff_fade_v33.json", "sha256": "80ac9cf09680f50aec45eb36a29ed21528246d87bda30e1af049fee8722bd611"},
+        {"path": "evidence/run_asian_displacement_handoff_fade_v33_official_001/proposal_ledger_asian_displacement_handoff_fade_v33.jsonl", "sha256": "6498f917839ed1bd13beb36e8e9eb650fc5aa972d4c1b9f073f52e624a8b9dd4"},
+        {"path": "evidence/orchestrator_state_v2/official_seal_v33.json", "sha256": "851a74a8d10088474548c55c4679f959d6343340e9802706852c290ba5f6a50e"},
+        {"path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v34.json", "sha256": "c74effb4d7be63152abdd756b225f89309d939d46d6f5b487c625febdcaee060"}
+      ],
+      "hypothesis_contract": {
+        "independent": true,
+        "frozen_before_replay": true,
+        "baseline": "FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_V33",
+        "family": "FX_SESSION_HANDOFF_MEAN_REVERSION",
+        "family_hypothesis_number": 2,
+        "single_changed_variable": "one_preregistered_turnover_reduction_rule_preserving_all_v32_raw_signals",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5",
+        "price_component": "BID_ASK",
+        "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "raw_signal_source": "GENERATED_IN_CYCLE",
+        "parent_cycle_id": "V33",
+        "parent_result": "evidence/run_asian_displacement_handoff_fade_v33_official_001/result_asian_displacement_handoff_fade_v33.json",
+        "parent_result_sha256": "80ac9cf09680f50aec45eb36a29ed21528246d87bda30e1af049fee8722bd611",
+        "parent_ledger": "evidence/run_asian_displacement_handoff_fade_v33_official_001/proposal_ledger_asian_displacement_handoff_fade_v33.jsonl",
+        "parent_ledger_sha256": "6498f917839ed1bd13beb36e8e9eb650fc5aa972d4c1b9f073f52e624a8b9dd4",
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true,
+        "same_entry_direction_exit": true,
+        "same_execution_mask_all_arms": true,
+        "same_execution_state_transitions_all_arms": true,
+        "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true,
+        "one_basket_per_utc_day": true,
+        "add_to_position": false,
+        "martingale": false,
+        "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285,
+        "gross_leverage_cap": 1.0,
+        "rule_max_gross_leverage": 0.14285714285714285,
+        "currency_abs_exposure_cap": 1.0,
+        "finite_max_age_seconds": 345600,
+        "selected_positions_per_basket": 1,
+        "terminal_liquidation_required": true,
+        "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_SINGLE_TURNOVER_RULE_FROM_SEALED_V34_WORK_ORDER",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "CAUSAL_TAIL_EXCESS_REPRESENTATIVE_PREREGISTRATION_V34.json#training_only_rule_selection",
+        "model_identity": "NO_ACTUAL_LLM_USED",
+        "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": [
+          "run_causal_tail_excess_representative_v34.py",
+          "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+          "--parent-result", "evidence/run_asian_displacement_handoff_fade_v33_official_001/result_asian_displacement_handoff_fade_v33.json",
+          "--parent-ledger", "evidence/run_asian_displacement_handoff_fade_v33_official_001/proposal_ledger_asian_displacement_handoff_fade_v33.jsonl",
+          "--output-root", "evidence/run_causal_tail_excess_representative_v34_official_001"
+        ],
+        "pythonpath": ["paper_replay_compat", "."],
+        "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_causal_tail_excess_representative_v34_official_001/result_causal_tail_excess_representative_v34.json",
+        "ledger": "evidence/run_causal_tail_excess_representative_v34_official_001/proposal_ledger_causal_tail_excess_representative_v34.jsonl"
       }
     }
   ]

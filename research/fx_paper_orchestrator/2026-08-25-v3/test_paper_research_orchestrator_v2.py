@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -250,6 +250,24 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertFalse(failure["result_exists"])
         self.assertFalse(failure["metrics_available"])
         self.assertFalse(failure["profit_proven"])
+
+    def test_v34_is_one_cost_independent_daily_representative_rule(self):
+        cycle = self.registry["cycles"][9]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V34")
+        self.assertEqual(cycle["depends_on_cycle"], "V33")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        selection = prereg["training_only_rule_selection"]
+        self.assertEqual(selection["candidate_rules_preregistered"], 1)
+        self.assertEqual(selection["candidate_rules_compared_by_outcome"], 0)
+        self.assertFalse(selection["post_entry_return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        rule = prereg["turnover_rule"]
+        self.assertEqual(rule["name"], "ONE_DAILY_MAX_NORMALIZED_TAIL_EXCESS_REPRESENTATIVE")
+        self.assertFalse(rule["signal_generation_changed"])
+        self.assertFalse(rule["cost_or_post_entry_outcome_inputs"])
+        self.assertEqual(cycle["inventory_contract"]["selected_positions_per_basket"], 1)
+        self.assertEqual(cycle["inventory_contract"]["rule_max_gross_leverage"], 1 / 7)
 
     def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
         reason, variable = orchestrator.route_next_work_order(
