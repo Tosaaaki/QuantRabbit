@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35", "V36", "V37"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35", "V36", "V37", "V38"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)

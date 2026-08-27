@@ -1,0 +1,69 @@
+{
+  "artifact_id": "FX_LONDON_OVEREXTENSION_FADE_V38",
+  "cycle_id": "V38",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "predecessor_disposition": {
+    "cycle_id": "V37",
+    "status": "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN",
+    "reason_code": "LONDON_ASIAN_RANGE_BREAKOUT_RAW_EDGE_ABSENT",
+    "work_order_path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v38.json",
+    "work_order_sha256": "7a1ab3526ceb10408b236c2369a33179c8a54fa7bd32c85fc7e530554c7f6f1c"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+    "null": "Asian-range-normalized London overextension fades lack executable edge.",
+    "alternative": "London moves exceeding the completed Asian range mean-revert after the lunch handoff."
+  },
+  "training_only_family_selection": {
+    "candidate_signal_families_preregistered": 1,
+    "candidate_signal_families_compared_by_outcome": 0,
+    "selection_basis": "FX session microstructure with a same-day dimensionless range ratio and no fitted parameter.",
+    "post_entry_return_outcome_consulted": false,
+    "cost_consulted": false,
+    "evaluation_month_used_for_selection": false,
+    "walk_forward_used_for_selection": false,
+    "holdout_used": false
+  },
+  "signal_family_rule": {
+    "name": "LONDON_OVEREXTENSION_BEYOND_COMPLETED_ASIAN_RANGE_FADE",
+    "eligibility_formula": "abs(log(C1155/O0800)) > log(H_asian/L_asian)",
+    "direction_formula": "-sign(log(C1155/O0800))",
+    "decision": "11:55 completed M5 close",
+    "fill": "12:00 next M5 executable open",
+    "raw_exit": "15:55 completed M5 close",
+    "maximum_signals_per_pair_utc_day": 1,
+    "same_signal_action_state_all_cost_arms": true,
+    "cost_or_post_entry_outcome_inputs": false
+  },
+  "fixed_contracts": {
+    "execution_state_machine": "V31 finite inventory and exit planner",
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "target_hold_seconds": 172800,
+    "hard_max_age_seconds": 345600,
+    "evaluation_end_exclusive": "2026-07-01",
+    "cost_arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false}
+  },
+  "rejection_contract": {"official_run_limit": 1, "adoption_authorized": false},
+  "proposal_provenance": {
+    "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_SINGLE_FX_SESSION_SIGNAL_FAMILY",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "model_identity": "NO_ACTUAL_LLM_USED",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

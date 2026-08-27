@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "9678c6c9a1d970a7de0d5bf9b28092298f44e2b9dc8dc90ce5937c54659554a3",
+    "sha256": "edd10f224e820b5a6196aa0cd56e1e39deb4c07c30e520b7c45e7ad5bb6bd1ba",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -1391,6 +1391,84 @@
         "official_run_limit": 1,
         "result": "evidence/run_london_asian_range_breakout_v37_official_001/result_london_asian_range_breakout_v37.json",
         "ledger": "evidence/run_london_asian_range_breakout_v37_official_001/proposal_ledger_london_asian_range_breakout_v37.jsonl"
+      }
+    },
+    {
+      "cycle_id": "V38",
+      "registered_before_official_execution": true,
+      "depends_on_cycle": "V37",
+      "depends_on_legacy_cycle": null,
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "LONDON_OVEREXTENSION_FADE_PREREGISTRATION_V38.json",
+      "preregistration_sha256": "f26aefcfb64f3116a8005e6859aec89742b02fdc570636c1b881095c6294ced3",
+      "script": "run_london_overextension_fade_v38.py",
+      "script_sha256": "c1b7c59c0e8ed8869f1f737499f12a508a0b0fba2f69e01e73873c128f995eb5",
+      "test": "test_london_overextension_fade_v38.py",
+      "test_sha256": "a38138107eba99acf90e77457253243aae5864e8b4557b5b28c1c9f8e3898960",
+      "dependency_files": [
+        {"path": "run_asian_displacement_handoff_fade_v32.py", "sha256": "349447aa53a1dc8ff837e29960326b9c24b3276083f78a273dfceaf3c685eaca"},
+        {"path": "run_asian_displacement_handoff_fade_v33.py", "sha256": "d30b3a5e364d1612606fdf9c957122476a763d6a18789f2cf88d78be64ebb1e9"},
+        {"path": "evidence/orchestrator_state_v2/official_seal_v37.json", "sha256": "e40bc67c3ec3a015452bb9ac58a7d3e1033d6685c037d1ec88b60491950c8380"},
+        {"path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v38.json", "sha256": "7a1ab3526ceb10408b236c2369a33179c8a54fa7bd32c85fc7e530554c7f6f1c"}
+      ],
+      "hypothesis_contract": {
+        "independent": true, "frozen_before_replay": true,
+        "baseline": "FX_LONDON_ASIAN_RANGE_BREAKOUT_V37",
+        "family": "FX_SESSION_RANGE_NORMALIZED_MEAN_REVERSION",
+        "family_hypothesis_number": 1,
+        "single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5", "price_component": "BID_ASK", "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "raw_signal_source": "GENERATED_IN_CYCLE",
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true, "same_entry_direction_exit": true,
+        "same_execution_state_transitions_all_arms": true, "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true, "one_basket_per_utc_day": true,
+        "add_to_position": false, "martingale": false, "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285, "gross_leverage_cap": 1.0,
+        "rule_max_gross_leverage": 1.0, "currency_abs_exposure_cap": 1.0,
+        "finite_max_age_seconds": 345600, "terminal_liquidation_required": true,
+        "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_SINGLE_FX_SESSION_SIGNAL_FAMILY",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "LONDON_OVEREXTENSION_FADE_PREREGISTRATION_V38.json#training_only_family_selection",
+        "model_identity": "NO_ACTUAL_LLM_USED", "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": ["run_london_overextension_fade_v38.py", "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z", "--output-root", "evidence/run_london_overextension_fade_v38_official_001"],
+        "pythonpath": ["paper_replay_compat", "."], "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_london_overextension_fade_v38_official_001/result_london_overextension_fade_v38.json",
+        "ledger": "evidence/run_london_overextension_fade_v38_official_001/proposal_ledger_london_overextension_fade_v38.jsonl"
       }
     }
   ]
