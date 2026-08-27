@@ -405,6 +405,24 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(migration["v42_dst_only"], "NO_GO")
         self.assertFalse(migration["v42_current_execution_authorized"])
         self.assertEqual(migration["holdout"], "UNOPENED")
+        shadow = report["forward_shadow_core"]
+        self.assertEqual(
+            shadow["status"], "SYSTEM_VALIDATED_NO_FEED_NO_PROFIT_EVIDENCE"
+        )
+        self.assertEqual(shadow["allowed_input_formats"], ["JSONL", "CSV"])
+        self.assertTrue(shadow["batch_lossless"])
+        self.assertEqual(shadow["exact_duplicate_count"], 1)
+        self.assertEqual(
+            shadow["completed_bar_counts"],
+            {"M5": 100, "M15": 32, "H1": 8, "H4": 2},
+        )
+        self.assertTrue(shadow["restart_state_hash_match"])
+        self.assertEqual(shadow["terminal_inventory_mtm_jpy"], 0.0)
+        self.assertFalse(shadow["actual_llm_called"])
+        self.assertFalse(shadow["forward_feed_connected"])
+        self.assertFalse(shadow["profit_evidence_generated"])
+        self.assertEqual(shadow["holdout"], "UNOPENED")
+        self.assertEqual(shadow["external_orders"], 0)
 
     def test_cause_and_pair_audit_contracts_are_hash_bound_non_strategy_evidence(self):
         pair = self.registry["derived_pair_audit_contract"]
@@ -439,6 +457,29 @@ class RegistryAcceptanceTest(unittest.TestCase):
             self.assertEqual(
                 orchestrator.sha256_file(ROOT / migration[path_key]), migration[hash_key]
             )
+
+    def test_forward_shadow_core_contract_is_hash_bound_non_strategy_infrastructure(self):
+        shadow = self.registry["forward_shadow_core_contract"]
+        self.assertEqual(
+            shadow["classification"],
+            "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE",
+        )
+        self.assertEqual(shadow["output_path"], orchestrator.FORWARD_SHADOW_CORE_AUDIT_PATH)
+        for path_key, hash_key in (
+            ("policy_path", "policy_sha256"),
+            ("runtime_path", "runtime_sha256"),
+            ("builder_path", "builder_sha256"),
+            ("core_test_path", "core_test_sha256"),
+            ("checkpoint_test_path", "checkpoint_test_sha256"),
+        ):
+            self.assertEqual(
+                orchestrator.sha256_file(ROOT / shadow[path_key]), shadow[hash_key]
+            )
+        validated = orchestrator.validate_forward_shadow_core_evidence(ROOT)
+        self.assertEqual(
+            validated["status"], "SYSTEM_VALIDATED_NO_FEED_NO_PROFIT_EVIDENCE"
+        )
+        self.assertFalse(validated["strategy_adoption_authorized"])
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)

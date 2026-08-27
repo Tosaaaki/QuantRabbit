@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "e4a97b22fc33f6ec11bdac53db2e5480fd22aefed740c4cb1de1c3268b040d90",
+    "sha256": "66d3758e604a10fd7bc6f3880d440b27601abadb69262e73aea6165184ed6ff3",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -72,6 +72,20 @@
     "migration_test_sha256": "1267cf804a8d598005446e72f9317a6bdfb5afb2cfa2affb60ea964957bb9b73",
     "output_path": "evidence/jpy_accounting_dst_runtime_migration_v1/jpy_accounting_dst_runtime_migration_v1.json",
     "classification": "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION"
+  },
+  "forward_shadow_core_contract": {
+    "policy_path": "FORWARD_SHADOW_CORE_CONTRACT_V1.json",
+    "policy_sha256": "7db704f81d8dad159315c6482cfd34f2aae60c8dbf97222638082f5b5d9754ab",
+    "runtime_path": "forward_shadow_core_v1.py",
+    "runtime_sha256": "7733a6ca850bd212c70266d8c6b175846b332faec190fd7d490abf0e5722c99b",
+    "builder_path": "build_forward_shadow_core_checkpoint_v1.py",
+    "builder_sha256": "5d991b242372dd627cb616ea828310e9ea48294efbd6e84baf01e534376e8022",
+    "core_test_path": "test_forward_shadow_core_v1.py",
+    "core_test_sha256": "e6c5b59d3ea858f98e2ae4070f0bb0947e466943b649346993ec089278e6ee2c",
+    "checkpoint_test_path": "test_forward_shadow_core_checkpoint_v1.py",
+    "checkpoint_test_sha256": "0a463561c4a26686ed3afe8e81e5396d80c6308375de8e89292e8d1dbc2a4676",
+    "output_path": "evidence/forward_shadow_core_v1/forward_shadow_core_checkpoint_v1.json",
+    "classification": "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE"
   },
   "legacy_evidence": {
     "registry": "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json",

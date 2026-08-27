@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "contract_id": "CREDENTIAL_FREE_FORWARD_SHADOW_CORE_V1",
+  "classification": "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "prerequisite_remote_checkpoints": {
+    "cause_pair_audit": "d7f0c7d0fc5ae5fb386c2875dc7f9bb23fcc8724",
+    "jpy_accounting_dst_migration": "a85c5c63d0b473d7c74b0221aef3967a0c755686"
+  },
+  "input_contract": {
+    "allowed_formats": [
+      "JSONL",
+      "CSV"
+    ],
+    "regular_local_file_only": true,
+    "source_mutation_allowed": false,
+    "append_only_prefix_required_on_reingest": true,
+    "truncated_final_record_fails_closed": true,
+    "unknown_schema_fails_closed": true,
+    "canonical_event_fields": [
+      "schema_version",
+      "provider_id",
+      "instrument",
+      "bid",
+      "ask",
+      "liquidity_optional",
+      "source_ts_ns",
+      "arrival_ts_ns",
+      "provider_event_id",
+      "sequence",
+      "heartbeat",
+      "raw_payload_sha256",
+      "quality_flags"
+    ]
+  },
+  "batch_manifest_contract": {
+    "content_address": "SHA256_OF_EXACT_SOURCE_BYTES",
+    "required_fields": [
+      "source_bytes_sha256",
+      "source_size_bytes",
+      "source_mtime_ns",
+      "event_count",
+      "accepted_event_count",
+      "first_source_ts_ns",
+      "last_source_ts_ns",
+      "exact_duplicate_count",
+      "lossless",
+      "invalid_interval_count",
+      "raw_ledger_terminal_hash"
+    ],
+    "manifest_embedded_sha256": true
+  },
+  "quality_contract": {
+    "maximum_source_gap_seconds": 90,
+    "maximum_arrival_gap_seconds": 90,
+    "heartbeat_expiry_seconds": 90,
+    "burn_in_completed_m5_bars": 48,
+    "sequence_absent_lossless": false,
+    "price_imputation_allowed": false,
+    "halt_new_decision_and_fill_on": [
+      "CONFLICTING_DUPLICATE",
+      "OUT_OF_ORDER_EVENT",
+      "CLOCK_REVERSAL",
+      "SPREAD_INVERSION",
+      "NONPOSITIVE_PRICE",
+      "SOURCE_OR_ARRIVAL_GAP",
+      "HEARTBEAT_FAILURE",
+      "RECONNECT_BOUNDARY"
+    ],
+    "invalid_intervals_reported_separately": true,
+    "automatic_quality_halt_clear_allowed": false
+  },
+  "aggregation_contract": {
+    "completed_timeframes": [
+      "M5",
+      "M15",
+      "H1",
+      "H4"
+    ],
+    "higher_timeframes_require_complete_valid_m5_bundle": true,
+    "decision_uses_completed_close_t": true,
+    "fill_uses_first_later_executable_bbo": true,
+    "same_bar_retroactive_use_forbidden": true
+  },
+  "proposal_and_execution_contract": {
+    "proposal_stream_content_addressed": true,
+    "worker_arms": [
+      "BOT_ONLY",
+      "ACTUAL_LLM_INVENTORY_POLICY"
+    ],
+    "cost_arms": {
+      "EXECUTABLE_BASE": {
+        "latency_milliseconds": 500,
+        "slippage_pips_per_side": 0.3
+      },
+      "ADVERSE_STRESS": {
+        "latency_milliseconds": 1500,
+        "slippage_pips_per_side": 0.9
+      }
+    },
+    "actual_llm_call_required_for_plumbing_test": false,
+    "actual_llm_call_performed_in_checkpoint": false,
+    "llm_may_change": [
+      "WORKER_ENABLE",
+      "PAIR_CAP",
+      "CURRENCY_CAP",
+      "FREEZE",
+      "UNWIND"
+    ],
+    "llm_may_not_change": [
+      "INDIVIDUAL_DIRECTION",
+      "FILL",
+      "ORDER",
+      "TP_SL",
+      "LEVERAGE",
+      "HARD_GUARD"
+    ],
+    "expected_orders_are_internal_records_only": true,
+    "virtual_fills_are_internal_records_only": true
+  },
+  "paper_account_contract": {
+    "initial_equity_jpy": 200000,
+    "fixed_gross_cap": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_required": true,
+    "jpy_accounting_runtime": "jpy_accounting_v2.py",
+    "financing_included": true,
+    "terminal_liquidation_required": true,
+    "terminal_inventory_mtm_jpy": 0,
+    "margin_guard_required": true
+  },
+  "restart_contract": {
+    "append_only_hash_chained_ledgers": true,
+    "atomic_checkpoint": true,
+    "checkpoint_recoverable_from_verified_ledger": true,
+    "exact_batch_reingest_idempotent": true,
+    "partial_ledger_record_fails_closed": true,
+    "manifest_mismatch_fails_closed": true,
+    "kill_restart_state_hash_must_match": true
+  },
+  "cli_contract": [
+    "validate-schema",
+    "ingest-batch",
+    "resume",
+    "status",
+    "finalize-period"
+  ],
+  "runtime_dependency_contract": {
+    "standard_library_only_except_local_jpy_accounting_module": true,
+    "network_transport_present": false,
+    "external_endpoint_present": false,
+    "secret_source_present": false,
+    "new_dependency_added": false
+  },
+  "research_boundary": {
+    "forward_feed_connected": false,
+    "forward_observation_started": false,
+    "official_strategy_run_performed": false,
+    "profit_evidence_generated": false,
+    "strategy_adoption_authorized": false,
+    "holdout_state": "UNOPENED"
+  }
+}

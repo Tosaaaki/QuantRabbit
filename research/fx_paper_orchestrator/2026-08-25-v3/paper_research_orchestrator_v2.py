@@ -95,6 +95,9 @@ JPY_ACCOUNTING_DST_AUDIT_PATH = (
     "evidence/jpy_accounting_dst_runtime_migration_v1/"
     "jpy_accounting_dst_runtime_migration_v1.json"
 )
+FORWARD_SHADOW_CORE_AUDIT_PATH = (
+    "evidence/forward_shadow_core_v1/forward_shadow_core_checkpoint_v1.json"
+)
 
 
 class ContractError(RuntimeError):
@@ -290,6 +293,26 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         artifact = within(root, migration_ref[path_key])
         if not artifact.is_file() or sha256_file(artifact) != migration_ref[hash_key]:
             raise ContractError(f"JPY accounting/DST artifact changed: {path_key}")
+    shadow_ref = require_keys(registry.get("forward_shadow_core_contract"), {
+        "policy_path", "policy_sha256", "runtime_path", "runtime_sha256",
+        "builder_path", "builder_sha256", "core_test_path", "core_test_sha256",
+        "checkpoint_test_path", "checkpoint_test_sha256", "output_path",
+        "classification",
+    }, "forward_shadow_core_contract")
+    if shadow_ref["classification"] != (
+        "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE"
+    ) or shadow_ref["output_path"] != FORWARD_SHADOW_CORE_AUDIT_PATH:
+        raise ContractError("forward shadow core contract identity changed")
+    for path_key, hash_key in (
+        ("policy_path", "policy_sha256"),
+        ("runtime_path", "runtime_sha256"),
+        ("builder_path", "builder_sha256"),
+        ("core_test_path", "core_test_sha256"),
+        ("checkpoint_test_path", "checkpoint_test_sha256"),
+    ):
+        artifact = within(root, shadow_ref[path_key])
+        if not artifact.is_file() or sha256_file(artifact) != shadow_ref[hash_key]:
+            raise ContractError(f"forward shadow core artifact changed: {path_key}")
     cycles = registry.get("cycles")
     if not isinstance(cycles, list) or not cycles:
         raise ContractError("registry has no cycles")
@@ -2224,6 +2247,70 @@ def validate_jpy_accounting_dst_migration_evidence(root: Path) -> dict[str, Any]
     }
 
 
+def validate_forward_shadow_core_evidence(root: Path) -> dict[str, Any]:
+    """Validate file-only forward plumbing without claiming feed or profit evidence."""
+    try:
+        import build_forward_shadow_core_checkpoint_v1 as shadow_checkpoint
+
+        payload = shadow_checkpoint.validate(root)
+    except (ImportError, OSError, ValueError, RuntimeError) as error:
+        raise ContractError(f"forward shadow core validation failed: {error}") from error
+    if payload.get("classification") != (
+        "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE"
+    ) or payload.get("authority") != AUTHORITY:
+        raise ContractError("forward shadow core identity changed")
+    closed_fields = {
+        "forward_feed_connected": False,
+        "forward_observation_started": False,
+        "official_strategy_run_performed": False,
+        "profit_evidence_generated": False,
+        "strategy_adoption_authorized": False,
+        "holdout_state": "UNOPENED",
+        "external_orders": 0,
+    }
+    if any(payload.get(field) != expected for field, expected in closed_fields.items()):
+        raise ContractError("forward shadow core crossed feed, holdout, or authority boundary")
+    input_scope = payload.get("input_scope", {})
+    if input_scope.get("network_transport_present") is not False \
+            or input_scope.get("secret_source_present") is not False \
+            or input_scope.get("external_endpoint_present") is not False \
+            or input_scope.get("source_unchanged_after_ingest") is not True:
+        raise ContractError("forward shadow core input boundary changed")
+    restart = payload.get("restart_safety", {})
+    if restart.get("state_and_checkpoint_hash_match") is not True \
+            or restart.get("exact_batch_reingest_idempotent") is not True \
+            or restart.get("append_only_ledgers_verified") is not True:
+        raise ContractError("forward shadow core is not restart-safe")
+    execution = payload.get("shared_proposal_execution", {})
+    finalization = payload.get("paper_account_finalization", {})
+    if execution.get("actual_llm_called") is not False \
+            or execution.get("same_content_addressed_proposal_all_arms") is not True \
+            or execution.get("external_order_count") != 0 \
+            or finalization.get("terminal_inventory_mtm_jpy") != 0.0 \
+            or finalization.get("terminal_currency_inventory") != {}:
+        raise ContractError("forward shadow execution or terminal accounting changed")
+    return {
+        "status": "SYSTEM_VALIDATED_NO_FEED_NO_PROFIT_EVIDENCE",
+        "audit_file_sha256": sha256_file(
+            within(root, FORWARD_SHADOW_CORE_AUDIT_PATH)
+        ),
+        "audit_sha256": payload["audit_sha256"],
+        "allowed_input_formats": payload["input_scope"]["allowed_formats"],
+        "batch_lossless": payload["batch_manifest"]["lossless"],
+        "exact_duplicate_count": payload["batch_manifest"]["exact_duplicate_count"],
+        "completed_bar_counts": payload["causal_completed_bars"]["counts"],
+        "quality_halts": payload["quality_failure_matrix"]["covered_halts"],
+        "restart_state_hash_match": True,
+        "terminal_inventory_mtm_jpy": 0.0,
+        "actual_llm_called": False,
+        "forward_feed_connected": False,
+        "profit_evidence_generated": False,
+        "holdout": "UNOPENED",
+        "external_orders": 0,
+        "strategy_adoption_authorized": False,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -2297,10 +2384,12 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         }
     cause_pair_summary = validate_cause_and_pair_audit_evidence(root)
     migration_summary = validate_jpy_accounting_dst_migration_evidence(root)
+    shadow_summary = validate_forward_shadow_core_evidence(root)
     return {"schema_version": 2, "authority": AUTHORITY, "cycles": reports,
             "component_worker_evidence": component_summary,
             "cause_and_pair_audit_evidence": cause_pair_summary,
-            "jpy_accounting_dst_migration": migration_summary}
+            "jpy_accounting_dst_migration": migration_summary,
+            "forward_shadow_core": shadow_summary}
 
 
 def build_component_registry_checkpoint(root: Path) -> dict[str, Any]:
@@ -2401,6 +2490,8 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         validate_cause_and_pair_audit_evidence(root)
     if "jpy_accounting_dst_migration_contract" in registry:
         validate_jpy_accounting_dst_migration_evidence(root)
+    if "forward_shadow_core_contract" in registry:
+        validate_forward_shadow_core_evidence(root)
     shared_paths = state_paths(root)
     with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
         state = read_state(shared_paths["state"])

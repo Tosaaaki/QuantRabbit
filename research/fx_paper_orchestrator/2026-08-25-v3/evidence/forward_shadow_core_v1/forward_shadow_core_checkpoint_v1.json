@@ -1,0 +1,238 @@
+{
+  "artifact_file_sha256": {
+    "evidence/forward_shadow_core_v1/completed_bars_v1.jsonl": "d6dd84619b3079c3d7e2e3f9668439eba51b2934b2eb131deb790dfb4faa633a",
+    "evidence/forward_shadow_core_v1/quality_failure_matrix_v1.jsonl": "4f2b00f9cd5f7eb69da9c11acac460e3ab0f229b184a7e7e61aba9929281b759",
+    "evidence/forward_shadow_core_v1/shared_proposal_execution_v1.jsonl": "0339d43d0a8bb04948815afaf37a8e72a9ede6c94fcdd1884954b6e09f2d72c8",
+    "evidence/forward_shadow_core_v1/valid_batch_manifest_v1.json": "3093a04ff662894504c87ef9bd06025cd65a39235a3ef9ee0ec8051ed7c7f13b"
+  },
+  "audit_sha256": "d71b70e5f326e1b49fd440ea7b10630e84e1319ddadb5359c501cc2700e92bbc",
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "batch_manifest": {
+    "accepted_event_count": 510,
+    "event_count": 511,
+    "exact_duplicate_count": 1,
+    "first_source_ts_ns": 1781510400000000000,
+    "invalid_interval_count": 0,
+    "last_source_ts_ns": 1781525400000000000,
+    "lossless": true,
+    "manifest_sha256": "9a91755a01ac8c64125205c285f2059cab59a78e091449bf7a57f799b6b893d6",
+    "path": "evidence/forward_shadow_core_v1/valid_batch_manifest_v1.json",
+    "source_bytes_sha256": "7b17d1ce526b18c8c4c0d9eb32645cbf529b971c688c30dc2d1745a7184d5414",
+    "source_mtime_ns": 1787777777000000000,
+    "source_size_bytes": 152061
+  },
+  "causal_completed_bars": {
+    "burn_in_completed_m5_bars": 48,
+    "counts": {
+      "H1": 8,
+      "H4": 2,
+      "M15": 32,
+      "M5": 100
+    },
+    "decision_close_t_and_later_fill_verified": true,
+    "higher_timeframes_use_complete_m5_bundles": true,
+    "invalid_counts": {
+      "H1": 0,
+      "H4": 0,
+      "M15": 0,
+      "M5": 0
+    },
+    "path": "evidence/forward_shadow_core_v1/completed_bars_v1.jsonl"
+  },
+  "checkpoint_id": "CREDENTIAL_FREE_FORWARD_SHADOW_CORE_V1",
+  "classification": "NON_STRATEGY_FILE_ONLY_FORWARD_SHADOW_INFRASTRUCTURE",
+  "cli_commands": [
+    "validate-schema",
+    "ingest-batch",
+    "resume",
+    "status",
+    "finalize-period"
+  ],
+  "external_orders": 0,
+  "forward_feed_connected": false,
+  "forward_observation_started": false,
+  "holdout_state": "UNOPENED",
+  "input_scope": {
+    "allowed_formats": [
+      "JSONL",
+      "CSV"
+    ],
+    "csv_schema_event_count": 4,
+    "external_endpoint_present": false,
+    "jsonl_schema_event_count": 511,
+    "network_transport_present": false,
+    "runtime_import_roots": [
+      "__future__",
+      "argparse",
+      "calendar",
+      "csv",
+      "dataclasses",
+      "datetime",
+      "decimal",
+      "hashlib",
+      "io",
+      "jpy_accounting_v2",
+      "json",
+      "math",
+      "os",
+      "pathlib",
+      "re",
+      "tempfile",
+      "typing"
+    ],
+    "secret_source_present": false,
+    "source_unchanged_after_ingest": true
+  },
+  "official_strategy_run_performed": false,
+  "paper_account_finalization": {
+    "external_order_count": 0,
+    "live_authority": false,
+    "max_age_close_count": 4,
+    "period_end_ts_ns": 1781525400000000000,
+    "schema_version": 1,
+    "summary_sha256": "dbc786367c10db2a2299cc7df492004707f25ba0982ec3e6afa265ee32bfc263",
+    "terminal_currency_inventory": {},
+    "terminal_inventory_mtm_jpy": 0.0,
+    "terminal_liquidation_count": 4,
+    "worker_cost_arms": {
+      "ACTUAL_LLM_INVENTORY_POLICY|ADVERSE_STRESS": {
+        "ending_equity_jpy": 199984.61436563483,
+        "margin_guard_violations": 0,
+        "realized_net_jpy": -15.3856343651641,
+        "terminal_inventory_mtm_jpy": 0.0,
+        "terminal_open_positions": 0
+      },
+      "ACTUAL_LLM_INVENTORY_POLICY|EXECUTABLE_BASE": {
+        "ending_equity_jpy": 199992.10724109382,
+        "margin_guard_violations": 0,
+        "realized_net_jpy": -7.892758906190938,
+        "terminal_inventory_mtm_jpy": 0.0,
+        "terminal_open_positions": 0
+      },
+      "BOT_ONLY|ADVERSE_STRESS": {
+        "ending_equity_jpy": 199984.61436563483,
+        "margin_guard_violations": 0,
+        "realized_net_jpy": -15.3856343651641,
+        "terminal_inventory_mtm_jpy": 0.0,
+        "terminal_open_positions": 0
+      },
+      "BOT_ONLY|EXECUTABLE_BASE": {
+        "ending_equity_jpy": 199992.10724109382,
+        "margin_guard_violations": 0,
+        "realized_net_jpy": -7.892758906190938,
+        "terminal_inventory_mtm_jpy": 0.0,
+        "terminal_open_positions": 0
+      }
+    }
+  },
+  "profit_evidence_generated": false,
+  "protected_historical_artifact_hashes": {
+    "evidence/orchestrator_state_v2/next_hypothesis_work_order_v42.json": "29d541646f57efffe543007d94ce0958a2fa3cc68180cf521101886a8b09b524",
+    "evidence/orchestrator_state_v2/official_seal_v41.json": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+    "evidence/run_london_open_false_break_reclaim_v41_official_001/result_london_open_false_break_reclaim_v41.json": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a"
+  },
+  "quality_failure_matrix": {
+    "cases": [
+      "gap_reconnect",
+      "ordering",
+      "spread_inversion"
+    ],
+    "covered_halts": [
+      "CLOCK_REVERSAL",
+      "HEARTBEAT_FAILURE",
+      "OUT_OF_ORDER_EVENT",
+      "RECONNECT_BOUNDARY",
+      "SOURCE_OR_ARRIVAL_GAP",
+      "SPREAD_INVERSION"
+    ],
+    "invalid_intervals_reported_separately": true,
+    "path": "evidence/forward_shadow_core_v1/quality_failure_matrix_v1.jsonl",
+    "price_imputation_used": false,
+    "sequence_absent_lossless_false": true
+  },
+  "restart_safety": {
+    "append_only_ledgers_verified": true,
+    "checkpoint_sha256_after_restart": "d9146d51383c20748343d03c95f788b7bffb3e1c6aed53150bab5508c0fe1085",
+    "checkpoint_sha256_before_restart": "d9146d51383c20748343d03c95f788b7bffb3e1c6aed53150bab5508c0fe1085",
+    "exact_batch_reingest_idempotent": true,
+    "state_and_checkpoint_hash_match": true,
+    "state_sha256_after_restart": "68499f7058db31292138eab5f596a9691d8dc0fbdaa6b18c0e7d39290bd0774f",
+    "state_sha256_before_restart": "68499f7058db31292138eab5f596a9691d8dc0fbdaa6b18c0e7d39290bd0774f"
+  },
+  "schema_version": 1,
+  "shared_proposal_execution": {
+    "actual_llm_called": false,
+    "cost_arms": [
+      "ADVERSE_STRESS",
+      "EXECUTABLE_BASE"
+    ],
+    "external_order_count": 0,
+    "normal_adverse_latency_and_slippage_applied_after_decision": true,
+    "path": "evidence/forward_shadow_core_v1/shared_proposal_execution_v1.jsonl",
+    "proposal_sha256": [
+      "0051b2c88fa6fcd9554a9f62f7b0c9d5886871371160be9d234df4e5e907f696",
+      "ccd26b87f9e4b410d99083c32b668c77d21148b2c207e488986f66c9f107e2e1"
+    ],
+    "route_receipts": [
+      {
+        "cost_arms": [
+          "ADVERSE_STRESS",
+          "EXECUTABLE_BASE"
+        ],
+        "decision_stream_sha256": "5d630d4de38647b8454562a44ec6e0272ae911120340ec2d07411ca7cfed4cae",
+        "external_order_count": 0,
+        "idempotent": false,
+        "new_virtual_fill_count": 4,
+        "proposal_sha256": "0051b2c88fa6fcd9554a9f62f7b0c9d5886871371160be9d234df4e5e907f696",
+        "resumed_partial_execution": false,
+        "same_content_addressed_proposal_all_arms": true,
+        "virtual_fill_count": 4,
+        "worker_arms": [
+          "BOT_ONLY",
+          "ACTUAL_LLM_INVENTORY_POLICY"
+        ]
+      },
+      {
+        "cost_arms": [
+          "ADVERSE_STRESS",
+          "EXECUTABLE_BASE"
+        ],
+        "decision_stream_sha256": "5d630d4de38647b8454562a44ec6e0272ae911120340ec2d07411ca7cfed4cae",
+        "external_order_count": 0,
+        "idempotent": false,
+        "new_virtual_fill_count": 4,
+        "proposal_sha256": "ccd26b87f9e4b410d99083c32b668c77d21148b2c207e488986f66c9f107e2e1",
+        "resumed_partial_execution": false,
+        "same_content_addressed_proposal_all_arms": true,
+        "virtual_fill_count": 4,
+        "worker_arms": [
+          "BOT_ONLY",
+          "ACTUAL_LLM_INVENTORY_POLICY"
+        ]
+      }
+    ],
+    "same_content_addressed_proposal_all_arms": true,
+    "worker_arms": [
+      "BOT_ONLY",
+      "ACTUAL_LLM_INVENTORY_POLICY"
+    ]
+  },
+  "source_artifact_sha256": {
+    "FORWARD_SHADOW_CORE_CONTRACT_V1.json": "7db704f81d8dad159315c6482cfd34f2aae60c8dbf97222638082f5b5d9754ab",
+    "build_forward_shadow_core_checkpoint_v1.py": "5d991b242372dd627cb616ea828310e9ea48294efbd6e84baf01e534376e8022",
+    "forward_shadow_core_v1.py": "7733a6ca850bd212c70266d8c6b175846b332faec190fd7d490abf0e5722c99b",
+    "jpy_accounting_v2.py": "f49998e6d01bdbec65f8a6f307e039d531c5fcdad9899c5ef3d5ae946132dda6",
+    "test_forward_shadow_core_checkpoint_v1.py": "0a463561c4a26686ed3afe8e81e5396d80c6308375de8e89292e8d1dbc2a4676",
+    "test_forward_shadow_core_v1.py": "e6c5b59d3ea858f98e2ae4070f0bb0947e466943b649346993ec089278e6ee2c"
+  },
+  "strategy_adoption_authorized": false
+}

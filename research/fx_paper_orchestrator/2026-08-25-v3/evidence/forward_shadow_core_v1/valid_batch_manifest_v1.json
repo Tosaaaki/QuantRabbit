@@ -1,0 +1,21 @@
+{
+  "accepted_event_count": 510,
+  "batch_sha256": "7b17d1ce526b18c8c4c0d9eb32645cbf529b971c688c30dc2d1745a7184d5414",
+  "event_count": 511,
+  "exact_duplicate_count": 1,
+  "external_order_count": 0,
+  "first_source_ts_ns": 1781510400000000000,
+  "halt_new_actions": false,
+  "invalid_interval_count": 0,
+  "last_source_ts_ns": 1781525400000000000,
+  "lossless": true,
+  "manifest_sha256": "9a91755a01ac8c64125205c285f2059cab59a78e091449bf7a57f799b6b893d6",
+  "raw_ledger_terminal_hash": "f8d65c7f7753234bbace2a9365540a2b55fa0aeb8476943993890b33f3d1ad69",
+  "schema_version": 1,
+  "source_bytes_sha256": "7b17d1ce526b18c8c4c0d9eb32645cbf529b971c688c30dc2d1745a7184d5414",
+  "source_identity_sha256": "e56a3f1b9a502037c9b362e3df0f13ef0b64c840e893aee6775cae9c2bbca4e2",
+  "source_mtime_ns": 1787777777000000000,
+  "source_name": "forward_shadow_valid.jsonl",
+  "source_size_bytes": 152061,
+  "status": "COMPLETED"
+}
