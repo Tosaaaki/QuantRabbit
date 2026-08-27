@@ -189,6 +189,19 @@
       "stdout_sha256": "d88888ce39e2763f81c827829044f6a3a52bcb87c5396a2a1f2d81d2993aa8bc",
       "strategy_profit_pass": false,
       "subprocess_returncode": 0
+    },
+    "V40": {
+      "official_attempts": 1,
+      "official_result_file_sha256": "c5062a2901fd4cb829d0f6a54bcc0fc8159c01d891c453236b92150a020fa927",
+      "official_seal_file_sha256": "a04f30d969170585195732445e7f99bd6ac4264e7db84b24738c8cfd80f8dd6d",
+      "official_seal_sha256": "c1edab6fab07dc387ecad3f5c132d9329ddd578ec33fdd85eb24b1559187e602",
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-27T04:31:39.320516+00:00",
+      "status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "69e795d7a7884e674542287cafbe3abb1705433b528cfa7aebb662bf6612edef",
+      "strategy_profit_pass": false,
+      "subprocess_returncode": 0
     }
   },
   "schema_version": 2
