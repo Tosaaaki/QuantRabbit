@@ -1,0 +1,55 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "authorized_recovery_execution": false,
+  "authorized_recovery_ordinal": 0,
+  "cycle_id": "V37",
+  "effective_bet_days": 65,
+  "embedded_result_sha256": "cd5c321b785c9cc5949e8d5a69572a15460e75b6ccaa7ae6b9d4e3fa26dcec0c",
+  "ledger_sha256": "0e26c70f6e427afff3e50919351ee35ce3314963eda84982057fa5fee9e4f027",
+  "official_execution_ordinal": 1,
+  "official_seal_sha256": "860479b2d1dc5a88a41cfc747a7b8b76a2f5ed61cfcc14d801d82fe1f6aa6e55",
+  "preregistration_sha256": "c22449a0c4c9db3efbe1c2824227ace7ca4721d8ee3cababbab3ddf79ca1c000",
+  "recovered_without_rerun": false,
+  "recovery_authorization_sha256": null,
+  "registry_sha256": "7bf29f00323d0e2b0eef61366e07298f717fa4b6048372e7d8330aba6f0d7e38",
+  "result_file_sha256": "2bf42c97e4a1a7fe8863a4ab1e29b06f7bfe0c21bd58643683fb037d653e0179",
+  "schema_version": 2,
+  "script_sha256": "02f7cd4c9583e526ab01ace0455f802203a3c27ba653ff4fd33a4a582325b41a",
+  "signal_id_set_sha256": "a5b8cb8d264d606ae0b449f0993fc3fc0915127f38d2c5aab39412ede925bdfe",
+  "signals": 211,
+  "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+  "strategy_profit_gate": {
+    "adoption_authorized": false,
+    "adverse_2x_pass": false,
+    "adverse_monthly_multiples": {
+      "MONTH_2026_05": 0.9969536417921846,
+      "MONTH_2026_06": 0.9870772879321216
+    },
+    "initial_equity_jpy": 200000,
+    "normal_2x_pass": false,
+    "normal_monthly_multiples": {
+      "MONTH_2026_05": 0.9999516472336821,
+      "MONTH_2026_06": 0.9894229295621824
+    },
+    "passed": false,
+    "stretch_3x_pass": false,
+    "unopened_holdout_reproduced": false
+  },
+  "system_acceptance": {
+    "external_orders": 0,
+    "holdout_state": "UNOPENED",
+    "paper_only": true,
+    "passed": true,
+    "restart_safe_seal": true
+  },
+  "test_sha256": "fb63d1325b1a952f17267862949c16a48df542a53fb81ac49af534f09915b1b5"
+}
