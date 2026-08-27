@@ -1,0 +1,266 @@
+{
+  "classification": "LEGACY_ORACLE_COVERAGE_SIDECAR_ONLY",
+  "coverage_sha256": "a0687316c9d5e78868f5d7f507411177e00e1bf9b6583de768b46b248713e32c",
+  "cycles": [
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V25",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v25.json",
+      "legacy_seal_sha256": "913fe2200731563705246e4e59e37a1e2bd60e9fdcac3831a2a79630872068c4",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "MISSING",
+      "cycle": "V26",
+      "legacy_seal_path": null,
+      "legacy_seal_sha256": null,
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V27",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v27.json",
+      "legacy_seal_sha256": "d496aed31081631d80b921a0d30930a9b7b60182efaef13c1bf19b3585c22ddf",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V28",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v28.json",
+      "legacy_seal_sha256": "2a0004a6daea3cdb328b1dfddb762644901d87ae56ea97ec8fa23fb421a7ee93",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V29",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v29.json",
+      "legacy_seal_sha256": "d819a6698072a0a5c64ad08888a019d581672d8361becc527953da155734ca6d",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V30",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v30.json",
+      "legacy_seal_sha256": "00e1c669de5f8a5770d04955a6114e1541a8e48f458337a36af89a08b9a74f2b",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V31",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v31.json",
+      "legacy_seal_sha256": "ca17acbd21061d69d7301520f4d441f4319b4de080fcc3fb602312e5501034f5",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "MISSING",
+      "cycle": "V32",
+      "legacy_seal_path": null,
+      "legacy_seal_sha256": null,
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V33",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v33.json",
+      "legacy_seal_sha256": "851a74a8d10088474548c55c4679f959d6343340e9802706852c290ba5f6a50e",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "MISSING",
+      "cycle": "V34",
+      "legacy_seal_path": null,
+      "legacy_seal_sha256": null,
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V35",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v35.json",
+      "legacy_seal_sha256": "c2d9ada3413709e4e3b5b2e1d1aa89eafd2b5988b9c9fa0562ebc10d533225d9",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "MISSING",
+      "cycle": "V36",
+      "legacy_seal_path": null,
+      "legacy_seal_sha256": null,
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V37",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v37.json",
+      "legacy_seal_sha256": "e40bc67c3ec3a015452bb9ac58a7d3e1033d6685c037d1ec88b60491950c8380",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V38",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v38.json",
+      "legacy_seal_sha256": "9c63bdb9d4e68fc286be401449895143f728e69f88e8132bcb12fb44e6db4365",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V39",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v39.json",
+      "legacy_seal_sha256": "b2e7684960811f2779d0be8110f07335f72af7151c988b245be66fa176dd0bbe",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V40",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v40.json",
+      "legacy_seal_sha256": "a04f30d969170585195732445e7f99bd6ac4264e7db84b24738c8cfd80f8dd6d",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    },
+    {
+      "coverage_state": "RETROACTIVE",
+      "cycle": "V41",
+      "legacy_seal_path": "evidence/orchestrator_state_v2/official_seal_v41.json",
+      "legacy_seal_sha256": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+      "missing_independent_oracle_inputs": [
+        "EXACT_EVENT_BBO_BYTES",
+        "EVENT_ARRIVAL_TIMESTAMPS",
+        "BASE_MICROUNITS",
+        "SIGN_AWARE_CONVERSION_RECEIPTS",
+        "MARGIN_GRID"
+      ],
+      "official_oracle_pass": false,
+      "retroactive_promotion_allowed": false
+    }
+  ],
+  "legacy_seals_changed": false,
+  "official_oracle_pass_count": 0,
+  "reconstructable_count": 0,
+  "schema_version": 1,
+  "sealed_cycle_count": 13
+}

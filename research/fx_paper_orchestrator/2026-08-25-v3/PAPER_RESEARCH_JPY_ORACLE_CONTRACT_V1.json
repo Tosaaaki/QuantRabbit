@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "contract_id": "PAPER_RESEARCH_JPY_ORACLE_V1",
+  "classification": "FUTURE_ONLY_INDEPENDENT_ECONOMIC_ORACLE",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "forbidden_imports": [
+    "jpy_accounting_v2",
+    "shadow_jpy_accounting_v1",
+    "paper_research_template_runner_v3",
+    "paper_research_orchestrator_v2",
+    "paper_research_system_v3",
+    "result_validator"
+  ],
+  "canonical_number_contract": {
+    "float_allowed": false,
+    "price": "INTEGER_TICKS_PLUS_INTEGER_TICK_SCALE",
+    "position": "INTEGER_BASE_MICROUNITS",
+    "account": "INTEGER_JPY_MICROS",
+    "time": "INTEGER_EPOCH_NANOSECONDS",
+    "ratios": "DECIMAL_TEXT",
+    "rounding": "CONSERVATIVE_FLOOR_TO_JPY_MICROS"
+  },
+  "inputs": {
+    "source": ["EXACT_BBO_BLOB_BYTES", "CONTENT_HASHED_SOURCE_MANIFEST"],
+    "path_capability": "ALL_INPUTS_BENEATH_EXPLICIT_NONSYMLINK_INPUT_ROOT_AND_OUTPUTS_BENEATH_EXPLICIT_NONSYMLINK_OUTPUT_ROOT",
+    "proposal": "EX_ANTE_ONLY_WITHOUT_IDENTIFIERS_OR_OUTCOMES",
+    "policies": [
+      "FROZEN_EXECUTION_POLICY",
+      "FROZEN_INVENTORY_POLICY",
+      "FROZEN_ACCOUNTING_POLICY",
+      "FROZEN_EVALUATION_POLICY"
+    ],
+    "producer_result_or_self_reported_metrics_used": false
+  },
+  "proposal_recursive_forbidden_fields": [
+    "signal_id",
+    "fill",
+    "fill_price",
+    "path",
+    "mfe",
+    "mae",
+    "pnl",
+    "cost",
+    "equity",
+    "drawdown",
+    "dd",
+    "cvar",
+    "profit",
+    "return"
+  ],
+  "oracle_outputs": {
+    "signal_id_generated_by_oracle": true,
+    "all_proposals_have_all_arm_dispositions": true,
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "source_fill_reference_fields": [
+      "source_event_sha256",
+      "provider_id",
+      "source_ts_ns",
+      "arrival_ts_ns",
+      "execution_policy_sha256"
+    ],
+    "recomputed": [
+      "FILL",
+      "COST",
+      "CURRENCY_INVENTORY",
+      "FINITE_MAX_AGE",
+      "TERMINAL_LIQUIDATION",
+      "JPY_EQUITY",
+      "MONTHLY_MULTIPLE",
+      "MAX_DRAWDOWN",
+      "CVAR",
+      "MARGIN",
+      "TERMINAL_MTM"
+    ],
+    "terminal_inventory_mtm_jpy_micros": 0,
+    "external_orders": 0
+  },
+  "verification": {
+    "verifier_is_separate_process": true,
+    "verifier_request_schema": "paper_research_oracle_verifier_schema_v1.json",
+    "verifier_imports_oracle_runner_or_accounting": false,
+    "verifier_recomputes_fills_cost_inventory_and_jpy_economics_from_frozen_inputs": true,
+    "verifier_reaggregates_hash_chained_oracle_ledger": true,
+    "profit_and_admission_read_oracle_metrics_only": true,
+    "pre_anchor_status": "LOCAL_REPRODUCIBLE",
+    "post_remote_readback_status": "EXTERNALLY_ANCHORED"
+  },
+  "legacy_boundary": {
+    "v25_through_v41_seals_changed": false,
+    "retroactive_official_oracle_pass_allowed": false,
+    "coverage_sidecar_only": true,
+    "coverage_states": ["RECONSTRUCTABLE", "RETROACTIVE", "MISSING"]
+  }
+}

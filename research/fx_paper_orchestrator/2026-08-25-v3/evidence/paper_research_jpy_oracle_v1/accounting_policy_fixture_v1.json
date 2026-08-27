@@ -1,0 +1,1 @@
+{"accounting_policy_sha256":"01a2d87a56c95daff2f7dc0b3ff2704f1d01d020a4f1d7867802d4fe491fd75f","asset_conversion_side":"BID","base_microunits_per_unit":1000000,"jpy_micros_per_yen":1000000,"liability_conversion_side":"ASK","max_conversion_staleness_ns":400000000000,"policy_id":"FROZEN_ACCOUNTING_POLICY_V1","schema_version":1,"supported_quote_currencies":["CAD","CHF","JPY","USD"]}

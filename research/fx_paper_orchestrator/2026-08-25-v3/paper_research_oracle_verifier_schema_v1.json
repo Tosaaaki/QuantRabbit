@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:quantrabbit:paper-research-oracle-verifier:v1",
+  "title": "QuantRabbit independent JPY oracle verifier input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "input_root",
+    "output_root",
+    "oracle_manifest",
+    "oracle_ledger",
+    "source_blob",
+    "source_manifest",
+    "proposal",
+    "execution_policy",
+    "inventory_policy",
+    "accounting_policy",
+    "evaluation_policy",
+    "receipt_name"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "input_root": {"type": "string", "minLength": 1},
+    "output_root": {"type": "string", "minLength": 1},
+    "oracle_manifest": {"$ref": "#/$defs/artifact"},
+    "oracle_ledger": {"$ref": "#/$defs/artifact"},
+    "source_blob": {"$ref": "#/$defs/artifact"},
+    "source_manifest": {"$ref": "#/$defs/artifact"},
+    "proposal": {"$ref": "#/$defs/artifact"},
+    "execution_policy": {"$ref": "#/$defs/artifact"},
+    "inventory_policy": {"$ref": "#/$defs/artifact"},
+    "accounting_policy": {"$ref": "#/$defs/artifact"},
+    "evaluation_policy": {"$ref": "#/$defs/artifact"},
+    "receipt_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "accounting_policy_sha256": "0eed40ef06b1a91acb8a538605ec4a7c7dfcf52f8677037cbc94d27ec6730f1f",
+  "anchor_status": "LOCAL_REPRODUCIBLE",
+  "evaluation_policy_sha256": "519a778ec4e1fe0f5d224a4bb17eafc427d88f0631dfcd39064ba61c35c4b3cd",
+  "execution_policy_sha256": "a33bdac3480fdaa2a338a8d606a2d0b3aa3c022bfe40345ed704e1c5ea3f36f9",
+  "external_orders": 0,
+  "independent_fill_cost_inventory_jpy_replay": true,
+  "inventory_policy_sha256": "c451f975cacb3e35d2da733037cc663cb4a1a98122c066d3daa4243a5080e5d2",
+  "oracle_implementation": "INDEPENDENT_JPY_ORACLE_V1",
+  "oracle_ledger_sha256": "887c6e4bdc2ef6fcb091d99ac98a8fb8150bc93b88561ab56a5e73bb1e66d6d4",
+  "oracle_root_sha256": "6f8d03a719a8382d6856ef2489f7cc69657fd131d8d3fb1c7fc460547189e477",
+  "producer_metrics_used": false,
+  "proposal_sha256": "c3d3070bd42139a2a4ab789554aaa8a74c17c184a0c11450415b2376f2d6a317",
+  "schema_version": 1,
+  "source_blob_sha256": "708d85468c0bd963b32de11ce2b823e42f9b7153c8d5383eb4cfe30646b3db5a",
+  "source_manifest_sha256": "455c8f2cd50d1bbcb3eb9f71ecb50bbcdab9536edc1603c51e87685d20cfbd59",
+  "status": "VERIFIED",
+  "terminal_inventory_mtm_jpy_micros": 0,
+  "verified_oracle_metrics": {
+    "action_label_contract_all_arms": true,
+    "all_proposals_have_all_arm_dispositions": true,
+    "arms": {
+      "ADVERSE_STRESS": {
+        "action_transition_sha256": "1595761dc38f9a8aef9f9177f875f650197ac8d29199931fb284730b4e9e117d",
+        "currency_time_cluster_count": 2,
+        "cvar_jpy_micros": -26438534,
+        "cvar_tail_bps": 500,
+        "direction_accuracy": "0.500000000000000000",
+        "disposition_counts": {
+          "FILLED_CLOSED": 2
+        },
+        "ending_equity_jpy_micros": 199972716004,
+        "ending_equity_multiple": "0.999863580020000000",
+        "executed_count": 2,
+        "gross_pnl_jpy_micros": -7114209,
+        "margin_guard_pass": true,
+        "max_drawdown_jpy_micros": 27283996,
+        "max_drawdown_ratio": "0.000136419980000000",
+        "max_gross_notional_jpy_micros": 28000000000,
+        "net_pnl_jpy_micros": -27283996,
+        "proposal_count": 2,
+        "realized_cost_jpy_micros": 20169787,
+        "signal_id_set_sha256": "0451755f10d4713c99fc9619bc727cbf2a5e8273dce2a059d80e9c928d5acada",
+        "terminal_inventory_mtm_jpy_micros": 0,
+        "terminal_open_positions": 0
+      },
+      "EXECUTABLE_BASE": {
+        "action_transition_sha256": "1595761dc38f9a8aef9f9177f875f650197ac8d29199931fb284730b4e9e117d",
+        "currency_time_cluster_count": 2,
+        "cvar_jpy_micros": -18757632,
+        "cvar_tail_bps": 500,
+        "direction_accuracy": "0.500000000000000000",
+        "disposition_counts": {
+          "FILLED_CLOSED": 2
+        },
+        "ending_equity_jpy_micros": 199981639363,
+        "ending_equity_multiple": "0.999908196815000000",
+        "executed_count": 2,
+        "gross_pnl_jpy_micros": -7114582,
+        "margin_guard_pass": true,
+        "max_drawdown_jpy_micros": 18757632,
+        "max_drawdown_ratio": "0.000093788160000000",
+        "max_gross_notional_jpy_micros": 28000000000,
+        "net_pnl_jpy_micros": -18360637,
+        "proposal_count": 2,
+        "realized_cost_jpy_micros": 11246055,
+        "signal_id_set_sha256": "0451755f10d4713c99fc9619bc727cbf2a5e8273dce2a059d80e9c928d5acada",
+        "terminal_inventory_mtm_jpy_micros": 0,
+        "terminal_open_positions": 0
+      },
+      "RAW_SIGNAL": {
+        "action_transition_sha256": "1595761dc38f9a8aef9f9177f875f650197ac8d29199931fb284730b4e9e117d",
+        "currency_time_cluster_count": 2,
+        "cvar_jpy_micros": -11185832,
+        "cvar_tail_bps": 500,
+        "direction_accuracy": "0.500000000000000000",
+        "disposition_counts": {
+          "FILLED_CLOSED": 2
+        },
+        "ending_equity_jpy_micros": 199992887166,
+        "ending_equity_multiple": "0.999964435830000000",
+        "executed_count": 2,
+        "gross_pnl_jpy_micros": -7112834,
+        "margin_guard_pass": true,
+        "max_drawdown_jpy_micros": 11185832,
+        "max_drawdown_ratio": "0.000055929160000000",
+        "max_gross_notional_jpy_micros": 28000000000,
+        "net_pnl_jpy_micros": -7112834,
+        "proposal_count": 2,
+        "realized_cost_jpy_micros": 0,
+        "signal_id_set_sha256": "0451755f10d4713c99fc9619bc727cbf2a5e8273dce2a059d80e9c928d5acada",
+        "terminal_inventory_mtm_jpy_micros": 0,
+        "terminal_open_positions": 0
+      }
+    },
+    "external_orders": 0,
+    "initial_equity_jpy_micros": 200000000000,
+    "metrics_sha256": "8c5e8ff02bae83eea7e833afd14b73679ec75ec47ba2452358ca2800237a7fcd",
+    "monthly_multiples": {
+      "ADVERSE_STRESS": {
+        "2026-01": "0.999863580020000000"
+      },
+      "EXECUTABLE_BASE": {
+        "2026-01": "0.999908196815000000"
+      },
+      "RAW_SIGNAL": {
+        "2026-01": "0.999964435830000000"
+      }
+    },
+    "same_signal_ids_all_arms": true,
+    "terminal_inventory_mtm_jpy_micros": 0
+  },
+  "verifier_code_sha256": "eeef42c4ad0a8db7a6b3a53ff0c32a9bb2b88d4a435be3045c5efe8fca634093",
+  "verifier_implementation": "INDEPENDENT_ORACLE_LEDGER_VERIFIER_V1",
+  "verifier_receipt_sha256": "ffa6fdbf4c9ea7916bb1bed789cb57cdda47871290ec93722602b987faefbba7",
+  "verifier_schema_sha256": "d4192e640f5b5b479e5220e17cd3245491d3e17148609aa8f02d7387a256e924"
+}

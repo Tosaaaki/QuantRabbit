@@ -1,0 +1,1 @@
+{"cvar_tail_bps":500,"evaluation_policy_sha256":"6f87687a0bc9842b840b5687012067d17ae5344c925644aef9b45ca393c52a70","holdout_state":"UNOPENED","initial_equity_jpy_micros":200000000000,"margin_notional_cap_jpy_micros":200000000000,"period_end_ts_ns":1767226500100000000,"period_start_ts_ns":1767225600000000000,"policy_id":"FROZEN_EVALUATION_POLICY_V1","schema_version":1}
