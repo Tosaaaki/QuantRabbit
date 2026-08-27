@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -207,6 +207,32 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(rule["minimum_peer_signals"], 2)
         self.assertTrue(rule["unanimity_required"])
         self.assertEqual(rule["hard_max_age_seconds"], 345600)
+
+    def test_v32_changes_only_one_training_only_fx_signal_family(self):
+        cycle = self.registry["cycles"][7]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V32")
+        self.assertEqual(cycle["depends_on_cycle"], "V31")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(cycle["signal_contract"]["raw_signal_source"], "GENERATED_IN_CYCLE")
+        selection = prereg["training_only_family_selection"]
+        self.assertEqual(selection["candidate_signal_families_preregistered"], 1)
+        self.assertEqual(selection["candidate_signal_families_compared_by_outcome"], 0)
+        self.assertFalse(selection["post_entry_return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        self.assertFalse(selection["evaluation_month_used_for_selection"])
+        self.assertFalse(prereg["frozen_execution_contract"]["changed_from_v31"])
+        self.assertEqual(prereg["frozen_execution_contract"]["hard_max_age_seconds"], 345600)
+        work_order = ROOT / "evidence/orchestrator_state_v2/next_hypothesis_work_order_v32.json"
+        self.assertEqual(orchestrator.sha256_file(work_order),
+                         "82ed0e702c7691ce424ffeb75283c4a711356565f36ea59c3a454696f47b4d26")
+
+    def test_v32_raw_edge_absence_routes_to_another_single_signal_family(self):
+        reason, variable = orchestrator.route_next_work_order(
+            "FX_SESSION_HANDOFF_FADE_RAW_EDGE_ABSENT", .99, .98, .97, 0, True,
+        )
+        self.assertEqual(reason, "FX_SESSION_HANDOFF_FADE_RAW_EDGE_ABSENT")
+        self.assertEqual(variable, orchestrator.SIGNAL_FAMILY_PIVOT_VARIABLE)
 
     def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
         reason, variable = orchestrator.route_next_work_order(

@@ -333,6 +333,38 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
             raise ContractError("cost-arm simulation call is not structurally unique")
         if not isinstance(simulator_calls[0].args[1], ast.Name) or simulator_calls[0].args[1].id != "rows":
             raise ContractError("cost arms do not consume the same RAW_SIGNAL ledger")
+        if cycle["cycle_id"] == "V32":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_family_selection", {})
+            signal_rule = prereg.get("signal_family_rule", {})
+            execution_rule = prereg.get("frozen_execution_contract", {})
+            if predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "CONSENSUS_RELEASE_PERSISTENCE_RAW_EDGE_ABSENT" \
+                    or predecessor.get("work_order_sha256") \
+                    != "82ed0e702c7691ce424ffeb75283c4a711356565f36ea59c3a454696f47b4d26":
+                raise ContractError("V32 did not preserve V31 and its signal-family pivot work order")
+            if selection.get("candidate_signal_families_preregistered") != 1 \
+                    or selection.get("candidate_signal_families_compared_by_outcome") != 0 \
+                    or selection.get("post_entry_return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("evaluation_month_used_for_selection") is not False \
+                    or selection.get("walk_forward_used_for_selection") is not False \
+                    or selection.get("holdout_used") is not False:
+                raise ContractError("V32 signal family was not one training-only outcome-free candidate")
+            if signal_rule.get("name") != "PAIR_SPECIFIC_ASIAN_TAIL_DISPLACEMENT_HANDOFF_FADE" \
+                    or signal_rule.get("direction_formula") != "native_pair_direction = -sign(d[pair,day])" \
+                    or signal_rule.get("maximum_signals_per_pair_utc_day") != 1 \
+                    or signal_rule.get("cost_or_post_entry_outcome_inputs") is not False:
+                raise ContractError("V32 signal-family rule differs from preregistration")
+            if execution_rule.get("baseline") != "V31 inventory and exit state machine" \
+                    or execution_rule.get("changed_from_v31") is not False \
+                    or execution_rule.get("required_consecutive_confirmations") != 2 \
+                    or execution_rule.get("target_hold_seconds") != 172800 \
+                    or execution_rule.get("hard_max_age_seconds") \
+                    != cycle["inventory_contract"]["finite_max_age_seconds"] \
+                    or execution_rule.get("cost_or_outcome_inputs") is not False:
+                raise ContractError("V32 changed the frozen V31 execution state machine")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -792,6 +824,43 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     or runtime.get("v26_rerun_permitted") is not False:
                 raise ContractError("V27 result runtime provenance or cycle identity mismatch")
 
+    if cycle["cycle_id"] == "V32":
+        if payload.get("cycle_id") != "V32" \
+                or payload.get("experiment") != "FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_V32" \
+                or payload.get("single_changed_variable") \
+                != "fx_specific_asian_displacement_handoff_fade_signal_family" \
+                or payload.get("same_execution_actions_all_cost_arms") is not True \
+                or payload.get("same_execution_state_transitions_all_cost_arms") is not True:
+            raise ContractError("V32 result identity or cost-arm parity mismatch")
+        if payload.get("holdout") != {
+                "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+                "state": "UNOPENED", "may_execute": False}:
+            raise ContractError("V32 holdout label or unopened state changed")
+        indicator = payload.get("indicator", {})
+        if indicator.get("training_abs_displacement_quantile") != 0.75 \
+                or indicator.get("direction_formula") \
+                != "-sign(log(mid_close_05:55 / mid_open_00:00))" \
+                or indicator.get("cost_used_for_signal") is not False \
+                or indicator.get("post_entry_outcome_used_for_signal") is not False \
+                or indicator.get("evaluation_month_used_for_threshold") is not False:
+            raise ContractError("V32 result signal formula differs from preregistration")
+        execution_rule = payload.get("execution_rule", {})
+        if execution_rule.get("changed_from_v31") is not False \
+                or execution_rule.get("required_consecutive_confirmations") != 2 \
+                or execution_rule.get("target_hold_seconds") != 172800 \
+                or execution_rule.get("hard_max_age_seconds") != max_age \
+                or execution_rule.get("cost_or_outcome_inputs") is not False:
+            raise ContractError("V32 result changed the V31 execution state machine")
+        if any(row.get("execution_selected") is not True for row in rows):
+            raise ContractError("V32 dropped a generated RAW signal from the execution ledger")
+        if any(not isinstance(row.get("arm_actions"), dict)
+               or set(row["arm_actions"]) != set(ARMS)
+               or len(set(row["arm_actions"].values())) != 1 for row in rows):
+            raise ContractError("V32 execution actions differ across cost arms")
+        if payload.get("signal_id_set_sha256") \
+                != hashlib.sha256(canonical_bytes(sorted(ids))).hexdigest():
+            raise ContractError("V32 embedded signal-id set hash mismatch")
+
     periods = payload.get("periods", {})
     if set(periods) != set(PERIODS):
         raise ContractError("walk-forward or comparable-month set changed")
@@ -837,6 +906,21 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
+            if cycle["cycle_id"] == "V32":
+                required_metrics = {
+                    "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
+                    "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
+                    "max_margin_requirement_jpy_at_1x", "terminal_inventory_mtm",
+                    "max_inventory_age_seconds", "N_eff_days", "N_eff_episodes",
+                    "max_gross_exposure_nav", "max_currency_abs_exposure_nav",
+                    "execution_state_transition_sha256",
+                }
+                if set(metrics) < required_metrics:
+                    raise ContractError(f"V32 required metrics missing in {period_name}/{arm}")
+                if metrics.get("processed_raw_signals") != raw_count or metrics.get("cash_signals") != 0:
+                    raise ContractError(f"V32 did not process the complete RAW ledger in {period_name}/{arm}")
+                if metrics["max_inventory_age_seconds"] > max_age:
+                    raise ContractError(f"V32 max-age exceeded in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
@@ -854,6 +938,12 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
+        if cycle["cycle_id"] == "V32":
+            transition_hashes = {
+                period[arm]["execution_state_transition_sha256"] for arm in ARMS
+            }
+            if len(transition_hashes) != 1:
+                raise ContractError("V32 arm transitions differ")
     if len({tuple(value) for value in signal_sets.values()}) != 1:
         raise ContractError("same signal_id set assertion failed")
 
@@ -946,6 +1036,15 @@ def route_next_work_order(
     elif result_reason == "CONSENSUS_RELEASE_SCOPE_ADVERSE_COST_FRAGILE":
         reason = result_reason
         variable = "one_preregistered_causal_consensus_release_scope_cost_robustness_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "FX_SESSION_HANDOFF_FADE_RAW_EDGE_ABSENT":
+        reason = result_reason
+        variable = SIGNAL_FAMILY_PIVOT_VARIABLE
+    elif result_reason == "FX_SESSION_HANDOFF_FADE_COST_DOMINANT":
+        reason = result_reason
+        variable = "one_preregistered_turnover_reduction_rule_preserving_all_v32_raw_signals"
+    elif result_reason == "FX_SESSION_HANDOFF_FADE_ADVERSE_COST_FRAGILE":
+        reason = result_reason
+        variable = "one_preregistered_cost_robustness_rule_preserving_all_v32_raw_signals"
     elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
         reason = result_reason
         variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"
