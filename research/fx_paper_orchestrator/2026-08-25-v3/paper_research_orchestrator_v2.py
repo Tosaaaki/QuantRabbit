@@ -288,6 +288,33 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or rule.get("same_direction_expiry_extension_seconds") != 0 \
                     or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"]:
                 raise ContractError("V28 basket-hold no-add/max-age rule differs from preregistration")
+        elif cycle["cycle_id"] == "V29":
+            builders = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "build_execution_ledger"]
+            voters = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and node.name == "consensus_vote"]
+            if len(builders) != 1 or [arg.arg for arg in builders[0].args.args] != ["parent_rows", "corpus"]:
+                raise ContractError("V29 deterministic consensus-release builder contract mismatch")
+            if len(voters) != 1 or [arg.arg for arg in voters[0].args.args] != ["signals", "held_pair"]:
+                raise ContractError("V29 deterministic peer consensus contract mismatch")
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_rule_selection", {})
+            rule = prereg.get("execution_rule", {})
+            if predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "BASKET_HOLD_RAW_EDGE_ABSENT":
+                raise ContractError("V29 did not preserve V28 as frozen rejected evidence")
+            if selection.get("candidate_rules_compared") != 1 \
+                    or selection.get("return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("walk_forward_used_for_rule_selection") is not False:
+                raise ContractError("V29 rule was not selected as one training-only outcome-free candidate")
+            if rule.get("minimum_peer_signals") != 2 \
+                    or rule.get("unanimity_required") is not True \
+                    or rule.get("same_direction_add_units") != 0 \
+                    or rule.get("same_direction_expiry_extension_seconds") != 0 \
+                    or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"]:
+                raise ContractError("V29 consensus release rule differs from preregistration")
         else:
             raise ContractError(f"unsupported sealed-parent execution cycle: {cycle['cycle_id']}")
         if cycle["cycle_id"] == "V27":
@@ -543,21 +570,30 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             mask = [[row["signal_id"], row.get("execution_selected") is True] for row in rows]
             if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
                 raise ContractError("V26/V27 execution mask hash mismatch")
-        elif cycle["cycle_id"] == "V28":
-            if payload.get("cycle_id") != "V28" \
-                    or payload.get("experiment") != "FX_CAUSAL_BASKET_HOLD_V28" \
+        elif cycle["cycle_id"] in {"V28", "V29"}:
+            expected_experiment = {
+                "V28": "FX_CAUSAL_BASKET_HOLD_V28",
+                "V29": "FX_CAUSAL_BASKET_CONSENSUS_RELEASE_V29",
+            }[cycle["cycle_id"]]
+            if payload.get("cycle_id") != cycle["cycle_id"] \
+                    or payload.get("experiment") != expected_experiment \
                     or payload.get("same_execution_state_transitions_all_cost_arms") is not True \
                     or payload.get("same_parent_directions") is not True:
-                raise ContractError("V28 result identity or execution-state parity mismatch")
+                raise ContractError(f"{cycle['cycle_id']} result identity or execution-state parity mismatch")
             if any(row.get("execution_selected") is not True for row in rows):
-                raise ContractError("V28 removed a V25 RAW signal from the state ledger")
+                raise ContractError(f"{cycle['cycle_id']} removed a V25 RAW signal from the state ledger")
             if hashlib.sha256(canonical_bytes(action_material)).hexdigest() \
                     != payload.get("execution_action_sha256"):
-                raise ContractError("V28 execution action hash mismatch")
+                raise ContractError(f"{cycle['cycle_id']} execution action hash mismatch")
             rule = payload.get("execution_rule", {})
             if rule.get("cost_or_outcome_inputs") is not False \
                     or rule.get("hard_max_age_seconds") != max_age:
-                raise ContractError("V28 execution rule used a forbidden input or changed max-age")
+                raise ContractError(f"{cycle['cycle_id']} execution rule used a forbidden input or changed max-age")
+            if cycle["cycle_id"] == "V29" and (
+                    rule.get("minimum_peer_signals") != 2
+                    or rule.get("unanimity_required") is not True
+                    or rule.get("own_pair_signal_prevents_consensus_release") is not True):
+                raise ContractError("V29 result consensus rule differs from preregistration")
         if cycle["cycle_id"] == "V27":
             runtime = payload.get("runtime_compatibility_provenance", {})
             if payload.get("cycle_id") != "V27" \
@@ -590,7 +626,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 )
                 if metrics.get("executed_signals") != selected_count:
                     raise ContractError(f"V26/V27 executed signal count mismatch in {period_name}/{arm}")
-            if cycle["cycle_id"] == "V28":
+            if cycle["cycle_id"] in {"V28", "V29"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -598,28 +634,30 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     "max_inventory_age_seconds", "N_eff_days", "execution_state_transition_sha256",
                 }
                 if set(metrics) < required_metrics:
-                    raise ContractError(f"V28 required metrics missing in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} required metrics missing in {period_name}/{arm}")
                 if metrics.get("processed_raw_signals") != raw_count or metrics.get("cash_signals") != 0:
-                    raise ContractError(f"V28 did not process the complete RAW ledger in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} did not process the complete RAW ledger in {period_name}/{arm}")
                 if metrics["max_inventory_age_seconds"] > max_age:
-                    raise ContractError(f"V28 max-age exceeded in {period_name}/{arm}")
+                    raise ContractError(f"{cycle['cycle_id']} max-age exceeded in {period_name}/{arm}")
+                if cycle["cycle_id"] == "V29" and not isinstance(metrics.get("basket_consensus_releases"), int):
+                    raise ContractError(f"V29 consensus release count missing in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
                 if metrics["max_gross_exposure_nav"] < 0 \
                         or metrics["max_gross_exposure_nav"] > cycle["inventory_contract"]["rule_max_gross_leverage"]:
                     raise ContractError(f"margin exposure exceeds preregistration in {period_name}/{arm}")
-        if cycle["cycle_id"] == "V28":
+        if cycle["cycle_id"] in {"V28", "V29"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
             if len(transition_hashes) != 1:
-                raise ContractError(f"V28 arm transitions differ in {period_name}")
+                raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
     if len({tuple(value) for value in signal_sets.values()}) != 1:
         raise ContractError("same signal_id set assertion failed")
 
@@ -688,6 +726,15 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     elif result_reason == "BASKET_HOLD_ADVERSE_COST_FRAGILE":
         reason = result_reason
         variable = "one_preregistered_causal_opposite_signal_release_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_scope_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "BASKET_CONSENSUS_RELEASE_COST_DOMINANT":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_turnover_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
+    elif result_reason == "BASKET_CONSENSUS_RELEASE_ADVERSE_COST_FRAGILE":
+        reason = result_reason
+        variable = "one_preregistered_causal_consensus_release_cost_robustness_rule_preserving_all_v25_raw_signals_and_fixed_sleeves"
     elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
         reason = result_reason
         variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"

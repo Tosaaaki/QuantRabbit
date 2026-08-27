@@ -1,0 +1,197 @@
+{
+  "artifact_id": "FX_CAUSAL_BASKET_CONSENSUS_RELEASE_V29",
+  "cycle_id": "V29",
+  "status": "FROZEN_BEFORE_IMPLEMENTATION_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "family": "FX_SESSION_CURRENCY_COHERENCE",
+  "baseline": "FX_CAUSAL_BASKET_HOLD_V28",
+  "predecessor_cycle": "V28",
+  "predecessor_disposition": {
+    "status": "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN",
+    "remote_checkpoint": "07dc72188011d26fa42ab73ab570143409fd923b",
+    "reason_code": "BASKET_HOLD_RAW_EDGE_ABSENT",
+    "work_order": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v29.json",
+    "work_order_sha256": "46eafc1452f02080d6a7d3264febaa11a31b51ebd15b321edf49ec3781efb360",
+    "official_seal_sha256": "2a0004a6daea3cdb328b1dfddb762644901d87ae56ea97ec8fa23fb421a7ee93"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_basket_consensus_release_rule_preserving_all_v25_raw_signals_and_fixed_sleeves",
+    "null": "The one causal basket-consensus release rule does not produce positive RAW walk-forward equity or does not make both full comparable months reach 2.0x under both normal and adverse costs.",
+    "alternative": "Releasing a held sleeve only on contemporaneous unanimous opposite USD-node evidence improves RAW edge while preserving all V25 signals and fixed sleeves enough for both full comparable months to reach 2.0x under normal and adverse costs."
+  },
+  "training_only_rule_selection": {
+    "window_start": "2026-03-11",
+    "window_end_exclusive": "2026-05-01",
+    "candidate_rules_compared": 1,
+    "selection_basis": "The V29 work order named one basket consensus release variable. One structural formula was fixed without inspecting prices, returns, costs, accuracy, drawdown, monthly multiples, or walk-forward outcomes.",
+    "training_signals": 202,
+    "training_effective_days": 33,
+    "v28_structural_state_action_counts": {
+      "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 49,
+      "MAX_AGE_CLOSE_THEN_OPEN": 45,
+      "OPEN_FIXED_ONE_SEVENTH": 59,
+      "REVERSE_FIXED_ONE_SEVENTH": 49
+    },
+    "v28_structural_close_counts": {
+      "MAX_AGE_CLOSE": 97,
+      "OPPOSITE_SIGNAL_CLOSE": 49,
+      "TERMINAL_LIQUIDATION": 7
+    },
+    "selected_rule_structural_release_count": 11,
+    "selected_rule_structural_release_pairs": {
+      "AUD_USD": 1,
+      "EUR_USD": 2,
+      "NZD_USD": 3,
+      "USD_CAD": 3,
+      "USD_CHF": 1,
+      "USD_JPY": 1
+    },
+    "selected_rule_structural_state_action_counts": {
+      "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 49,
+      "MAX_AGE_CLOSE_THEN_OPEN": 35,
+      "OPEN_FIXED_ONE_SEVENTH": 69,
+      "REVERSE_FIXED_ONE_SEVENTH": 49
+    },
+    "selected_rule_structural_close_counts": {
+      "BASKET_CONSENSUS_RELEASE": 11,
+      "MAX_AGE_CLOSE": 86,
+      "OPPOSITE_SIGNAL_CLOSE": 49,
+      "TERMINAL_LIQUIDATION": 7
+    },
+    "training_episode_count": 153,
+    "training_max_observed_inventory_age_seconds": 313200.0,
+    "return_outcome_consulted": false,
+    "cost_consulted": false,
+    "direction_accuracy_consulted": false,
+    "drawdown_consulted": false,
+    "monthly_multiple_consulted": false,
+    "walk_forward_used_for_rule_selection": false,
+    "holdout_used": false
+  },
+  "raw_signal_invariants": {
+    "parent_cycle": "V25",
+    "raw_signal_count": 500,
+    "parent_result_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+    "same_signal_id": true,
+    "same_pair": true,
+    "same_utc_day": true,
+    "same_decision_timestamp": true,
+    "same_fill_timestamp": true,
+    "same_raw_exit_timestamp": true,
+    "same_direction": true,
+    "same_fixed_pair_sleeve": 0.14285714285714285,
+    "raw_cost_gate": false
+  },
+  "execution_rule": {
+    "name": "CAUSAL_BASKET_CONSENSUS_RELEASE",
+    "state_scope": "one independent inventory state per pair plus contemporaneous peer USD-node votes",
+    "units": "signed USD direction votes: +1 buys USD, -1 sells USD",
+    "formula": "release iff peer_count >= 2 and abs(sum(peer_usd_votes)) = peer_count and inventory_usd_direction * sign(sum(peer_usd_votes)) < 0",
+    "chronology": "Sort completed source bars by exact integer epoch nanoseconds. At each completed executable open, apply elapsed max-age first. If inventory remains and the pair has no own signal at that timestamp, compute peer consensus from only V25 signals at that same timestamp and release at the current pair open when the formula is true. Then apply the unchanged V28 own-signal action. Mark remaining inventory at completed close.",
+    "minimum_peer_signals": 2,
+    "unanimity_required": true,
+    "tie_break": "Mixed signs, zero sum, fewer than two peers, or no simultaneous peer batch deterministically preserve the unchanged V28 state.",
+    "own_pair_signal": "No consensus release is evaluated; unchanged V28 same-direction hold or opposite-direction reverse applies.",
+    "same_pair_same_direction_signal": "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION",
+    "same_direction_add_units": 0,
+    "same_direction_expiry_extension_seconds": 0,
+    "opposite_direction_signal": "CLOSE_AT_SIGNAL_EXECUTABLE_OPEN_THEN_OPEN_REVERSE_FIXED_SLEEVE",
+    "target_hold_seconds": 172800,
+    "hard_max_age_seconds": 345600,
+    "weekend_gap": "Use the first completed executable open at or after the 48-hour target; the 96-hour hard observed age cap is unchanged.",
+    "terminal_liquidation": "Close every remaining sleeve at the last completed bar close of each evaluation period and realize terminal MTM.",
+    "inputs_allowed_for_transitions": [
+      "completed source timestamp",
+      "pair",
+      "signal_id",
+      "direction",
+      "fill_time",
+      "simultaneous peer signal directions"
+    ],
+    "inputs_forbidden_for_transitions": [
+      "quoted or realized cost",
+      "future price",
+      "return",
+      "direction accuracy",
+      "drawdown",
+      "monthly multiple",
+      "holdout data"
+    ]
+  },
+  "cost_arm_contract": {
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "same_500_signal_ledger": true,
+    "same_execution_state_transitions": true,
+    "raw_price": "mid open/close with no spread, slippage, commission, or financing",
+    "base_price": "frozen V7 executable BID/ASK, slippage, commission, and financing",
+    "adverse_price": "frozen V7 adverse BID/ASK, slippage, commission, and financing",
+    "cost_applied_only_after_transition_plan_frozen": true
+  },
+  "inventory_contract": {
+    "one_position_per_pair": true,
+    "one_basket_per_utc_day": true,
+    "add_to_position": false,
+    "martingale": false,
+    "overlapping_tickets_same_pair": false,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "rule_max_gross_leverage": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 345600,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false,
+    "margin_method": "NOTIONAL_AT_1X_CONSERVATIVE_NO_BROKER_MARGIN_ASSUMPTION"
+  },
+  "evaluation_contract": {
+    "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+    "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "leverage_changed": false,
+    "evaluation_period_changed": false,
+    "profit_threshold_changed": false,
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false}
+  },
+  "rejection_contract": {
+    "system_fail": "Any frozen hash, RAW identity, chronology, arm-transition parity, source, cap, max-age, terminal liquidation, MTM, authority, holdout, period, leverage, or threshold mismatch fails closed.",
+    "profit_reject": "Automatically reject if either full comparable month is below 2.0x in EXECUTABLE_BASE or ADVERSE_STRESS, or unopened holdout reproduction is absent.",
+    "raw_edge_reason": "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT when walk-forward RAW equity is at or below 1.0.",
+    "adoption_authorized": false,
+    "official_run_limit": 1
+  },
+  "proposal_provenance": {
+    "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_ONE_RULE_FROM_V28_GENERATED_WORK_ORDER",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "policy_provenance": "next_hypothesis_work_order_v29.json plus this frozen preregistration",
+    "model_identity": "NO_ACTUAL_LLM_USED_FOR_INVENTORY_DIRECTION_FILL_OR_GUARDS",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "forbidden": [
+    "multiple candidate outcome sweep",
+    "lookahead",
+    "same-bar retroactive action",
+    "evaluation-period tuning",
+    "leverage after results",
+    "unrealized loss hiding",
+    "numeric alteration",
+    "holdout opening",
+    "V28 rewrite or rerun",
+    "live or broker side effect"
+  ],
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

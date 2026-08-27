@@ -115,7 +115,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
-        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28"])
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28", "V29"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -146,6 +146,22 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertFalse(prereg["training_only_rule_selection"]["cost_consulted"])
         self.assertEqual(cycle["inventory_contract"]["finite_max_age_seconds"], 345600)
         self.assertEqual(cycle["inventory_contract"]["rule_max_gross_leverage"], 1.0)
+
+    def test_v29_is_one_training_only_cost_independent_consensus_release_rule(self):
+        cycle = self.registry["cycles"][4]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V29")
+        self.assertEqual(cycle["depends_on_cycle"], "V28")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        selection = prereg["training_only_rule_selection"]
+        self.assertEqual(selection["candidate_rules_compared"], 1)
+        self.assertEqual(selection["selected_rule_structural_release_count"], 11)
+        self.assertFalse(selection["return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        rule = prereg["execution_rule"]
+        self.assertEqual(rule["minimum_peer_signals"], 2)
+        self.assertTrue(rule["unanimity_required"])
+        self.assertEqual(rule["hard_max_age_seconds"], 345600)
 
     def test_real_audit_preserves_v25_seal_and_exposes_terminal_v26_recovery_failure(self):
         report = orchestrator.audit(ROOT, self.registry)

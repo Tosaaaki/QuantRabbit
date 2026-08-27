@@ -87,3 +87,19 @@ with `BASKET_HOLD_RAW_EDGE_ABSENT`; walk-forward multiples were RAW
 0.9826974228, BASE 0.9705364475, and ADVERSE 0.9616665442. Terminal inventory
 and terminal MTM were zero, the holdout remained unopened, and external orders
 remained zero. The generated V29 work order is proposal-only and not executable.
+
+## V29 preregistration checkpoint
+
+V29 freezes one training-only, completed-data-only, cost-independent basket
+consensus release formula. The structural selection inspected no prices,
+returns, costs, direction accuracy, drawdown, monthly multiple, walk-forward
+outcome, or holdout data. In the training window it preserves 202 RAW signals,
+produces 11 deterministic releases, 153 episodes, and a maximum observed
+inventory age of 313,200 seconds. All 500 V25 RAW identities and fixed 1/7
+sleeves remain in the global ledger; V28 evidence remains frozen and is not
+rerun.
+
+Before official execution, the V29 targeted rule tests passed 8/8 and the
+coordinator acceptance suite passed 27/27. The official replay remains blocked
+until this preregistration checkpoint is committed, pushed, and read back by
+remote SHA.
