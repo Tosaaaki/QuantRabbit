@@ -127,6 +127,19 @@
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stdout_sha256": "21a11fd63e79fcefa2f71e651ce41e35ed689582b36a28793f2bfc58067e5588",
       "subprocess_returncode": 0
+    },
+    "V35": {
+      "official_attempts": 1,
+      "official_result_file_sha256": "0042bc645ca580b14a78de5721a1f390c886cb0f24aaa42de61aa7d1870385f2",
+      "official_seal_file_sha256": "c2d9ada3413709e4e3b5b2e1d1aa89eafd2b5988b9c9fa0562ebc10d533225d9",
+      "official_seal_sha256": "83a7196736932732ecf6cb204b341e0d388edfee23241325acb37265aa5080e7",
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-27T04:03:44.403697+00:00",
+      "status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "d5ee4fec4b9cb011383b7d09de6447268b61c0ac1adb791a5fb403d98a33ce06",
+      "strategy_profit_pass": false,
+      "subprocess_returncode": 0
     }
   },
   "schema_version": 2

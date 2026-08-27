@@ -1,0 +1,39 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "constraints": {
+    "evaluation_period_may_not_be_tuned": true,
+    "holdout_must_remain_unopened": true,
+    "leverage_may_not_be_changed_after_results": true,
+    "one_variable_only": true,
+    "same_raw_signal_ids_across_cost_arms": true
+  },
+  "observed_walk_forward": {
+    "ADVERSE_STRESS": 0.9995360504613563,
+    "EXECUTABLE_BASE": 1.0001451585149213,
+    "RAW_SIGNAL": 1.0008912741251919
+  },
+  "parent_cycle": "V35",
+  "proposed_cycle": "V36",
+  "raw_edge_refinement_budget_policy": {
+    "budget_reached": false,
+    "classification": "NON_STRATEGY_ORCHESTRATOR_POLICY",
+    "consecutive_prior_refinements": 0,
+    "derived_from_sealed_cycles": [],
+    "effective": true,
+    "max_consecutive_refinements": 3,
+    "policy_path": "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json"
+  },
+  "reason_code": "GLOBAL_NO_OVERLAP_ADVERSE_COST_FRAGILE",
+  "schema_version": 1,
+  "single_next_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+  "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE"
+}
