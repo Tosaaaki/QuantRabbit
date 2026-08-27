@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V32",
+  "status": "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN",
+  "official_execution_ordinal": 1,
+  "prereg_remote_checkpoint": "8c1a5623476113ea196443f0fccf7edd22441cd2",
+  "failure_class": "NON_STRATEGY_TIMESTAMP_REPRESENTATION_COMPATIBILITY",
+  "subprocess_returncode": 1,
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr_sha256": "9e55dca96f2193683cc0c04c91f49d75605d2ea6601f74fbc5c3e73b5f1c70a0",
+  "failure_message": "signal event mismatch for AUD_USD",
+  "root_cause": {
+    "description": "The V32 detector serialized its computed 06:00 and 11:55 timestamps as RFC3339 seconds ending in Z, while the frozen completed source and V31 state planner use canonical nine-digit fractional seconds. String-key lookup therefore treated every otherwise identical 06:00 instant as absent.",
+    "generated_example": "2026-03-11T06:00:00Z",
+    "source_example": "2026-03-11T06:00:00.000000000Z",
+    "integer_epoch_nanoseconds_equal": true,
+    "generated_raw_signals_structurally_audited": 129,
+    "signals_with_representation_mismatch": 129,
+    "signals_with_actual_missing_next_bar": 0,
+    "price_outcome_or_cost_consulted_for_diagnosis": false
+  },
+  "result_state": {
+    "result_file_exists": false,
+    "ledger_file_exists": false,
+    "metrics_available": false,
+    "profit_proven": false,
+    "numeric_results_may_not_be_inferred": true,
+    "v32_may_not_be_replayed": true
+  },
+  "recovery_contract": {
+    "proposed_cycle": "V33",
+    "same_unobserved_v32_strategy": true,
+    "changed_strategy_variables": 0,
+    "single_runtime_change": "canonicalize computed scheduled timestamps to RFC3339 UTC with exactly nine fractional digits before frozen state-plan lookup",
+    "new_preregistration_required": true,
+    "new_official_execution_ordinal": 1
+  },
+  "holdout": {"state": "UNOPENED", "may_execute": false},
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
