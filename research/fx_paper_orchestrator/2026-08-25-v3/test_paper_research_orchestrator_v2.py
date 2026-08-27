@@ -113,6 +113,10 @@ class RegistryAcceptanceTest(unittest.TestCase):
         statuses = {item["cycle_id"]: item["status"] for item in report["cycles"]}
         self.assertEqual(statuses["V25"], "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN")
         self.assertEqual(statuses["V26"], "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN")
+        v26 = next(item for item in report["cycles"] if item["cycle_id"] == "V26")
+        self.assertEqual(v26["recovery"]["status"], "AWAITING_EXPLICIT_USER_AUTHORIZATION_NOT_EXECUTABLE")
+        self.assertFalse(v26["recovery"]["authorization_recorded"])
+        self.assertFalse(v26["recovery"]["execution_allowed"])
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)

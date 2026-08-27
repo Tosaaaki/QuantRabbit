@@ -42,6 +42,8 @@ PERIOD_BOUNDS = {
     "MONTH_2026_05": ("2026-05-01", "2026-06-01"),
     "MONTH_2026_06": ("2026-06-01", "2026-07-01"),
 }
+V26_RECOVERY_WORK_ORDER = "V26_PRE_RESULT_RECOVERY_WORK_ORDER.json"
+V26_RECOVERY_WORK_ORDER_SHA256 = "9f78f63ec2798bc38f701046ce0d21e1caa9fb65ff9391eca290b77efbec7ad1"
 
 
 class ContractError(RuntimeError):
@@ -660,6 +662,84 @@ def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], 
     return seal
 
 
+def validate_v26_recovery_work_order(root: Path, cycle: dict[str, Any],
+                                     cycle_state: dict[str, Any]) -> dict[str, Any]:
+    """Validate the non-executable, pre-result V26 recovery proposal."""
+    path = within(root, V26_RECOVERY_WORK_ORDER)
+    if not path.is_file() or sha256_file(path) != V26_RECOVERY_WORK_ORDER_SHA256:
+        raise ContractError("V26 recovery work order is missing or changed")
+    work_order = json.loads(path.read_text(encoding="utf-8"))
+    if work_order.get("cycle_id") != "V26" or work_order.get("authority") != AUTHORITY:
+        raise ContractError("V26 recovery work order identity or authority mismatch")
+    failure = work_order.get("failure_evidence", {})
+    if cycle_state.get("status") != "FAILED_OFFICIAL_EXECUTION_NO_RERUN" \
+            or cycle_state.get("official_attempts") != 1:
+        raise ContractError("V26 recovery work order is not bound to the terminal failed attempt")
+    if failure.get("official_attempts") != 1 or failure.get("result_file_exists") is not False \
+            or failure.get("ledger_file_exists") is not False:
+        raise ContractError("V26 recovery work order does not preserve the pre-result failure")
+    if failure.get("persisted_or_reported_strategy_metrics_observed") is not False \
+            or failure.get("diagnostic_replay_result_reusable") is not False:
+        raise ContractError("V26 recovery work order permits outcome leakage or diagnostic reuse")
+    if failure.get("stdout_sha256") != cycle_state.get("stdout_sha256") \
+            or failure.get("stderr_sha256") != cycle_state.get("stderr_sha256"):
+        raise ContractError("V26 recovery failure evidence hashes differ from state")
+
+    execution = cycle["execution"]
+    if within(root, execution["result"]).exists() or within(root, execution["ledger"]).exists():
+        raise ContractError("V26 recovery proposal cannot coexist with an unsealed result or ledger")
+    frozen = work_order.get("frozen_strategy_contract", {})
+    expected_frozen = {
+        "preregistration_sha256": cycle["preregistration_sha256"],
+        "original_runner_sha256": cycle["script_sha256"],
+        "original_test_sha256": cycle["test_sha256"],
+        "source_manifest_sha256": cycle["source_contract"]["manifest_sha256"],
+        "parent_ledger_sha256": cycle["signal_contract"]["parent_ledger_sha256"],
+        "parent_signal_id_set_sha256": cycle["signal_contract"]["parent_signal_id_set_sha256"],
+    }
+    if any(frozen.get(key) != value for key, value in expected_frozen.items()):
+        raise ContractError("V26 recovery work order changed a frozen strategy input")
+    parent_rows = [json.loads(line) for line in within(
+        root, cycle["signal_contract"]["parent_ledger"]
+    ).read_text(encoding="utf-8").splitlines() if line]
+    timestamp_values = [
+        row[field]
+        for row in parent_rows
+        for field in ("decision_time", "fill_time", "exit_time")
+    ]
+    timestamp_evidence = work_order.get("timestamp_evidence", {})
+    if timestamp_evidence.get("parent_rows") != len(parent_rows) \
+            or timestamp_evidence.get("timestamps_checked") != len(timestamp_values) \
+            or timestamp_evidence.get("nonconforming_actual_timestamps") != 0 \
+            or any(not value.endswith(".000000000Z") for value in timestamp_values):
+        raise ContractError("V26 recovery timestamp evidence differs from the frozen parent ledger")
+
+    repair = work_order.get("repair_contract", {})
+    if repair.get("allowed_changed_variable_count") != 1 \
+            or repair.get("allowed_change") != "Python_3_10_timestamp_parser_compatibility_only":
+        raise ContractError("V26 recovery repair scope is not timestamp-only")
+    for path_key, hash_key in (
+        ("compatibility_module", "compatibility_module_sha256"),
+        ("compatibility_test", "compatibility_test_sha256"),
+    ):
+        artifact = within(root, repair.get(path_key, ""))
+        if not artifact.is_file() or sha256_file(artifact) != repair.get(hash_key):
+            raise ContractError(f"V26 recovery artifact changed: {path_key}")
+    authorization = work_order.get("authorization_gate", {})
+    if authorization.get("explicit_user_authorization_required") is not True \
+            or authorization.get("authorization_recorded") is not False \
+            or authorization.get("current_launcher_registered") is not False \
+            or authorization.get("current_execution_allowed") is not False:
+        raise ContractError("V26 recovery authorization gate is not closed")
+    return {
+        "status": work_order["status"],
+        "reason_code": work_order["reason_code"],
+        "work_order_sha256": V26_RECOVERY_WORK_ORDER_SHA256,
+        "authorization_recorded": False,
+        "execution_allowed": False,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -684,10 +764,16 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             status = "FAIL_CLOSED_UNCERTAIN_EXECUTION_NO_RESULT"
         elif cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN":
             status = "FAILED_OFFICIAL_EXECUTION_NO_RESULT_RERUN_FORBIDDEN"
+            recovery = validate_v26_recovery_work_order(root, cycle, cycle_state) \
+                if cycle["cycle_id"] == "V26" else None
         else:
             status = "REGISTERED_PREFLIGHT_PASS_PENDING"
-        reports.append({"cycle_id": cycle["cycle_id"], "status": status,
-                        "source_rows": {pair: item["rows"] for pair, item in source_audit.items()}})
+        report = {"cycle_id": cycle["cycle_id"], "status": status,
+                  "source_rows": {pair: item["rows"] for pair, item in source_audit.items()}}
+        if cycle_state and cycle_state.get("status") == "FAILED_OFFICIAL_EXECUTION_NO_RERUN" \
+                and cycle["cycle_id"] == "V26":
+            report["recovery"] = recovery
+        reports.append(report)
     return {"schema_version": 2, "authority": AUTHORITY, "cycles": reports}
 
 

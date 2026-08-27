@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V26",
+  "status": "AWAITING_EXPLICIT_USER_AUTHORIZATION_NOT_EXECUTABLE",
+  "reason_code": "PRE_RESULT_IMPLEMENTATION_ERROR_NANOSECOND_PARSE",
+  "purpose": "Permit an auditable timestamp-only recovery proposal without treating the failed official process as a strategy result or authorizing a replay.",
+  "failure_evidence": {
+    "official_attempts": 1,
+    "subprocess_returncode": 1,
+    "state": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "c0b2fb2a77b3d8d77f5849038c237d09c910fea26b52b85b0b205f3e84a67bef",
+    "result_file_exists": false,
+    "ledger_file_exists": false,
+    "persisted_or_reported_strategy_metrics_observed": false,
+    "diagnostic_replay_result_reusable": false,
+    "root_cause": "Python 3.10 datetime.fromisoformat rejected the frozen parent ledger's nine-digit UTC fractional seconds while calculating inventory age."
+  },
+  "frozen_strategy_contract": {
+    "preregistration": "CAUSAL_MIN_SPREAD_REPRESENTATIVE_PREREGISTRATION_V26.json",
+    "preregistration_sha256": "b4579b78ea045e1cbf778cbc3f643496823276e768dd7b7dad66bb6d14fd9c2d",
+    "original_runner": "run_causal_min_spread_representative_v26.py",
+    "original_runner_sha256": "3989c614e92b93bc107995f93952c15bdb75a5f43740882270e2c7d0916e67ab",
+    "original_test": "test_causal_min_spread_representative_v26.py",
+    "original_test_sha256": "3dbe5ba799f5b99241324ab808db6112c9c5223332d01615ab6b813a59d6a8e9",
+    "parent_result_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+    "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+    "failure_checkpoint_commit": "9127ba155189babec9ec2d7a7a0f45001632d1bd"
+  },
+  "timestamp_evidence": {
+    "parent_rows": 500,
+    "timestamp_fields_checked_per_row": 3,
+    "timestamps_checked": 1500,
+    "accepted_actual_shape": "YYYY-MM-DDTHH:MM:SS.000000000Z",
+    "distinct_fractional_suffixes": [
+      "000000000"
+    ],
+    "nonconforming_actual_timestamps": 0
+  },
+  "repair_contract": {
+    "allowed_changed_variable_count": 1,
+    "allowed_change": "Python_3_10_timestamp_parser_compatibility_only",
+    "compatibility_module": "run_causal_min_spread_representative_v26_recovery.py",
+    "compatibility_module_sha256": "f1b68055a77664e7a33ab9dc04ef068de152f4712c9f0bf81ce929d141886585",
+    "compatibility_test": "test_causal_min_spread_representative_v26_recovery.py",
+    "compatibility_test_sha256": "cb26f827885b5ef82f98d886511b2cc783ff23427b198002714f2e3113ff2f5b",
+    "actual_data_semantics": "Remove only the final three zero fractional digits before Python 3.10 parsing; reject any nonzero sub-microsecond digits.",
+    "forbidden_changes": [
+      "raw_signal_definition",
+      "signal_id_set",
+      "decision_fill_or_exit_timestamps",
+      "directions",
+      "execution_selection_rule",
+      "execution_mask",
+      "cost_arms",
+      "inventory_or_max_age",
+      "leverage_or_sleeve",
+      "evaluation_periods",
+      "profit_thresholds",
+      "holdout_state",
+      "metric_or_rejection_logic"
+    ]
+  },
+  "authorization_gate": {
+    "explicit_user_authorization_required": true,
+    "authorization_recorded": false,
+    "recovery_attempt_limit_if_authorized": 1,
+    "current_launcher_registered": false,
+    "current_execution_allowed": false,
+    "automatic_or_manual_replay_before_authorization": "FORBIDDEN"
+  },
+  "post_authorization_acceptance": {
+    "register_separate_one_shot_launcher_and_hash_before_execution": true,
+    "preserve_original_v26_files_and_hashes": true,
+    "verify_no_strategy_field_changed": true,
+    "execute_complete_paper_replay_once": true,
+    "seal_or_reject_result_without_reuse_of_diagnostics": true,
+    "holdout_must_remain_unopened": true,
+    "external_orders_must_equal_zero": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
