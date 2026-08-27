@@ -1,0 +1,68 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "constraints": {
+    "evaluation_period_may_not_be_tuned": true,
+    "holdout_must_remain_unopened": true,
+    "leverage_may_not_be_changed_after_results": true,
+    "one_variable_only": true,
+    "same_raw_signal_ids_across_cost_arms": true
+  },
+  "observed_walk_forward": {
+    "ADVERSE_STRESS": 0.9616665442262916,
+    "EXECUTABLE_BASE": 0.9705364474866082,
+    "RAW_SIGNAL": 0.9826974228016372
+  },
+  "parent_cycle": "V31",
+  "proposed_cycle": "V32",
+  "raw_edge_refinement_budget_policy": {
+    "budget_reached": true,
+    "classification": "NON_STRATEGY_ORCHESTRATOR_POLICY",
+    "consecutive_prior_refinements": 4,
+    "derived_from_sealed_cycles": [
+      {
+        "cycle_id": "V27",
+        "journal_event": "OFFICIAL_RESULT_SEALED",
+        "official_seal_sha256": "f1beb3d78331b13f215b797f3ead8b224c90517e82a8193217926a8971f9aca5",
+        "reason_code": "EXECUTION_SUBSET_RAW_EDGE_ABSENT",
+        "result_file_sha256": "b6b7679143690f79f8d9e9662db40fe7c9062ad1f7c7bb8c43828cdd9de99b87"
+      },
+      {
+        "cycle_id": "V28",
+        "journal_event": "OFFICIAL_RESULT_SEALED",
+        "official_seal_sha256": "07247acd19060100d9b176cd35530c20c1cd4bbabe9597165b08a5f3e3db57ef",
+        "reason_code": "BASKET_HOLD_RAW_EDGE_ABSENT",
+        "result_file_sha256": "be6914d6bef4268d39022cb134bbf9ab4fd72206f5b8fe980c05c64c919c343f"
+      },
+      {
+        "cycle_id": "V29",
+        "journal_event": "OFFICIAL_RESULT_SEALED",
+        "official_seal_sha256": "660a220e1b5eebf01daee4fd9630669acc8433cbd5c682858e648b185e865132",
+        "reason_code": "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT",
+        "result_file_sha256": "87124a2588bd583127c45026e6b09852040893ba2dc3d6011f19a193f8ad4303"
+      },
+      {
+        "cycle_id": "V30",
+        "journal_event": "OFFICIAL_RESULT_SEALED",
+        "official_seal_sha256": "65dcc55d13c204a3d993fac0b3d615f33aae06c56df379355eeea15bfe5238a9",
+        "reason_code": "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT",
+        "result_file_sha256": "27e9b006ba115214d8f2590bf21add290c1df406e0565717016584265a2d0bd8"
+      }
+    ],
+    "effective": true,
+    "max_consecutive_refinements": 3,
+    "policy_path": "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json"
+  },
+  "reason_code": "REPEATED_RAW_EDGE_ABSENT_SIGNAL_FAMILY_PIVOT",
+  "schema_version": 1,
+  "single_next_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+  "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE"
+}

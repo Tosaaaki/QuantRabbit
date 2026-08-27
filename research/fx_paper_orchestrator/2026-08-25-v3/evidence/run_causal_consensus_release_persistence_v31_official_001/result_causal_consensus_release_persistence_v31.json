@@ -1,0 +1,1740 @@
+{
+  "admission_blockers": [
+    "opened 2026 data are development evidence",
+    "untouched future FX holdout remains unopened",
+    "both normal and adverse full-month 2.0x gates are mandatory",
+    "strategy adoption remains a separate gate"
+  ],
+  "automatic_rejection": {
+    "adoption_authorized": false,
+    "adverse_full_month_2x_pass": false,
+    "holdout_reproduced": false,
+    "normal_full_month_2x_pass": false,
+    "reason_code": "CONSENSUS_RELEASE_PERSISTENCE_RAW_EDGE_ABSENT",
+    "rejected": true
+  },
+  "broker_account_access": false,
+  "cost_provenance": {
+    "adverse": "FROZEN_V7_ADVERSE_BID_ASK_SLIPPAGE_COMMISSION_FINANCING",
+    "applied_after_transition_plan": true,
+    "base": "FROZEN_V7_BID_ASK_SLIPPAGE_COMMISSION_FINANCING",
+    "latency": "FROZEN_V25_DECISION_TIME_TO_FILL_TIME_CHRONOLOGY",
+    "source_price": "ACTUAL_COMPLETED_M5_BID_ASK"
+  },
+  "cost_suppressed_raw_signals": 0,
+  "credential_access": false,
+  "cycle_id": "V31",
+  "deploy": false,
+  "development_admitted": false,
+  "effective_bet_days": 80,
+  "evidence_class": "opened_development_not_future_holdout",
+  "execution_action_sha256": "3f29af12a6f38dea60753b162a7418c15832eb2d603c6218210832bd1bb6cb28",
+  "execution_rule": {
+    "confirmation_unit": "completed_global_V25_decision_event",
+    "cost_or_outcome_inputs": false,
+    "direction_formula_changed_from_v30": false,
+    "event_precedence": "MAX_AGE_THEN_DECISION_SNAPSHOT_THEN_PERSISTENCE_CONFIRMATION_THEN_OWN_SIGNAL_THEN_TERMINAL_MTM",
+    "finite_max_age_precedence": true,
+    "first_confirmation_action": "ARM_ONLY_NO_RETROACTIVE_RELEASE",
+    "hard_max_age_seconds": 345600,
+    "minimum_peer_signals": 2,
+    "missing_gap_tie_or_insufficient": "CLEAR_PENDING_CONFIRMATION_AND_HOLD_UNCHANGED",
+    "name": "CAUSAL_CONSENSUS_RELEASE_WITH_TWO_EVENT_PERSISTENCE",
+    "next_event_rule": "RELEASE_ONLY_AT_IMMEDIATELY_NEXT_COMPLETED_DECISION_EVENT_WITH_SAME_USD_CONSENSUS",
+    "only_changed_field_from_v30": "required_consecutive_confirmation_events",
+    "opposite_direction": "CLOSE_AT_SIGNAL_EXECUTABLE_OPEN_THEN_OPEN_REVERSE_FIXED_SLEEVE",
+    "own_pair_signal_prevents_consensus_release": true,
+    "peer_scope": "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH",
+    "release_inequality": "inventory_usd_direction * consensus_usd_direction < 0",
+    "required_consecutive_confirmations": 2,
+    "same_direction": "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION",
+    "same_timestamp_required": true,
+    "self_pair_excluded": true,
+    "state_inputs": [
+      "completed_source_timestamps",
+      "pair",
+      "signal_id",
+      "direction",
+      "fill_time",
+      "predecision_inventory",
+      "prior_completed_decision_confirmation"
+    ],
+    "target_hold_seconds": 172800,
+    "unanimity_required": true
+  },
+  "experiment": "FX_CAUSAL_CONSENSUS_RELEASE_PERSISTENCE_V31",
+  "external_config_mutation": false,
+  "external_orders": 0,
+  "family": "FX_SESSION_CURRENCY_COHERENCE",
+  "family_hypotheses": 6,
+  "final_admitted": false,
+  "holdout": {
+    "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+    "state": "UNOPENED"
+  },
+  "live_authority": false,
+  "metric_comparison_vs_v25_and_v30": {
+    "MONTH_2026_05": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": {
+          "V25": 20,
+          "V30": 20,
+          "V31": 20,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 86,
+          "V31": 86,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "direction_accuracy": {
+          "V25": 0.5967741935483871,
+          "V30": 0.4418604651162791,
+          "V31": 0.4418604651162791,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.9975372601433768,
+          "V30": 0.9771581577253762,
+          "V31": 0.9771581577253762,
+          "delta_V31_minus_V30": 0.0
+        },
+        "gross_edge_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.008589299911671011,
+          "V30": -0.023889945933510792,
+          "V31": -0.023889945933510792,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -1.3747509935800937,
+          "V30": -18.861901051719595,
+          "V31": -18.861901051719595,
+          "delta_V31_minus_V30": 0.0
+        },
+        "realized_cost_bps": {
+          "V25": 4.263452811097254,
+          "V30": 9.292688570282824,
+          "V31": 9.292688570282824,
+          "delta_V31_minus_V30": 0.0
+        },
+        "release_count": {
+          "V30": 0,
+          "V31": 0,
+          "delta_V31_minus_V30": 0
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 35.42857142857143,
+          "V30": 24.57142857142857,
+          "V31": 24.57142857142857,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": {
+          "V25": 20,
+          "V30": 20,
+          "V31": 20,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 86,
+          "V31": 86,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "direction_accuracy": {
+          "V25": 0.5967741935483871,
+          "V30": 0.4418604651162791,
+          "V31": 0.4418604651162791,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 1.000889954212436,
+          "V30": 0.9817889675954863,
+          "V31": 0.9817889675954863,
+          "delta_V31_minus_V30": 0.0
+        },
+        "gross_edge_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.007907314808833221,
+          "V30": -0.020137035115111224,
+          "V31": -0.020137035115111224,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": 0.5192902968372275,
+          "V30": -15.01134912270844,
+          "V31": -15.01134912270844,
+          "delta_V31_minus_V30": 0.0
+        },
+        "realized_cost_bps": {
+          "V25": 2.369411520679933,
+          "V30": 5.442136641271671,
+          "V31": 5.442136641271671,
+          "delta_V31_minus_V30": 0.0
+        },
+        "release_count": {
+          "V30": 0,
+          "V31": 0,
+          "delta_V31_minus_V30": 0
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 35.42857142857143,
+          "V30": 24.57142857142857,
+          "V31": 24.57142857142857,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": {
+          "V25": 20,
+          "V30": 20,
+          "V31": 20,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 86,
+          "V31": 86,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "direction_accuracy": {
+          "V25": 0.5967741935483871,
+          "V30": 0.4418604651162791,
+          "V31": 0.4418604651162791,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 1.0051002981100148,
+          "V30": 0.9883451434815077,
+          "V31": 0.9883451434815077,
+          "delta_V31_minus_V30": 0.0
+        },
+        "gross_edge_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.007192866070460324,
+          "V30": -0.01759167521749705,
+          "V31": -0.01759167521749705,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": 2.8887018175171604,
+          "V30": -9.56921248143677,
+          "V31": -9.56921248143677,
+          "delta_V31_minus_V30": 0.0
+        },
+        "realized_cost_bps": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "release_count": {
+          "V30": 0,
+          "V31": 0,
+          "delta_V31_minus_V30": 0
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 35.42857142857143,
+          "V30": 24.57142857142857,
+          "V31": 24.57142857142857,
+          "delta_V31_minus_V30": 0.0
+        }
+      }
+    },
+    "MONTH_2026_06": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": {
+          "V25": 17,
+          "V30": 17,
+          "V31": 17,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 89,
+          "V31": 89,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "direction_accuracy": {
+          "V25": 0.49056603773584906,
+          "V30": 0.38202247191011235,
+          "V31": 0.38202247191011235,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.993207023745714,
+          "V30": 0.9838692639246738,
+          "V31": 0.9840486561613426,
+          "delta_V31_minus_V30": 0.00017939223666885162
+        },
+        "gross_edge_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.012551900797156179,
+          "V30": -0.024314534459117132,
+          "V31": -0.02431420462353262,
+          "delta_V31_minus_V30": 3.2983558451160633e-07
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -4.494924739173496,
+          "V30": -12.707977325976863,
+          "V31": -12.564702784963707,
+          "delta_V31_minus_V30": 0.14327454101315595
+        },
+        "realized_cost_bps": {
+          "V25": 4.2673271038961476,
+          "V30": 8.063149816413565,
+          "V31": 8.096152449624853,
+          "delta_V31_minus_V30": 0.0330026332112876
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 30.285714285714285,
+          "V30": 25.428571428571427,
+          "V31": 25.428571428571427,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": {
+          "V25": 17,
+          "V30": 17,
+          "V31": 17,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 89,
+          "V31": 89,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "direction_accuracy": {
+          "V25": 0.49056603773584906,
+          "V30": 0.38202247191011235,
+          "V31": 0.38202247191011235,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.9960796381638591,
+          "V30": 0.9882459699396912,
+          "V31": 0.9884543826720592,
+          "delta_V31_minus_V30": 0.00020841273236804625
+        },
+        "gross_edge_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.010962915159695275,
+          "V30": -0.022487782550284052,
+          "V31": -0.022487313381132412,
+          "delta_V31_minus_V30": 4.691691516400809e-07
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -2.587255444214725,
+          "V30": -9.218225475010389,
+          "V31": -9.052437269270452,
+          "delta_V31_minus_V30": 0.16578820573993625
+        },
+        "realized_cost_bps": {
+          "V25": 2.3596578089373765,
+          "V30": 4.573397965447091,
+          "V31": 4.5838869339315975,
+          "delta_V31_minus_V30": 0.010488968484506422
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 30.285714285714285,
+          "V30": 25.428571428571427,
+          "V31": 25.428571428571427,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": {
+          "V25": 17,
+          "V30": 17,
+          "V31": 17,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 89,
+          "V31": 89,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "direction_accuracy": {
+          "V25": 0.49056603773584906,
+          "V30": 0.38202247191011235,
+          "V31": 0.38202247191011235,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.9996441478265915,
+          "V30": 0.9940098786440561,
+          "V31": 0.994232507667516,
+          "delta_V31_minus_V30": 0.0002226290234599304
+        },
+        "gross_edge_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.009232187925817259,
+          "V30": -0.01991452380537373,
+          "V31": -0.01991405874994967,
+          "delta_V31_minus_V30": 4.650554240592797e-07
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -0.22759763527734825,
+          "V30": -4.644827509563298,
+          "V31": -4.468550335338855,
+          "delta_V31_minus_V30": 0.17627717422444267
+        },
+        "realized_cost_bps": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 30.285714285714285,
+          "V30": 25.428571428571427,
+          "V31": 25.428571428571427,
+          "delta_V31_minus_V30": 0.0
+        }
+      }
+    },
+    "WALK_FORWARD": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": {
+          "V25": 37,
+          "V30": 37,
+          "V31": 37,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 175,
+          "V31": 175,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "direction_accuracy": {
+          "V25": 0.5478260869565217,
+          "V30": 0.4114285714285714,
+          "V31": 0.4114285714285714,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.9907639221545058,
+          "V30": 0.9614944774663403,
+          "V31": 0.9616665442262916,
+          "delta_V31_minus_V30": 0.00017206675995129483
+        },
+        "gross_edge_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.012554489853787265,
+          "V30": -0.04264907079833424,
+          "V31": -0.04247828534822007,
+          "delta_V31_minus_V30": 0.00017078545011417479
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -2.812744111114444,
+          "V30": -15.732191271199007,
+          "V31": -15.65932593319803,
+          "delta_V31_minus_V30": 0.07286533800097672
+        },
+        "realized_cost_bps": {
+          "V25": 4.265238354735005,
+          "V30": 8.667380289743601,
+          "V31": 8.684164486062484,
+          "delta_V31_minus_V30": 0.016784196318882394
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 65.71428571428571,
+          "V30": 50.0,
+          "V31": 50.0,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": {
+          "V25": 37,
+          "V30": 37,
+          "V31": 37,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 175,
+          "V31": 175,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "direction_accuracy": {
+          "V25": 0.5478260869565217,
+          "V30": 0.4114285714285714,
+          "V31": 0.4114285714285714,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 0.9969664235923138,
+          "V30": 0.9703351079466831,
+          "V31": 0.9705364474866082,
+          "delta_V31_minus_V30": 0.0002013395399250717
+        },
+        "gross_edge_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.01096822093807115,
+          "V30": -0.03587931299291747,
+          "V31": -0.03567977848913717,
+          "delta_V31_minus_V30": 0.00019953450378029647
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": -0.9124220881693245,
+          "V30": -12.065131953307716,
+          "V31": -11.980816808674264,
+          "delta_V31_minus_V30": 0.08431514463345202
+        },
+        "realized_cost_bps": {
+          "V25": 2.364916331789885,
+          "V30": 5.000320971852313,
+          "V31": 5.005655361538719,
+          "delta_V31_minus_V30": 0.005334389686406205
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 65.71428571428571,
+          "V30": 50.0,
+          "V31": 50.0,
+          "delta_V31_minus_V30": 0.0
+        }
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": {
+          "V25": 37,
+          "V30": 37,
+          "V31": 37,
+          "delta_V31_minus_V30": 0
+        },
+        "N_eff_episodes": {
+          "V25": null,
+          "V30": 175,
+          "V31": 175,
+          "delta_V31_minus_V30": 0
+        },
+        "break_even_cost_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "direction_accuracy": {
+          "V25": 0.5478260869565217,
+          "V30": 0.4114285714285714,
+          "V31": 0.4114285714285714,
+          "delta_V31_minus_V30": 0.0
+        },
+        "equity_multiple": {
+          "V25": 1.004741490752261,
+          "V30": 0.9824806484227545,
+          "V31": 0.9826974228016372,
+          "delta_V31_minus_V30": 0.00021677437888267814
+        },
+        "gross_edge_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "max_currency_abs_exposure_nav": {
+          "V25": 1.0,
+          "V30": 0.9999999999999998,
+          "V31": 0.9999999999999998,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_drawdown": {
+          "V25": -0.009241410881576484,
+          "V30": -0.026580074375925133,
+          "V31": -0.0263657242731955,
+          "delta_V31_minus_V30": 0.0002143501027296324
+        },
+        "max_gross_exposure_nav": {
+          "V25": 1.0,
+          "V30": 1.0,
+          "V31": 1.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_inventory_age_seconds": {
+          "V25": 21300.0,
+          "V30": 313200.0,
+          "V31": 313200.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "max_margin_requirement_jpy_at_1x": {
+          "V25": 200000,
+          "V30": 200000.0,
+          "V31": 200000.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "net_edge_bps": {
+          "V25": 1.4524942436205606,
+          "V30": -7.064810981455403,
+          "V31": -6.9751614471355445,
+          "delta_V31_minus_V30": 0.08964953431985823
+        },
+        "realized_cost_bps": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "release_count": {
+          "V30": 2,
+          "V31": 0,
+          "delta_V31_minus_V30": -2
+        },
+        "terminal_inventory_mtm": {
+          "V25": 0.0,
+          "V30": 0.0,
+          "V31": 0.0,
+          "delta_V31_minus_V30": 0.0
+        },
+        "turnover_nav": {
+          "V25": 65.71428571428571,
+          "V30": 50.0,
+          "V31": 50.0,
+          "delta_V31_minus_V30": 0.0
+        }
+      }
+    }
+  },
+  "non_strategy_orchestrator_policy": {
+    "applies_only_to_successor_work_order_generation": true,
+    "changes_v31_signal_action_or_result": false,
+    "path": "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json"
+  },
+  "order_endpoint": false,
+  "paper_only": true,
+  "parent_cycle": "V30",
+  "parent_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+  "parent_result_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+  "parent_signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+  "periods": {
+    "MONTH_2026_05": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 20,
+        "N_eff_episodes": 86,
+        "aggregated_hold_signals": 38,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -9.56921248143677,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4418604651162791,
+        "ending_equity_jpy": 195431.63154507524,
+        "equity_multiple": 0.9771581577253762,
+        "executed_signals": 86,
+        "execution_state_transition_sha256": "433349a219c2e673f89951c5d939c19958d07bb9e89537669adfc51aaf3da0bb",
+        "gross_edge_bps": -9.56921248143677,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 19,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.023889945933510792,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -18.861901051719595,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "502a69853b79e70156abd19648269a4518e59945e81d1d2fa59dc1e0c3e96b4f"
+          },
+          "EUR_USD": {
+            "episodes": 12,
+            "source_signals": 18,
+            "transition_sha256": "68af76e1206c21b491aa10a26fd5a495c39f00c2191cbc6fb854c7fa35098282"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 20,
+            "transition_sha256": "a9420c92fd0a3ef8c515795ed099fc43cca4bc0c5037f1f8d1b928134c5a8710"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 17,
+            "transition_sha256": "8f40b3d97d7d7149fb7d6da913717289289e6b29f47660310230f92ef3bd0f63"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 17,
+            "transition_sha256": "682533ae0cbbf7bb04a3c37be29d56c3709d893afdbe175b280efe74a0f15317"
+          },
+          "USD_CHF": {
+            "episodes": 13,
+            "source_signals": 18,
+            "transition_sha256": "c4ac94ff2d40b78a5b8114fb157306dbc462b3559f011410e945be0ae598c093"
+          },
+          "USD_JPY": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "2041c2f3e04169605721dc60aaecf23d23e626f5a77739d8bc4b3dd589ce3a33"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 86,
+        "position_opens": 86,
+        "processed_raw_signals": 124,
+        "realized_cost_bps": 9.292688570282824,
+        "reversals": 23,
+        "source_signals": 124,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.57142857142857
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 20,
+        "N_eff_episodes": 86,
+        "aggregated_hold_signals": 38,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -9.56921248143677,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4418604651162791,
+        "ending_equity_jpy": 196357.79351909726,
+        "equity_multiple": 0.9817889675954863,
+        "executed_signals": 86,
+        "execution_state_transition_sha256": "433349a219c2e673f89951c5d939c19958d07bb9e89537669adfc51aaf3da0bb",
+        "gross_edge_bps": -9.56921248143677,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 19,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.020137035115111224,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -15.01134912270844,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "502a69853b79e70156abd19648269a4518e59945e81d1d2fa59dc1e0c3e96b4f"
+          },
+          "EUR_USD": {
+            "episodes": 12,
+            "source_signals": 18,
+            "transition_sha256": "68af76e1206c21b491aa10a26fd5a495c39f00c2191cbc6fb854c7fa35098282"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 20,
+            "transition_sha256": "a9420c92fd0a3ef8c515795ed099fc43cca4bc0c5037f1f8d1b928134c5a8710"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 17,
+            "transition_sha256": "8f40b3d97d7d7149fb7d6da913717289289e6b29f47660310230f92ef3bd0f63"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 17,
+            "transition_sha256": "682533ae0cbbf7bb04a3c37be29d56c3709d893afdbe175b280efe74a0f15317"
+          },
+          "USD_CHF": {
+            "episodes": 13,
+            "source_signals": 18,
+            "transition_sha256": "c4ac94ff2d40b78a5b8114fb157306dbc462b3559f011410e945be0ae598c093"
+          },
+          "USD_JPY": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "2041c2f3e04169605721dc60aaecf23d23e626f5a77739d8bc4b3dd589ce3a33"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 86,
+        "position_opens": 86,
+        "processed_raw_signals": 124,
+        "realized_cost_bps": 5.442136641271671,
+        "reversals": 23,
+        "source_signals": 124,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.57142857142857
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 20,
+        "N_eff_episodes": 86,
+        "aggregated_hold_signals": 38,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -9.56921248143677,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4418604651162791,
+        "ending_equity_jpy": 197669.02869630154,
+        "equity_multiple": 0.9883451434815077,
+        "executed_signals": 86,
+        "execution_state_transition_sha256": "433349a219c2e673f89951c5d939c19958d07bb9e89537669adfc51aaf3da0bb",
+        "gross_edge_bps": -9.56921248143677,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 19,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.01759167521749705,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -9.56921248143677,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "502a69853b79e70156abd19648269a4518e59945e81d1d2fa59dc1e0c3e96b4f"
+          },
+          "EUR_USD": {
+            "episodes": 12,
+            "source_signals": 18,
+            "transition_sha256": "68af76e1206c21b491aa10a26fd5a495c39f00c2191cbc6fb854c7fa35098282"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 20,
+            "transition_sha256": "a9420c92fd0a3ef8c515795ed099fc43cca4bc0c5037f1f8d1b928134c5a8710"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 17,
+            "transition_sha256": "8f40b3d97d7d7149fb7d6da913717289289e6b29f47660310230f92ef3bd0f63"
+          },
+          "USD_CAD": {
+            "episodes": 11,
+            "source_signals": 17,
+            "transition_sha256": "682533ae0cbbf7bb04a3c37be29d56c3709d893afdbe175b280efe74a0f15317"
+          },
+          "USD_CHF": {
+            "episodes": 13,
+            "source_signals": 18,
+            "transition_sha256": "c4ac94ff2d40b78a5b8114fb157306dbc462b3559f011410e945be0ae598c093"
+          },
+          "USD_JPY": {
+            "episodes": 12,
+            "source_signals": 17,
+            "transition_sha256": "2041c2f3e04169605721dc60aaecf23d23e626f5a77739d8bc4b3dd589ce3a33"
+          }
+        },
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "position_closes": 86,
+        "position_opens": 86,
+        "processed_raw_signals": 124,
+        "realized_cost_bps": 0.0,
+        "reversals": 23,
+        "source_signals": 124,
+        "terminal_closes": 0,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 24.57142857142857
+      },
+      "raw_diagnostics": {
+        "cost_used_for_state_transition": false,
+        "effective_bet_days": 20,
+        "persistence_armed_count": 0,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 0,
+        "processed_signals": 124,
+        "raw_definition_changed": false,
+        "signals": 124,
+        "state_action_counts": {
+          "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 38,
+          "MAX_AGE_CLOSE_THEN_OPEN": 19,
+          "OPEN_FIXED_ONE_SEVENTH": 44,
+          "REVERSE_FIXED_ONE_SEVENTH": 23
+        }
+      }
+    },
+    "MONTH_2026_06": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 89,
+        "aggregated_hold_signals": 17,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -4.468550335338855,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38202247191011235,
+        "ending_equity_jpy": 196809.73123226853,
+        "equity_multiple": 0.9840486561613426,
+        "executed_signals": 89,
+        "execution_state_transition_sha256": "7e8c185d217a017398f23b56e602f8205d967d02538b65640ef20e9fdeb7126f",
+        "gross_edge_bps": -4.468550335338855,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 18,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.02431420462353262,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -12.564702784963707,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 13,
+            "transition_sha256": "37f4f91fa71de1df433d04f8b895942bb5a4d68812c08b9fa63752e401e86846"
+          },
+          "EUR_USD": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "fc20990399b8fa2eed53ddeeac149c5e69d4e17533b8d359171b8cf94518e124"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 16,
+            "transition_sha256": "947b429c30d2404de2ce511cff9b3b380bbbdb37010c3a25f9d21dad1d058ec0"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 15,
+            "transition_sha256": "0f078b956fe27e2bf52c0e329979cef8b3d20a2ec6230098e73dd6ac957aed08"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 16,
+            "transition_sha256": "d9624c186bdd6fe679199f90eff166edf0aaa337bf4981d5be661a2e7fd9bc86"
+          },
+          "USD_CHF": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "9bcdc47556e8161fdaab8f4421d655bf34424260d0ca2ae3475a352bbd550ac1"
+          },
+          "USD_JPY": {
+            "episodes": 9,
+            "source_signals": 12,
+            "transition_sha256": "525b26c87074d6bc7fc567b310f421784c0b1ff3129d0692ccef09b01db6b2df"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 89,
+        "position_opens": 89,
+        "processed_raw_signals": 106,
+        "realized_cost_bps": 8.096152449624853,
+        "reversals": 27,
+        "source_signals": 106,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 25.428571428571427
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 89,
+        "aggregated_hold_signals": 17,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -4.468550335338855,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38202247191011235,
+        "ending_equity_jpy": 197690.87653441183,
+        "equity_multiple": 0.9884543826720592,
+        "executed_signals": 89,
+        "execution_state_transition_sha256": "7e8c185d217a017398f23b56e602f8205d967d02538b65640ef20e9fdeb7126f",
+        "gross_edge_bps": -4.468550335338855,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 18,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.022487313381132412,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -9.052437269270452,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 13,
+            "transition_sha256": "37f4f91fa71de1df433d04f8b895942bb5a4d68812c08b9fa63752e401e86846"
+          },
+          "EUR_USD": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "fc20990399b8fa2eed53ddeeac149c5e69d4e17533b8d359171b8cf94518e124"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 16,
+            "transition_sha256": "947b429c30d2404de2ce511cff9b3b380bbbdb37010c3a25f9d21dad1d058ec0"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 15,
+            "transition_sha256": "0f078b956fe27e2bf52c0e329979cef8b3d20a2ec6230098e73dd6ac957aed08"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 16,
+            "transition_sha256": "d9624c186bdd6fe679199f90eff166edf0aaa337bf4981d5be661a2e7fd9bc86"
+          },
+          "USD_CHF": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "9bcdc47556e8161fdaab8f4421d655bf34424260d0ca2ae3475a352bbd550ac1"
+          },
+          "USD_JPY": {
+            "episodes": 9,
+            "source_signals": 12,
+            "transition_sha256": "525b26c87074d6bc7fc567b310f421784c0b1ff3129d0692ccef09b01db6b2df"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 89,
+        "position_opens": 89,
+        "processed_raw_signals": 106,
+        "realized_cost_bps": 4.5838869339315975,
+        "reversals": 27,
+        "source_signals": 106,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 25.428571428571427
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 17,
+        "N_eff_episodes": 89,
+        "aggregated_hold_signals": 17,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -4.468550335338855,
+        "cash_signals": 0,
+        "direction_accuracy": 0.38202247191011235,
+        "ending_equity_jpy": 198846.5015335032,
+        "equity_multiple": 0.994232507667516,
+        "executed_signals": 89,
+        "execution_state_transition_sha256": "7e8c185d217a017398f23b56e602f8205d967d02538b65640ef20e9fdeb7126f",
+        "gross_edge_bps": -4.468550335338855,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 18,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.01991405874994967,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -4.468550335338855,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 12,
+            "source_signals": 13,
+            "transition_sha256": "37f4f91fa71de1df433d04f8b895942bb5a4d68812c08b9fa63752e401e86846"
+          },
+          "EUR_USD": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "fc20990399b8fa2eed53ddeeac149c5e69d4e17533b8d359171b8cf94518e124"
+          },
+          "GBP_USD": {
+            "episodes": 13,
+            "source_signals": 16,
+            "transition_sha256": "947b429c30d2404de2ce511cff9b3b380bbbdb37010c3a25f9d21dad1d058ec0"
+          },
+          "NZD_USD": {
+            "episodes": 13,
+            "source_signals": 15,
+            "transition_sha256": "0f078b956fe27e2bf52c0e329979cef8b3d20a2ec6230098e73dd6ac957aed08"
+          },
+          "USD_CAD": {
+            "episodes": 14,
+            "source_signals": 16,
+            "transition_sha256": "d9624c186bdd6fe679199f90eff166edf0aaa337bf4981d5be661a2e7fd9bc86"
+          },
+          "USD_CHF": {
+            "episodes": 14,
+            "source_signals": 17,
+            "transition_sha256": "9bcdc47556e8161fdaab8f4421d655bf34424260d0ca2ae3475a352bbd550ac1"
+          },
+          "USD_JPY": {
+            "episodes": 9,
+            "source_signals": 12,
+            "transition_sha256": "525b26c87074d6bc7fc567b310f421784c0b1ff3129d0692ccef09b01db6b2df"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 89,
+        "position_opens": 89,
+        "processed_raw_signals": 106,
+        "realized_cost_bps": 0.0,
+        "reversals": 27,
+        "source_signals": 106,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 25.428571428571427
+      },
+      "raw_diagnostics": {
+        "cost_used_for_state_transition": false,
+        "effective_bet_days": 17,
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "processed_signals": 106,
+        "raw_definition_changed": false,
+        "signals": 106,
+        "state_action_counts": {
+          "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 17,
+          "MAX_AGE_CLOSE_THEN_OPEN": 18,
+          "OPEN_FIXED_ONE_SEVENTH": 44,
+          "REVERSE_FIXED_ONE_SEVENTH": 27
+        }
+      }
+    },
+    "WALK_FORWARD": {
+      "ADVERSE_STRESS": {
+        "N_eff_days": 37,
+        "N_eff_episodes": 175,
+        "aggregated_hold_signals": 55,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -6.9751614471355445,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4114285714285714,
+        "ending_equity_jpy": 192333.30884525832,
+        "equity_multiple": 0.9616665442262916,
+        "executed_signals": 175,
+        "execution_state_transition_sha256": "5d523382322ea427368dc2332109a30db02229ca21c0ec032d847fdc5fb9d8b2",
+        "gross_edge_bps": -6.9751614471355445,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 37,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.04247828534822007,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -15.65932593319803,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 24,
+            "source_signals": 30,
+            "transition_sha256": "154797f77939d9bce2e5e92baf2a84f3f7903272d782dac006be2a3218c67e23"
+          },
+          "EUR_USD": {
+            "episodes": 26,
+            "source_signals": 35,
+            "transition_sha256": "1afc1a8666a10dfca3d11231a1c3781819dc824922b6704dec7426f22df3b89f"
+          },
+          "GBP_USD": {
+            "episodes": 26,
+            "source_signals": 36,
+            "transition_sha256": "09e8debf70f15d4523e083f94f1a771a515f8211b7a67742a54879d690aad3c3"
+          },
+          "NZD_USD": {
+            "episodes": 26,
+            "source_signals": 32,
+            "transition_sha256": "94cbf46b1efa19590ac54c6b1e2f0b12b2391dd4d177f819a5f014f566f64bfd"
+          },
+          "USD_CAD": {
+            "episodes": 25,
+            "source_signals": 33,
+            "transition_sha256": "1dbb9c75ac38695cbda54e8c89462f9ccf23e75fdfbb4540ca3cb9592044fc14"
+          },
+          "USD_CHF": {
+            "episodes": 27,
+            "source_signals": 35,
+            "transition_sha256": "64b1cabfb3f3b65bdc0fe9e57b66e701edf4a0c5355679d0b434a6d2ffbc64a9"
+          },
+          "USD_JPY": {
+            "episodes": 21,
+            "source_signals": 29,
+            "transition_sha256": "959b5f9e7a6c398538b61a6db608fc48d8905d3236199914d538f7d21d4522ae"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 175,
+        "position_opens": 175,
+        "processed_raw_signals": 230,
+        "realized_cost_bps": 8.684164486062484,
+        "reversals": 50,
+        "source_signals": 230,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.0
+      },
+      "EXECUTABLE_BASE": {
+        "N_eff_days": 37,
+        "N_eff_episodes": 175,
+        "aggregated_hold_signals": 55,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -6.9751614471355445,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4114285714285714,
+        "ending_equity_jpy": 194107.28949732165,
+        "equity_multiple": 0.9705364474866082,
+        "executed_signals": 175,
+        "execution_state_transition_sha256": "5d523382322ea427368dc2332109a30db02229ca21c0ec032d847fdc5fb9d8b2",
+        "gross_edge_bps": -6.9751614471355445,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 37,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.03567977848913717,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -11.980816808674264,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 24,
+            "source_signals": 30,
+            "transition_sha256": "154797f77939d9bce2e5e92baf2a84f3f7903272d782dac006be2a3218c67e23"
+          },
+          "EUR_USD": {
+            "episodes": 26,
+            "source_signals": 35,
+            "transition_sha256": "1afc1a8666a10dfca3d11231a1c3781819dc824922b6704dec7426f22df3b89f"
+          },
+          "GBP_USD": {
+            "episodes": 26,
+            "source_signals": 36,
+            "transition_sha256": "09e8debf70f15d4523e083f94f1a771a515f8211b7a67742a54879d690aad3c3"
+          },
+          "NZD_USD": {
+            "episodes": 26,
+            "source_signals": 32,
+            "transition_sha256": "94cbf46b1efa19590ac54c6b1e2f0b12b2391dd4d177f819a5f014f566f64bfd"
+          },
+          "USD_CAD": {
+            "episodes": 25,
+            "source_signals": 33,
+            "transition_sha256": "1dbb9c75ac38695cbda54e8c89462f9ccf23e75fdfbb4540ca3cb9592044fc14"
+          },
+          "USD_CHF": {
+            "episodes": 27,
+            "source_signals": 35,
+            "transition_sha256": "64b1cabfb3f3b65bdc0fe9e57b66e701edf4a0c5355679d0b434a6d2ffbc64a9"
+          },
+          "USD_JPY": {
+            "episodes": 21,
+            "source_signals": 29,
+            "transition_sha256": "959b5f9e7a6c398538b61a6db608fc48d8905d3236199914d538f7d21d4522ae"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 175,
+        "position_opens": 175,
+        "processed_raw_signals": 230,
+        "realized_cost_bps": 5.005655361538719,
+        "reversals": 50,
+        "source_signals": 230,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.0
+      },
+      "RAW_SIGNAL": {
+        "N_eff_days": 37,
+        "N_eff_episodes": 175,
+        "aggregated_hold_signals": 55,
+        "basket_consensus_releases": 0,
+        "break_even_cost_bps": -6.9751614471355445,
+        "cash_signals": 0,
+        "direction_accuracy": 0.4114285714285714,
+        "ending_equity_jpy": 196539.48456032743,
+        "equity_multiple": 0.9826974228016372,
+        "executed_signals": 175,
+        "execution_state_transition_sha256": "5d523382322ea427368dc2332109a30db02229ca21c0ec032d847fdc5fb9d8b2",
+        "gross_edge_bps": -6.9751614471355445,
+        "initial_equity_jpy": 200000,
+        "max_age_reopens": 37,
+        "max_currency_abs_exposure_nav": 0.9999999999999998,
+        "max_drawdown": -0.0263657242731955,
+        "max_gross_exposure_nav": 1.0,
+        "max_inventory_age_seconds": 313200.0,
+        "max_margin_requirement_jpy_at_1x": 200000.0,
+        "net_edge_bps": -6.9751614471355445,
+        "pair_audit": {
+          "AUD_USD": {
+            "episodes": 24,
+            "source_signals": 30,
+            "transition_sha256": "154797f77939d9bce2e5e92baf2a84f3f7903272d782dac006be2a3218c67e23"
+          },
+          "EUR_USD": {
+            "episodes": 26,
+            "source_signals": 35,
+            "transition_sha256": "1afc1a8666a10dfca3d11231a1c3781819dc824922b6704dec7426f22df3b89f"
+          },
+          "GBP_USD": {
+            "episodes": 26,
+            "source_signals": 36,
+            "transition_sha256": "09e8debf70f15d4523e083f94f1a771a515f8211b7a67742a54879d690aad3c3"
+          },
+          "NZD_USD": {
+            "episodes": 26,
+            "source_signals": 32,
+            "transition_sha256": "94cbf46b1efa19590ac54c6b1e2f0b12b2391dd4d177f819a5f014f566f64bfd"
+          },
+          "USD_CAD": {
+            "episodes": 25,
+            "source_signals": 33,
+            "transition_sha256": "1dbb9c75ac38695cbda54e8c89462f9ccf23e75fdfbb4540ca3cb9592044fc14"
+          },
+          "USD_CHF": {
+            "episodes": 27,
+            "source_signals": 35,
+            "transition_sha256": "64b1cabfb3f3b65bdc0fe9e57b66e701edf4a0c5355679d0b434a6d2ffbc64a9"
+          },
+          "USD_JPY": {
+            "episodes": 21,
+            "source_signals": 29,
+            "transition_sha256": "959b5f9e7a6c398538b61a6db608fc48d8905d3236199914d538f7d21d4522ae"
+          }
+        },
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "position_closes": 175,
+        "position_opens": 175,
+        "processed_raw_signals": 230,
+        "realized_cost_bps": 0.0,
+        "reversals": 50,
+        "source_signals": 230,
+        "terminal_closes": 7,
+        "terminal_inventory_mtm": 0.0,
+        "terminal_open_inventory": 0,
+        "turnover_nav": 50.0
+      },
+      "raw_diagnostics": {
+        "cost_used_for_state_transition": false,
+        "effective_bet_days": 37,
+        "persistence_armed_count": 2,
+        "persistence_release_count": 0,
+        "persistence_reset_count": 2,
+        "processed_signals": 230,
+        "raw_definition_changed": false,
+        "signals": 230,
+        "state_action_counts": {
+          "HOLD_EXISTING_NO_ADD_NO_EXPIRY_EXTENSION": 55,
+          "MAX_AGE_CLOSE_THEN_OPEN": 37,
+          "OPEN_FIXED_ONE_SEVENTH": 88,
+          "REVERSE_FIXED_ONE_SEVENTH": 50
+        }
+      }
+    }
+  },
+  "portfolio": {
+    "add_to_position": false,
+    "currency_abs_exposure_cap": 1.0,
+    "gross_leverage_cap": 1.0,
+    "margin_method": "NOTIONAL_AT_1X_CONSERVATIVE_NO_BROKER_MARGIN_ASSUMPTION",
+    "pair_count": 7,
+    "rule_max_gross_leverage": 1.0,
+    "weight_per_pair": 0.14285714285714285
+  },
+  "proposal_ledger": "evidence/run_causal_consensus_release_persistence_v31_official_001/proposal_ledger_causal_consensus_release_persistence_v31.jsonl",
+  "proposal_ledger_sha256": "20a62c3dff9ce2b95375571ec84865b77096624dc1ea78367e40f069e525745c",
+  "raw_signal_definition": {
+    "cost_used_for_signal": false,
+    "fill_utc": "06:00",
+    "fixed_exit_utc_bar": "11:55",
+    "future_outcome_used_for_signal": false,
+    "measurement_window_utc": "00:00-05:55",
+    "minimum_aligned_pairs": 5
+  },
+  "raw_signal_parent_cycle": "V25",
+  "raw_signals": 500,
+  "result_sha256": "5c5159b6d0242c3c8b588ace6812908e33513901f9a0a31371082a7f39def66d",
+  "same_execution_state_transitions_all_cost_arms": true,
+  "same_parent_decision_timestamps": true,
+  "same_parent_directions": true,
+  "same_parent_signal_id_set": true,
+  "same_signal_stream_all_cost_arms": true,
+  "single_changed_variable": "one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves",
+  "source_audit": [
+    {
+      "bars": 26047,
+      "pair": "AUD_USD",
+      "source_sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    {
+      "bars": 26051,
+      "pair": "EUR_USD",
+      "source_sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    {
+      "bars": 26045,
+      "pair": "GBP_USD",
+      "source_sha256": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92"
+    },
+    {
+      "bars": 26049,
+      "pair": "NZD_USD",
+      "source_sha256": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642"
+    },
+    {
+      "bars": 26047,
+      "pair": "USD_CAD",
+      "source_sha256": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc"
+    },
+    {
+      "bars": 26018,
+      "pair": "USD_CHF",
+      "source_sha256": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f"
+    },
+    {
+      "bars": 26046,
+      "pair": "USD_JPY",
+      "source_sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  ],
+  "terminal_inventory_mtm_hidden": false,
+  "v30_ledger_sha256": "3d7e60bc8322133d78d7f5cdec65defca3204306d5a08500fde76e9e4ce6ad51",
+  "v30_result_sha256": "27e9b006ba115214d8f2590bf21add290c1df406e0565717016584265a2d0bd8"
+}
