@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V27",
+  "experiment": "FX_CAUSAL_MIN_SPREAD_REPRESENTATIVE_V27",
+  "registered_before_official_execution": true,
+  "strategy_parent_cycle": "V25",
+  "failed_execution_predecessor": "V26",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "predecessor_evidence": {
+    "v26_result_observed": false,
+    "v26_metrics_available": false,
+    "v26_may_not_be_replayed": true,
+    "v26_preregistration_sha256": "b4579b78ea045e1cbf778cbc3f643496823276e768dd7b7dad66bb6d14fd9c2d",
+    "v26_runner_sha256": "3989c614e92b93bc107995f93952c15bdb75a5f43740882270e2c7d0916e67ab",
+    "v26_test_sha256": "3dbe5ba799f5b99241324ab808db6112c9c5223332d01615ab6b813a59d6a8e9",
+    "v26_failure_evidence_sha256": "75cceae96df7be5a51955a0966f587d378a0328ddf4f9c4f4947c2b3ed154a2b",
+    "reason_code": "V26_AUTHORIZED_RECOVERY_FAILED_PRE_RESULT"
+  },
+  "parent_evidence": {
+    "official_result_file_sha256": "eb646f6933d1078e86a025fa28b941fa2ddfd20f1a885a61ced7bbc23bfdef45",
+    "proposal_ledger_sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "signal_id_set_sha256": "4100dd95a74526fddee1a495a8a1bbe0d7568a6a5f5147cb048509a989f23f8e",
+    "raw_signals": 500,
+    "effective_bet_days": 80
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "baseline": "FX_ASIAN_USD_COHERENCE_PERSISTENCE_V25",
+    "family": "FX_SESSION_CURRENCY_COHERENCE",
+    "family_hypothesis_number": 2,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_causal_minimum_spread_representative_execution_per_raw_signal_basket",
+    "same_unobserved_strategy_as_v26": true,
+    "null": "Keeping all 500 V25 RAW signals and fixed 1/7 sleeves while executing one causally cheapest representative per UTC-day basket does not make both normal and adverse full comparable months reach 2.0x.",
+    "alternative": "The single execution mask reduces realized cost and turnover enough for both normal and adverse full comparable months to reach at least 2.0x without leverage, period, holdout, signal or threshold changes."
+  },
+  "training_only_rule_selection": {
+    "window_start": "2026-03-11",
+    "window_end_exclusive": "2026-05-01",
+    "outcome_fields_read": false,
+    "candidate_rules_evaluated": 1,
+    "selected_rule": "CAUSAL_MIN_SPREAD_REPRESENTATIVE",
+    "selection_reopened_after_v26_failure": false,
+    "parameters_optimized_on_returns": false
+  },
+  "deterministic_rule": {
+    "lookback_bars": 20,
+    "bar_granularity": "M5",
+    "score_formula": "median over 20 completed same-pair M5 bars ending at decision_time of 2*10000*(ask_close-bid_close)/((ask_close+bid_close)/2)",
+    "score_units": "roundtrip_quoted_spread_proxy_basis_points_of_notional_return",
+    "basket_key": "utc_day",
+    "selection_formula": "argmin(score_bps, signal_id)",
+    "selected_per_nonempty_basket": 1,
+    "nonselected_action": "CASH_NO_POSITION",
+    "entry_use": "inherit V25 pair, direction, decision_time and fill_time",
+    "exit_use": "inherit V25 exit_time and finite max-age",
+    "inventory_use": "selected signal opens one fixed 1/7 sleeve; all other sleeves remain cash",
+    "chronology": "all score rows complete with timestamp <= decision_time; fill, exit and outcome unavailable",
+    "missing_or_invalid_input": "FAIL_CLOSED_BEFORE_REPLAY"
+  },
+  "runtime_compatibility_provenance": {
+    "classification": "NON_STRATEGY_RUNTIME_COMPATIBILITY",
+    "changed_strategy_variables": 0,
+    "parser_contract": "canonical UTC with 0 to 9 fractional digits represented as exact integer epoch nanoseconds; no rejection or truncation of nonzero sub-microseconds",
+    "reachable_bindings": [
+      "run_causal_min_spread_representative_v26.parse_time",
+      "run_portfolio_episode_netting_v15.timestamp",
+      "run_auction_trap_geometry_v7.timestamp"
+    ],
+    "input_fraction_audit": "V27_TIMESTAMP_FRACTION_AUDIT.json",
+    "input_fraction_audit_sha256": "6f1852bdb7af00cfca48df33cd623c7456ee991b054e6fa6afee1f607f159fd2",
+    "observed_corpus_nonzero_submicrosecond_count": 0,
+    "observed_parent_nonzero_submicrosecond_count": 0,
+    "runner_sha256": "a72880146b5be5295b3f41ab7818f266552eac840b485c3f59aa94dbeb3e050d",
+    "test_sha256": "2a5244c63d8fde44d55ad637df5d58d66601475374301edced2d47fd66b1eb9b",
+    "v26_rerun_permitted": false
+  },
+  "signal_contract": {
+    "raw_signal_source": "SEALED_PARENT_V25_LEDGER",
+    "raw_signal_definition_changed": false,
+    "raw_signal_id_set_changed": false,
+    "decision_timestamps_changed": false,
+    "same_signal_id_set": true,
+    "same_entry_direction_exit": true,
+    "same_execution_mask_all_arms": true,
+    "raw_cost_gate": false,
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"]
+  },
+  "inventory_contract": {
+    "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+    "one_position_per_pair": true,
+    "one_basket_per_utc_day": true,
+    "selected_positions_per_basket": 1,
+    "add_to_position": false,
+    "martingale": false,
+    "overlap": false,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "unallocated_sleeves_remain_cash": true,
+    "gross_leverage_cap": 1.0,
+    "rule_max_gross_leverage": 0.14285714285714285,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 21600,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false
+  },
+  "evaluation_contract": {
+    "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+    "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "leverage_changed": false,
+    "evaluation_period_changed": false
+  },
+  "required_metrics": [
+    "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
+    "break_even_cost_bps", "direction_accuracy", "monthly_equity_multiple",
+    "max_drawdown", "max_gross_exposure_nav", "max_margin_requirement_jpy_at_1x",
+    "terminal_inventory_mtm", "max_inventory_age_seconds", "N_eff_days"
+  ],
+  "rejection_conditions": {
+    "system_fail": "any frozen hash, RAW identity, chronology, arm-mask, source, inventory, max-age, liquidation, MTM, authority, holdout, period, leverage or threshold mismatch",
+    "profit_reject": "either full month below 2.0x in BASE or ADVERSE, or unopened holdout reproduction absent",
+    "automatic_next_work_order": true
+  },
+  "llm_policy": {
+    "actual_llm_used": false,
+    "individual_order_direction_fill_authority": false,
+    "hard_guards_owned_by_bot": true
+  },
+  "forbidden": [
+    "multiple_candidate_sweep", "lookahead", "evaluation_period_tuning",
+    "post_hoc_leverage", "hidden_unrealized_loss", "numeric_tampering",
+    "holdout_opening", "v26_rerun", "live_or_broker_side_effect"
+  ]
+}

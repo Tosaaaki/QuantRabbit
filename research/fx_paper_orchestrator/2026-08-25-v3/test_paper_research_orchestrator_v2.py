@@ -32,6 +32,7 @@ def synthetic_cycle() -> dict:
             orchestrator.canonical_bytes({})).hexdigest()},
         "inventory_contract": {
             "fixed_pair_sleeve": 1 / 7,
+            "rule_max_gross_leverage": 1 / 7,
             "gross_leverage_cap": 1.0,
             "currency_abs_exposure_cap": 1.0,
             "finite_max_age_seconds": 21600,
@@ -83,6 +84,20 @@ def write_synthetic_result(root: Path, cycle: dict, equity: float = 1.01) -> Non
         "live_authority": False,
         "external_orders": 0,
     }
+    if cycle["cycle_id"] == "V27":
+        result.update({
+            "cycle_id": "V27",
+            "experiment": "FX_CAUSAL_MIN_SPREAD_REPRESENTATIVE_V27",
+            "runtime_compatibility_provenance": {
+                "classification": "NON_STRATEGY_RUNTIME_COMPATIBILITY",
+                "changed_strategy_variables": 0,
+                "v26_rerun_permitted": False,
+            },
+        })
+        for period in result["periods"].values():
+            for metrics in (period[arm] for arm in orchestrator.ARMS):
+                metrics["max_gross_exposure_nav"] = 1 / 7
+                metrics["max_margin_requirement_jpy_at_1x"] = 200000 / 7
     result["result_sha256"] = orchestrator.embedded_hash(result, "result_sha256")
     result_path = root / cycle["execution"]["result"]
     result_path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
@@ -100,13 +115,25 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
-        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26"])
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
         self.assertEqual(cycle["signal_contract"]["raw_signal_source"], "SEALED_PARENT_V25_LEDGER")
         self.assertTrue(cycle["signal_contract"]["same_decision_timestamps"])
         self.assertTrue(cycle["signal_contract"]["same_execution_mask_all_arms"])
+
+    def test_v27_is_new_cycle_with_same_unobserved_strategy_and_runtime_only_migration(self):
+        cycle = self.registry["cycles"][2]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V27")
+        self.assertEqual(cycle["depends_on_cycle"], "V25")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertTrue(prereg["hypothesis_contract"]["same_unobserved_strategy_as_v26"])
+        runtime = prereg["runtime_compatibility_provenance"]
+        self.assertEqual(runtime["changed_strategy_variables"], 0)
+        self.assertFalse(runtime["v26_rerun_permitted"])
+        self.assertEqual(runtime["observed_corpus_nonzero_submicrosecond_count"], 0)
 
     def test_real_audit_preserves_v25_seal_and_exposes_terminal_v26_recovery_failure(self):
         report = orchestrator.audit(ROOT, self.registry)
@@ -299,6 +326,35 @@ class ResultAndRestartAcceptanceTest(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertTrue(orchestrator.state_paths(root, "V26")["seal"].is_file())
 
+    def test_execute_next_skips_terminal_failed_cycle_and_runs_new_cycle(self):
+        temporary, root, parent, registry = self.setup_root()
+        self.addCleanup(temporary.cleanup)
+        failed = copy.deepcopy(parent)
+        failed["cycle_id"] = "V26"
+        successor = copy.deepcopy(parent)
+        successor["cycle_id"] = "V27"
+        successor["depends_on_cycle"] = "V25"
+        successor["execution"]["result"] = "evidence/run-v27/result.json"
+        successor["execution"]["ledger"] = "evidence/run-v27/ledger.jsonl"
+        registry["cycles"] = [parent, failed, successor]
+        orchestrator.atomic_json(orchestrator.state_paths(root)["state"], {
+            "schema_version": 2,
+            "cycles": {
+                "V25": {"status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN"},
+                "V26": {"status": "FAILED_AUTHORIZED_RECOVERY_NO_RERUN"},
+            },
+        })
+
+        def fake_run(*_args, **_kwargs):
+            write_synthetic_result(root, successor)
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+        with mock.patch.object(orchestrator, "validate_source", return_value={}), \
+                mock.patch.object(orchestrator.subprocess, "run", side_effect=fake_run) as run:
+            seal = orchestrator.execute_next(root, registry)
+        self.assertEqual(seal["cycle_id"], "V27")
+        self.assertEqual(run.call_count, 1)
+
     def test_failed_official_subprocess_is_terminal_and_rerun_is_forbidden(self):
         temporary, root, cycle, registry = self.setup_root()
         self.addCleanup(temporary.cleanup)
@@ -308,7 +364,7 @@ class ResultAndRestartAcceptanceTest(unittest.TestCase):
                 )) as run:
             with self.assertRaisesRegex(orchestrator.ContractError, "rerun forbidden"):
                 orchestrator.execute_next(root, registry)
-            with self.assertRaisesRegex(orchestrator.ContractError, "unexpected cycle state"):
+            with self.assertRaisesRegex(orchestrator.ContractError, "every registered cycle"):
                 orchestrator.execute_next(root, registry)
         self.assertEqual(run.call_count, 1)
         state = json.loads(orchestrator.state_paths(root)["state"].read_text())

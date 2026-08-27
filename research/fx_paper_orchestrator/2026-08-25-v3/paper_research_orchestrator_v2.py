@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,10 @@ V26_RECOVERY_LAUNCHER = "run_causal_min_spread_representative_v26_recovery_once.
 V26_RECOVERY_LAUNCHER_SHA256 = "8a137bd7f48facfd958a4d8e9c1977b84589d6016aa4ebcf4f413654a955430a"
 V26_RECOVERY_FAILURE = "V26_AUTHORIZED_RECOVERY_FAILURE.json"
 V26_RECOVERY_FAILURE_SHA256 = "75cceae96df7be5a51955a0966f587d378a0328ddf4f9c4f4947c2b3ed154a2b"
+TERMINAL_NO_RERUN_STATUSES = {
+    "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+    "FAILED_AUTHORIZED_RECOVERY_NO_RERUN",
+}
 
 
 class ContractError(RuntimeError):
@@ -72,6 +77,18 @@ def embedded_hash(payload: dict[str, Any], field: str) -> str:
     unsigned = dict(payload)
     unsigned.pop(field, None)
     return hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+
+
+def sanitized_subprocess_excerpt(value: str, limit: int = 4000) -> str:
+    """Keep bounded failure evidence without persisting local paths or secrets."""
+    cleaned = "".join(character for character in value if character in "\n\t" or ord(character) >= 32)
+    cleaned = re.sub(r"/Users/[^\s:'\"]+", "<local-path>", cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(token|secret|password|credential)\s*[=:]\s*[^\s]+",
+        r"\1=<redacted>",
+        cleaned,
+    )
+    return cleaned[-limit:]
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -126,6 +143,14 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         raise ContractError("registry schema_version must be 2")
     if registry.get("authority") != AUTHORITY:
         raise ContractError("zero-authority paper-only contract mismatch")
+    coordinator = require_keys(registry.get("coordinator"), {
+        "path", "sha256", "failure_text_policy",
+    }, "coordinator")
+    coordinator_path = within(root, coordinator["path"])
+    if not coordinator_path.is_file() or sha256_file(coordinator_path) != coordinator["sha256"]:
+        raise ContractError("frozen coordinator hash mismatch")
+    if coordinator["failure_text_policy"] != "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256":
+        raise ContractError("coordinator failure evidence policy changed")
     legacy = require_keys(registry.get("legacy_evidence"), {
         "registry", "registry_sha256", "sealed_cycles", "policy",
     }, "legacy_evidence")
@@ -241,6 +266,18 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
             raise ContractError("V26 deterministic execution selector contract mismatch")
         if len(scorers) != 1 or [arg.arg for arg in scorers[0].args.args] != ["row", "bars", "time_index"]:
             raise ContractError("V26 causal cost score contract mismatch")
+        if cycle["cycle_id"] == "V27":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            runtime = prereg.get("runtime_compatibility_provenance", {})
+            if runtime.get("classification") != "NON_STRATEGY_RUNTIME_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("v26_rerun_permitted") is not False:
+                raise ContractError("V27 runtime compatibility is mixed with strategy authority")
+            if prereg.get("hypothesis_contract", {}).get("same_unobserved_strategy_as_v26") is not True:
+                raise ContractError("V27 did not preserve the unobserved V26 strategy")
+            failure = within(root, V26_RECOVERY_FAILURE)
+            if not failure.is_file() or sha256_file(failure) != V26_RECOVERY_FAILURE_SHA256:
+                raise ContractError("V27 predecessor failure evidence changed")
     else:
         raise ContractError(f"unsupported raw signal source: {raw_source}")
 
@@ -448,6 +485,14 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             mask.append([row["signal_id"], row.get("execution_selected") is True])
         if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
             raise ContractError("V26 execution mask hash mismatch")
+        if cycle["cycle_id"] == "V27":
+            runtime = payload.get("runtime_compatibility_provenance", {})
+            if payload.get("cycle_id") != "V27" \
+                    or payload.get("experiment") != "FX_CAUSAL_MIN_SPREAD_REPRESENTATIVE_V27" \
+                    or runtime.get("classification") != "NON_STRATEGY_RUNTIME_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("v26_rerun_permitted") is not False:
+                raise ContractError("V27 result runtime provenance or cycle identity mismatch")
 
     periods = payload.get("periods", {})
     if set(periods) != set(PERIODS):
@@ -476,6 +521,13 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
+            if cycle["cycle_id"] == "V27":
+                if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
+                        or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
+                    raise ContractError(f"missing margin metrics in {period_name}/{arm}")
+                if metrics["max_gross_exposure_nav"] < 0 \
+                        or metrics["max_gross_exposure_nav"] > cycle["inventory_contract"]["rule_max_gross_leverage"]:
+                    raise ContractError(f"V27 margin exposure exceeds preregistration in {period_name}/{arm}")
     if len({tuple(value) for value in signal_sets.values()}) != 1:
         raise ContractError("same signal_id set assertion failed")
 
@@ -946,7 +998,9 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
         state = read_state(shared_paths["state"])
         cycle = next((item for item in registry["cycles"]
-                      if not state.get("cycles", {}).get(item["cycle_id"], {}).get("status", "").startswith("SEALED")), None)
+                      if not state.get("cycles", {}).get(item["cycle_id"], {}).get("status", "").startswith("SEALED")
+                      and state.get("cycles", {}).get(item["cycle_id"], {}).get("status")
+                      not in TERMINAL_NO_RERUN_STATUSES), None)
         if cycle is None:
             raise ContractError("every registered cycle already has its one official sealed execution")
         cycle_id = cycle["cycle_id"]
@@ -995,12 +1049,15 @@ def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
         state["cycles"][cycle_id]["stderr_sha256"] = hashlib.sha256(completed.stderr.encode()).hexdigest()
         atomic_json(paths["state"], state)
         if completed.returncode != 0:
+            excerpt = sanitized_subprocess_excerpt(completed.stderr)
+            state["cycles"][cycle_id]["sanitized_stderr_excerpt"] = excerpt
             state["cycles"][cycle_id]["status"] = "FAILED_OFFICIAL_EXECUTION_NO_RERUN"
             atomic_json(paths["state"], state)
             append_journal(paths["journal"], "OFFICIAL_EXECUTION_FAILED", cycle_id=cycle_id,
                            returncode=completed.returncode,
                            stdout_sha256=state["cycles"][cycle_id]["stdout_sha256"],
-                           stderr_sha256=state["cycles"][cycle_id]["stderr_sha256"])
+                           stderr_sha256=state["cycles"][cycle_id]["stderr_sha256"],
+                           sanitized_stderr_excerpt=excerpt)
             raise ContractError(f"official subprocess failed with exit {completed.returncode}; rerun forbidden")
         return seal_completed(root, registry, cycle, state, paths, recovery=False)
 

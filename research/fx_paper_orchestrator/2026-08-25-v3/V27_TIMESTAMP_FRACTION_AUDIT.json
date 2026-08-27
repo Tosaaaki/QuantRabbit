@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "cycle_id": "V27",
+  "recorded_at": "2026-08-27T01:16:52Z",
+  "read_only_scan": true,
+  "official_replay_started": false,
+  "source_binding": {
+    "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+    "registered_pairs": ["AUD_USD", "EUR_USD", "GBP_USD", "NZD_USD", "USD_CAD", "USD_CHF", "USD_JPY"],
+    "files_scanned": 7,
+    "rows_scanned": 182303,
+    "timestamp_values_scanned": 182303,
+    "fraction_digit_counts": {"9": 182303},
+    "fraction_7_to_9_nonzero_count": 0,
+    "representative_nonzero_values": []
+  },
+  "parent_ledger_binding": {
+    "path": "evidence/run_asian_usd_coherence_persistence_v25_official_001/proposal_ledger_asian_usd_coherence_persistence_v25.jsonl",
+    "sha256": "4657f39f444529f8b267d2295485cf8ea66c8506fefdf50bdf1456a1acafc6db",
+    "rows_scanned": 500,
+    "fields_scanned": ["decision_time", "fill_time", "exit_time"],
+    "timestamp_values_scanned": 1500,
+    "fraction_digit_counts": {"9": 1500},
+    "fraction_7_to_9_nonzero_count": 0,
+    "representative_nonzero_values": []
+  },
+  "compatibility_decision": {
+    "observed_nonzero_submicrosecond_total": 0,
+    "future_canonical_nonzero_nine_digit_timestamp_supported": true,
+    "precision_policy": "EXACT_INTEGER_EPOCH_NANOSECONDS_NO_REJECTION_NO_TRUNCATION",
+    "strategy_variable_change": false,
+    "v26_rerun_permitted": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
