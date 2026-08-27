@@ -57,6 +57,20 @@ TERMINAL_NO_RERUN_STATUSES = {
     "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
     "FAILED_AUTHORIZED_RECOVERY_NO_RERUN",
 }
+RAW_EDGE_REFINEMENT_POLICY_PATH = "RAW_EDGE_REFINEMENT_BUDGET_POLICY_V31.json"
+RAW_EDGE_REFINEMENT_BUDGET = 3
+RAW_EDGE_REFINEMENT_REASONS = {
+    "EXECUTION_SUBSET_RAW_EDGE_ABSENT",
+    "BASKET_HOLD_RAW_EDGE_ABSENT",
+    "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT",
+    "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT",
+    "CONSENSUS_RELEASE_PERSISTENCE_RAW_EDGE_ABSENT",
+}
+SIGNAL_FAMILY_PIVOT_REASON = "REPEATED_RAW_EDGE_ABSENT_SIGNAL_FAMILY_PIVOT"
+SIGNAL_FAMILY_PIVOT_VARIABLE = (
+    "one_preregistered_causal_fx_specific_signal_family_replacement_"
+    "preserving_costs_leverage_periods_and_holdout"
+)
 
 
 class ContractError(RuntimeError):
@@ -173,6 +187,16 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         raise ContractError("profit thresholds changed")
     if not gate["strategy_adoption_is_separate_gate"]:
         raise ContractError("system and strategy gates must remain separate")
+    policy_ref = require_keys(registry.get("next_work_order_policy"), {
+        "path", "sha256", "classification",
+    }, "next_work_order_policy")
+    if policy_ref["path"] != RAW_EDGE_REFINEMENT_POLICY_PATH \
+            or policy_ref["classification"] != "NON_STRATEGY_ORCHESTRATOR_POLICY":
+        raise ContractError("next-work-order policy identity changed")
+    policy_path = within(root, policy_ref["path"])
+    if not policy_path.is_file() or sha256_file(policy_path) != policy_ref["sha256"]:
+        raise ContractError("next-work-order policy hash mismatch")
+    validate_next_work_order_policy(root, json.loads(policy_path.read_text(encoding="utf-8")))
     cycles = registry.get("cycles")
     if not isinstance(cycles, list) or not cycles:
         raise ContractError("registry has no cycles")
@@ -182,6 +206,67 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
     for cycle in cycles:
         validate_cycle_contract(root, cycle)
     return registry
+
+
+def validate_next_work_order_policy(root: Path, policy: dict[str, Any]) -> None:
+    require_keys(policy, {
+        "schema_version", "classification", "effective_from_parent_cycle",
+        "max_consecutive_raw_edge_absent_refinements", "counted_reason_codes",
+        "pivot_reason_code", "pivot_single_changed_variable", "grandfathered_work_order",
+        "historical_derivation", "authority", "holdout",
+    }, "next_work_order_policy")
+    if policy["schema_version"] != 1 \
+            or policy["classification"] != "NON_STRATEGY_ORCHESTRATOR_POLICY" \
+            or policy["effective_from_parent_cycle"] != "V31" \
+            or policy["max_consecutive_raw_edge_absent_refinements"] != RAW_EDGE_REFINEMENT_BUDGET:
+        raise ContractError("raw-edge refinement budget policy changed")
+    if set(policy["counted_reason_codes"]) != RAW_EDGE_REFINEMENT_REASONS:
+        raise ContractError("raw-edge refinement reason set changed")
+    if policy["pivot_reason_code"] != SIGNAL_FAMILY_PIVOT_REASON \
+            or policy["pivot_single_changed_variable"] != SIGNAL_FAMILY_PIVOT_VARIABLE:
+        raise ContractError("signal-family pivot route changed")
+    if policy["authority"] != AUTHORITY \
+            or policy["holdout"] != {"state": "UNOPENED", "may_execute": False}:
+        raise ContractError("next-work-order policy authority or holdout changed")
+    grandfathered = require_keys(policy["grandfathered_work_order"], {
+        "path", "sha256", "parent_cycle", "proposed_cycle", "immutable",
+    }, "grandfathered_work_order")
+    grandfathered_path = within(root, grandfathered["path"])
+    if grandfathered["parent_cycle"] != "V30" or grandfathered["proposed_cycle"] != "V31" \
+            or grandfathered["immutable"] is not True \
+            or not grandfathered_path.is_file() \
+            or sha256_file(grandfathered_path) != grandfathered["sha256"]:
+        raise ContractError("sealed V31 work order changed")
+    history = policy["historical_derivation"]
+    if [item.get("cycle_id") for item in history] != ["V27", "V28", "V29", "V30"]:
+        raise ContractError("raw-edge refinement history must be V27-V30")
+    state = read_state(within(root, "evidence/orchestrator_state_v2/state.json"))
+    journal_path = within(root, "evidence/orchestrator_state_v2/failure_and_event_journal.jsonl")
+    journal = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+    for item in history:
+        require_keys(item, {
+            "cycle_id", "result", "result_sha256", "reason_code",
+            "official_seal_sha256", "state_status", "journal_event",
+        }, "historical_derivation item")
+        result_path = within(root, item["result"])
+        if not result_path.is_file() or sha256_file(result_path) != item["result_sha256"]:
+            raise ContractError(f"historical result changed: {item['cycle_id']}")
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        if result.get("automatic_rejection", {}).get("reason_code") != item["reason_code"] \
+                or item["reason_code"] not in RAW_EDGE_REFINEMENT_REASONS:
+            raise ContractError(f"historical RAW-edge reason changed: {item['cycle_id']}")
+        state_record = state.get("cycles", {}).get(item["cycle_id"], {})
+        if state_record.get("status") != item["state_status"] \
+                or state_record.get("official_result_file_sha256") != item["result_sha256"] \
+                or state_record.get("official_seal_sha256") != item["official_seal_sha256"]:
+            raise ContractError(f"historical sealed state changed: {item['cycle_id']}")
+        events = [event for event in journal
+                  if event.get("event") == item["journal_event"]
+                  and event.get("cycle_id") == item["cycle_id"]
+                  and event.get("result_file_sha256") == item["result_sha256"]]
+        if len(events) != 1:
+            raise ContractError(f"historical seal journal changed: {item['cycle_id']}")
 
 
 def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
@@ -348,6 +433,52 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"] \
                     or rule.get("cost_or_outcome_inputs") is not False:
                 raise ContractError("V30 peer scope differs from preregistration")
+        elif cycle["cycle_id"] == "V31":
+            builders = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "build_execution_ledger"]
+            planners = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "build_period_plans"]
+            if len(builders) != 1 or [arg.arg for arg in builders[0].args.args] != [
+                    "parent_rows", "corpus"]:
+                raise ContractError("V31 deterministic persistence builder contract mismatch")
+            if len(planners) != 1 or [arg.arg for arg in planners[0].args.args] != [
+                    "corpus", "parent_rows", "start", "end"]:
+                raise ContractError("V31 deterministic persistence planner contract mismatch")
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            predecessor = prereg.get("predecessor_disposition", {})
+            selection = prereg.get("training_only_persistence_selection", {})
+            rule = prereg.get("persistence_confirmation_rule", {})
+            system_policy = prereg.get("non_strategy_orchestrator_contract", {})
+            if predecessor.get("status") != "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN" \
+                    or predecessor.get("reason_code") != "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT":
+                raise ContractError("V31 did not preserve V30 as frozen rejected evidence")
+            if selection.get("candidate_rules_preregistered") != 1 \
+                    or selection.get("candidate_confirmation_counts_compared_by_outcome") != 0 \
+                    or selection.get("required_consecutive_confirmations") != 2 \
+                    or selection.get("price_consulted") is not False \
+                    or selection.get("return_outcome_consulted") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("evaluation_month_used_for_selection") is not False:
+                raise ContractError("V31 persistence rule was not one training-only outcome-free candidate")
+            if rule.get("name") != "TWO_CONSECUTIVE_COMPLETED_DECISION_EVENTS_SAME_USD_CONSENSUS" \
+                    or rule.get("only_changed_field_from_v30") != "required consecutive confirmation events" \
+                    or rule.get("required_consecutive_confirmations") != 2 \
+                    or rule.get("peer_scope") != "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH" \
+                    or rule.get("minimum_peer_signals") != 2 \
+                    or rule.get("unanimity_required") is not True \
+                    or rule.get("same_timestamp_required") is not True \
+                    or rule.get("self_pair_excluded") is not True \
+                    or rule.get("direction_formula_changed_from_v30") is not False \
+                    or not str(rule.get("finite_max_age_precedence", "")) \
+                    or rule.get("hard_max_age_seconds") != cycle["inventory_contract"]["finite_max_age_seconds"] \
+                    or rule.get("cost_or_outcome_inputs") is not False:
+                raise ContractError("V31 persistence rule differs from preregistration")
+            if system_policy.get("classification") != "NON_STRATEGY_ORCHESTRATOR_POLICY" \
+                    or system_policy.get("changed_strategy_variables") != 0 \
+                    or system_policy.get("changes_v31_signal_action_or_result") is not False \
+                    or system_policy.get("grandfathered_v31_work_order_sha256") \
+                    != "873d6d92b9f18b66b9ded21f339d643bfd16b0f6bda6759905f95f36ab6b8763":
+                raise ContractError("V31 strategy and successor-routing policy contracts were mixed")
         else:
             raise ContractError(f"unsupported sealed-parent execution cycle: {cycle['cycle_id']}")
         if cycle["cycle_id"] == "V27":
@@ -603,11 +734,12 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             mask = [[row["signal_id"], row.get("execution_selected") is True] for row in rows]
             if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
                 raise ContractError("V26/V27 execution mask hash mismatch")
-        elif cycle["cycle_id"] in {"V28", "V29", "V30"}:
+        elif cycle["cycle_id"] in {"V28", "V29", "V30", "V31"}:
             expected_experiment = {
                 "V28": "FX_CAUSAL_BASKET_HOLD_V28",
                 "V29": "FX_CAUSAL_BASKET_CONSENSUS_RELEASE_V29",
                 "V30": "FX_CAUSAL_CONSENSUS_RELEASE_SCOPE_V30",
+                "V31": "FX_CAUSAL_CONSENSUS_RELEASE_PERSISTENCE_V31",
             }[cycle["cycle_id"]]
             if payload.get("cycle_id") != cycle["cycle_id"] \
                     or payload.get("experiment") != expected_experiment \
@@ -638,6 +770,19 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     or rule.get("direction_formula_changed_from_v29") is not False
                     or rule.get("own_pair_signal_prevents_consensus_release") is not True):
                 raise ContractError("V30 result peer scope differs from preregistration")
+            if cycle["cycle_id"] == "V31" and (
+                    rule.get("only_changed_field_from_v30") != "required_consecutive_confirmation_events"
+                    or rule.get("required_consecutive_confirmations") != 2
+                    or rule.get("confirmation_unit") != "completed_global_V25_decision_event"
+                    or rule.get("peer_scope") != "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH"
+                    or rule.get("minimum_peer_signals") != 2
+                    or rule.get("unanimity_required") is not True
+                    or rule.get("same_timestamp_required") is not True
+                    or rule.get("self_pair_excluded") is not True
+                    or rule.get("direction_formula_changed_from_v30") is not False
+                    or rule.get("own_pair_signal_prevents_consensus_release") is not True
+                    or rule.get("finite_max_age_precedence") is not True):
+                raise ContractError("V31 result persistence rule differs from preregistration")
         if cycle["cycle_id"] == "V27":
             runtime = payload.get("runtime_compatibility_provenance", {})
             if payload.get("cycle_id") != "V27" \
@@ -670,7 +815,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 )
                 if metrics.get("executed_signals") != selected_count:
                     raise ContractError(f"V26/V27 executed signal count mismatch in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V28", "V29", "V30"}:
+            if cycle["cycle_id"] in {"V28", "V29", "V30", "V31"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -687,18 +832,23 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                     raise ContractError(f"V29 consensus release count missing in {period_name}/{arm}")
                 if cycle["cycle_id"] == "V30" and not isinstance(metrics.get("scope_release_count"), int):
                     raise ContractError(f"V30 scoped release count missing in {period_name}/{arm}")
+                if cycle["cycle_id"] == "V31" and (
+                        not isinstance(metrics.get("persistence_release_count"), int)
+                        or not isinstance(metrics.get("persistence_armed_count"), int)
+                        or not isinstance(metrics.get("persistence_reset_count"), int)):
+                    raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
                 if metrics["max_gross_exposure_nav"] < 0 \
                         or metrics["max_gross_exposure_nav"] > cycle["inventory_contract"]["rule_max_gross_leverage"]:
                     raise ContractError(f"margin exposure exceeds preregistration in {period_name}/{arm}")
-        if cycle["cycle_id"] in {"V28", "V29", "V30"}:
+        if cycle["cycle_id"] in {"V28", "V29", "V30", "V31"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
@@ -754,12 +904,18 @@ def evaluate_gates(registry: dict[str, Any], cycle: dict[str, Any], verified: di
     }
 
 
-def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str, Any]:
-    walk = verified["periods"]["WALK_FORWARD"]
-    raw = walk["RAW_SIGNAL"]["equity_multiple"]
-    base = walk["EXECUTABLE_BASE"]["equity_multiple"]
-    adverse = walk["ADVERSE_STRESS"]["equity_multiple"]
-    result_reason = verified["result"].get("automatic_rejection", {}).get("reason_code")
+def route_next_work_order(
+    result_reason: str | None,
+    raw: float,
+    base: float,
+    adverse: float,
+    consecutive_prior_raw_edge_refinements: int,
+    policy_applies: bool,
+) -> tuple[str, str]:
+    """Choose one successor variable without allowing unbounded exit refinements."""
+    if (policy_applies and raw <= 1 and result_reason in RAW_EDGE_REFINEMENT_REASONS
+            and consecutive_prior_raw_edge_refinements >= RAW_EDGE_REFINEMENT_BUDGET):
+        return SIGNAL_FAMILY_PIVOT_REASON, SIGNAL_FAMILY_PIVOT_VARIABLE
     if result_reason == "EXECUTION_SUBSET_RAW_EDGE_ABSENT":
         reason = result_reason
         variable = "one_preregistered_causal_basket_hold_rule_that_preserves_all_v25_raw_signals_and_fixed_sleeves"
@@ -805,6 +961,82 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
     else:
         reason = "DEVELOPMENT_EDGE_NOT_FINAL"
         variable = "one_preregistered_causal_regime_partition_on_development_data_only"
+    return reason, variable
+
+
+def sealed_raw_edge_refinement_history(
+    root: Path,
+    registry: dict[str, Any],
+    state: dict[str, Any],
+    before_cycle_id: str,
+) -> list[dict[str, Any]]:
+    """Derive the contiguous predecessor run from sealed state, journal and results."""
+    before_number = int(before_cycle_id.removeprefix("V"))
+    journal_path = state_paths(root, before_cycle_id)["journal"]
+    journal = []
+    if journal_path.is_file():
+        journal = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()
+                   if line.strip()]
+    history: list[dict[str, Any]] = []
+    predecessors = sorted(
+        (cycle for cycle in registry["cycles"]
+         if int(cycle["cycle_id"].removeprefix("V")) < before_number),
+        key=lambda cycle: int(cycle["cycle_id"].removeprefix("V")),
+        reverse=True,
+    )
+    expected_number = before_number - 1
+    for predecessor in predecessors:
+        cycle_id = predecessor["cycle_id"]
+        number = int(cycle_id.removeprefix("V"))
+        if number != expected_number:
+            break
+        record = state.get("cycles", {}).get(cycle_id, {})
+        if not str(record.get("status", "")).startswith("SEALED_"):
+            break
+        result_path = within(root, predecessor["execution"]["result"])
+        result_hash = record.get("official_result_file_sha256")
+        if not result_path.is_file() or sha256_file(result_path) != result_hash:
+            raise ContractError(f"sealed predecessor result mismatch: {cycle_id}")
+        matching_events = [event for event in journal
+                           if event.get("event") == "OFFICIAL_RESULT_SEALED"
+                           and event.get("cycle_id") == cycle_id
+                           and event.get("result_file_sha256") == result_hash]
+        if len(matching_events) != 1:
+            raise ContractError(f"sealed predecessor journal evidence mismatch: {cycle_id}")
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        reason = payload.get("automatic_rejection", {}).get("reason_code")
+        if reason not in RAW_EDGE_REFINEMENT_REASONS:
+            break
+        history.append({
+            "cycle_id": cycle_id,
+            "reason_code": reason,
+            "result_file_sha256": result_hash,
+            "official_seal_sha256": record.get("official_seal_sha256"),
+            "journal_event": "OFFICIAL_RESULT_SEALED",
+        })
+        expected_number -= 1
+    history.reverse()
+    return history
+
+
+def next_work_order(
+    root: Path,
+    registry: dict[str, Any],
+    state: dict[str, Any],
+    cycle: dict[str, Any],
+    verified: dict[str, Any],
+) -> dict[str, Any]:
+    walk = verified["periods"]["WALK_FORWARD"]
+    raw = walk["RAW_SIGNAL"]["equity_multiple"]
+    base = walk["EXECUTABLE_BASE"]["equity_multiple"]
+    adverse = walk["ADVERSE_STRESS"]["equity_multiple"]
+    result_reason = verified["result"].get("automatic_rejection", {}).get("reason_code")
+    policy_applies = int(cycle["cycle_id"].removeprefix("V")) >= 31
+    history = (sealed_raw_edge_refinement_history(root, registry, state, cycle["cycle_id"])
+               if policy_applies else [])
+    reason, variable = route_next_work_order(
+        result_reason, raw, base, adverse, len(history), policy_applies,
+    )
     next_number = int(cycle["cycle_id"].removeprefix("V")) + 1
     return {
         "schema_version": 1,
@@ -821,6 +1053,15 @@ def next_work_order(cycle: dict[str, Any], verified: dict[str, Any]) -> dict[str
             "evaluation_period_may_not_be_tuned": True,
         },
         "observed_walk_forward": {"RAW_SIGNAL": raw, "EXECUTABLE_BASE": base, "ADVERSE_STRESS": adverse},
+        "raw_edge_refinement_budget_policy": {
+            "classification": "NON_STRATEGY_ORCHESTRATOR_POLICY",
+            "effective": policy_applies,
+            "max_consecutive_refinements": RAW_EDGE_REFINEMENT_BUDGET,
+            "consecutive_prior_refinements": len(history),
+            "derived_from_sealed_cycles": history,
+            "budget_reached": policy_applies and len(history) >= RAW_EDGE_REFINEMENT_BUDGET,
+            "policy_path": RAW_EDGE_REFINEMENT_POLICY_PATH,
+        },
         "authority": AUTHORITY,
     }
 
@@ -912,7 +1153,7 @@ def seal_completed(root: Path, registry: dict[str, Any], cycle: dict[str, Any], 
     }
     seal["official_seal_sha256"] = embedded_hash(seal, "official_seal_sha256")
     atomic_json(paths["seal"], seal)
-    atomic_json(paths["work_order"], next_work_order(cycle, verified))
+    atomic_json(paths["work_order"], next_work_order(root, registry, state, cycle, verified))
     state["cycles"][cycle["cycle_id"]].update({
         "status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN" if not gates["strategy_profit_gate"]["passed"]
         else "SEALED_SYSTEM_AND_PROFIT_PASS_NOT_ADOPTED",

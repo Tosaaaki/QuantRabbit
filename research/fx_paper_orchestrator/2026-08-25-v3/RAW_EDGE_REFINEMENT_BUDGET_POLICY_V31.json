@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "classification": "NON_STRATEGY_ORCHESTRATOR_POLICY",
+  "effective_from_parent_cycle": "V31",
+  "policy_purpose": "Bound consecutive RAW-edge-absent exit and inventory refinements so the coordinator cannot continue a non-positive signal family indefinitely.",
+  "max_consecutive_raw_edge_absent_refinements": 3,
+  "threshold_selection": {
+    "kind": "SYSTEM_STOP_CONDITION_NOT_STRATEGY_PARAMETER",
+    "selected_before_v31_official_replay": true,
+    "outcome_value_optimization": false,
+    "basis": "Three consecutive independently sealed RAW-edge-absent refinements are sufficient disconfirmation of further exit or inventory micro-adjustment within the same frozen signal family."
+  },
+  "counted_reason_codes": [
+    "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT",
+    "BASKET_HOLD_RAW_EDGE_ABSENT",
+    "CONSENSUS_RELEASE_PERSISTENCE_RAW_EDGE_ABSENT",
+    "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT",
+    "EXECUTION_SUBSET_RAW_EDGE_ABSENT"
+  ],
+  "pivot_reason_code": "REPEATED_RAW_EDGE_ABSENT_SIGNAL_FAMILY_PIVOT",
+  "pivot_single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+  "route_precedence": "When this policy applies, RAW<=1 and a counted specific reason reaches the budget are routed to the signal-family pivot before any specific exit or inventory refinement branch. BASE/ADVERSE-only failures retain their cost routes.",
+  "grandfathered_work_order": {
+    "path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v31.json",
+    "sha256": "873d6d92b9f18b66b9ded21f339d643bfd16b0f6bda6759905f95f36ab6b8763",
+    "parent_cycle": "V30",
+    "proposed_cycle": "V31",
+    "immutable": true,
+    "reason": "V31 was already sealed as the one persistence-confirmation variable before this system policy was introduced."
+  },
+  "historical_derivation": [
+    {
+      "cycle_id": "V27",
+      "result": "evidence/run_causal_min_spread_representative_v27_official_001/result_causal_min_spread_representative_v27.json",
+      "result_sha256": "b6b7679143690f79f8d9e9662db40fe7c9062ad1f7c7bb8c43828cdd9de99b87",
+      "reason_code": "EXECUTION_SUBSET_RAW_EDGE_ABSENT",
+      "official_seal_sha256": "f1beb3d78331b13f215b797f3ead8b224c90517e82a8193217926a8971f9aca5",
+      "state_status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "journal_event": "OFFICIAL_RESULT_SEALED"
+    },
+    {
+      "cycle_id": "V28",
+      "result": "evidence/run_causal_basket_hold_v28_official_001/result_causal_basket_hold_v28.json",
+      "result_sha256": "be6914d6bef4268d39022cb134bbf9ab4fd72206f5b8fe980c05c64c919c343f",
+      "reason_code": "BASKET_HOLD_RAW_EDGE_ABSENT",
+      "official_seal_sha256": "07247acd19060100d9b176cd35530c20c1cd4bbabe9597165b08a5f3e3db57ef",
+      "state_status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "journal_event": "OFFICIAL_RESULT_SEALED"
+    },
+    {
+      "cycle_id": "V29",
+      "result": "evidence/run_causal_basket_consensus_release_v29_official_001/result_causal_basket_consensus_release_v29.json",
+      "result_sha256": "87124a2588bd583127c45026e6b09852040893ba2dc3d6011f19a193f8ad4303",
+      "reason_code": "BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT",
+      "official_seal_sha256": "660a220e1b5eebf01daee4fd9630669acc8433cbd5c682858e648b185e865132",
+      "state_status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "journal_event": "OFFICIAL_RESULT_SEALED"
+    },
+    {
+      "cycle_id": "V30",
+      "result": "evidence/run_causal_consensus_release_scope_v30_official_001/result_causal_consensus_release_scope_v30.json",
+      "result_sha256": "27e9b006ba115214d8f2590bf21add290c1df406e0565717016584265a2d0bd8",
+      "reason_code": "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT",
+      "official_seal_sha256": "65dcc55d13c204a3d993fac0b3d615f33aae06c56df379355eeea15bfe5238a9",
+      "state_status": "SEALED_SYSTEM_PASS_PROFIT_UNPROVEN",
+      "journal_event": "OFFICIAL_RESULT_SEALED"
+    }
+  ],
+  "restart_safety": {
+    "history_sources": ["sealed state", "sealed result hash", "OFFICIAL_RESULT_SEALED journal event"],
+    "missing_or_mismatched_evidence": "FAIL_CLOSED",
+    "existing_sealed_work_orders_or_results_rewritten": false
+  },
+  "holdout": {
+    "state": "UNOPENED",
+    "may_execute": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

@@ -115,7 +115,8 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
-        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]], ["V25", "V26", "V27", "V28", "V29", "V30"])
+        self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -185,6 +186,75 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(rule["minimum_peer_signals"], 2)
         self.assertTrue(rule["unanimity_required"])
         self.assertEqual(rule["hard_max_age_seconds"], 345600)
+
+    def test_v31_changes_only_one_training_only_persistence_confirmation_rule(self):
+        cycle = self.registry["cycles"][6]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V31")
+        self.assertEqual(cycle["depends_on_cycle"], "V30")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(cycle["hypothesis_contract"]["single_changed_variable"],
+                         "one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves")
+        selection = prereg["training_only_persistence_selection"]
+        self.assertEqual(selection["candidate_rules_preregistered"], 1)
+        self.assertEqual(selection["candidate_confirmation_counts_compared_by_outcome"], 0)
+        self.assertEqual(selection["required_consecutive_confirmations"], 2)
+        self.assertFalse(selection["price_consulted"])
+        self.assertFalse(selection["return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        rule = prereg["persistence_confirmation_rule"]
+        self.assertEqual(rule["peer_scope"], "ACTIVE_SAME_SIGNED_USD_INVENTORY_SUBGRAPH")
+        self.assertEqual(rule["minimum_peer_signals"], 2)
+        self.assertTrue(rule["unanimity_required"])
+        self.assertEqual(rule["hard_max_age_seconds"], 345600)
+
+    def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
+        reason, variable = orchestrator.route_next_work_order(
+            "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT", .99, .98, .97, 2, True,
+        )
+        self.assertEqual(reason, "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT")
+        self.assertEqual(variable,
+                         "one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves")
+
+    def test_raw_edge_refinement_budget_at_limit_pivots_signal_family(self):
+        reason, variable = orchestrator.route_next_work_order(
+            "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT", .99, .98, .97, 3, True,
+        )
+        self.assertEqual(reason, orchestrator.SIGNAL_FAMILY_PIVOT_REASON)
+        self.assertEqual(variable, orchestrator.SIGNAL_FAMILY_PIVOT_VARIABLE)
+
+    def test_base_or_adverse_only_problem_retains_cost_route(self):
+        reason, variable = orchestrator.route_next_work_order(
+            "CONSENSUS_RELEASE_SCOPE_COST_DOMINANT", 1.01, .99, .98, 99, True,
+        )
+        self.assertEqual(reason, "CONSENSUS_RELEASE_SCOPE_COST_DOMINANT")
+        self.assertEqual(variable,
+                         "one_preregistered_causal_consensus_release_scope_turnover_rule_preserving_all_v25_raw_signals_and_fixed_sleeves")
+
+    def test_policy_preserves_holdout_authority_and_sealed_v31_work_order_hash(self):
+        policy = json.loads((ROOT / orchestrator.RAW_EDGE_REFINEMENT_POLICY_PATH).read_text())
+        self.assertEqual(policy["authority"], orchestrator.AUTHORITY)
+        self.assertEqual(policy["holdout"], {"state": "UNOPENED", "may_execute": False})
+        work_order = ROOT / policy["grandfathered_work_order"]["path"]
+        self.assertEqual(orchestrator.sha256_file(work_order),
+                         "873d6d92b9f18b66b9ded21f339d643bfd16b0f6bda6759905f95f36ab6b8763")
+
+    def test_real_sealed_state_journal_results_derive_four_prior_refinements(self):
+        state = orchestrator.read_state(ROOT / "evidence/orchestrator_state_v2/state.json")
+        history = orchestrator.sealed_raw_edge_refinement_history(
+            ROOT, self.registry, state, "V31",
+        )
+        self.assertEqual([item["cycle_id"] for item in history], ["V27", "V28", "V29", "V30"])
+
+    def test_non_strategy_policy_is_not_imported_by_v31_replay(self):
+        tree = orchestrator.ast.parse((ROOT / "run_causal_consensus_release_persistence_v31.py").read_text())
+        imports = [node.module for node in orchestrator.ast.walk(tree)
+                   if isinstance(node, orchestrator.ast.ImportFrom)]
+        imports += [alias.name for node in orchestrator.ast.walk(tree)
+                    if isinstance(node, orchestrator.ast.Import) for alias in node.names]
+        self.assertNotIn("paper_research_orchestrator_v2", imports)
+        prereg = json.loads((ROOT / "CAUSAL_CONSENSUS_RELEASE_PERSISTENCE_PREREGISTRATION_V31.json").read_text())
+        self.assertFalse(prereg["non_strategy_orchestrator_contract"]["changes_v31_signal_action_or_result"])
 
     def test_real_audit_preserves_v25_seal_and_exposes_terminal_v26_recovery_failure(self):
         report = orchestrator.audit(ROOT, self.registry)
