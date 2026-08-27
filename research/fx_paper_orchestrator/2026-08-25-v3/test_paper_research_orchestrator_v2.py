@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35", "V36"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -301,6 +301,22 @@ class RegistryAcceptanceTest(unittest.TestCase):
             )
             self.assertEqual(reason, result_reason)
             self.assertEqual(variable, orchestrator.SIGNAL_FAMILY_PIVOT_VARIABLE)
+
+    def test_v36_is_one_outcome_free_london_asian_range_breakout_family(self):
+        cycle = self.registry["cycles"][11]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V36")
+        self.assertEqual(cycle["depends_on_cycle"], "V35")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        selection = prereg["training_only_family_selection"]
+        self.assertEqual(selection["candidate_signal_families_preregistered"], 1)
+        self.assertEqual(selection["candidate_signal_families_compared_by_outcome"], 0)
+        self.assertFalse(selection["post_entry_return_outcome_consulted"])
+        self.assertFalse(selection["cost_consulted"])
+        rule = prereg["signal_family_rule"]
+        self.assertEqual(rule["name"], "LONDON_OPEN_COMPLETED_ASIAN_RANGE_BREAKOUT")
+        self.assertEqual(rule["maximum_signals_per_pair_utc_day"], 1)
+        self.assertTrue(rule["same_signal_action_state_all_cost_arms"])
 
     def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
         reason, variable = orchestrator.route_next_work_order(

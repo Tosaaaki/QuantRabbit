@@ -1,0 +1,73 @@
+{
+  "artifact_id": "FX_LONDON_ASIAN_RANGE_BREAKOUT_V36",
+  "cycle_id": "V36",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "predecessor_disposition": {
+    "cycle_id": "V35",
+    "status": "FROZEN_REJECTED_EVIDENCE_NO_REWRITE_NO_RERUN",
+    "reason_code": "GLOBAL_NO_OVERLAP_ADVERSE_COST_FRAGILE",
+    "work_order_path": "evidence/orchestrator_state_v2/next_hypothesis_work_order_v36.json",
+    "work_order_sha256": "9b3926f810070e31b88ce25e3565c1c18f5c6f571f65cfda90eabca9a2ba44f1"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_causal_fx_specific_signal_family_replacement_preserving_costs_leverage_periods_and_holdout",
+    "null": "Completed London-open breaks of the Asian range do not produce enough executable edge for both full-month 2.0x gates.",
+    "alternative": "A completed London-open break beyond the Asian range contains causal continuation information after fixed costs."
+  },
+  "training_only_family_selection": {
+    "candidate_signal_families_preregistered": 1,
+    "candidate_signal_families_compared_by_outcome": 0,
+    "selection_basis": "FX session handoff structure only; strict range boundary avoids an outcome-tuned numeric buffer.",
+    "post_entry_return_outcome_consulted": false,
+    "cost_consulted": false,
+    "evaluation_month_used_for_selection": false,
+    "walk_forward_used_for_selection": false,
+    "holdout_used": false
+  },
+  "signal_family_rule": {
+    "name": "LONDON_OPEN_COMPLETED_ASIAN_RANGE_BREAKOUT",
+    "asian_range_utc": "00:00-05:55 completed M5 midpoint highs/lows",
+    "decision": "07:55 completed M5 midpoint close strictly above Asian high or below Asian low",
+    "fill": "08:00 next M5 executable open",
+    "raw_exit": "15:55 completed M5 close",
+    "direction_formula": "long above Asian high; short below Asian low",
+    "maximum_signals_per_pair_utc_day": 1,
+    "same_signal_action_state_all_cost_arms": true,
+    "cost_or_post_entry_outcome_inputs": false
+  },
+  "fixed_contracts": {
+    "execution_state_machine": "V31 finite inventory and exit planner",
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "currency_abs_exposure_cap": 1.0,
+    "target_hold_seconds": 172800,
+    "hard_max_age_seconds": 345600,
+    "cost_arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "evaluation_periods": ["WALK_FORWARD", "MONTH_2026_05", "MONTH_2026_06"],
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false}
+  },
+  "rejection_contract": {
+    "official_run_limit": 1,
+    "profit_reject": "Reject unless BASE and ADVERSE are each at least 2.0x in both full comparable months and untouched holdout reproduces.",
+    "adoption_authorized": false
+  },
+  "proposal_provenance": {
+    "proposal_kind": "DETERMINISTIC_TRAINING_ONLY_SINGLE_FX_SESSION_SIGNAL_FAMILY",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "model_identity": "NO_ACTUAL_LLM_USED",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
