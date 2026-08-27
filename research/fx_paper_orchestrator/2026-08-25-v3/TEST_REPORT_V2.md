@@ -103,3 +103,33 @@ Before official execution, the V29 targeted rule tests passed 8/8 and the
 coordinator acceptance suite passed 27/27. The official replay remains blocked
 until this preregistration checkpoint is committed, pushed, and read back by
 remote SHA.
+
+## V29 official replay
+
+After remote readback of preregistration commit
+`449e053312ba5721152eb3d810a365097440b6a6`, coordinator official execution
+ordinal 1 ran exactly once and sealed V29 with system acceptance passed and the
+strategy profit gate failed. The unchanged ledger contains all 500 V25 RAW
+signals, all cost arms share one action/state transition stream, holdout remains
+`UNOPENED`, terminal inventory and terminal MTM are zero, and external orders
+are zero.
+
+Walk-forward results were RAW `0.9824806484227545`, EXECUTABLE_BASE
+`0.9703351079466831`, and ADVERSE_STRESS `0.9614944774663403`. Gross edge was
+`-7.064810981455403` bps; realized costs were `0.0`, `5.000320971852313`, and
+`8.667380289743601` bps respectively. Turnover was `50.0` NAV, direction
+accuracy was `0.4114285714285714`, maximum drawdown ranged from
+`-0.026580074375925133` to `-0.04264907079833424`, maximum currency exposure
+was `0.9999999999999998` NAV, maximum inventory age was `313200.0` seconds,
+and N_eff was 37 days / 175 episodes. The two full-month BASE multiples were
+`0.9817889675954863` and `0.9882459699396912`; ADVERSE multiples were
+`0.9771581577253762` and `0.9838692639246738`.
+
+V29 was automatically rejected without alteration under reason code
+`BASKET_CONSENSUS_RELEASE_RAW_EDGE_ABSENT`. The generated V30 proposal changes
+one variable only:
+`one_preregistered_causal_consensus_release_scope_rule_preserving_all_v25_raw_signals_and_fixed_sleeves`.
+
+Post-run V29 plus coordinator tests passed 35/35 and the mechanical result
+verification passed. Dedicated full discovery ran 154 tests: 147 passed and
+the same seven documented legacy import errors remained; no V29 test failed.
