@@ -386,6 +386,30 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertFalse(v26["recovery"]["metrics_available"])
         self.assertFalse(v26["recovery"]["profit_proven"])
         self.assertTrue(v26["recovery"]["next_work_order"]["v26_may_not_be_replayed"])
+        cause = report["cause_and_pair_audit_evidence"]
+        self.assertEqual(cause["status"], "VALIDATED")
+        self.assertEqual(cause["valid_sealed_cycle_count"], 13)
+        self.assertEqual(cause["unique_raw_signal_stream_count"], 6)
+        self.assertTrue(cause["current_1x_capacity_insufficient"])
+        self.assertEqual(cause["v42_dst_only"], "NO_GO")
+        self.assertFalse(cause["v42_current_execution_authorized"])
+        self.assertEqual(cause["holdout"], "UNOPENED")
+
+    def test_cause_and_pair_audit_contracts_are_hash_bound_non_strategy_evidence(self):
+        pair = self.registry["derived_pair_audit_contract"]
+        cause = self.registry["profit_gate_cause_feasibility_contract"]
+        self.assertEqual(pair["classification"],
+                         "NON_STRATEGY_READ_ONLY_DERIVED_LEGACY_EVIDENCE")
+        self.assertEqual(cause["classification"],
+                         "NON_STRATEGY_READ_ONLY_CAUSE_FEASIBILITY_EVIDENCE")
+        for ref, path_key, hash_key in (
+            (pair, "builder_path", "builder_sha256"),
+            (pair, "test_path", "test_sha256"),
+            (cause, "policy_path", "policy_sha256"),
+            (cause, "builder_path", "builder_sha256"),
+            (cause, "test_path", "test_sha256"),
+        ):
+            self.assertEqual(orchestrator.sha256_file(ROOT / ref[path_key]), ref[hash_key])
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)

@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "14a34b3b6120ae826edbab98a8b98ec99929ce5e118b05da472a3d03809b5cf9",
+    "sha256": "b7fffcd0dabd0d2f0605f42122de69ba6b8a12e780813a78c8ad26d8b2813257",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -34,6 +34,24 @@
     "builder_path": "component_worker_evidence_registry_v2.py",
     "builder_sha256": "6108314b8e48fc82982f0aeaee2e043bfe5241fb5b15d86dca11a68a7fa3efd0",
     "classification": "NON_STRATEGY_ORCHESTRATOR_EVIDENCE_POLICY"
+  },
+  "derived_pair_audit_contract": {
+    "builder_path": "derived_pair_audit_runner_v1.py",
+    "builder_sha256": "0856ef6cd8cba7ac7e5cde1e0af4c0c777efe0cedd7ee90695bf645efd87877d",
+    "test_path": "test_derived_pair_audit_runner_v1.py",
+    "test_sha256": "774f3d607be8c65394052c154796e0078494985c7af6b03b20810a3bafebd586",
+    "output_path": "evidence/derived_pair_audit_v1/derived_pair_audit_v1.json",
+    "classification": "NON_STRATEGY_READ_ONLY_DERIVED_LEGACY_EVIDENCE"
+  },
+  "profit_gate_cause_feasibility_contract": {
+    "policy_path": "PROFIT_GATE_CAUSE_FEASIBILITY_POLICY_V1.json",
+    "policy_sha256": "77e55911fe58609d6070f59c2b0c926569656441ed73a403995ee6ea3d2b00ae",
+    "builder_path": "profit_gate_cause_feasibility_audit_v1.py",
+    "builder_sha256": "930dfbaf07e60d45e581d9ea5bf833224d728b2c0d38ea99a1d0aabbf5b84cd6",
+    "test_path": "test_profit_gate_cause_feasibility_audit_v1.py",
+    "test_sha256": "a378322a942726266d22c2b7ba6c1f00b20ef232f2d88ebe0a56c84224634a48",
+    "output_path": "evidence/profit_gate_cause_feasibility_v1/profit_gate_cause_feasibility_audit_v1.json",
+    "classification": "NON_STRATEGY_READ_ONLY_CAUSE_FEASIBILITY_EVIDENCE"
   },
   "legacy_evidence": {
     "registry": "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json",

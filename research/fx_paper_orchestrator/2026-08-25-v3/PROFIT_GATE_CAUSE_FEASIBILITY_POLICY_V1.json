@@ -1,0 +1,622 @@
+{
+  "artifact_id": "FX_MONTHLY_2X_CAUSE_FEASIBILITY_POLICY_V1",
+  "classification": "NON_STRATEGY_ORCHESTRATOR_CAUSE_FEASIBILITY_POLICY",
+  "effective_after_checkpoint": "FX_COMPONENT_WORKER_SIGN_AWARE_EVIDENCE_REGISTRY_V2",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "profit_gate": {
+    "classification": "LEGACY_V25_TO_V41_GATE_PRESERVED_NO_RETROACTIVE_CHANGE",
+    "initial_equity_jpy": 200000,
+    "full_comparable_month_required": true,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "target_monthly_log_growth": 0.6931471805599453,
+    "stretch_multiple": 3.0,
+    "unopened_holdout_reproduction_required": true,
+    "post_hoc_leverage_forbidden": true,
+    "evaluation_period_tuning_forbidden": true,
+    "hidden_unrealized_loss_forbidden": true,
+    "diagnostic_extrapolation_may_not_admit_strategy": true
+  },
+  "future_geometric_mean_profit_gate": {
+    "classification": "FORMULA_FIXED_THRESHOLDS_INCOMPLETE_NOT_EXECUTABLE",
+    "formula": "G = exp(mean(log(monthly_multiple)))",
+    "arithmetic_mean_forbidden": true,
+    "target_center_multiple": 2.0,
+    "example": {
+      "first_month_multiple": 1.5,
+      "required_second_month_multiple_for_two_month_G_2": 2.6666666666666665
+    },
+    "near_target_tolerance": null,
+    "evaluation_month_count": null,
+    "worst_month_floor": null,
+    "maximum_drawdown_guard": null,
+    "margin_guard": null,
+    "ruin_guard": null,
+    "missing_values_may_not_be_guessed": true,
+    "may_register_or_execute_future_profit_gate": false,
+    "legacy_month_by_month_gate_results_may_not_be_reclassified": true
+  },
+  "evaluation_calendar": {
+    "full_months": {
+      "MONTH_2026_05": {
+        "start": "2026-05-01",
+        "end_exclusive": "2026-06-01",
+        "calendar_days": 31
+      },
+      "MONTH_2026_06": {
+        "start": "2026-06-01",
+        "end_exclusive": "2026-07-01",
+        "calendar_days": 30
+      }
+    },
+    "full_month_mean_definition": "ARITHMETIC_MEAN_OF_THE_TWO_FULL_MONTH_LOG_GROWTH_VALUES",
+    "walk_forward_days": 61,
+    "holdout_state": "UNOPENED",
+    "may_june_classification": "REUSED_DEVELOPMENT_WALK_FORWARD_NOT_PURE_HOLDOUT",
+    "adoption_without_new_untouched_outer_slice": false
+  },
+    "source_evidence": {
+        "sealed_component_cycles": [
+            "V38",
+            "V40"
+        ],
+        "sealed_valid_cycle_count": 13,
+        "unique_raw_signal_stream_count": 6,
+        "derived_pair_audit_runner": "derived_pair_audit_runner_v1.py",
+        "derived_pair_audit": "evidence/derived_pair_audit_v1/derived_pair_audit_v1.json",
+        "derived_pair_metrics": "evidence/derived_pair_audit_v1/pair_month_arm_metrics_v1.jsonl",
+        "component_registry": "evidence/component_worker_registry_v2/component_worker_registry_v2.json",
+    "source_mode": "LOCAL_OANDA_HISTORICAL_M5_BID_ASK_COMPLETED_ONLY",
+    "source_root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+    "selected_pair_direct_readback": [
+      "USD_JPY",
+      "EUR_USD",
+      "AUD_USD"
+    ],
+    "pair_selection_data_rule": "TUNING_PERIOD_ONLY_THEN_FREEZE_FOR_WALK_FORWARD_AND_HOLDOUT",
+    "aud_crosses_if_present": "REGISTER_AS_SEPARATE_FAMILY_EVIDENCE_NEVER_INVENT_OR_MERGE"
+  },
+  "all_cycle_pair_readback": {
+    "sealed_valid_cycles": [
+      "V25",
+      "V27",
+      "V28",
+      "V29",
+      "V30",
+      "V31",
+      "V33",
+      "V35",
+      "V37",
+      "V38",
+      "V39",
+      "V40",
+      "V41"
+    ],
+    "sealed_valid_cycle_count": 13,
+    "invalid_result_cycle": "V34",
+    "invalid_result_policy": "EXCLUDE_METRICS_BECAUSE_OFFICIAL_SEAL_ABSENT_AND_INVENTORY_CAP_VALIDATION_FAILED",
+    "no_result_or_ledger_cycles": [
+      "V26",
+      "V32",
+      "V36"
+    ],
+    "required_dimensions": [
+      "PAIR",
+      "ARM",
+      "FULL_MONTH"
+    ],
+    "required_metrics": [
+      "RAW_SIGNALS",
+      "SELECTED_SIGNALS",
+      "EXECUTED_EPISODES",
+      "GROSS_CONTRIBUTION",
+      "NET_CONTRIBUTION",
+      "DIRECTION_ACCURACY",
+      "COST_DRAG",
+      "N_EFF"
+    ],
+    "signal_id_dedupe_required": true,
+    "cycle_count_may_not_be_used_as_independent_trial_count": true,
+    "expected_unique_signal_id_set_count": 6
+  },
+  "completed_daily_range_audit": {
+    "pairs": [
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "source_timeframe": "M5_COMPLETED_BID_ASK",
+    "minimum_completed_bars_per_utc_day": 250,
+    "range_formula": "(max completed midpoint high - min completed midpoint low) / pip_size",
+    "months": [
+      "2026-05",
+      "2026-06"
+    ],
+    "range_is_not_known_at_entry": true
+  },
+  "oracle_feasibility_ceiling": {
+    "classification": "LOOKAHEAD_UPPER_BOUND_DIAGNOSTIC_NOT_STRATEGY_EVIDENCE",
+    "pairs": [
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "pair_gross_allocation": "FIXED_EQUAL",
+    "round_trips_per_pair_per_eligible_day": 1,
+    "daily_range_return_formula": "log(max completed midpoint high / min completed midpoint low)",
+    "daily_cost_formula": "(daily median completed close ask-bid spread pips + 0.3 pip per side) * pip_size / daily midrange",
+    "monthly_multiple_formula": "product_day(1 + gross_cap/2 * sum_pair(capture_fraction * daily_log_range - daily_cost_fraction))",
+    "capture_fraction_solution": "bisection root where monthly_multiple = 2.0",
+        "evaluated_gross_caps": [
+            1.0,
+            4.0,
+            8.0,
+            12.0,
+            20.0
+        ],
+    "current_authorized_gross_cap": 1.0,
+    "gross_cap_change_authorized": false,
+    "post_hoc_leverage_forbidden": true,
+    "full_daily_range_capture_is_lookahead": true,
+        "every_day_positive_capture_is_unrealistic": true
+    },
+    "next_feasibility_envelope_contract": {
+        "classification": "PREREG_REQUIRED_DIAGNOSTIC_NOT_LEVERAGE_AUTHORIZATION",
+        "fixed_gross_cap_grid": [1.0, 4.0, 8.0, 12.0, 20.0],
+        "caps_must_be_within_existing_hard_limit": true,
+        "required_outputs_per_cap": [
+            "PERFECT_ORACLE_NORMAL_CEILING",
+            "PERFECT_ORACLE_ADVERSE_CEILING",
+            "REALISTIC_CORRECTED_LCB_EDGE_CEILING",
+            "REQUIRED_CAPTURE_FRACTION",
+            "EXPECTED_MAX_DRAWDOWN",
+            "ADVERSE_CVAR",
+            "MARGIN_REQUIREMENT_JPY",
+            "RUIN_PROBABILITY",
+            "TERMINAL_LIQUIDATION_STATUS"
+        ],
+        "adverse_cost_formula": null,
+        "realistic_corrected_lcb_definition": null,
+        "drawdown_guard": null,
+        "cvar_guard": null,
+        "margin_guard": null,
+        "ruin_guard": null,
+        "unspecified_values_may_not_be_guessed": true,
+        "cap_selection_from_evaluation_outcomes_forbidden": true,
+        "risk_constrained_policy_must_be_frozen_from_tuning_only": true,
+        "decision_rules": {
+            "perfect_oracle_cap20_below_2x": "STOP_CURRENT_DATA_UNIVERSE_TIMEFRAME_EXPERIMENT_AND_ADD_INDEPENDENT_OPPORTUNITY_SET",
+            "oracle_reaches_2x_but_realistic_lcb_far": "NO_LEVERAGE_RESCUE_REDESIGN_SIGNAL_INFORMATION_FAMILY",
+            "positive_realistic_edge_but_1x_capacity_only": "SEPARATE_PREREGISTERED_RISK_CONSTRAINED_ALLOCATION_EXPERIMENT_MAY_BE_PROPOSED",
+            "any_cost_dd_margin_ruin_or_terminal_guard_violation": "REJECT_EVEN_IF_2X_REACHED"
+        },
+        "current_execution_authorized": false,
+        "post_hoc_scaling_forbidden": true,
+        "current_opportunity_set_implication": "AT_1X_A_LOOKAHEAD_ORACLE_REQUIRING_MORE_THAN_100_PERCENT_DAILY_RANGE_CAPTURE_PROVES_CAPACITY_INSUFFICIENCY_FOR_THIS_FAMILY_UNIVERSE_AND_OPPORTUNITY_SET_NOT_FOR_ALL_FX",
+        "entry_or_exit_tuning_alone_may_not_claim_to_CLOSE_THE_1X_CAPACITY_GAP": true,
+        "next_family_success_condition": {
+            "minimum_per_risk_net_edge_multiplier": 2.0,
+            "minimum_independent_opportunity_density_multiplier": 2.0,
+            "selected_hierarchical_family_minimum_edge_density_product_multiplier": 4.0,
+            "at_least_one_dominant_shortage_must_meet_its_prefrozen_multiplier": true,
+            "small_positive_result_classification": "COMPONENT_CANDIDATE_ONLY",
+            "profit_admission_from_small_positive_result": false
+        }
+    },
+  "decomposition_contract": {
+    "equation": "g_month ~= N_eff_currency_time_clusters * edge_per_episode * effective_risk - cost_penalty + dependency_tail_path_residual",
+    "ticket_count_may_not_be_used_as_n_eff": true,
+    "independent_bet_unit": "CURRENCY_TIME_EXPOSURE_STATE_CLUSTER_ON_COMPLETED_M5_TIMELINE",
+    "edge_unit": "BPS_PER_REALIZED_EPISODE",
+    "growth_unit": "NATURAL_LOG_RETURN_ON_ACCOUNT_CAPITAL",
+    "cost_unit": "BPS_PER_REALIZED_EPISODE",
+    "active_exposure_unit": "COMPLETED_M5_BAR_SECONDS_AND_NAV_WEIGHTED_SECONDS",
+    "nominal_pair_sleeve_nav": 0.14285714285714285,
+    "component_portfolio_allocation": "FIXED_EQUAL_COMPONENT_SLEEVES",
+    "effective_risk_formula": "sum(allocation_i * N_eff_episodes_i * fixed_pair_sleeve_nav) / N_eff_currency_time_clusters",
+    "dependency_overlap_factor_formula": "combined_currency_time_clusters / sum(individual_currency_time_clusters)",
+    "tail_path_residual_formula": "actual_log_growth - (gross_proxy_log_growth - cost_proxy_log_drag)",
+    "linear_backsolves_are_diagnostic_only": true
+  },
+  "failure_taxonomy": [
+    "SIGNAL_EDGE_INSUFFICIENCY",
+    "INDEPENDENT_OPPORTUNITY_DENSITY_INSUFFICIENCY",
+    "WORKER_CORRELATION_OR_DUPLICATION",
+    "COST_DRAG",
+    "INVENTORY_DWELL",
+    "RISK_BUDGET",
+    "DATA_INFORMATION_LIMIT",
+    "TARGET_FEASIBILITY"
+  ],
+  "v42_gate": {
+    "dst_only_revenue_hypothesis": "NO_GO_TECHNICAL_CHRONOLOGY_COMPATIBILITY_ONLY",
+    "dst_chronology_foundation_may_be_retained": true,
+    "dst_may_not_be_counted_as_new_edge": true,
+    "existing_v42_work_order_may_not_be_rewritten": true,
+    "current_official_execution_authorized": false,
+    "go_only_after": [
+      "JPY_ACCOUNTING_MIGRATION_VALIDATED",
+      "ONE_REDESIGNED_SIGNAL_FAMILY_PREREGISTERED",
+      "PAIR_AND_HORIZON_ARMS_FROZEN_FROM_TUNING_ONLY",
+      "SAME_RAW_SIGNAL_STREAM_ACROSS_COST_ARMS",
+      "HOLDOUT_REMAINS_UNOPENED"
+    ]
+  },
+  "legacy_accounting_read_only_diagnostic": {
+    "classification": "DIAGNOSTIC_ONLY_NOT_REUSABLE_AS_OFFICIAL_SEAL",
+    "sealed_signal_and_action_stream_changed": false,
+    "method": "FIXED_JPY_NOTIONAL_CONSERVATIVE_COMPLETED_QUOTE_TO_JPY_CONVERSION_AND_LINEAR_LONG_SHORT_PNL",
+    "cycles": {
+      "V38": {
+        "corrected_EXECUTABLE_BASE": 1.0052684753808443,
+        "corrected_ADVERSE_STRESS": 1.0032535337927713,
+        "sealed_EXECUTABLE_BASE": 1.0054413356328307,
+        "sealed_ADVERSE_STRESS": 1.003424809082437
+      },
+      "V40": {
+        "corrected_EXECUTABLE_BASE": 1.0034748354141543,
+        "corrected_ADVERSE_STRESS": 1.0014481695753052,
+        "sealed_EXECUTABLE_BASE": 1.0035004058451942,
+        "sealed_ADVERSE_STRESS": 1.0014733428327323
+      },
+      "V41": {
+        "corrected_EXECUTABLE_BASE": 0.9944945064365948,
+        "corrected_ADVERSE_STRESS": 0.9924844093867128,
+        "sealed_EXECUTABLE_BASE": 0.9945074167642008,
+        "sealed_ADVERSE_STRESS": 0.9924988234665635
+      }
+    },
+    "may_infer_monthly_2x": false,
+    "future_requirement": "INDEPENDENT_JPY_ACCOUNT_LEDGER_AND_REFERENCE_CALCULATOR_BEFORE_V42_OFFICIAL"
+  },
+  "family_priority_without_outcome_comparison": [
+        {
+            "priority": 1,
+            "family_id": "CURRENCY_NODE_CROSS_SECTIONAL_RESIDUAL_GRAPH_IMBALANCE",
+      "dominant_shortage_target": "GROSS_EDGE_PER_INDEPENDENT_BET",
+      "minimum_improvement_multiplier": 2.0,
+      "structural_precondition": "POSITIVE_CYCLE_SPACE_AND_OVERIDENTIFYING_RESIDUAL_DEGREES_OF_FREEDOM",
+            "rejection_condition": "USD_MAJOR_STAR_GRAPH_HAS_ZERO_CYCLE_SPACE_OR_ZERO_RESIDUAL_DF",
+            "current_seven_pair_decision": "NO_GO_IDENTIFICATION_FAILURE_WITHOUT_PROFIT_OR_COST_COMPARISON",
+            "current_structure": "SEVEN_OBSERVED_USD_STAR_EDGES_AND_SEVEN_NON_USD_NODE_UNKNOWNS_SATURATE_THE_USD_NUMERAIRE_INCIDENCE_SYSTEM",
+            "reconsideration_requires": "SEPARATE_DATA_EXPERIMENT_WITH_CAUSALLY_COMPLETED_CROSS_PAIR_EDGES"
+    },
+    {
+      "priority": 2,
+      "family_id": "H4_REGIME_M15_MUTUALLY_EXCLUSIVE_BRANCH_M5_TIMING",
+      "dominant_shortage_target": "GROSS_EDGE_TIMES_INDEPENDENT_OPPORTUNITY_DENSITY",
+      "minimum_gross_edge_per_independent_bet_multiplier": 2.0,
+      "minimum_independent_bet_density_multiplier": 2.0,
+      "minimum_gross_edge_density_product_multiplier": 4.0,
+      "maximum_adverse_cost_to_expected_move_ratio": 0.5,
+      "baseline_contract": "SAME_ELIGIBILITY_AND_DECISION_CHRONOLOGY_RSI14_AND_MACD_12_26_9",
+      "rejection_condition": "ANY_PREFROZEN_EDGE_DENSITY_COST_OR_HARD_GUARD_GATE_FAILS"
+    },
+    {
+      "priority": 3,
+      "family_id": "VOLATILITY_ENERGY_PROPAGATION_SESSION_SHOCK_STATE",
+      "dominant_shortage_target": "COST_TO_EXPECTED_MOVE_AND_TAIL_LOSS",
+      "minimum_cost_to_expected_move_improvement_multiplier": 2.0,
+      "maximum_adverse_cvar_ratio_to_BASELINE": 0.75,
+      "minimum_independent_bet_density_retention_ratio": 0.75,
+      "rejection_condition": "NO_INCREMENTAL_NET_EDGE_OR_NO_CVAR_IMPROVEMENT_AFTER_FIXED_COSTS"
+        }
+    ],
+    "pair_family_priority_without_outcome_comparison": [
+        {
+            "priority": 1,
+            "family_id": "EUR_USD_H4_REGIME_TO_M15_ENTRY_TIMING_HIERARCHICAL",
+            "pair": "EUR_USD",
+            "observed_shortage": "ADVERSE_COST_EXCEEDS_SMALL_POSITIVE_GROSS_MOVE",
+            "primary_design_target": "GROSS_MOVE_TO_COST_RATIO_NOT_DIRECTION_ACCURACY_FINE_TUNING",
+            "minimum_gross_edge_per_independent_bet_multiplier": 2.0,
+            "minimum_independent_bet_density_multiplier": 2.0,
+            "minimum_gross_edge_density_product_multiplier": 4.0,
+            "maximum_adverse_cost_to_expected_move_ratio": 0.5,
+            "rejection_condition": "ANY_PREFROZEN_EDGE_DENSITY_COST_OR_HARD_GUARD_GATE_FAILS"
+        },
+        {
+            "priority": 2,
+            "family_id": "USD_JPY_COST_TO_MFE_FIRST_PASSAGE_EXTENSION",
+            "pair": "USD_JPY",
+            "observed_shortage": "DIRECTION_ACCURACY_ABOVE_HALF_BUT_EXPECTED_MOVE_BELOW_COST",
+            "primary_design_target": "MFE_CAPTURE_AND_FIRST_PASSAGE_HOLD_WITHOUT_INCREASING_TRADE_COUNT",
+            "minimum_gross_edge_per_independent_bet_multiplier": 2.0,
+            "maximum_adverse_cost_to_expected_move_ratio": 0.5,
+            "maximum_trade_count_multiplier": 1.0,
+            "rejection_condition": "NO_PREFROZEN_MFE_CAPTURE_IMPROVEMENT_OR_COST_REMAINS_DOMINANT"
+        },
+        {
+            "priority": 3,
+            "family_id": "AUD_USD_REGIME_CONDITIONED_ASIAN_SESSION_TRANSITION",
+            "pair": "AUD_USD",
+            "observed_shortage": "MONTHLY_RAW_SIGN_REVERSAL_AND_REGIME_INSTABILITY",
+            "primary_design_target": "SEPARATE_ASIAN_SESSION_TRANSITION_AND_VOLATILITY_REGIME_WITHOUT_CROSS_PAIR_CLAIMS",
+            "minimum_gross_edge_per_independent_bet_multiplier": 2.0,
+            "minimum_independent_bet_density_retention_ratio": 0.5,
+            "maximum_adverse_cost_to_expected_move_ratio": 0.5,
+            "rejection_condition": "RAW_SIGN_IS_NOT_POSITIVE_IN_BOTH_FULL_MONTHS_OR_ADVERSE_COST_REMAINS_DOMINANT"
+        }
+    ],
+  "pair_specialization_matrix": {
+    "fixed_primary_pair_arms": [
+      "USD_JPY",
+      "EUR_USD",
+      "AUD_USD"
+    ],
+    "portfolio_average_may_not_hide_pair_failure": true,
+    "required_metrics": [
+      "gross_edge_bps",
+      "normal_cost_bps",
+      "adverse_cost_bps",
+      "cost_to_expected_move_ratio",
+      "trade_density",
+      "N_eff",
+      "session",
+      "timeframe",
+      "monthly_multiple"
+    ],
+    "aud_related_crosses": "SEPARATE_FAMILY_IF_LOCAL_COMPLETED_BID_ASK_CORPUS_EXISTS",
+    "pair_ranking_from_walk_forward_or_holdout_forbidden": true,
+    "initial_v42_active_pair_arms": [
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "AUD_USD_role": "DIRECT_READBACK_AND_SEPARATE_SPECIALIZATION_CONTROL_NOT_MERGED_IN_INITIAL_V42",
+    "EUR_USD_and_USD_JPY_independence_rule": "SHARED_USD_CURRENCY_TIME_CLUSTER_NOT_TWO_INDEPENDENT_BETS"
+  },
+  "two_horizon_matrix": {
+    "SCALP_INTRADAY": {
+      "completed_timeframes": [
+        "M5",
+        "M15"
+      ],
+      "session_coverage": "ALL_SESSIONS_WITH_CAUSAL_SESSION_LABEL",
+      "true_order_flow_or_hft_claim_allowed": false,
+      "separate_risk_sleeve": true,
+      "separate_n_eff": true,
+      "separate_admission": true
+    },
+    "SWING": {
+      "completed_timeframes": [
+        "H1",
+        "H4"
+      ],
+      "minimum_hold_seconds": 43200,
+      "maximum_hold_seconds": 864000,
+      "financing_required": true,
+      "weekend_gap_required": true,
+      "finite_max_age_required": true,
+      "terminal_liquidation_required": true,
+      "separate_risk_sleeve": true,
+      "separate_n_eff": true,
+      "separate_admission": true
+    },
+    "cross_horizon_netting_may_not_be_presented_as_admission": true,
+    "v42_initial_horizon": "SCALP_INTRADAY_WITH_H4_REGIME_CONTEXT_NOT_SWING_HOLD"
+  },
+  "indicator_factory_matrix": {
+    "allowed_completed_inputs": [
+      "OHLC_BID_ASK",
+      "SPREAD",
+      "SESSION",
+      "CURRENCY_GRAPH",
+      "BREAK_RECLAIM_REJECTION",
+      "PATH_GEOMETRY",
+      "RANGE_ENERGY_JERK_BREADTH",
+      "INVENTORY_STATE"
+    ],
+    "required_registration_fields": [
+      "formula",
+      "unit",
+      "completed_data_chronology",
+      "entry_use",
+      "exit_use",
+      "inventory_use",
+      "ablation",
+      "rejection_condition"
+    ],
+    "baselines": [
+      "RSI14_SAME_CHRONOLOGY",
+      "MACD_12_26_9_SAME_CHRONOLOGY"
+    ],
+        "fixed_hierarchical_observables": [
+            "EXECUTABLE_PATH_EFFICIENCY",
+            "SESSION_REJECTION_GEOMETRY",
+            "MULTI_SCALE_CURVATURE",
+            "H4_RANGE_NORMALIZED_REGIME_SCORE",
+            "M15_MUTUALLY_EXCLUSIVE_CONTINUATION_OR_RECLAIM_STATE",
+            "M5_BREAK_RECLAIM_REJECTION_TIMING_SCORE",
+            "USD_BREADTH_DISPERSION_STATE",
+            "ENERGY_JERK_SHOCK_GUARD"
+        ],
+        "observable_contracts": {
+            "EXECUTABLE_PATH_EFFICIENCY": {
+                "formula": "orientation_signed_close_displacement / sum(abs(completed_bar_close_change))",
+                "unit": "DIMENSIONLESS_BOUNDED_MINUS_ONE_TO_ONE",
+                "use": "ENTRY_TIMING_AND_EXPECTED_MOVE_TO_COST_IMPROVEMENT",
+                "cost_input": false
+            },
+            "SESSION_REJECTION_GEOMETRY": {
+                "formula": "VECTOR(excess_beyond_completed_causal_range, reclaim_fraction_into_range, outside_completed_bar_count, total_path_length)",
+                "unit": "PRICE_NORMALIZED_COMPONENTS_AND_COMPLETED_BAR_COUNT",
+                "use": "M15_MUTUALLY_EXCLUSIVE_CONTINUATION_OR_RECLAIM_STATE",
+                "cost_input": false
+            },
+            "MULTI_SCALE_CURVATURE": {
+                "formula": "NORMALIZED_COMPLETED_TIME_PRICE_VELOCITY_ACCELERATION_AND_CURVATURE_AT_M15_H1_H4",
+                "unit": "DIMENSIONLESS_AFTER_CAUSAL_RANGE_AND_TIME_NORMALIZATION",
+                "use": "MUTUALLY_EXCLUSIVE_CONTINUATION_VERSUS_EXHAUSTION_CLASSIFICATION",
+                "cost_input": false
+            },
+            "USD_BREADTH_DISPERSION_STATE": {
+                "formula": "QUOTE_ORIENTATION_NORMALIZED_SEVEN_PAIR_USD_COMMON_IMPULSE_SIGN_BREADTH_MAD_AND_LAMBDA_MAX_OVER_TRACE",
+                "unit": "DIMENSIONLESS_REGIME_VECTOR",
+                "use": "REGIME_ENABLE_SIZE_CAP_OR_FREEZE_ONLY_NOT_DIRECTION_EDGE",
+                "direction_signal_allowed": false
+            },
+            "ENERGY_JERK_SHOCK_GUARD": {
+                "formula": "COMPLETED_RANGE_ENERGY_REALIZED_ENERGY_TEMPORAL_JERK_AND_SPREAD_STRAIN_WITH_PREFROZEN_HYSTERESIS",
+                "unit": "CAUSALLY_NORMALIZED_DIMENSIONLESS_GUARD_STATE",
+                "use": "INVENTORY_CAP_FREEZE_OR_UNWIND_GUARD_ONLY",
+                "direction_signal_allowed": false
+            }
+        },
+    "fixed_ablations": [
+      "REMOVE_H4_REGIME",
+      "REMOVE_M15_BRANCH",
+      "REMOVE_M5_TIMING"
+    ],
+    "multiple_testing": {
+      "nested_tuning_then_walk_forward": true,
+      "holdout_exploration_forbidden": true,
+      "correction": "HOLM_BONFERRONI_FAMILYWISE_ALPHA_0_05",
+      "mass_combination_search_forbidden": true
+    },
+    "incremental_net_edge_and_independence_required": true
+  },
+    "historical_and_forward_shadow_matrix": {
+    "historical_replay_continues": true,
+    "forward_shadow": {
+      "mode": "ZERO_ORDER_MARKET_DATA_READ_ONLY",
+      "strategy_version_frozen_during_forward_window": true,
+      "improved_version_earliest_start": "NEXT_UTC_DAY",
+      "market_data_feed_status": "NO_ZERO_CREDENTIAL_FEED_WITH_REQUIRED_TIMESTAMP_HEARTBEAT_GAP_CONTRACT_CONFIRMED_NOT_CONNECTED",
+      "practice_market_data_token_accessed": false,
+      "new_user_permission_required_before_token_access": true,
+      "broker_account_order_live_authority": false
+    },
+        "feed_candidates": {
+            "OANDA_V20_PRICING_STREAM": "INELIGIBLE_REQUIRES_ACCOUNT_ID_AND_PERSONAL_ACCESS_TOKEN_WITH_NO_VERIFIED_READ_ONLY_SCOPE",
+            "MASSIVE_MARKET_DATA": "INELIGIBLE_UNDER_CURRENT_BOUNDARY_REQUIRES_API_KEY_AND_PAID_CONTRACT",
+      "TRUEFX_FIX": "INELIGIBLE_REQUIRES_PAID_CONTRACT_AND_IS_INDICATIVE",
+      "DUKASCOPY_JFOREX": "INELIGIBLE_LOGIN_REQUIRED_AND_ORDER_CAPABLE_SESSION_NOT_PROVEN_SEPARATE",
+      "FXCM_FCLITE": "INELIGIBLE_LOGIN_REQUIRED_AND_ORDER_CAPABLE_SESSION_NOT_PROVEN_SEPARATE",
+            "anonymous_eligible_feed": "UNCONFIRMED"
+        },
+        "forward_shadow_start_authorized": false,
+        "credential_free_shadow_core_candidate": {
+            "provider_neutral_bbo_schema": [
+                "provider_id",
+                "instrument",
+                "bid",
+                "ask",
+                "liquidity_optional",
+                "source_ts",
+                "arrival_ts",
+                "heartbeat",
+                "provider_event_id_or_sequence_optional",
+                "quality_flags",
+                "raw_payload_sha256"
+            ],
+            "storage": "APPEND_ONLY_RAW_LEDGER_CONTENT_ADDRESSED_BATCH_MANIFEST_AND_RESTART_CHECKPOINT",
+            "causal_aggregations": ["M5", "M15", "H1", "H4"],
+            "halt_new_signal_and_fill_on": [
+                "SOURCE_OR_ARRIVAL_GAP",
+                "HEARTBEAT_FAILURE",
+                "CLOCK_REVERSAL",
+                "OUT_OF_ORDER_EVENT",
+                "RECONNECT_BOUNDARY"
+            ],
+            "sequence_absent_policy": "LOSSLESS_FALSE_AND_AFFECTED_SOURCE_ARRIVAL_GAP_INTERVAL_INVALID",
+            "shared_proposal_stream_arms": ["BOT_ONLY", "ACTUAL_LLM_INVENTORY_POLICY"],
+            "ledger_outputs": ["EXPECTED_ORDERS", "VIRTUAL_FILLS"],
+            "transport_scope": "ABSTRACT_INTERFACE_PLUS_FIXTURE_AND_FILE_INGEST_ADAPTER_ONLY",
+            "offline_drop_in_formats": ["CSV", "JSONL"],
+            "forbidden_dependencies": [
+                "BROKER_SDK",
+                "ORDER_ENDPOINT",
+                "ACCOUNT_ENDPOINT",
+                "TRANSACTION_ENDPOINT",
+                "CREDENTIAL_LOADER"
+            ],
+            "network_connection_authorized": false,
+            "implementation_sequence": "AFTER_CAUSE_AND_PAIR_AUDIT_SAFE_CHECKPOINT"
+        }
+    },
+  "legacy_actual_llm_evidence_contract": {
+    "classification": "READ_ONLY_DIAGNOSTIC_NOT_CURRENT_STRATEGY_SEAL",
+    "current_v25_v41_machine_verified_actual_llm_strategy_arm": false,
+    "v25_identity": "LEGACY_TASK_NOT_MACHINE_VERIFIED",
+    "v26_through_v41_identity": "NO_ACTUAL_LLM_USED",
+    "v253": {
+      "classification": "STRONGEST_REPRODUCIBLE_LEGACY_RESULT_BUT_LEVERAGE_CONFOUNDED",
+      "same_proposal_stream": true,
+      "bot_gross_cap": 1.0,
+      "actual_llm_gross_cap": 12.0,
+      "same_cap_control_present": false,
+      "holdout": "UNOPENED",
+      "profit_or_incremental_llm_edge_claim_allowed": false,
+      "next_diagnostic": {
+        "fixed_gross_cap": 12.0,
+        "arms": [
+          "BOT_FIXED_SAME_CAP",
+          "MECHANICAL_VALIDATION_RULE_SAME_CAP",
+          "FROZEN_ACTUAL_LLM_SAME_CAP"
+        ],
+        "same_proposal_stream_risk_cost_required": true,
+        "holdout_must_remain": "UNOPENED",
+        "classification": "CONFOUND_SEPARATION_NOT_PROFIT_SEARCH"
+      }
+    },
+    "v15": {
+      "classification": "SHORT_WINDOW_NORMAL_GAIN_STRESS_FAILURE",
+      "aud_jpy_single_end_of_data_episode_may_not_support_edge_claim": true,
+      "next_ab_precondition": "HASH_FIXED_M1_JPY_CROSS_BID_ASK_CORPUS_WITH_FULL_COMPARABLE_MONTHS"
+    },
+    "v13": {
+      "classification": "PRIMARY_RAW_TO_BASE_TO_ADVERSE_COST_MARGIN_FAILURE_EVIDENCE",
+      "new_run_required_for_cause_audit": false
+    },
+    "ai_test_bot": {
+      "actual_llm": false,
+      "mechanism": "DETERMINISTIC_PRIOR_BUCKET_SELECTION_PLUS_POST_OUTCOME_LOSS_CAP",
+      "positive_jpy_may_not_be_ATTRIBUTED_TO_LLM": true
+    },
+    "broker_cohort": {
+      "actual_llm_attribution_proven": false,
+      "skip_counterfactual_thesis_ledger_complete": false,
+      "positive_jpy_may_not_be_USED_AS_LLM_PROFIT_EVIDENCE": true
+    },
+    "overall_sequence": "CAUSE_AND_PAIR_AUDIT_THEN_BOT_PAIR_REPAIR_PLUMBING_THEN_SAME_STREAM_ACTUAL_LLM_INVENTORY_OR_VETO_ARM",
+    "past_positive_jpy_may_not_be_imported_into_current_profit_gate": true
+  },
+  "actual_llm_ab_matrix": {
+    "status": "DESIGN_ONLY_NOT_EXECUTED",
+    "shared_proposal_stream_required": true,
+    "bot_owns": [
+      "TECHNICAL_CALCULATION",
+      "SIGNAL",
+      "FILL",
+      "COST",
+      "INVENTORY",
+      "HARD_GUARDS"
+    ],
+    "llm_allowed_decisions": [
+      "WORKER_ENABLE",
+      "PAIR_CAP",
+      "CURRENCY_CAP",
+      "ADD_PREEXISTING_PROPOSAL_WITHIN_CAP",
+      "FREEZE",
+      "UNWIND"
+    ],
+    "intraday_checkpoint_minutes": 15,
+    "swing_checkpoint": "H1_COMPLETED",
+    "required_provenance": [
+      "PROMPT_SHA256",
+      "MODEL_ID",
+      "MODEL_VERSION",
+      "INPUT_SHA256",
+      "DECISION_LATENCY_MS"
+    ],
+    "individual_direction_fill_or_order_authority": false,
+    "introduced_only_after_bot_only_family_seal": true
+  }
+}

@@ -28,6 +28,13 @@ from pathlib import Path
 from typing import Any, Iterator
 
 
+MODULE_DIR = Path(__file__).resolve().parent
+COMPAT_DIR = MODULE_DIR / "paper_replay_compat"
+for import_root in (MODULE_DIR, COMPAT_DIR):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
+
+
 AUTHORITY = {
     "paper_only": True,
     "live_authority": False,
@@ -78,6 +85,11 @@ COMPONENT_PORTFOLIO_REASON = "INDEPENDENT_PROVISIONAL_COMPONENTS_AVAILABLE"
 COMPONENT_PORTFOLIO_VARIABLE = (
     "one_preregistered_fixed_equal_component_sleeve_portfolio_composition_"
     "preserving_costs_leverage_periods_caps_terminal_liquidation_and_holdout"
+)
+DERIVED_PAIR_AUDIT_PATH = "evidence/derived_pair_audit_v1/derived_pair_audit_v1.json"
+CAUSE_FEASIBILITY_AUDIT_PATH = (
+    "evidence/profit_gate_cause_feasibility_v1/"
+    "profit_gate_cause_feasibility_audit_v1.json"
 )
 
 
@@ -223,6 +235,32 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         artifact = within(root, independence_ref[path_key])
         if not artifact.is_file() or sha256_file(artifact) != independence_ref[hash_key]:
             raise ContractError(f"sign-aware independence policy artifact changed: {path_key}")
+    pair_audit_ref = require_keys(registry.get("derived_pair_audit_contract"), {
+        "builder_path", "builder_sha256", "test_path", "test_sha256", "output_path",
+        "classification",
+    }, "derived_pair_audit_contract")
+    if pair_audit_ref["classification"] != "NON_STRATEGY_READ_ONLY_DERIVED_LEGACY_EVIDENCE" \
+            or pair_audit_ref["output_path"] != DERIVED_PAIR_AUDIT_PATH:
+        raise ContractError("derived pair audit contract identity changed")
+    for path_key, hash_key in (("builder_path", "builder_sha256"),
+                               ("test_path", "test_sha256")):
+        artifact = within(root, pair_audit_ref[path_key])
+        if not artifact.is_file() or sha256_file(artifact) != pair_audit_ref[hash_key]:
+            raise ContractError(f"derived pair audit contract artifact changed: {path_key}")
+    cause_ref = require_keys(registry.get("profit_gate_cause_feasibility_contract"), {
+        "policy_path", "policy_sha256", "builder_path", "builder_sha256",
+        "test_path", "test_sha256", "output_path", "classification",
+    }, "profit_gate_cause_feasibility_contract")
+    if cause_ref["classification"] != "NON_STRATEGY_READ_ONLY_CAUSE_FEASIBILITY_EVIDENCE" \
+            or cause_ref["output_path"] != CAUSE_FEASIBILITY_AUDIT_PATH:
+        raise ContractError("cause feasibility audit contract identity changed")
+    for path_key, hash_key in (
+        ("policy_path", "policy_sha256"), ("builder_path", "builder_sha256"),
+        ("test_path", "test_sha256"),
+    ):
+        artifact = within(root, cause_ref[path_key])
+        if not artifact.is_file() or sha256_file(artifact) != cause_ref[hash_key]:
+            raise ContractError(f"cause feasibility contract artifact changed: {path_key}")
     cycles = registry.get("cycles")
     if not isinstance(cycles, list) or not cycles:
         raise ContractError("registry has no cycles")
@@ -2068,6 +2106,49 @@ def validate_v26_recovery_failure(root: Path, cycle: dict[str, Any],
     }
 
 
+def validate_cause_and_pair_audit_evidence(root: Path) -> dict[str, Any]:
+    """Validate non-strategy pair/cause evidence without authorizing a strategy run."""
+    try:
+        import derived_pair_audit_runner_v1 as pair_audit
+        import profit_gate_cause_feasibility_audit_v1 as cause_audit
+
+        pair_payload = pair_audit.validate(root)
+        cause_payload = cause_audit.validate(root)
+    except (ImportError, OSError, ValueError, RuntimeError) as error:
+        raise ContractError(f"cause/pair audit validation failed: {error}") from error
+    if pair_payload.get("holdout_state") != "UNOPENED" \
+            or pair_payload.get("external_orders") != 0 \
+            or pair_payload.get("official_strategy_run_performed") is not False \
+            or cause_payload.get("holdout_state") != "UNOPENED" \
+            or cause_payload.get("external_orders") != 0 \
+            or cause_payload.get("official_strategy_run_performed") is not False \
+            or cause_payload.get("strategy_adoption_authorized") is not False:
+        raise ContractError("cause/pair audit crossed the paper-only evidence boundary")
+    v42 = cause_payload.get("v42_go_no_go", {})
+    if v42.get("dst_only_strategy_execution") != "NO_GO" \
+            or v42.get("current_official_v42_execution_authorized") is not False:
+        raise ContractError("cause audit did not fail closed before V42 execution")
+    return {
+        "status": "VALIDATED",
+        "derived_pair_audit_file_sha256": sha256_file(within(root, DERIVED_PAIR_AUDIT_PATH)),
+        "derived_pair_audit_sha256": pair_payload["audit_sha256"],
+        "valid_sealed_cycle_count": pair_payload["deduplication"]["valid_sealed_cycle_count"],
+        "unique_raw_signal_stream_count": pair_payload["deduplication"]
+        ["unique_signal_id_set_count"],
+        "cause_feasibility_audit_file_sha256": sha256_file(
+            within(root, CAUSE_FEASIBILITY_AUDIT_PATH)
+        ),
+        "cause_feasibility_audit_sha256": cause_payload["audit_sha256"],
+        "current_1x_capacity_insufficient": cause_payload["next_feasibility_envelope"]
+        ["current_1x_capacity_insufficient"],
+        "v42_dst_only": "NO_GO",
+        "v42_current_execution_authorized": False,
+        "selected_redesigned_family": v42["selected_family_id"],
+        "holdout": "UNOPENED",
+        "strategy_adoption_authorized": False,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -2139,8 +2220,10 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             "portfolio_composition_proposal_allowed": component["portfolio_composition_proposal_allowed"],
             "strategy_adoption_authorized": False,
         }
+    cause_pair_summary = validate_cause_and_pair_audit_evidence(root)
     return {"schema_version": 2, "authority": AUTHORITY, "cycles": reports,
-            "component_worker_evidence": component_summary}
+            "component_worker_evidence": component_summary,
+            "cause_and_pair_audit_evidence": cause_pair_summary}
 
 
 def build_component_registry_checkpoint(root: Path) -> dict[str, Any]:
@@ -2237,6 +2320,8 @@ def build_component_registry_v2_checkpoint(root: Path) -> dict[str, Any]:
 
 
 def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
+    if "profit_gate_cause_feasibility_contract" in registry:
+        validate_cause_and_pair_audit_evidence(root)
     shared_paths = state_paths(root)
     with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
         state = read_state(shared_paths["state"])
