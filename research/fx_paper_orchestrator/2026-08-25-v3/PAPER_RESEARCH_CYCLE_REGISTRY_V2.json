@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "b7fffcd0dabd0d2f0605f42122de69ba6b8a12e780813a78c8ad26d8b2813257",
+    "sha256": "e4a97b22fc33f6ec11bdac53db2e5480fd22aefed740c4cb1de1c3268b040d90",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -47,11 +47,31 @@
     "policy_path": "PROFIT_GATE_CAUSE_FEASIBILITY_POLICY_V1.json",
     "policy_sha256": "77e55911fe58609d6070f59c2b0c926569656441ed73a403995ee6ea3d2b00ae",
     "builder_path": "profit_gate_cause_feasibility_audit_v1.py",
-    "builder_sha256": "930dfbaf07e60d45e581d9ea5bf833224d728b2c0d38ea99a1d0aabbf5b84cd6",
+    "builder_sha256": "4febb52d95d2e59c1abd36b640c4507285a47de9610b9bebb44ba05fa6c28ab2",
     "test_path": "test_profit_gate_cause_feasibility_audit_v1.py",
-    "test_sha256": "a378322a942726266d22c2b7ba6c1f00b20ef232f2d88ebe0a56c84224634a48",
+    "test_sha256": "05944fbe85b18e5261f081f97191a77f2d4be5fa2f2cc28d4b82581db91dcf5b",
     "output_path": "evidence/profit_gate_cause_feasibility_v1/profit_gate_cause_feasibility_audit_v1.json",
     "classification": "NON_STRATEGY_READ_ONLY_CAUSE_FEASIBILITY_EVIDENCE"
+  },
+  "jpy_accounting_dst_migration_contract": {
+    "policy_path": "JPY_ACCOUNTING_DST_RUNTIME_MIGRATION_V1.json",
+    "policy_sha256": "0af5ea76f98f166e67b03ee42e4f043c3f3002cd4569a29e79a3e5454d805a83",
+    "accounting_runtime_path": "jpy_accounting_v2.py",
+    "accounting_runtime_sha256": "f49998e6d01bdbec65f8a6f307e039d531c5fcdad9899c5ef3d5ae946132dda6",
+    "reference_path": "jpy_accounting_reference_v1.py",
+    "reference_sha256": "4a875653362789bec3907f4fe5adaf92354ec096066a4a1eb47e8274999aa747",
+    "chronology_path": "london_session_chronology_v1.py",
+    "chronology_sha256": "3d3bf97fdcf9f4c583e217fba4ba199ab84ca731e0e670947cf4d72c8e807cc0",
+    "builder_path": "build_jpy_accounting_dst_migration_v1.py",
+    "builder_sha256": "bcf2f1ccae80b084cea1639f5a23e88466b6ff4d3c287f3cd8978c8e5dddbec2",
+    "accounting_test_path": "test_jpy_accounting_v2.py",
+    "accounting_test_sha256": "33d8a8a1b11eed7f47ae586db6e8e7309b576ef3ad328b2eb31ccea2dacd8e6b",
+    "chronology_test_path": "test_london_session_chronology_v1.py",
+    "chronology_test_sha256": "967f71c8cdb68a46aabb73419b8bb258d77e78904202d1d72a7e4d206e5bbef7",
+    "migration_test_path": "test_jpy_accounting_dst_migration_v1.py",
+    "migration_test_sha256": "1267cf804a8d598005446e72f9317a6bdfb5afb2cfa2affb60ea964957bb9b73",
+    "output_path": "evidence/jpy_accounting_dst_runtime_migration_v1/jpy_accounting_dst_runtime_migration_v1.json",
+    "classification": "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION"
   },
   "legacy_evidence": {
     "registry": "PAPER_RESEARCH_CYCLE_REGISTRY_V1.json",

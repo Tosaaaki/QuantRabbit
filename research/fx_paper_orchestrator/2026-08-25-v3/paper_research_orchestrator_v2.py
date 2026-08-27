@@ -91,6 +91,10 @@ CAUSE_FEASIBILITY_AUDIT_PATH = (
     "evidence/profit_gate_cause_feasibility_v1/"
     "profit_gate_cause_feasibility_audit_v1.json"
 )
+JPY_ACCOUNTING_DST_AUDIT_PATH = (
+    "evidence/jpy_accounting_dst_runtime_migration_v1/"
+    "jpy_accounting_dst_runtime_migration_v1.json"
+)
 
 
 class ContractError(RuntimeError):
@@ -261,6 +265,31 @@ def load_registry(root: Path, registry_path: Path) -> dict[str, Any]:
         artifact = within(root, cause_ref[path_key])
         if not artifact.is_file() or sha256_file(artifact) != cause_ref[hash_key]:
             raise ContractError(f"cause feasibility contract artifact changed: {path_key}")
+    migration_ref = require_keys(registry.get("jpy_accounting_dst_migration_contract"), {
+        "policy_path", "policy_sha256", "accounting_runtime_path",
+        "accounting_runtime_sha256", "reference_path", "reference_sha256",
+        "chronology_path", "chronology_sha256", "builder_path", "builder_sha256",
+        "accounting_test_path", "accounting_test_sha256", "chronology_test_path",
+        "chronology_test_sha256", "migration_test_path", "migration_test_sha256",
+        "output_path", "classification",
+    }, "jpy_accounting_dst_migration_contract")
+    if migration_ref["classification"] != (
+        "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION"
+    ) or migration_ref["output_path"] != JPY_ACCOUNTING_DST_AUDIT_PATH:
+        raise ContractError("JPY accounting/DST migration contract identity changed")
+    for path_key, hash_key in (
+        ("policy_path", "policy_sha256"),
+        ("accounting_runtime_path", "accounting_runtime_sha256"),
+        ("reference_path", "reference_sha256"),
+        ("chronology_path", "chronology_sha256"),
+        ("builder_path", "builder_sha256"),
+        ("accounting_test_path", "accounting_test_sha256"),
+        ("chronology_test_path", "chronology_test_sha256"),
+        ("migration_test_path", "migration_test_sha256"),
+    ):
+        artifact = within(root, migration_ref[path_key])
+        if not artifact.is_file() or sha256_file(artifact) != migration_ref[hash_key]:
+            raise ContractError(f"JPY accounting/DST artifact changed: {path_key}")
     cycles = registry.get("cycles")
     if not isinstance(cycles, list) or not cycles:
         raise ContractError("registry has no cycles")
@@ -2149,6 +2178,52 @@ def validate_cause_and_pair_audit_evidence(root: Path) -> dict[str, Any]:
     }
 
 
+def validate_jpy_accounting_dst_migration_evidence(root: Path) -> dict[str, Any]:
+    """Validate the non-strategy accounting/chronology migration checkpoint."""
+    try:
+        import build_jpy_accounting_dst_migration_v1 as migration
+
+        payload = migration.validate(root)
+    except (ImportError, OSError, ValueError, RuntimeError) as error:
+        raise ContractError(f"JPY accounting/DST migration validation failed: {error}") from error
+    if payload.get("classification") != (
+        "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION"
+    ) or payload.get("authority") != AUTHORITY:
+        raise ContractError("JPY accounting/DST migration identity changed")
+    if payload.get("holdout_state") != "UNOPENED" \
+            or payload.get("external_orders") != 0 \
+            or payload.get("official_strategy_run_performed") is not False \
+            or payload.get("historical_seal_rewritten") is not False \
+            or payload.get("strategy_adoption_authorized") is not False:
+        raise ContractError("JPY accounting/DST migration crossed the paper-only boundary")
+    if payload.get("account_currency_midpoint_conversion_used") is not False \
+            or payload.get("conversion_max_staleness_seconds") != 300:
+        raise ContractError("JPY executable conversion contract changed")
+    if payload.get("dst_is_revenue_edge") is not False \
+            or payload.get("v42_dst_only") != "NO_GO" \
+            or payload.get("current_official_v42_execution_authorized") is not False:
+        raise ContractError("DST migration improperly authorized a strategy run")
+    cycles = payload.get("sealed_plan_accounting_diagnostic", {})
+    if set(cycles) != {"V38", "V40", "V41"} \
+            or any(item.get("hidden_2x_revealed") is not False for item in cycles.values()):
+        raise ContractError("formal accounting diagnostic classification changed")
+    return {
+        "status": "VALIDATED",
+        "audit_file_sha256": sha256_file(within(root, JPY_ACCOUNTING_DST_AUDIT_PATH)),
+        "audit_sha256": payload["audit_sha256"],
+        "reference_fixture_parity_passed": payload["reference_fixture_parity_passed"],
+        "account_currency_midpoint_conversion_used": False,
+        "conversion_max_staleness_seconds": 300,
+        "formal_diagnostic_cycles": sorted(cycles),
+        "hidden_2x_revealed": False,
+        "dst_is_revenue_edge": False,
+        "v42_dst_only": "NO_GO",
+        "v42_current_execution_authorized": False,
+        "holdout": "UNOPENED",
+        "strategy_adoption_authorized": False,
+    }
+
+
 def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     shared_paths = state_paths(root)
     state = read_state(shared_paths["state"])
@@ -2221,9 +2296,11 @@ def audit(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
             "strategy_adoption_authorized": False,
         }
     cause_pair_summary = validate_cause_and_pair_audit_evidence(root)
+    migration_summary = validate_jpy_accounting_dst_migration_evidence(root)
     return {"schema_version": 2, "authority": AUTHORITY, "cycles": reports,
             "component_worker_evidence": component_summary,
-            "cause_and_pair_audit_evidence": cause_pair_summary}
+            "cause_and_pair_audit_evidence": cause_pair_summary,
+            "jpy_accounting_dst_migration": migration_summary}
 
 
 def build_component_registry_checkpoint(root: Path) -> dict[str, Any]:
@@ -2322,6 +2399,8 @@ def build_component_registry_v2_checkpoint(root: Path) -> dict[str, Any]:
 def execute_next(root: Path, registry: dict[str, Any]) -> dict[str, Any]:
     if "profit_gate_cause_feasibility_contract" in registry:
         validate_cause_and_pair_audit_evidence(root)
+    if "jpy_accounting_dst_migration_contract" in registry:
+        validate_jpy_accounting_dst_migration_evidence(root)
     shared_paths = state_paths(root)
     with exclusive_lock(shared_paths["lock"], shared_paths["journal"]):
         state = read_state(shared_paths["state"])

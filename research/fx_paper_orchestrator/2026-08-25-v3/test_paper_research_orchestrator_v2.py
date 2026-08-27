@@ -394,6 +394,17 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertEqual(cause["v42_dst_only"], "NO_GO")
         self.assertFalse(cause["v42_current_execution_authorized"])
         self.assertEqual(cause["holdout"], "UNOPENED")
+        migration = report["jpy_accounting_dst_migration"]
+        self.assertEqual(migration["status"], "VALIDATED")
+        self.assertTrue(migration["reference_fixture_parity_passed"])
+        self.assertFalse(migration["account_currency_midpoint_conversion_used"])
+        self.assertEqual(migration["conversion_max_staleness_seconds"], 300)
+        self.assertEqual(migration["formal_diagnostic_cycles"], ["V38", "V40", "V41"])
+        self.assertFalse(migration["hidden_2x_revealed"])
+        self.assertFalse(migration["dst_is_revenue_edge"])
+        self.assertEqual(migration["v42_dst_only"], "NO_GO")
+        self.assertFalse(migration["v42_current_execution_authorized"])
+        self.assertEqual(migration["holdout"], "UNOPENED")
 
     def test_cause_and_pair_audit_contracts_are_hash_bound_non_strategy_evidence(self):
         pair = self.registry["derived_pair_audit_contract"]
@@ -410,6 +421,24 @@ class RegistryAcceptanceTest(unittest.TestCase):
             (cause, "test_path", "test_sha256"),
         ):
             self.assertEqual(orchestrator.sha256_file(ROOT / ref[path_key]), ref[hash_key])
+
+    def test_jpy_accounting_dst_contract_is_hash_bound_non_strategy_migration(self):
+        migration = self.registry["jpy_accounting_dst_migration_contract"]
+        self.assertEqual(migration["classification"],
+                         "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION")
+        for path_key, hash_key in (
+            ("policy_path", "policy_sha256"),
+            ("accounting_runtime_path", "accounting_runtime_sha256"),
+            ("reference_path", "reference_sha256"),
+            ("chronology_path", "chronology_sha256"),
+            ("builder_path", "builder_sha256"),
+            ("accounting_test_path", "accounting_test_sha256"),
+            ("chronology_test_path", "chronology_test_sha256"),
+            ("migration_test_path", "migration_test_sha256"),
+        ):
+            self.assertEqual(
+                orchestrator.sha256_file(ROOT / migration[path_key]), migration[hash_key]
+            )
 
     def test_authority_has_no_live_broker_credential_order_or_deploy(self):
         self.assertEqual(self.registry["authority"], orchestrator.AUTHORITY)

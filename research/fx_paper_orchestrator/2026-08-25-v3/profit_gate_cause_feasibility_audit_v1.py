@@ -34,6 +34,9 @@ import derived_pair_audit_runner_v1 as derived_pair
 
 
 POLICY_PATH = "PROFIT_GATE_CAUSE_FEASIBILITY_POLICY_V1.json"
+CAUSE_AUDIT_CHECKPOINT_REGISTRY_SHA256 = (
+    "648330845b9c80ab52881b2505ec499f52834d32263f0ef1bbe5a3af1a912fd1"
+)
 OUTPUT_ROOT = "evidence/profit_gate_cause_feasibility_v1"
 AUDIT_PATH = f"{OUTPUT_ROOT}/profit_gate_cause_feasibility_audit_v1.json"
 PAIR_READBACK_PATH = derived_pair.METRICS_PATH
@@ -1293,6 +1296,25 @@ def legacy_actual_llm_readback(root: Path) -> dict[str, Any]:
     }
 
 
+def evidence_semantically_equal(left: Any, right: Any) -> bool:
+    """Keep structural/hash equality exact while tolerating float last-bit noise."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, float) and isinstance(right, float):
+        return math.isfinite(left) and math.isfinite(right) and math.isclose(
+            left, right, rel_tol=0.0, abs_tol=1e-15
+        )
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            evidence_semantically_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            evidence_semantically_equal(a, b) for a, b in zip(left, right)
+        )
+    return type(left) is type(right) and left == right
+
+
 def build(root: Path) -> dict[str, Any]:
     policy_path = root / POLICY_PATH
     policy = load_json(policy_path)
@@ -1693,7 +1715,16 @@ def validate(root: Path) -> dict[str, Any]:
             ):
                 raise CauseFeasibilityError("feasibility envelope oracle grid changed")
     legacy_llm = payload["legacy_actual_llm_read_only_evidence"]
-    if legacy_llm != legacy_actual_llm_readback(root):
+    current_llm = legacy_actual_llm_readback(root)
+    stored_comparable = json.loads(json.dumps(legacy_llm, sort_keys=True, allow_nan=False))
+    current_comparable = json.loads(json.dumps(current_llm, sort_keys=True, allow_nan=False))
+    stored_registry_hash = stored_comparable["current_v25_v41_actual_llm_status"].pop(
+        "registry_file_sha256"
+    )
+    current_comparable["current_v25_v41_actual_llm_status"].pop("registry_file_sha256")
+    if stored_registry_hash != CAUSE_AUDIT_CHECKPOINT_REGISTRY_SHA256:
+        raise CauseFeasibilityError("cause-audit checkpoint registry hash changed")
+    if not evidence_semantically_equal(stored_comparable, current_comparable):
         raise CauseFeasibilityError("legacy actual-LLM direct readback changed")
     v253 = legacy_llm["v253_development_walk_inventory_policy"]
     if v253["incremental_llm_edge_identified"] is not False \

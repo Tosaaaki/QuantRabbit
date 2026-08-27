@@ -1,0 +1,290 @@
+{
+  "account_currency_midpoint_conversion_used": false,
+  "audit_sha256": "71d9acedde86e25ac42735529db15950777f3b866cb70ec770069e1d9d637904",
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "classification": "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION",
+  "conversion_max_staleness_seconds": 300,
+  "current_official_v42_execution_authorized": false,
+  "diagnostic_reused_as_official_seal": false,
+  "diagnostic_rows": 570,
+  "diagnostic_rows_file_sha256": "d7c124a73633333f1ae8ef83895caa17b04d39fd70abb2c47936f61853df42bd",
+  "diagnostic_rows_path": "evidence/jpy_accounting_dst_runtime_migration_v1/sealed_plan_accounting_diagnostic_v1.jsonl",
+  "dst_chronology": {
+    "classification": "COMMON_CHRONOLOGY_FOUNDATION_NOT_NEW_EDGE",
+    "fixed_utc_hour_used_as_edge_definition": false,
+    "summer": {
+      "completed_data_only": true,
+      "decision_bar_time_utc": "2026-06-15T08:55:00Z",
+      "decision_close_available_at_utc": "2026-06-15T09:00:00Z",
+      "decision_local_minute": 595,
+      "decision_relation": "DECISION_T_COMPLETED_CLOSE",
+      "fill_next_m5_open_time_utc": "2026-06-15T09:00:00Z",
+      "fill_relation": "FILL_T_PLUS_1_EXECUTABLE_OPEN",
+      "fixed_utc_hour_used_as_edge_definition": false,
+      "local_date": "2026-06-15",
+      "rail_bar_times_utc": [
+        "2026-06-15T08:00:00Z",
+        "2026-06-15T08:05:00Z",
+        "2026-06-15T08:10:00Z",
+        "2026-06-15T08:15:00Z",
+        "2026-06-15T08:20:00Z",
+        "2026-06-15T08:25:00Z",
+        "2026-06-15T08:30:00Z",
+        "2026-06-15T08:35:00Z",
+        "2026-06-15T08:40:00Z",
+        "2026-06-15T08:45:00Z",
+        "2026-06-15T08:50:00Z"
+      ],
+      "rail_last_local_minute": 590,
+      "rail_latest_bar_relation": "RAIL_LE_T_MINUS_1",
+      "session": "LONDON_MIGRATION_FIXTURE",
+      "timezone_name": "BST",
+      "utc_offset_seconds": 3600
+    },
+    "transitions": {
+      "2026-03-29T00:55:00.000000000Z": {
+        "epoch_nanoseconds": 1774745700000000000,
+        "fold": 0,
+        "local_clock": "00:55:00",
+        "local_date": "2026-03-29",
+        "timezone_name": "GMT",
+        "utc_offset_seconds": 0,
+        "utc_time": "2026-03-29T00:55:00.000000000Z"
+      },
+      "2026-03-29T01:00:00.000000000Z": {
+        "epoch_nanoseconds": 1774746000000000000,
+        "fold": 0,
+        "local_clock": "02:00:00",
+        "local_date": "2026-03-29",
+        "timezone_name": "BST",
+        "utc_offset_seconds": 3600,
+        "utc_time": "2026-03-29T01:00:00.000000000Z"
+      },
+      "2026-10-25T00:55:00.000000000Z": {
+        "epoch_nanoseconds": 1792889700000000000,
+        "fold": 0,
+        "local_clock": "01:55:00",
+        "local_date": "2026-10-25",
+        "timezone_name": "BST",
+        "utc_offset_seconds": 3600,
+        "utc_time": "2026-10-25T00:55:00.000000000Z"
+      },
+      "2026-10-25T01:00:00.000000000Z": {
+        "epoch_nanoseconds": 1792890000000000000,
+        "fold": 1,
+        "local_clock": "01:00:00",
+        "local_date": "2026-10-25",
+        "timezone_name": "GMT",
+        "utc_offset_seconds": 0,
+        "utc_time": "2026-10-25T01:00:00.000000000Z"
+      }
+    },
+    "winter": {
+      "completed_data_only": true,
+      "decision_bar_time_utc": "2026-01-15T09:55:00Z",
+      "decision_close_available_at_utc": "2026-01-15T10:00:00Z",
+      "decision_local_minute": 595,
+      "decision_relation": "DECISION_T_COMPLETED_CLOSE",
+      "fill_next_m5_open_time_utc": "2026-01-15T10:00:00Z",
+      "fill_relation": "FILL_T_PLUS_1_EXECUTABLE_OPEN",
+      "fixed_utc_hour_used_as_edge_definition": false,
+      "local_date": "2026-01-15",
+      "rail_bar_times_utc": [
+        "2026-01-15T09:00:00Z",
+        "2026-01-15T09:05:00Z",
+        "2026-01-15T09:10:00Z",
+        "2026-01-15T09:15:00Z",
+        "2026-01-15T09:20:00Z",
+        "2026-01-15T09:25:00Z",
+        "2026-01-15T09:30:00Z",
+        "2026-01-15T09:35:00Z",
+        "2026-01-15T09:40:00Z",
+        "2026-01-15T09:45:00Z",
+        "2026-01-15T09:50:00Z"
+      ],
+      "rail_last_local_minute": 590,
+      "rail_latest_bar_relation": "RAIL_LE_T_MINUS_1",
+      "session": "LONDON_MIGRATION_FIXTURE",
+      "timezone_name": "GMT",
+      "utc_offset_seconds": 0
+    }
+  },
+  "dst_is_revenue_edge": false,
+  "external_orders": 0,
+  "historical_seal_rewritten": false,
+  "holdout_state": "UNOPENED",
+  "migration_id": "JPY_ACCOUNTING_AND_LONDON_DST_RUNTIME_MIGRATION_V1",
+  "official_strategy_run_performed": false,
+  "profit_gate_pass_inferred": false,
+  "protected_historical_artifact_hashes": {
+    "evidence/orchestrator_state_v2/next_hypothesis_work_order_v42.json": "29d541646f57efffe543007d94ce0958a2fa3cc68180cf521101886a8b09b524",
+    "evidence/orchestrator_state_v2/official_seal_v41.json": "ad3362849a979f13afa3c5c1f6c52b88431a1fac54a2889839c3a93c991afc6c",
+    "evidence/run_london_open_false_break_reclaim_v41_official_001/proposal_ledger_london_open_false_break_reclaim_v41.jsonl": "0a6e4ce7f1198969a5cffab865c3cd7e7240f233926eab18897221afe019c600",
+    "evidence/run_london_open_false_break_reclaim_v41_official_001/result_london_open_false_break_reclaim_v41.json": "953370828c05dbbbae6fdde1287bfd81bc3ca0317fdc519f3d13da854a60a83a"
+  },
+  "reference_fixture_count": 4,
+  "reference_fixture_file_sha256": "80c6295fecf59240e250b6c128af879bd6258511595f70787a72bd4fcb401730",
+  "reference_fixture_parity_passed": true,
+  "reference_fixture_path": "evidence/jpy_accounting_dst_runtime_migration_v1/reference_fixture_parity_v1.jsonl",
+  "schema_version": 1,
+  "sealed_plan_accounting_diagnostic": {
+    "V38": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 2.6358278894877425,
+          "formal_gross_jpy": 1612.837783084134,
+          "formal_net_jpy": 665.359222466653,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0033267961123333,
+          "formal_total_cost_jpy": 947.4785606174808,
+          "prior_accounting_only_diagnostic_multiple": 1.0032535337927713,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.003424809082437
+        },
+        "EXECUTABLE_BASE": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 2.659821526801492,
+          "formal_gross_jpy": 1612.837783084134,
+          "formal_net_jpy": 1067.8399269872712,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0053391996349363,
+          "formal_total_cost_jpy": 544.9978560968628,
+          "prior_accounting_only_diagnostic_multiple": 1.0052684753808443,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.0054413356328307
+        },
+        "RAW_SIGNAL": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 2.8066553736853486,
+          "formal_gross_jpy": 1612.837783084134,
+          "formal_net_jpy": 1612.837783084134,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0080641889154207,
+          "formal_total_cost_jpy": 0.0,
+          "prior_accounting_only_diagnostic_multiple": null,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.0081832509786561
+        }
+      },
+      "episode_count": 35,
+      "execution_transition_sha256": "92c0a1e161395570ebc6ca6a85a78f21c738e3155459a89a3af49623ed826808",
+      "hidden_2x_revealed": false,
+      "same_explicit_units_all_arms": true,
+      "terminal_inventory_mtm_jpy": 0.0,
+      "terminal_open_inventory": 0
+    },
+    "V40": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.37021482081445756,
+          "formal_gross_jpy": 1213.0247292399483,
+          "formal_net_jpy": 292.5983375148657,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0014629916875744,
+          "formal_total_cost_jpy": 920.426391725083,
+          "prior_accounting_only_diagnostic_multiple": 1.0014481695753052,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.0014733428327323
+        },
+        "EXECUTABLE_BASE": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.37220781348512777,
+          "formal_gross_jpy": 1213.0247292399483,
+          "formal_net_jpy": 696.8820623074482,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0034844103115372,
+          "formal_total_cost_jpy": 516.1426669325007,
+          "prior_accounting_only_diagnostic_multiple": 1.0034748354141543,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.0035004058451942
+        },
+        "RAW_SIGNAL": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.3838730142122495,
+          "formal_gross_jpy": 1213.0247292399483,
+          "formal_net_jpy": 1213.0247292399483,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 1.0060651236461997,
+          "formal_total_cost_jpy": 0.0,
+          "prior_accounting_only_diagnostic_multiple": null,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 1.006095150624114
+        }
+      },
+      "episode_count": 77,
+      "execution_transition_sha256": "1d8c7b6ee969994d0945a36d285a896432f64147d45a837a24d6ee150412548f",
+      "hidden_2x_revealed": false,
+      "same_explicit_units_all_arms": true,
+      "terminal_inventory_mtm_jpy": 0.0,
+      "terminal_open_inventory": 0
+    },
+    "V41": {
+      "arms": {
+        "ADVERSE_STRESS": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.3220141061854983,
+          "formal_gross_jpy": -589.7224873397498,
+          "formal_net_jpy": -1511.1620764514878,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 0.9924441896177426,
+          "formal_total_cost_jpy": 921.4395891117382,
+          "prior_accounting_only_diagnostic_multiple": 0.9924844093867128,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 0.9924988234665635
+        },
+        "EXECUTABLE_BASE": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.30559880770656667,
+          "formal_gross_jpy": -589.7224873397498,
+          "formal_net_jpy": -1105.9817353383626,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 0.9944700913233082,
+          "formal_total_cost_jpy": 516.2592479986129,
+          "prior_accounting_only_diagnostic_multiple": 0.9944945064365948,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 0.9945074167642008
+        },
+        "RAW_SIGNAL": {
+          "diagnostic_only": true,
+          "formal_below_2x": true,
+          "formal_conversion_bid_ask_width_jpy": 0.28062187665064364,
+          "formal_gross_jpy": -589.7224873397498,
+          "formal_net_jpy": -589.7224873397498,
+          "formal_sign_aware_bbo_fixed_notional_multiple": 0.9970513875633013,
+          "formal_total_cost_jpy": 0.0,
+          "prior_accounting_only_diagnostic_multiple": null,
+          "reusable_as_official_seal": false,
+          "sealed_legacy_multiple": 0.9970717769074577
+        }
+      },
+      "episode_count": 78,
+      "execution_transition_sha256": "636e0d08e661b83d7d5bc17099d78e94aa44e43c5bf66b631bc9b09a5e2ab986",
+      "hidden_2x_revealed": false,
+      "same_explicit_units_all_arms": true,
+      "terminal_inventory_mtm_jpy": 0.0,
+      "terminal_open_inventory": 0
+    }
+  },
+  "sealed_signal_or_action_changed": false,
+  "source_artifact_sha256": {
+    "accounting_runtime": "f49998e6d01bdbec65f8a6f307e039d531c5fcdad9899c5ef3d5ae946132dda6",
+    "accounting_tests": "33d8a8a1b11eed7f47ae586db6e8e7309b576ef3ad328b2eb31ccea2dacd8e6b",
+    "chronology_tests": "967f71c8cdb68a46aabb73419b8bb258d77e78904202d1d72a7e4d206e5bbef7",
+    "independent_reference": "4a875653362789bec3907f4fe5adaf92354ec096066a4a1eb47e8274999aa747",
+    "london_chronology": "3d3bf97fdcf9f4c583e217fba4ba199ab84ca731e0e670947cf4d72c8e807cc0",
+    "policy": "0af5ea76f98f166e67b03ee42e4f043c3f3002cd4569a29e79a3e5454d805a83"
+  },
+  "strategy_adoption_authorized": false,
+  "v42_dst_only": "NO_GO"
+}

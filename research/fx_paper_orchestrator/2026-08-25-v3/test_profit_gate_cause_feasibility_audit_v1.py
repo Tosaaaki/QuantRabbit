@@ -17,6 +17,18 @@ def payload() -> dict:
     return audit.validate(ROOT)
 
 
+def test_semantic_readback_keeps_hashes_exact_but_tolerates_float_last_bit() -> None:
+    stored = {"hash": "a" * 64, "values": [0.1, True, 7]}
+    same = {"hash": "a" * 64, "values": [0.1 + 5e-17, True, 7]}
+    assert audit.evidence_semantically_equal(stored, same)
+    assert not audit.evidence_semantically_equal(
+        stored, {"hash": "b" * 64, "values": [0.1, True, 7]}
+    )
+    assert not audit.evidence_semantically_equal(
+        stored, {"hash": "a" * 64, "values": [0.1 + 1e-12, True, 7]}
+    )
+
+
 def test_audit_is_read_only_paper_evidence_not_profit_admission(payload: dict) -> None:
     assert payload["classification"] == "NON_STRATEGY_READ_ONLY_CAUSE_FEASIBILITY_EVIDENCE"
     assert payload["holdout_state"] == "UNOPENED"

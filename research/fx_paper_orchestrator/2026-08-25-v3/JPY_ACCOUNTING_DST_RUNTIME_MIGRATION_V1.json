@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "migration_id": "JPY_ACCOUNTING_AND_LONDON_DST_RUNTIME_MIGRATION_V1",
+  "classification": "NON_STRATEGY_RUNTIME_ACCOUNTING_AND_CHRONOLOGY_MIGRATION",
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "historical_boundary": {
+    "sealed_cycles_v25_through_v41_recalculated": false,
+    "sealed_results_rewritten": false,
+    "historical_profit_classification_changed": false,
+    "legacy_accounting_is_evidence_only": true,
+    "new_accounting_applies_first_to_a_new_preregistered_official_cycle": true
+  },
+  "jpy_account_contract": {
+    "account_currency": "JPY",
+    "position_size": "EXPLICIT_FIXED_JPY_NOTIONAL_AND_EXPLICIT_BASE_UNITS",
+    "pnl_order": [
+      "COMPUTE_LINEAR_TRADE_PNL_IN_PAIR_QUOTE_CURRENCY",
+      "CONVERT_SIGNED_QUOTE_PNL_TO_JPY_AT_EXIT_OR_MARK_EVENT",
+      "CONVERT_COMMISSION_AND_FINANCING_LIABILITIES_WITH_THE_SAME_SIGN_AWARE_RULE",
+      "POST_JPY_RESULT_TO_APPEND_ONLY_ACCOUNT_LEDGER"
+    ],
+    "long_quote_pnl_formula": "units * (exit_price_quote_per_base - entry_price_quote_per_base)",
+    "short_quote_pnl_formula": "units * (entry_price_quote_per_base - exit_price_quote_per_base)",
+    "inverse_wealth_shortcut_forbidden": true,
+    "positive_currency_amount": "SELL_ASSET_ALONG_EXPLICIT_PATH_USING_BID_OR_INVERSE_ASK",
+    "negative_currency_amount": "BUY_BACK_LIABILITY_FROM_JPY_ALONG_REVERSED_PATH_USING_BID_OR_INVERSE_ASK",
+    "account_currency_midpoint_conversion_forbidden": true,
+    "pair_midpoint_allowed_only_for_raw_pair_price_diagnostic": true,
+    "conversion_move_decomposition": "REVALUE_IDENTICAL_SIGNED_QUOTE_PNL_AT_ENTRY_AND_EXIT_EXECUTABLE_CONVERSION",
+    "conversion_cost_diagnostic": "LIABILITY_BUYBACK_JPY_MINUS_ASSET_LIQUIDATION_JPY_FOR_EQUAL_ABSOLUTE_QUOTE_AMOUNT",
+    "conversion_cost_is_not_double_subtracted": true,
+    "commission_currency": "PAIR_QUOTE",
+    "financing_currency": "PAIR_QUOTE",
+    "financing_time_basis": "ACTUAL_UTC_ELAPSED_SECONDS_DIVIDED_BY_86400_INCLUDING_WEEKEND_GAPS",
+    "currency_inventory": "BASE_DIRECTIONAL_UNITS_AND_ENTRY_QUOTE_FUNDING_VECTOR",
+    "terminal_liquidation_required": true,
+    "terminal_open_inventory_required": 0,
+    "terminal_inventory_mtm_jpy_required": 0.0
+  },
+  "conversion_paths": {
+    "JPY": [],
+    "USD": [
+      {"instrument": "USD_JPY", "from_currency": "USD", "to_currency": "JPY"}
+    ],
+    "CAD": [
+      {"instrument": "USD_CAD", "from_currency": "CAD", "to_currency": "USD"},
+      {"instrument": "USD_JPY", "from_currency": "USD", "to_currency": "JPY"}
+    ],
+    "CHF": [
+      {"instrument": "USD_CHF", "from_currency": "CHF", "to_currency": "USD"},
+      {"instrument": "USD_JPY", "from_currency": "USD", "to_currency": "JPY"}
+    ]
+  },
+  "conversion_quote_contract": {
+    "source": "COMPLETED_CAUSAL_BID_ASK",
+    "maximum_staleness_seconds": 300,
+    "quote_source_time_must_be_lte_event_time": true,
+    "latest_eligible_quote_only": true,
+    "future_quote_must_not_change_past_conversion": true,
+    "path_selection_uses_price_or_outcome": false,
+    "exactly_one_preregistered_path_per_source_currency": true,
+    "fail_closed": [
+      "MISSING_QUOTE",
+      "STALE_QUOTE",
+      "FUTURE_QUOTE",
+      "NONPOSITIVE_PRICE",
+      "NONFINITE_PRICE",
+      "ASK_BELOW_BID",
+      "DUPLICATE_OR_REVERSED_PROVIDER_CHRONOLOGY",
+      "MISSING_CONVERSION_PATH",
+      "AMBIGUOUS_CONVERSION_PATH",
+      "DISCONNECTED_OR_CYCLIC_PATH"
+    ]
+  },
+  "cost_arms": {
+    "same_signal_action_and_inventory_transition_contract": true,
+    "RAW_SIGNAL": {
+      "pair_price": "COMPLETED_PAIR_MID_DIAGNOSTIC",
+      "account_conversion": "SIGN_AWARE_EXECUTABLE_BID_ASK",
+      "slippage_pips_per_side": 0.0,
+      "commission_bps_per_side": 0.0,
+      "financing_bps_per_day": 0.0,
+      "cost_may_suppress_raw_signal": false
+    },
+    "EXECUTABLE_BASE": {
+      "pair_price": "ACTUAL_SIDE_BID_ASK_PLUS_0_3_PIP_PER_SIDE_SLIPPAGE",
+      "account_conversion": "SIGN_AWARE_EXECUTABLE_BID_ASK",
+      "slippage_pips_per_side": 0.3,
+      "commission_bps_per_side": 0.0,
+      "financing_bps_per_day": 0.5
+    },
+    "ADVERSE_STRESS": {
+      "pair_price": "ACTUAL_SIDE_BID_ASK_PLUS_0_9_PIP_PER_SIDE_SLIPPAGE",
+      "account_conversion": "SIGN_AWARE_EXECUTABLE_BID_ASK",
+      "slippage_pips_per_side": 0.9,
+      "commission_bps_per_side": 0.2,
+      "financing_bps_per_day": 1.5
+    }
+  },
+  "london_chronology_contract": {
+    "timezone": "Europe/London",
+    "accepted_timestamp_input": "CANONICAL_UTC_Z_ONLY_0_TO_9_FRACTION_DIGITS",
+    "local_or_offset_timestamp_input_accepted": false,
+    "utc_to_local_direction_only": true,
+    "fixed_utc_hour_is_strategy_edge": false,
+    "classification": "COMMON_CHRONOLOGY_FOUNDATION_NOT_NEW_EDGE",
+    "bar_interval": "M5",
+    "rail_data": "COMPLETED_BARS_THROUGH_T_MINUS_1",
+    "decision": "COMPLETED_T_CLOSE",
+    "fill": "NEXT_M5_EXECUTABLE_OPEN_T_PLUS_1",
+    "missing_bar_action": "FAIL_CLOSED_NO_SIGNAL_NO_FILL",
+    "duplicate_bar_action": "FAIL_CLOSED_NO_SIGNAL_NO_FILL",
+    "ambiguous_fall_wall_clock_action": "FAIL_CLOSED_NO_SIGNAL_NO_FILL",
+    "spring_missing_wall_clock_action": "FAIL_CLOSED_NO_SIGNAL_NO_FILL",
+    "required_fixtures": [
+      "WINTER_GMT",
+      "SUMMER_BST",
+      "SPRING_FORWARD_BOUNDARY",
+      "FALL_BACK_BOUNDARY"
+    ]
+  },
+  "acceptance_properties": [
+    "POSITIVE_ASSET_SELL_SIDE",
+    "NEGATIVE_LIABILITY_BUYBACK_SIDE",
+    "JPY_AND_NON_JPY_SCALE_INVARIANCE",
+    "EXECUTABLE_CONVERSION_ROUNDTRIP_LOSS_NONNEGATIVE",
+    "QUOTE_INVERSION_EQUIVALENCE",
+    "FUTURE_TIMESTAMP_INVARIANCE",
+    "LONG_SHORT_LINEAR_PNL_REFERENCE_PARITY",
+    "USD_JPY_DIRECT_QUOTE",
+    "USD_CAD_AND_USD_CHF_TWO_HOP_QUOTE",
+    "CONVERSION_MOVE",
+    "MONTH_BOUNDARY_EXIT_BOOKING",
+    "WEEKEND_FINANCING",
+    "TERMINAL_LIQUIDATION_ZERO_MTM",
+    "PORTFOLIO_SUM_RECONCILIATION",
+    "OLD_VS_NEW_DIAGNOSTIC_HASHES",
+    "WINTER_SUMMER_AND_DST_BOUNDARY_CHRONOLOGY"
+  ],
+  "v42_boundary": {
+    "dst_only_revenue_hypothesis": "NO_GO",
+    "dst_migration_may_be_reused_by_redesigned_family": true,
+    "current_existing_v42_work_order_may_be_rewritten": false,
+    "official_v42_execution_performed_by_this_migration": false,
+    "redesigned_family_requires_separate_preregistration": true
+  },
+  "holdout": {
+    "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+    "state": "UNOPENED",
+    "opened_by_migration": false
+  },
+  "profit_or_adoption": {
+    "profit_inferred": false,
+    "strategy_adoption_authorized": false,
+    "accounting_diagnostic_reusable_as_official_seal": false
+  }
+}
