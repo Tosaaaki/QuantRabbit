@@ -1,0 +1,58 @@
+{
+  "artifact_id": "FX_LONDON_ASIAN_RANGE_BREAKOUT_V37",
+  "cycle_id": "V37",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "failed_predecessor": {
+    "cycle_id": "V36",
+    "status": "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN",
+    "failure_evidence": "V36_OFFICIAL_EXECUTION_FAILURE.json",
+    "metrics_available": false,
+    "profit_proven": false,
+    "rerun_permitted": false
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "evaluation_scope_eligibility_compatibility_only_preserving_the_unobserved_v36_signal_family",
+    "same_unobserved_v36_strategy_within_fixed_evaluation_period": true
+  },
+  "runtime_compatibility_provenance": {
+    "classification": "NON_STRATEGY_EVALUATION_SCOPE_COMPATIBILITY",
+    "changed_strategy_variables": 0,
+    "evaluation_end_exclusive": "2026-07-01",
+    "eligibility_formula": "utc_day < 2026-07-01",
+    "price_return_cost_inputs": false,
+    "v36_rerun_permitted": false
+  },
+  "frozen_v36_signal_family": {
+    "name": "LONDON_OPEN_COMPLETED_ASIAN_RANGE_BREAKOUT",
+    "asian_range_utc": "00:00-05:55 completed M5 midpoint highs/lows",
+    "decision": "07:55 completed close outside range",
+    "fill": "08:00 next M5 executable open",
+    "raw_exit": "15:55 completed M5 close",
+    "direction_formula_changed": false,
+    "cost_or_post_entry_outcome_inputs": false
+  },
+  "fixed_contracts": {
+    "costs_leverage_periods_changed": false,
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "hard_max_age_seconds": 345600,
+    "holdout": {"state": "UNOPENED", "may_execute": false},
+    "official_run_limit": 1
+  },
+  "proposal_provenance": {
+    "model_identity": "NO_ACTUAL_LLM_USED",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

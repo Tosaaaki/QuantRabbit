@@ -1,0 +1,24 @@
+{
+  "parent_cycle": "V36",
+  "proposed_cycle": "V37",
+  "status": "PRE_RESULT_RUNTIME_RECOVERY_NOT_REGISTERED_NOT_EXECUTABLE",
+  "reason_code": "V36_POST_EVALUATION_PARTIAL_DAY_PATH_INCOMPLETE",
+  "single_next_changed_variable": "evaluation_scope_eligibility_compatibility_only_preserving_the_unobserved_v36_signal_family",
+  "requirements": {
+    "v36_may_not_be_replayed": true,
+    "same_unobserved_v36_strategy_within_fixed_evaluation_period": true,
+    "exclude_only_dates_at_or_after_frozen_walk_forward_end": "2026-07-01",
+    "costs_leverage_periods_holdout_unchanged": true,
+    "official_run_limit_for_new_cycle": 1
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

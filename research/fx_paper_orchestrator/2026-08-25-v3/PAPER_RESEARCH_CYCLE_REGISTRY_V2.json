@@ -13,7 +13,7 @@
   },
   "coordinator": {
     "path": "paper_research_orchestrator_v2.py",
-    "sha256": "617fdec81f71e6c21702169302b806b09802af14e803d94ecf2e6653784e980e",
+    "sha256": "9678c6c9a1d970a7de0d5bf9b28092298f44e2b9dc8dc90ce5937c54659554a3",
     "failure_text_policy": "SANITIZED_BOUNDED_EXCERPT_AND_FULL_SHA256"
   },
   "next_work_order_policy": {
@@ -1311,6 +1311,86 @@
         "official_run_limit": 1,
         "result": "evidence/run_london_asian_range_breakout_v36_official_001/result_london_asian_range_breakout_v36.json",
         "ledger": "evidence/run_london_asian_range_breakout_v36_official_001/proposal_ledger_london_asian_range_breakout_v36.jsonl"
+      }
+    },
+    {
+      "cycle_id": "V37",
+      "registered_before_official_execution": true,
+      "depends_on_cycle": "V35",
+      "depends_on_legacy_cycle": null,
+      "failed_predecessor_cycle": "V36",
+      "status": "REGISTERED_PENDING_OFFICIAL_EXECUTION",
+      "preregistration": "LONDON_ASIAN_RANGE_BREAKOUT_PREREGISTRATION_V37.json",
+      "preregistration_sha256": "c22449a0c4c9db3efbe1c2824227ace7ca4721d8ee3cababbab3ddf79ca1c000",
+      "script": "run_london_asian_range_breakout_v37.py",
+      "script_sha256": "02f7cd4c9583e526ab01ace0455f802203a3c27ba653ff4fd33a4a582325b41a",
+      "test": "test_london_asian_range_breakout_v37.py",
+      "test_sha256": "fb63d1325b1a952f17267862949c16a48df542a53fb81ac49af534f09915b1b5",
+      "dependency_files": [
+        {"path": "run_london_asian_range_breakout_v36.py", "sha256": "8f8da1b0e8289780d1d07b190d1cbea29b455baaac6325e4a73e97d6ebff56fb"},
+        {"path": "V36_OFFICIAL_EXECUTION_FAILURE.json", "sha256": "f1f2a6f8d7fd075b110ec0d4126caed26bdc57eb9369968b096179f6c2e4a05f"},
+        {"path": "V37_PRE_RESULT_RECOVERY_WORK_ORDER.json", "sha256": "b122b283f9d285e3861a963bd7df546bbe7de6bc7b4d0224a9dd8d9bde0ea2d7"},
+        {"path": "evidence/orchestrator_state_v2/official_seal_v35.json", "sha256": "c2d9ada3413709e4e3b5b2e1d1aa89eafd2b5988b9c9fa0562ebc10d533225d9"}
+      ],
+      "hypothesis_contract": {
+        "independent": true,
+        "frozen_before_replay": true,
+        "baseline": "UNOBSERVED_FX_LONDON_ASIAN_RANGE_BREAKOUT_V36",
+        "family": "FX_SESSION_RANGE_BREAKOUT",
+        "family_hypothesis_number": 1,
+        "single_changed_variable": "evaluation_scope_eligibility_compatibility_only_preserving_the_unobserved_v36_signal_family",
+        "changed_variable_count": 1
+      },
+      "source_contract": {
+        "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+        "bar_granularity": "M5", "price_component": "BID_ASK", "completed_only": true,
+        "strictly_increasing_timestamp": true,
+        "files": {
+          "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+          "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+          "GBP_USD": "ecb25469bad45a34f4eb184ca80fac01ab14c1e19b89185a3d7623c4d09c4f92",
+          "NZD_USD": "510c226680bf6f704fa483aa01f81e3f945c6e99624448fb795a9b95d1b84642",
+          "USD_CAD": "f0238ffa77da1e9c808689393e8377671be76d16298f6dc17b7a7fff59b67abc",
+          "USD_CHF": "861761ea749abf0af7e8e353b83b038b43e9de9ea23f53fd384e57e5604fd70f",
+          "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+        },
+        "manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55"
+      },
+      "signal_contract": {
+        "raw_signal_source": "GENERATED_IN_CYCLE",
+        "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+        "same_signal_id_set": true, "same_entry_direction_exit": true,
+        "same_execution_state_transitions_all_arms": true, "raw_cost_gate": false,
+        "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+        "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS"
+      },
+      "inventory_contract": {
+        "currencies": ["AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"],
+        "one_position_per_pair": true, "one_basket_per_utc_day": true,
+        "add_to_position": false, "martingale": false, "overlap": false,
+        "fixed_pair_sleeve": 0.14285714285714285, "gross_leverage_cap": 1.0,
+        "rule_max_gross_leverage": 1.0, "currency_abs_exposure_cap": 1.0,
+        "finite_max_age_seconds": 345600, "terminal_liquidation_required": true,
+        "terminal_mtm_hidden": false
+      },
+      "evaluation_contract": {
+        "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+        "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+        "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false},
+        "development_evidence_label": "OPENED_2026_DATA_NOT_FINAL_HOLDOUT"
+      },
+      "proposal_provenance": {
+        "proposal_kind": "UNOBSERVED_V36_STRATEGY_WITH_EVALUATION_SCOPE_COMPATIBILITY_ONLY",
+        "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+        "policy_provenance": "LONDON_ASIAN_RANGE_BREAKOUT_PREREGISTRATION_V37.json#runtime_compatibility_provenance",
+        "model_identity": "NO_ACTUAL_LLM_USED", "unverified_identity_may_not_be_inferred": true
+      },
+      "execution": {
+        "argv": ["run_london_asian_range_breakout_v37.py", "--input-root", "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z", "--output-root", "evidence/run_london_asian_range_breakout_v37_official_001"],
+        "pythonpath": ["paper_replay_compat", "."], "timeout_seconds": 1800,
+        "official_run_limit": 1,
+        "result": "evidence/run_london_asian_range_breakout_v37_official_001/result_london_asian_range_breakout_v37.json",
+        "ledger": "evidence/run_london_asian_range_breakout_v37_official_001/proposal_ledger_london_asian_range_breakout_v37.jsonl"
       }
     }
   ]

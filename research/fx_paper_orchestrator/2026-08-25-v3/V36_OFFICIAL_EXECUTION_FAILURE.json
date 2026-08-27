@@ -1,0 +1,26 @@
+{
+  "cycle_id": "V36",
+  "status": "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN",
+  "official_execution_ordinal": 1,
+  "subprocess_returncode": 1,
+  "stderr_sha256": "4757710c4b86a1fa6c85b4400deb29937036d0c9599494a3e921d1e99392a5e3",
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure_class": "POST_EVALUATION_PARTIAL_DAY_RAW_PATH_COMPLETENESS",
+  "sanitized_error": "accepted signal path became incomplete",
+  "result_exists": false,
+  "metrics_available": false,
+  "profit_proven": false,
+  "rerun_permitted": false,
+  "strategy_observed": false,
+  "holdout": {"state": "UNOPENED", "may_execute": false},
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}

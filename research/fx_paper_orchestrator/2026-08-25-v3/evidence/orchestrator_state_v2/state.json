@@ -140,6 +140,16 @@
       "stdout_sha256": "d5ee4fec4b9cb011383b7d09de6447268b61c0ac1adb791a5fb403d98a33ce06",
       "strategy_profit_pass": false,
       "subprocess_returncode": 0
+    },
+    "V36": {
+      "official_attempts": 1,
+      "sanitized_stderr_excerpt": "Traceback (most recent call last):\n  File \"<local-path>\", line 149, in <module>\n    raise SystemExit(main())\n  File \"<local-path>\", line 140, in main\n    result = run(args.input_root, args.output_root)\n  File \"<local-path>\", line 86, in run\n    payload = engine.run(input_root, output_root)\n  File \"<local-path>\", line 172, in run\n    path_for_signal(pair_day_bars[signal[\"pair\"]], signal), int(signal[\"direction\"])\n  File \"<local-path>\", line 156, in path_for_signal\n    raise ValueError(\"accepted signal path became incomplete\")\nValueError: accepted signal path became incomplete\n",
+      "source_manifest_sha256": "39df658ed80fceb51282a893ec37377e8e6f760803d3dd0b0622b217b61fcb55",
+      "started_at": "2026-08-27T04:09:37.107425+00:00",
+      "status": "FAILED_OFFICIAL_EXECUTION_NO_RERUN",
+      "stderr_sha256": "4757710c4b86a1fa6c85b4400deb29937036d0c9599494a3e921d1e99392a5e3",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "subprocess_returncode": 1
     }
   },
   "schema_version": 2

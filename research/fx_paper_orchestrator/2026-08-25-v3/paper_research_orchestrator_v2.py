@@ -329,7 +329,7 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                          and node.name == "detect_day_signals"]
             if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
                 raise ContractError("signal detector exposes cost or outcome inputs")
-        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36"}:
+        if cycle["cycle_id"] not in {"V33", "V34", "V35", "V36", "V37"}:
             simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                                and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
             if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
@@ -482,6 +482,21 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
                     or rule.get("same_signal_action_state_all_cost_arms") is not True \
                     or rule.get("cost_or_post_entry_outcome_inputs") is not False:
                 raise ContractError("V36 signal family differs from preregistration")
+        if cycle["cycle_id"] == "V37":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            failure = prereg.get("failed_predecessor", {})
+            runtime = prereg.get("runtime_compatibility_provenance", {})
+            if failure.get("cycle_id") != "V36" \
+                    or failure.get("status") != "FAILED_OFFICIAL_EXECUTION_NO_RESULT_NO_RERUN" \
+                    or failure.get("metrics_available") is not False \
+                    or failure.get("rerun_permitted") is not False:
+                raise ContractError("V37 did not preserve V36 as a terminal pre-result failure")
+            if runtime.get("classification") != "NON_STRATEGY_EVALUATION_SCOPE_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("evaluation_end_exclusive") != "2026-07-01" \
+                    or runtime.get("price_return_cost_inputs") is not False \
+                    or runtime.get("v36_rerun_permitted") is not False:
+                raise ContractError("V37 evaluation-scope recovery changed the unobserved V36 strategy")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -989,15 +1004,16 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             if any(not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z", row[field])
                            for field in ("decision_time", "fill_time", "exit_time")) for row in rows):
                 raise ContractError("V33 ledger contains a noncanonical scheduled timestamp")
-    if cycle["cycle_id"] == "V36":
-        if payload.get("cycle_id") != "V36" \
-                or payload.get("experiment") != "FX_LONDON_ASIAN_RANGE_BREAKOUT_V36" \
+    if cycle["cycle_id"] in {"V36", "V37"}:
+        cycle_id = cycle["cycle_id"]
+        if payload.get("cycle_id") != cycle_id \
+                or payload.get("experiment") != f"FX_LONDON_ASIAN_RANGE_BREAKOUT_{cycle_id}" \
                 or payload.get("family") != "FX_SESSION_RANGE_BREAKOUT" \
                 or payload.get("single_changed_variable") \
                 != "fx_specific_london_asian_range_breakout_signal_family" \
                 or payload.get("same_execution_actions_all_cost_arms") is not True \
                 or payload.get("same_execution_state_transitions_all_cost_arms") is not True:
-            raise ContractError("V36 result identity or cost-arm parity mismatch")
+            raise ContractError(f"{cycle_id} result identity or cost-arm parity mismatch")
         indicator = payload.get("indicator", {})
         if indicator.get("asian_range_utc") != "00:00-05:55_COMPLETED_MID_HIGH_LOW" \
                 or indicator.get("decision_utc") != "07:55_COMPLETED_CLOSE" \
@@ -1006,16 +1022,27 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 or indicator.get("cost_used_for_signal") is not False \
                 or indicator.get("post_entry_outcome_used_for_signal") is not False \
                 or indicator.get("evaluation_month_used_for_threshold") is not False:
-            raise ContractError("V36 result signal formula differs from preregistration")
+            raise ContractError(f"{cycle_id} result signal formula differs from preregistration")
         if any(row.get("execution_selected") is not True for row in rows):
-            raise ContractError("V36 dropped a generated RAW signal")
+            raise ContractError(f"{cycle_id} dropped a generated RAW signal")
         if any(not isinstance(row.get("arm_actions"), dict)
                or set(row["arm_actions"]) != set(ARMS)
                or len(set(row["arm_actions"].values())) != 1 for row in rows):
-            raise ContractError("V36 execution actions differ across cost arms")
+            raise ContractError(f"{cycle_id} execution actions differ across cost arms")
         if payload.get("signal_id_set_sha256") \
                 != hashlib.sha256(canonical_bytes(sorted(ids))).hexdigest():
-            raise ContractError("V36 signal-id set hash mismatch")
+            raise ContractError(f"{cycle_id} signal-id set hash mismatch")
+        if cycle_id == "V37":
+            runtime = payload.get("runtime_compatibility_provenance", {})
+            if runtime.get("classification") != "NON_STRATEGY_EVALUATION_SCOPE_COMPATIBILITY" \
+                    or runtime.get("changed_strategy_variables") != 0 \
+                    or runtime.get("same_unobserved_v36_strategy_within_evaluation") is not True \
+                    or runtime.get("evaluation_end_exclusive") != "2026-07-01" \
+                    or runtime.get("v36_rerun_permitted") is not False \
+                    or runtime.get("post_evaluation_data_used") is not False:
+                raise ContractError("V37 result runtime compatibility provenance mismatch")
+            if any(row["utc_day"] >= "2026-07-01" for row in rows):
+                raise ContractError("V37 ledger escaped the fixed evaluation period")
     if cycle["cycle_id"] in {"V34", "V35"}:
         cycle_id = cycle["cycle_id"]
         expected_experiment = {
@@ -1124,7 +1151,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36"}:
+            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -1150,7 +1177,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35", "V36", "V37"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
@@ -1163,7 +1190,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
-        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36"}:
+        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35", "V36", "V37"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
