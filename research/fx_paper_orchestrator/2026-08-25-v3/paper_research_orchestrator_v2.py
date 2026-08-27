@@ -324,12 +324,12 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
     tree = ast.parse(within(root, cycle["script"]).read_text(encoding="utf-8"))
     raw_source = signal.get("raw_signal_source", "GENERATED_IN_CYCLE")
     if raw_source == "GENERATED_IN_CYCLE":
-        if cycle["cycle_id"] not in {"V34"}:
+        if cycle["cycle_id"] not in {"V34", "V35"}:
             detectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
                          and node.name == "detect_day_signals"]
             if len(detectors) != 1 or [arg.arg for arg in detectors[0].args.args] != ["pair_day_bars"]:
                 raise ContractError("signal detector exposes cost or outcome inputs")
-        if cycle["cycle_id"] not in {"V33", "V34"}:
+        if cycle["cycle_id"] not in {"V33", "V34", "V35"}:
             simulator_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                                and isinstance(node.func, ast.Name) and node.func.id == "simulate_portfolio"]
             if len(simulator_calls) != 1 or len(simulator_calls[0].args) < 3:
@@ -424,6 +424,40 @@ def validate_cycle_contract(root: Path, cycle: dict[str, Any]) -> None:
             if len(selectors) != 1 or [arg.arg for arg in selectors[0].args.args] != ["rows"] \
                     or len(scorers) != 1 or [arg.arg for arg in scorers[0].args.args] != ["row"]:
                 raise ContractError("V34 deterministic turnover selector contract mismatch")
+        if cycle["cycle_id"] == "V35":
+            prereg = json.loads(within(root, cycle["preregistration"]).read_text(encoding="utf-8"))
+            failure = prereg.get("failed_predecessor", {})
+            selection = prereg.get("training_only_rule_selection", {})
+            rule = prereg.get("admission_rule", {})
+            if failure.get("cycle_id") != "V34" \
+                    or failure.get("status") != "FAILED_RESULT_VALIDATION_NO_RERUN" \
+                    or failure.get("metrics_admissible") is not False \
+                    or failure.get("rerun_permitted") is not False \
+                    or prereg.get("work_order", {}).get("sha256") \
+                    != "e2120996e628b0a72ecc6956b713b211f6bce6e01a31c5611f19c78f491b6e17":
+                raise ContractError("V35 did not preserve V34 as an inadmissible terminal failure")
+            if selection.get("candidate_rules_preregistered") != 1 \
+                    or selection.get("candidate_rules_compared_by_outcome") != 0 \
+                    or selection.get("v34_result_metrics_used") is not False \
+                    or selection.get("cost_consulted") is not False \
+                    or selection.get("post_entry_return_outcome_consulted") is not False \
+                    or selection.get("evaluation_month_used") is not False \
+                    or selection.get("holdout_used") is not False:
+                raise ContractError("V35 admission rule was not one outcome-free preregistered candidate")
+            if rule.get("name") != "GLOBAL_HARD_AGE_NO_OVERLAP_ADMISSION" \
+                    or rule.get("hard_spacing_seconds") \
+                    != cycle["inventory_contract"]["finite_max_age_seconds"] \
+                    or rule.get("same_v33_raw_signal_ids_directions_timestamps") is not True \
+                    or rule.get("same_mask_all_cost_arms") is not True \
+                    or rule.get("cost_or_outcome_inputs") is not False:
+                raise ContractError("V35 global no-overlap rule differs from preregistration")
+            selectors = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                         and node.name == "apply_rule"]
+            rankers = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == "daily_representatives"]
+            if len(selectors) != 1 or [arg.arg for arg in selectors[0].args.args] != ["rows"] \
+                    or len(rankers) != 1 or [arg.arg for arg in rankers[0].args.args] != ["rows"]:
+                raise ContractError("V35 deterministic admission selector contract mismatch")
     elif raw_source == "SEALED_PARENT_V25_LEDGER":
         require_keys(signal, {
             "parent_cycle_id", "parent_ledger", "parent_ledger_sha256", "parent_signal_id_set_sha256",
@@ -931,43 +965,67 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             if any(not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z", row[field])
                            for field in ("decision_time", "fill_time", "exit_time")) for row in rows):
                 raise ContractError("V33 ledger contains a noncanonical scheduled timestamp")
-    if cycle["cycle_id"] == "V34":
-        if payload.get("cycle_id") != "V34" \
-                or payload.get("experiment") != "FX_CAUSAL_TAIL_EXCESS_REPRESENTATIVE_V34" \
+    if cycle["cycle_id"] in {"V34", "V35"}:
+        cycle_id = cycle["cycle_id"]
+        expected_experiment = {
+            "V34": "FX_CAUSAL_TAIL_EXCESS_REPRESENTATIVE_V34",
+            "V35": "FX_GLOBAL_NO_OVERLAP_ADMISSION_V35",
+        }[cycle_id]
+        if payload.get("cycle_id") != cycle_id \
+                or payload.get("experiment") != expected_experiment \
                 or payload.get("same_execution_mask_all_cost_arms") is not True \
                 or payload.get("same_execution_state_transitions_all_cost_arms") is not True:
-            raise ContractError("V34 result identity or arm parity mismatch")
+            raise ContractError(f"{cycle_id} result identity or arm parity mismatch")
         parent_path = within(root, cycle["signal_contract"]["parent_ledger"])
         parent_rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines() if line]
         identity = ("signal_id", "pair", "utc_day", "decision_time", "fill_time", "exit_time", "direction")
         if [[row[field] for field in identity] for row in rows] != [
                 [row[field] for field in identity] for row in parent_rows]:
-            raise ContractError("V34 changed sealed V33 RAW signal identity")
+            raise ContractError(f"{cycle_id} changed sealed V33 RAW signal identity")
         if payload.get("parent_ledger_sha256") != cycle["signal_contract"]["parent_ledger_sha256"] \
                 or payload.get("parent_result_sha256") != cycle["signal_contract"]["parent_result_sha256"] \
                 or payload.get("same_parent_signal_id_set") is not True \
                 or payload.get("same_parent_decision_timestamps") is not True \
                 or payload.get("same_parent_directions") is not True:
-            raise ContractError("V34 parent identity provenance mismatch")
+            raise ContractError(f"{cycle_id} parent identity provenance mismatch")
         mask = [[row["signal_id"], row.get("execution_selected") is True] for row in rows]
         if hashlib.sha256(canonical_bytes(mask)).hexdigest() != payload.get("execution_mask_sha256"):
-            raise ContractError("V34 execution mask hash mismatch")
+            raise ContractError(f"{cycle_id} execution mask hash mismatch")
         if any(not isinstance(row.get("arm_actions"), dict)
                or set(row["arm_actions"]) != set(ARMS)
                or len(set(row["arm_actions"].values())) != 1 for row in rows):
-            raise ContractError("V34 actions differ across cost arms")
+            raise ContractError(f"{cycle_id} actions differ across cost arms")
         selected_by_day: dict[str, int] = {}
         for row in rows:
             selected_by_day[row["utc_day"]] = selected_by_day.get(row["utc_day"], 0) \
                 + int(row.get("execution_selected") is True)
-        if not selected_by_day or any(count != 1 for count in selected_by_day.values()):
+        if cycle_id == "V34" and (not selected_by_day or any(count != 1 for count in selected_by_day.values())):
             raise ContractError("V34 did not select exactly one representative per RAW signal day")
         rule = payload.get("turnover_rule", {})
-        if rule.get("name") != "ONE_DAILY_MAX_NORMALIZED_TAIL_EXCESS_REPRESENTATIVE" \
-                or rule.get("cost_inputs") is not False \
-                or rule.get("post_entry_outcome_inputs") is not False \
-                or rule.get("evaluation_month_inputs") is not False:
-            raise ContractError("V34 result turnover rule differs from preregistration")
+        if cycle_id == "V34":
+            if rule.get("name") != "ONE_DAILY_MAX_NORMALIZED_TAIL_EXCESS_REPRESENTATIVE" \
+                    or rule.get("cost_inputs") is not False \
+                    or rule.get("post_entry_outcome_inputs") is not False \
+                    or rule.get("evaluation_month_inputs") is not False:
+                raise ContractError("V34 result turnover rule differs from preregistration")
+        else:
+            selected_rows = [row for row in rows if row.get("execution_selected") is True]
+            if not selected_rows:
+                raise ContractError("V35 selected no global representative")
+            selected_fill_ns = [parse_time(row["fill_time"]).value for row in selected_rows]
+            spacing_ns = cycle["inventory_contract"]["finite_max_age_seconds"] * 1_000_000_000
+            if any(right - left < spacing_ns for left, right in zip(
+                    selected_fill_ns, selected_fill_ns[1:])):
+                raise ContractError("V35 admitted overlapping hard-age windows")
+            if payload.get("failed_predecessor_cycle") != "V34" \
+                    or payload.get("v34_result_metrics_used") is not False \
+                    or rule.get("name") != "GLOBAL_HARD_AGE_NO_OVERLAP_ADMISSION" \
+                    or rule.get("hard_spacing_seconds") \
+                    != cycle["inventory_contract"]["finite_max_age_seconds"] \
+                    or rule.get("cost_inputs") is not False \
+                    or rule.get("post_entry_outcome_inputs") is not False \
+                    or rule.get("v34_result_metrics_used") is not False:
+                raise ContractError("V35 result no-overlap rule differs from preregistration")
 
     periods = payload.get("periods", {})
     if set(periods) != set(PERIODS):
@@ -1015,7 +1073,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                         or not isinstance(metrics.get("persistence_armed_count"), int)
                         or not isinstance(metrics.get("persistence_reset_count"), int)):
                     raise ContractError(f"V31 persistence counts missing in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V32", "V33", "V34"}:
+            if cycle["cycle_id"] in {"V32", "V33", "V34", "V35"}:
                 required_metrics = {
                     "gross_edge_bps", "realized_cost_bps", "net_edge_bps", "turnover_nav",
                     "break_even_cost_bps", "direction_accuracy", "equity_multiple", "max_drawdown",
@@ -1027,21 +1085,21 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
                 if set(metrics) < required_metrics:
                     raise ContractError(f"{cycle['cycle_id']} required metrics missing in {period_name}/{arm}")
                 if metrics.get("processed_raw_signals") != raw_count \
-                        or (cycle["cycle_id"] != "V34" and metrics.get("cash_signals") != 0):
+                        or (cycle["cycle_id"] not in {"V34", "V35"} and metrics.get("cash_signals") != 0):
                     raise ContractError(f"{cycle['cycle_id']} did not process the complete RAW ledger in {period_name}/{arm}")
                 if metrics["max_inventory_age_seconds"] > max_age:
                     raise ContractError(f"{cycle['cycle_id']} max-age exceeded in {period_name}/{arm}")
-                if cycle["cycle_id"] == "V34":
+                if cycle["cycle_id"] in {"V34", "V35"}:
                     if metrics.get("executed_signals", 0) + metrics.get("cash_signals", 0) != raw_count:
-                        raise ContractError(f"V34 execution/cash partition mismatch in {period_name}/{arm}")
+                        raise ContractError(f"{cycle['cycle_id']} execution/cash partition mismatch in {period_name}/{arm}")
                     if metrics.get("max_gross_exposure_nav", 0) \
                             > cycle["inventory_contract"]["rule_max_gross_leverage"] + 1e-12:
-                        raise ContractError(f"V34 representative exposure exceeded in {period_name}/{arm}")
+                        raise ContractError(f"{cycle['cycle_id']} representative exposure exceeded in {period_name}/{arm}")
             if metrics.get("terminal_open_inventory") != 0:
                 raise ContractError(f"terminal inventory nonzero in {period_name}/{arm}")
             if not isinstance(metrics.get("equity_multiple"), int | float):
                 raise ContractError(f"missing equity multiple in {period_name}/{arm}")
-            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34"}:
+            if cycle["cycle_id"] in {"V27", "V28", "V29", "V30", "V31", "V34", "V35"}:
                 if not isinstance(metrics.get("max_gross_exposure_nav"), int | float) \
                         or not isinstance(metrics.get("max_margin_requirement_jpy_at_1x"), int | float):
                     raise ContractError(f"missing margin metrics in {period_name}/{arm}")
@@ -1054,7 +1112,7 @@ def validate_result(root: Path, cycle: dict[str, Any]) -> dict[str, Any]:
             }
             if len(transition_hashes) != 1:
                 raise ContractError(f"{cycle['cycle_id']} arm transitions differ in {period_name}")
-        if cycle["cycle_id"] in {"V32", "V33", "V34"}:
+        if cycle["cycle_id"] in {"V32", "V33", "V34", "V35"}:
             transition_hashes = {
                 period[arm]["execution_state_transition_sha256"] for arm in ARMS
             }
@@ -1170,6 +1228,13 @@ def route_next_work_order(
     elif result_reason == "TAIL_EXCESS_REPRESENTATIVE_ADVERSE_COST_FRAGILE":
         reason = result_reason
         variable = "one_preregistered_cost_robustness_rule_preserving_all_v33_raw_signals_and_v34_execution_mask"
+    elif result_reason in {
+            "GLOBAL_NO_OVERLAP_RAW_EDGE_ABSENT",
+            "GLOBAL_NO_OVERLAP_COST_DOMINANT",
+            "GLOBAL_NO_OVERLAP_ADVERSE_COST_FRAGILE",
+    }:
+        reason = result_reason
+        variable = SIGNAL_FAMILY_PIVOT_VARIABLE
     elif result_reason == "MONTHLY_2X_AND_UNOPENED_HOLDOUT_NOT_MET":
         reason = result_reason
         variable = "one_preregistered_causal_inventory_carry_rule_with_finite_max_age_and_unchanged_v25_raw_signals"

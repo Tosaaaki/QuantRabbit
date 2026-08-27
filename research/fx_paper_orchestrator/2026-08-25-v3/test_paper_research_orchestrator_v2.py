@@ -116,7 +116,7 @@ class RegistryAcceptanceTest(unittest.TestCase):
 
     def test_v26_is_registered_once_from_sealed_v25_with_parent_raw_identity(self):
         self.assertEqual([cycle["cycle_id"] for cycle in self.registry["cycles"]],
-                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34"])
+                         ["V25", "V26", "V27", "V28", "V29", "V30", "V31", "V32", "V33", "V34", "V35"])
         cycle = self.registry["cycles"][1]
         self.assertEqual(cycle["depends_on_cycle"], "V25")
         self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
@@ -268,6 +268,39 @@ class RegistryAcceptanceTest(unittest.TestCase):
         self.assertFalse(rule["cost_or_post_entry_outcome_inputs"])
         self.assertEqual(cycle["inventory_contract"]["selected_positions_per_basket"], 1)
         self.assertEqual(cycle["inventory_contract"]["rule_max_gross_leverage"], 1 / 7)
+
+    def test_v35_is_one_global_no_overlap_admission_rule_after_v34_failure(self):
+        cycle = self.registry["cycles"][10]
+        prereg = json.loads((ROOT / cycle["preregistration"]).read_text())
+        self.assertEqual(cycle["cycle_id"], "V35")
+        self.assertEqual(cycle["depends_on_cycle"], "V33")
+        self.assertEqual(cycle["hypothesis_contract"]["changed_variable_count"], 1)
+        self.assertEqual(cycle["hypothesis_contract"]["single_changed_variable"],
+                         "one_preregistered_global_no_overlap_admission_rule_preserving_all_v33_raw_signals_and_v34_daily_representative_ranking")
+        self.assertEqual(prereg["failed_predecessor"]["status"],
+                         "FAILED_RESULT_VALIDATION_NO_RERUN")
+        self.assertFalse(prereg["failed_predecessor"]["metrics_admissible"])
+        selection = prereg["training_only_rule_selection"]
+        self.assertEqual(selection["candidate_rules_preregistered"], 1)
+        self.assertEqual(selection["candidate_rules_compared_by_outcome"], 0)
+        self.assertFalse(selection["v34_result_metrics_used"])
+        rule = prereg["admission_rule"]
+        self.assertEqual(rule["name"], "GLOBAL_HARD_AGE_NO_OVERLAP_ADMISSION")
+        self.assertEqual(rule["hard_spacing_seconds"], 345600)
+        self.assertTrue(rule["same_v33_raw_signal_ids_directions_timestamps"])
+        self.assertFalse(rule["cost_or_outcome_inputs"])
+        self.assertEqual(cycle["inventory_contract"]["rule_max_gross_leverage"], 1 / 7)
+
+    def test_v35_routes_to_signal_family_pivot_after_global_serialization(self):
+        for result_reason in (
+                "GLOBAL_NO_OVERLAP_RAW_EDGE_ABSENT",
+                "GLOBAL_NO_OVERLAP_COST_DOMINANT",
+                "GLOBAL_NO_OVERLAP_ADVERSE_COST_FRAGILE"):
+            reason, variable = orchestrator.route_next_work_order(
+                result_reason, 1.01, .99, .98, 0, True,
+            )
+            self.assertEqual(reason, result_reason)
+            self.assertEqual(variable, orchestrator.SIGNAL_FAMILY_PIVOT_VARIABLE)
 
     def test_raw_edge_refinement_budget_routes_below_limit_to_existing_rule(self):
         reason, variable = orchestrator.route_next_work_order(

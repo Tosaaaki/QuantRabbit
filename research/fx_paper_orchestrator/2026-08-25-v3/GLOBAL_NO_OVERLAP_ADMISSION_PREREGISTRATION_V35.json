@@ -1,0 +1,100 @@
+{
+  "artifact_id": "FX_GLOBAL_NO_OVERLAP_ADMISSION_V35",
+  "cycle_id": "V35",
+  "status": "FROZEN_BEFORE_HASH_REGISTRATION_AND_OFFICIAL_REPLAY",
+  "family": "FX_SESSION_HANDOFF_MEAN_REVERSION",
+  "baseline": "FX_ASIAN_DISPLACEMENT_HANDOFF_FADE_V33",
+  "failed_predecessor": {
+    "cycle_id": "V34",
+    "status": "FAILED_RESULT_VALIDATION_NO_RERUN",
+    "failure_evidence": "V34_RESULT_VALIDATION_FAILURE.json",
+    "failure_evidence_sha256": "21341b3d60b182ef62dec648b5906bbd5f2735e74e26bd1c1700150f027d4e28",
+    "metrics_admissible": false,
+    "profit_proven": false,
+    "rerun_permitted": false
+  },
+  "work_order": {
+    "path": "V35_PRE_RESULT_WORK_ORDER.json",
+    "sha256": "e2120996e628b0a72ecc6956b713b211f6bce6e01a31c5611f19c78f491b6e17",
+    "reason_code": "V34_CONCURRENT_INVENTORY_CAP_CONTRADICTION"
+  },
+  "hypothesis_contract": {
+    "independent": true,
+    "frozen_before_replay": true,
+    "changed_variable_count": 1,
+    "single_changed_variable": "one_preregistered_global_no_overlap_admission_rule_preserving_all_v33_raw_signals_and_v34_daily_representative_ranking",
+    "null": "A global no-overlap gate does not preserve positive RAW edge or pass both full-month 2.0x normal/adverse gates.",
+    "alternative": "Serializing admissions prevents unintended concurrent cost accumulation while retaining the strongest causal daily representative."
+  },
+  "training_only_rule_selection": {
+    "candidate_rules_preregistered": 1,
+    "candidate_rules_compared_by_outcome": 0,
+    "selection_basis": "Use the already-frozen V34 daily rank and the existing 96-hour hard max-age as a conservative timestamp-only spacing bound. No V34 result metric is admissible or consulted.",
+    "v34_result_metrics_used": false,
+    "cost_consulted": false,
+    "post_entry_return_outcome_consulted": false,
+    "evaluation_month_used": false,
+    "holdout_used": false
+  },
+  "admission_rule": {
+    "name": "GLOBAL_HARD_AGE_NO_OVERLAP_ADMISSION",
+    "daily_ranking": "unchanged V34 argmax abs(displacement)/frozen_pair_q75 with pair/signal_id tie-break",
+    "formula": "admit candidate k iff fill_ns[k] >= fill_ns[last_admitted] + 345600*1e9",
+    "unselected_action": "CASH_GLOBAL_NO_OVERLAP",
+    "hard_spacing_seconds": 345600,
+    "chronology": "Uses only completed decision/fill timestamps and frozen predecision ranking; no future price or outcome.",
+    "same_v33_raw_signal_ids_directions_timestamps": true,
+    "same_mask_all_cost_arms": true,
+    "cost_or_outcome_inputs": false
+  },
+  "inventory_contract": {
+    "fixed_pair_sleeve": 0.14285714285714285,
+    "gross_leverage_cap": 1.0,
+    "rule_max_gross_leverage": 0.14285714285714285,
+    "currency_abs_exposure_cap": 1.0,
+    "finite_max_age_seconds": 345600,
+    "global_overlap": false,
+    "add_to_position": false,
+    "martingale": false,
+    "terminal_liquidation_required": true,
+    "terminal_mtm_hidden": false
+  },
+  "cost_arm_contract": {
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "same_129_signal_ledger": true,
+    "same_execution_mask_and_transitions": true,
+    "base_cost_model": "FROZEN_V7_ARMS_EXECUTABLE_BASE",
+    "adverse_cost_model": "FROZEN_V7_ARMS_ADVERSE_STRESS",
+    "actual_completed_bid_ask": true
+  },
+  "evaluation_contract": {
+    "walk_forward": {"start": "2026-05-01", "end_exclusive": "2026-07-01"},
+    "full_comparable_months": ["MONTH_2026_05", "MONTH_2026_06"],
+    "initial_equity_jpy": 200000,
+    "normal_min_multiple": 2.0,
+    "adverse_min_multiple": 2.0,
+    "stretch_multiple": 3.0,
+    "holdout": {"label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15", "state": "UNOPENED", "may_execute": false}
+  },
+  "rejection_contract": {
+    "profit_reject": "Reject if either full comparable month is below 2.0x in BASE or ADVERSE, or holdout reproduction is absent.",
+    "official_run_limit": 1,
+    "adoption_authorized": false
+  },
+  "proposal_provenance": {
+    "proposal_kind": "DETERMINISTIC_PRE_RESULT_STRUCTURAL_NO_OVERLAP_RULE",
+    "policy": "ONE_VARIABLE_PREREGISTER_THEN_REPLAY_V1",
+    "model_identity": "NO_ACTUAL_LLM_USED",
+    "unverified_identity_may_not_be_inferred": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  }
+}
