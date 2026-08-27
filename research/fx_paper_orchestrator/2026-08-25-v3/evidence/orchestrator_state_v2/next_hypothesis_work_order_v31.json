@@ -1,0 +1,30 @@
+{
+  "authority": {
+    "broker_account_access": false,
+    "credential_access": false,
+    "deploy": false,
+    "external_config_mutation": false,
+    "external_orders": 0,
+    "live_authority": false,
+    "order_endpoint": false,
+    "paper_only": true
+  },
+  "constraints": {
+    "evaluation_period_may_not_be_tuned": true,
+    "holdout_must_remain_unopened": true,
+    "leverage_may_not_be_changed_after_results": true,
+    "one_variable_only": true,
+    "same_raw_signal_ids_across_cost_arms": true
+  },
+  "observed_walk_forward": {
+    "ADVERSE_STRESS": 0.9614944774663403,
+    "EXECUTABLE_BASE": 0.9703351079466831,
+    "RAW_SIGNAL": 0.9824806484227545
+  },
+  "parent_cycle": "V30",
+  "proposed_cycle": "V31",
+  "reason_code": "CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT",
+  "schema_version": 1,
+  "single_next_changed_variable": "one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves",
+  "status": "PROPOSAL_ONLY_NOT_REGISTERED_NOT_EXECUTABLE"
+}

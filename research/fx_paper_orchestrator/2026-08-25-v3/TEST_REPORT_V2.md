@@ -162,3 +162,48 @@ Dedicated full discovery ran 164 tests: 157 passed and the same seven
 documented legacy import errors remained. Five require the absent sibling V250
 fixture and two require the legacy `aggregate_bars` compatibility export. No
 V30 or coordinator test failed, and no frozen legacy artifact was changed.
+
+## V30 official replay
+
+After remote readback of preregistration commit
+`2e397b18783f1c84e144901c49ac794782a1b945`, coordinator official execution
+ordinal 1 ran exactly once. Mechanical system acceptance passed: all 500 V25
+RAW identities, directions, and decision timestamps remain unchanged; all cost
+arms share the same action/state-transition stream; actual completed BID/ASK,
+slippage, latency, financing, currency inventory, finite max-age, terminal
+liquidation, walk-forward boundaries, and rerun prohibition were validated.
+Terminal inventory and terminal MTM are zero, holdout remains `UNOPENED`, and
+external orders remain zero.
+
+The strategy profit gate failed. Walk-forward multiples were RAW
+`0.9824806484227545`, EXECUTABLE_BASE `0.9703351079466831`, and
+ADVERSE_STRESS `0.9614944774663403`. Gross edge was
+`-7.064810981455403` bps; realized costs were `0.0`, `5.000320971852313`,
+and `8.667380289743601` bps; net edges were `-7.064810981455403`,
+`-12.065131953307716`, and `-15.732191271199007` bps. Turnover was `50.0`
+NAV, break-even cost was `-7.064810981455403` bps, direction accuracy was
+`0.4114285714285714`, and maximum drawdown was `-0.026580074375925133`,
+`-0.03587931299291747`, and `-0.04264907079833424`. Maximum gross exposure
+was `1.0` NAV, maximum currency exposure was `0.9999999999999998` NAV,
+maximum 1x margin requirement was `200000.0` JPY, maximum inventory age was
+`313200.0` seconds, N_eff was 37 days / 175 episodes, and the scoped release
+count was 2. The narrowed membership removed nonlocal peers at both
+walk-forward release events but produced the same release/action stream and
+the same outcomes as V29.
+
+The full-month BASE multiples were `0.9817889675954863` and
+`0.9882459699396912`; ADVERSE multiples were `0.9771581577253762` and
+`0.9838692639246738`. V30 was automatically rejected without alteration under
+`CONSENSUS_RELEASE_SCOPE_RAW_EDGE_ABSENT`. The sealed V31 proposal changes one
+variable only:
+`one_preregistered_causal_consensus_release_persistence_confirmation_rule_preserving_all_v25_raw_signals_and_fixed_sleeves`.
+
+Result file SHA-256 is
+`27e9b006ba115214d8f2590bf21add290c1df406e0565717016584265a2d0bd8`,
+ledger SHA-256 is
+`3d7e60bc8322133d78d7f5cdec65defca3204306d5a08500fde76e9e4ce6ad51`,
+and the official embedded seal SHA-256 is
+`65dcc55d13c204a3d993fac0b3d615f33aae06c56df379355eeea15bfe5238a9`.
+Post-run V30 plus coordinator tests passed 37/37. Dedicated full discovery
+again ran 164 tests: 157 passed and the same seven legacy import errors
+remained; no V30 or coordinator test failed.
