@@ -1,0 +1,86 @@
+{
+  "schema_version": 2,
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "status": "PREREGISTERED_OFFLINE_RESEARCH_ONLY",
+  "created_date": "2026-08-28",
+  "authority": {
+    "network": false,
+    "credentials": false,
+    "live_runtime": false,
+    "external_orders": false,
+    "commit": false,
+    "push": false
+  },
+  "inputs": {
+    "coverage_utc": ["2026-03-11T00:00:00Z", "2026-07-15T10:55:00Z"],
+    "split": {"tuning_fraction": 0.7, "walk_forward_fraction": 0.3, "method": "per_pair_chronological_floor"},
+    "holdout_unopened": true,
+    "files": {
+      "EUR_USD": {"path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz", "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89", "rows": 26051},
+      "USD_JPY": {"path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz", "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648", "rows": 26046},
+      "AUD_USD": {"path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz", "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd", "rows": 26047}
+    }
+  },
+  "signal": {
+    "price": "mid_close=(bid_close+ask_close)/2",
+    "warmup_completed_bars": 12,
+    "ema_fast": 3,
+    "ema_slow": 12,
+    "direction": "LONG iff EMA3>EMA12; SHORT iff EMA3<EMA12; equality emits no signal",
+    "cost_gate": false,
+    "decision": "completed bar only",
+    "fill": "entry at next completed bar open; long at ASK and short at BID",
+    "managed_exit": "TP, opposite-signal and giveback are evaluated only after a completed close and execute at the next available bar open; fixed max-age executes at its precommitted final bar close",
+    "signal_id": "sha256(prereg_sha256|pair|decision_time|decision_bar_sha256|side)"
+  },
+  "portfolio": {
+    "initial_equity_jpy": 200000,
+    "units": 1000,
+    "max_positions_per_pair_config": 1,
+    "jpy_conversion": "JPY-quoted PnL is direct; USD-quoted PnL uses the latest completed USD_JPY mid close at or before each exit",
+    "margin_model": "none; fixed-unit accounting continues through zero and negative equity, which is retained as failure evidence and is not a tradable-capital claim",
+    "martingale": false,
+    "averaging": false
+  },
+  "costs": {"base_slippage_pips_per_side": 0.3, "adverse_slippage_pips_per_side": 0.9, "spread": "observed BID/ASK", "raw": "mid prices, zero spread and slippage"},
+  "configs": {
+    "max_age_bars": [6, 12, 24],
+    "arms": {
+      "A": "max_age_only",
+      "B": "opposite_signal_oldest_first_or_max_age",
+      "C": "fixed_tp_or_max_age",
+      "D": "fixed_tp_or_50pct_peak_profit_giveback_or_max_age"
+    },
+    "tp": "per-pair tuning directional executable maximum completed-close excursion Q40 over a full 24-bar horizon wholly inside tuning, floored at 1.25 times tuning median observed roundtrip spread cost; frozen for walk-forward",
+    "price_stop_loss": false,
+    "terminal_liquidation": true
+  },
+  "selection": {
+    "data": "tuning only",
+    "order": ["maximum executable_base_net_expectancy_family_adjusted_lcb", "minimum absolute base max_drawdown", "minimum base monthly_multiple_std", "config_id lexical"],
+    "lcb_proxy": "UTC-day-cluster mean minus Bonferroni two-sided 5pct family critical value times cluster standard error across the 12 frozen configs",
+    "not_selected_by_monthly_2x": true
+  },
+  "admission_gates": {
+    "walk_forward_adverse_lcb_pips_gt": 0,
+    "walk_forward_base_expectancy_pips_gt": 0,
+    "walk_forward_worst_month_multiple_gte": 1,
+    "walk_forward_full_calendar_months_gte": 3,
+    "walk_forward_max_drawdown_gte": -0.1,
+    "no_equity_ruin": true,
+    "family_correction": "12-config Bonferroni-adjusted UTC-day-cluster LCB plus all gates conjunctive"
+  },
+  "owner_corrections_before_first_seal": {
+    "status": "PRESEAL_CAUSAL_REMEDIATION_NOT_PARAMETER_TUNING",
+    "changes": [
+      "bound TP estimation to full horizons wholly inside tuning",
+      "moved completed-close dependent exits to the next executable bar open",
+      "removed synthetic TP-time midpoint reconstruction from bar-close spread",
+      "changed drawdown to a completed-bar portfolio mark-to-market curve",
+      "changed monthly multiples to consecutive month-end equity ratios",
+      "added equity-ruin and family-adjusted LCB admission gates"
+      ,"selected configs with EXECUTABLE_BASE only; ADVERSE_STRESS remains evaluation-only"
+    ],
+    "thresholds_changed_for_profit": false
+  }
+}

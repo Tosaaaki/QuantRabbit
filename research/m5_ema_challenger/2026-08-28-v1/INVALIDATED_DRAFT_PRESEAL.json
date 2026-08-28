@@ -1,0 +1,20 @@
+{
+  "status": "INVALIDATED_DRAFT_PRESEAL_NOT_EVIDENCE",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "invalidated_at_owner_review_date": "2026-08-28",
+  "prior_hashes": {
+    "preregistration_sha256": "c11a3beec24973337e9a54357e27d4edbf65c1dbc1678860f779e51240d63b3b",
+    "script_sha256": "727f5ec032912b8738d6367e65479b476c5550aec53d22d816ba011962d75dc2",
+    "result_sha256": "798dad87da758d6cdf636d819e64aea5e8d17c6a3313366420d3184c5e1fc8d0",
+    "evidence_packet_sha256": "68239260fd1f95106ddec47cdf20b4350ec9fd68e51c73138b759b35fe9c7416"
+  },
+  "invalidating_findings": [
+    "completed-close giveback and opposite-signal decisions used the same close as their exit",
+    "TP training labels could cross the 70 percent tuning boundary by up to 23 M5 bars",
+    "TP raw midpoint was synthesized from a bar-close spread not observed at the TP hit",
+    "drawdown omitted open-inventory mark-to-market and monthly multiples used initial rather than month-start equity"
+  ],
+  "profit_claim_allowed": false,
+  "admission_claim_allowed": false,
+  "replacement": "fresh deterministic replay after owner causal remediation"
+}

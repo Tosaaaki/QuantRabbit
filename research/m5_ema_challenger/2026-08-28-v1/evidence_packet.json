@@ -1,0 +1,318 @@
+{
+  "admission": false,
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "config_results": {
+    "arm": "A",
+    "max_age_bars": 6,
+    "tuning": {
+      "adverse": {
+        "break_even_roundtrip_cost_pips": -0.11545763827918519,
+        "cluster_mean_expectancy_pips": -3.964154235422747,
+        "collision_skips": 45551,
+        "cost_drag_pips": 3.5809427129060434,
+        "direction_accuracy": 0.4804895450304594,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": -1.3186134596999848,
+        "equity_ruin": true,
+        "equity_ruin_time": "2026-04-16T18:00:00.000000000Z",
+        "executed_direction_accuracy": 0.4815627743634767,
+        "expectancy_pips": -3.6964003511852286,
+        "family_adjusted_lcb_pips": -4.478173884563639,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.11545763827918519,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.999012291483758,
+        "lcb_proxy_pips": -4.478173884563639,
+        "mae_mean_pips": -6.729839771729672,
+        "max_drawdown": -2.3172235874407745,
+        "mfe_mean_pips": 3.028786215979025,
+        "monthly_multiple_std": 0.6296104848707835,
+        "monthly_multiples": {
+          "2026-03": 0.42643158240000606,
+          "2026-04": -0.832789387341561,
+          "2026-05": null,
+          "2026-06": null
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-03": 0.4264315824000061,
+          "2026-04": 0.2182358889500069,
+          "2026-05": 0.2080650012500017,
+          "2026-06": 0.8286540677000012
+        },
+        "n_eff_utc_day_clusters": 77,
+        "raw_signals": 54663,
+        "return_on_initial_equity": -2.318613459699985,
+        "terminal_liquidation_pips": -3.7000000000003204,
+        "terminal_open_inventory": 0,
+        "trades": 9112,
+        "turnover_units": 18224000
+      },
+      "base": {
+        "break_even_roundtrip_cost_pips": -0.11545763827918519,
+        "cluster_mean_expectancy_pips": -2.7641542354227466,
+        "collision_skips": 45551,
+        "cost_drag_pips": 2.380942712906043,
+        "direction_accuracy": 0.4804895450304594,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": -0.5571640634999846,
+        "equity_ruin": true,
+        "equity_ruin_time": "2026-05-07T01:15:00.000000000Z",
+        "executed_direction_accuracy": 0.4815627743634767,
+        "expectancy_pips": -2.4964003511852284,
+        "family_adjusted_lcb_pips": -3.278173884563639,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.11545763827918519,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.999012291483758,
+        "lcb_proxy_pips": -3.278173884563639,
+        "mae_mean_pips": -6.729839771729672,
+        "max_drawdown": -1.556515254327305,
+        "mfe_mean_pips": 3.028786215979025,
+        "monthly_multiple_std": 2.5411836187602694,
+        "monthly_multiples": {
+          "2026-03": 0.6066499986000062,
+          "2026-04": 0.1486849052306453,
+          "2026-05": -4.9983873105560646,
+          "2026-06": null
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-03": 0.6066499986000062,
+          "2026-04": 0.4831906719500061,
+          "2026-05": 0.4598630040500037,
+          "2026-06": 0.8931322619000013
+        },
+        "n_eff_utc_day_clusters": 77,
+        "raw_signals": 54663,
+        "return_on_initial_equity": -1.5571640634999846,
+        "terminal_liquidation_pips": -0.10000000000032072,
+        "terminal_open_inventory": 0,
+        "trades": 9112,
+        "turnover_units": 18224000
+      },
+      "raw": {
+        "break_even_roundtrip_cost_pips": -0.11545763827918519,
+        "cluster_mean_expectancy_pips": -0.12156635858559764,
+        "collision_skips": 45551,
+        "cost_drag_pips": 0.0,
+        "direction_accuracy": 0.4804895450304594,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": 0.9368320081875117,
+        "equity_ruin": false,
+        "equity_ruin_time": null,
+        "executed_direction_accuracy": 0.4815627743634767,
+        "expectancy_pips": -0.11545763827918519,
+        "family_adjusted_lcb_pips": -0.5492134500215229,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.11545763827918519,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.999012291483758,
+        "lcb_proxy_pips": -0.5492134500215229,
+        "mae_mean_pips": -6.729839771729672,
+        "max_drawdown": -0.09819847910299329,
+        "mfe_mean_pips": 3.028786215979025,
+        "monthly_multiple_std": 0.030485025985559123,
+        "monthly_multiples": {
+          "2026-03": 0.9649735100875042,
+          "2026-04": 1.012732551149395,
+          "2026-05": 0.9444227532901257,
+          "2026-06": 1.0150445837817397
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-03": 0.9649735100875042,
+          "2026-04": 1.0116452070250004,
+          "2026-05": 0.9466127759749993,
+          "2026-06": 1.013600515100002
+        },
+        "n_eff_utc_day_clusters": 77,
+        "raw_signals": 54663,
+        "return_on_initial_equity": -0.06316799181248833,
+        "terminal_liquidation_pips": 6.049999999999844,
+        "terminal_open_inventory": 0,
+        "trades": 9112,
+        "turnover_units": 18224000
+      }
+    },
+    "walk_forward": {
+      "adverse": {
+        "break_even_roundtrip_cost_pips": -0.1416091071885694,
+        "cluster_mean_expectancy_pips": -3.723191738816709,
+        "collision_skips": 19536,
+        "cost_drag_pips": 3.462100281401845,
+        "direction_accuracy": 0.4767754318618042,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": 0.006930033200006242,
+        "equity_ruin": false,
+        "equity_ruin_time": null,
+        "executed_direction_accuracy": 0.47633665899206956,
+        "expectancy_pips": -3.6037093885904143,
+        "family_adjusted_lcb_pips": -4.176154029587196,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.1416091071885694,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.997697620874904,
+        "lcb_proxy_pips": -4.176154029587196,
+        "mae_mean_pips": -5.6457405986186595,
+        "max_drawdown": -0.9930699667999927,
+        "mfe_mean_pips": 2.1630851880277513,
+        "monthly_multiple_std": 0.196959142409782,
+        "monthly_multiples": {
+          "2026-06": 0.41078836627500603,
+          "2026-07": 0.016870081455442037
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-06": 0.4109118884750059,
+          "2026-07": 0.5960181447250015
+        },
+        "n_eff_utc_day_clusters": 33,
+        "raw_signals": 23445,
+        "return_on_initial_equity": -0.9930699667999937,
+        "terminal_liquidation_pips": -22.59999999999775,
+        "terminal_open_inventory": 0,
+        "trades": 3909,
+        "turnover_units": 7818000
+      },
+      "base": {
+        "break_even_roundtrip_cost_pips": -0.1416091071885694,
+        "cluster_mean_expectancy_pips": -2.5231917388167093,
+        "collision_skips": 19536,
+        "cost_drag_pips": 2.2621002814018447,
+        "direction_accuracy": 0.4767754318618042,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": 0.33750332810000677,
+        "equity_ruin": false,
+        "equity_ruin_time": null,
+        "executed_direction_accuracy": 0.47633665899206956,
+        "expectancy_pips": -2.403709388590414,
+        "family_adjusted_lcb_pips": -2.9761540295871964,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.1416091071885694,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.997697620874904,
+        "lcb_proxy_pips": -2.9761540295871964,
+        "mae_mean_pips": -5.6457405986186595,
+        "max_drawdown": -0.6629250525294721,
+        "mfe_mean_pips": 2.1630851880277513,
+        "monthly_multiple_std": 0.03180244591853193,
+        "monthly_multiples": {
+          "2026-06": 0.6136226274750054,
+          "2026-07": 0.5500177356379415
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-06": 0.6134909888750053,
+          "2026-07": 0.7240123392250014
+        },
+        "n_eff_utc_day_clusters": 33,
+        "raw_signals": 23445,
+        "return_on_initial_equity": -0.6624966718999932,
+        "terminal_liquidation_pips": -18.999999999997748,
+        "terminal_open_inventory": 0,
+        "trades": 3909,
+        "turnover_units": 7818000
+      },
+      "raw": {
+        "break_even_roundtrip_cost_pips": -0.1416091071885694,
+        "cluster_mean_expectancy_pips": -0.06638770599371081,
+        "collision_skips": 19536,
+        "cost_drag_pips": 0.0,
+        "direction_accuracy": 0.4767754318618042,
+        "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+        "equity_multiple": 0.9579463333874915,
+        "equity_ruin": false,
+        "equity_ruin_time": null,
+        "executed_direction_accuracy": 0.47633665899206956,
+        "expectancy_pips": -0.1416091071885694,
+        "family_adjusted_lcb_pips": -0.4326019962237514,
+        "family_critical_z": 2.865260238532134,
+        "gross_expectancy_pips": -0.1416091071885694,
+        "inventory_age_max_bars": 6,
+        "inventory_age_mean_bars": 5.997697620874904,
+        "lcb_proxy_pips": -0.4326019962237514,
+        "mae_mean_pips": -5.6457405986186595,
+        "max_drawdown": -0.05284378595146744,
+        "mfe_mean_pips": 2.1630851880277513,
+        "monthly_multiple_std": 0.016511465402297865,
+        "monthly_multiples": {
+          "2026-06": 0.9953980583624965,
+          "2026-07": 0.9623751275579008
+        },
+        "monthly_realized_change_on_initial_equity": {
+          "2026-06": 0.9948255200624966,
+          "2026-07": 0.9631208133249979
+        },
+        "n_eff_utc_day_clusters": 33,
+        "raw_signals": 23445,
+        "return_on_initial_equity": -0.04205366661250853,
+        "terminal_liquidation_pips": -12.74999999999622,
+        "terminal_open_inventory": 0,
+        "trades": 3909,
+        "turnover_units": 7818000
+      }
+    }
+  },
+  "exact_config": {
+    "arm": "A",
+    "config_id": "A_H6",
+    "costs": {
+      "adverse_slippage_pips_per_side": 0.9,
+      "base_slippage_pips_per_side": 0.3,
+      "raw": "mid prices, zero spread and slippage",
+      "spread": "observed BID/ASK"
+    },
+    "max_age_bars": 6,
+    "portfolio": {
+      "averaging": false,
+      "initial_equity_jpy": 200000,
+      "jpy_conversion": "JPY-quoted PnL is direct; USD-quoted PnL uses the latest completed USD_JPY mid close at or before each exit",
+      "margin_model": "none; fixed-unit accounting continues through zero and negative equity, which is retained as failure evidence and is not a tradable-capital claim",
+      "martingale": false,
+      "max_positions_per_pair_config": 1,
+      "units": 1000
+    },
+    "tp_pips_by_pair": {
+      "AUD_USD": 1.7999999999995797,
+      "EUR_USD": 2.0624999999982463,
+      "USD_JPY": 2.1249999999994884
+    }
+  },
+  "external_orders": 0,
+  "formula": {
+    "cost_gate": false,
+    "decision": "completed bar only",
+    "direction": "LONG iff EMA3>EMA12; SHORT iff EMA3<EMA12; equality emits no signal",
+    "ema_fast": 3,
+    "ema_slow": 12,
+    "fill": "entry at next completed bar open; long at ASK and short at BID",
+    "managed_exit": "TP, opposite-signal and giveback are evaluated only after a completed close and execute at the next available bar open; fixed max-age executes at its precommitted final bar close",
+    "price": "mid_close=(bid_close+ask_close)/2",
+    "signal_id": "sha256(prereg_sha256|pair|decision_time|decision_bar_sha256|side)",
+    "warmup_completed_bars": 12
+  },
+  "holdout_unopened": true,
+  "invalidated_draft_sha256": "8c0e27bc5029ef7b82fe6bd618fe4b65468e9b9f3da65e696c215c5df2fe8bd2",
+  "prereg_sha256": "99422639b5faf3b0db2d77e99e47a102a93e217fb3db52f8e6471cf8b7d36518",
+  "profit_unproven": true,
+  "readme_sha256": "e674d21f8a470272ec6597bcf65cd4c4850d4adc08a5dda081b0945fa11deeca",
+  "result_sha256": "1dff6f1dde4731cbb65d1699c0c1e7996dc48add6ced9b5123d06c03747a624c",
+  "schema_version": 2,
+  "script_sha256": "8fd8a4be77b92ba076a72256e51ff8317203ca482730ec17323d3513880e766b",
+  "selected_config": "A_H6",
+  "sources": {
+    "AUD_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26047,
+      "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    "EUR_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26051,
+      "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    "USD_JPY": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26046,
+      "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  },
+  "status": "UNADMITTED_RESEARCH_RESULT",
+  "test_sha256": "290db87a1d557b6e2f68381fd29239f8c07935c9ded96ad7c496137215dd5d5f"
+}
