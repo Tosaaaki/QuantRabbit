@@ -1,0 +1,284 @@
+{
+  "schema": "QR_M5_EMA_STATE_IMPULSE_PREREGISTRATION_V1",
+  "candidate_id": "M5_EMA_STATE_IMPULSE_INVENTORY_V1_HISTORICAL_REPLAY_V1",
+  "runtime_strategy_id": "M5_EMA_STATE_IMPULSE_INVENTORY_V1",
+  "status": "PREREGISTERED_AWAITING_INDEPENDENT_REVIEW",
+  "profit_proven": false,
+  "strategy_admitted": false,
+  "prior_evidence_search": {
+    "exact_historical_evidence_found": false,
+    "exact_hits": 0,
+    "searched_roots": [
+      "research"
+    ],
+    "exact_contract": "EMA3 versus EMA6; three-bar price momentum; EMA6 slope; TP=max(0.5*ATR6,1.5*decision observed spread); six completed-M5-bar max age; 1000 base units; RAW_SIGNAL/EXECUTABLE_BASE/ADVERSE_STRESS",
+    "closest_non_equivalent_artifacts": [
+      "research/m5_ema_challenger/2026-08-28-v1 (EMA3 versus EMA12)",
+      "research/m5_ema_challenger/2026-08-28-v2 (EMA3 versus EMA12 interactions)",
+      "research/oanda_post_entry_lgar/2026-08-28-v4 (EMA3 versus EMA12)"
+    ]
+  },
+  "runtime_binding": {
+    "contract_path": "research/shadow_runtime/2026-08-27-v1/oanda_live_runtime_contract.json",
+    "contract_file_sha256": "1d86badc851595b0df60c13c43b3f77dafea78b703490afabc415c29ef708247",
+    "paper_execution_path": "research/shadow_runtime/2026-08-27-v1/oanda_paper_execution.py",
+    "paper_execution_file_sha256": "370d30c9456e8e5d548a0ac22d44456124b3f445a33372600473a476d3dc6d12",
+    "paper_execution_subobject_canonical_sha256": "5f01a6085b188d578c2054f619e135e76e66b92def15903adb023c99c1c7d50e",
+    "historical_latency_proxy_is_exact_runtime_equivalent": false
+  },
+  "authority": {
+    "offline_only": true,
+    "network_attempts_allowed": 0,
+    "credential_reads_allowed": 0,
+    "broker_or_account_access_allowed": false,
+    "external_order_attempts_allowed": 0,
+    "external_orders_allowed": 0,
+    "launchd_actions_allowed": 0,
+    "git_actions_allowed": 0,
+    "running_shadow_files_mutable": false
+  },
+  "input": {
+    "provider": "OANDA_V20_LIVE_CANDLES_IMMUTABLE_CAPTURE",
+    "dataset_root": "research/oanda_history_capture/2026-08-28-v1/runs/oanda-live-m5-ba-730d-20260828T040500Z-40b27f46ae63",
+    "canonical_dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+    "manifest_sha256": "3408963dce76f6c2da5be7f766a48b4e1a91b3fbd03d7082f5369f8e1f2a4a00",
+    "gap_report_sha256": "95e7f222a0579a7339db0c35e8299af9ca2c139425161638176e1eea6dbc32e7",
+    "symbols": [
+      "AUD_USD",
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "granularity": "M5",
+    "price_component": "BA",
+    "discovery_prefix_contract": {
+      "AUD_USD": {
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 20259438,
+        "prefix_rows": 55566,
+        "prefix_sha256": "2c36f2888ea1419b479c5c15f00eb32cdc262554bc9758530e2641147fd37fb1"
+      },
+      "EUR_USD": {
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 20273794,
+        "prefix_rows": 55576,
+        "prefix_sha256": "850f0cb01a2f75e1e3320c30df1efd2700a292b73a1cc305869ec5bb5f52a9e2"
+      },
+      "USD_JPY": {
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "exclusive_byte_offset": 20287549,
+        "prefix_rows": 55560,
+        "prefix_sha256": "fb32e71eb8d539a96ffe4e4cdffbca3caba7054f41dfa3546589f3dd7aa23502"
+      }
+    },
+    "validation_prefix_contract": {
+      "AUD_USD": {
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 27186414,
+        "prefix_rows": 74568,
+        "prefix_sha256": "79d959900555cc3b52ac1f759437bf4998f03c383e31629598355bc9250cd894"
+      },
+      "EUR_USD": {
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 27205812,
+        "prefix_rows": 74582,
+        "prefix_sha256": "0d1e76cad0ed725b05da593df241fba87549710d8ac15eb7478460fc808ad7f5"
+      },
+      "USD_JPY": {
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "exclusive_byte_offset": 27222596,
+        "prefix_rows": 74562,
+        "prefix_sha256": "bb102f9ff123fa45c2b248a851fbe073e3c33e0f1ff4d446b97bd157a748e4e2"
+      }
+    },
+    "semantic_decoder_exclusive_end_utc": "2025-08-28T04:05:00.000000Z",
+    "rows_or_bytes_after_boundary_allowed": 0
+  },
+  "splits": {
+    "calibration": {
+      "from_utc": "2024-08-28T04:05:00.000000Z",
+      "to_utc": "2024-11-28T04:05:00.000000Z",
+      "use": "fixed-config measurement and causal feature warm-up only; no parameter selection"
+    },
+    "discovery": {
+      "from_utc": "2024-11-28T04:05:00.000000Z",
+      "to_utc": "2025-05-28T04:05:00.000000Z",
+      "use": "preregistered discovery gate; no configuration selection"
+    },
+    "locked_validation": {
+      "from_utc": "2025-05-28T04:05:00.000000Z",
+      "to_utc": "2025-08-28T04:05:00.000000Z",
+      "use": "decoded only after independent review and a fixed-config discovery lock"
+    },
+    "later_rows": {
+      "from_utc": "2025-08-28T04:05:00.000000Z",
+      "use": "FORBIDDEN_NOT_READ_NOT_DECODED_NOT_HASHED"
+    }
+  },
+  "strategy": {
+    "timeframe": "M5",
+    "completed_bars_only": true,
+    "mid_price": "arithmetic midpoint of BID and ASK OHLC field",
+    "feature_window_bars": 7,
+    "fast_ema_bars": 3,
+    "slow_ema_bars": 6,
+    "ema_seed": "first close in the exact seven-bar causal tail",
+    "direction": "LONG when EMA3>EMA6, SHORT when EMA3<EMA6; equality emits no signal",
+    "momentum_bars": 3,
+    "momentum": "mid_close[t]-mid_close[t-3]",
+    "slow_slope": "EMA6 over seven-bar tail minus EMA6 over the first six bars of that tail",
+    "entry_rule": "emit only when direction*momentum>0 and direction*slow_slope>0",
+    "atr_bars": 6,
+    "true_range": "max(mid_high-mid_low,abs(mid_high-prior_mid_close),abs(mid_low-prior_mid_close))",
+    "tp_distance": "max(0.5*ATR6,1.5*(decision ask_close-decision bid_close))",
+    "tp_atr_multiple": 0.5,
+    "tp_spread_multiple_floor": 1.5,
+    "tp_changed_after_entry": false,
+    "max_age_bars": 6,
+    "individual_price_stop": false,
+    "virtual_units": 1000,
+    "hard_max_open_positions_per_instrument": 1,
+    "hard_max_open_positions_total": 2,
+    "pair_priority_for_simultaneous_signals": [
+      "AUD_USD",
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "entry_cost_gate_used": false,
+    "martingale": false,
+    "leverage_fitting": false
+  },
+  "chronology": {
+    "bar_timestamp_semantics": "OANDA candle start UTC",
+    "decision_time": "completed source bar start plus 300 seconds",
+    "fill": "first exact source M5 open whose source timestamp is strictly greater than decision_time",
+    "strict_fill_lag_bars_from_decision_bar": 2,
+    "expected_order_ttl_bars_after_decision": 1,
+    "same_timestamp_open_is_eligible": false,
+    "feature_across_gap": false,
+    "fill_across_gap": false,
+    "synthesized_bars_or_prices": false,
+    "max_age_precedence": "max-age exit at the due bar open precedes that bar intrabar TP",
+    "split_boundary": "positions are not carried between splits; pending orders expire and open positions liquidate at the last executable close inside the split"
+  },
+  "execution_arms": {
+    "shared_signal_id": true,
+    "signal_id_material": "preregistration canonical SHA256|strategy_id|pair|decision_time|decision bar canonical SHA256|direction",
+    "cost_is_entry_gate": false,
+    "fee_pips_per_side": 0.0,
+    "financing_jpy": 0.0,
+    "RAW_SIGNAL": {
+      "price_mode": "MID",
+      "slippage_pips_per_side": 0.0,
+      "latency_proxy": "NONE",
+      "entry_fill": "eligible bar midpoint open"
+    },
+    "EXECUTABLE_BASE": {
+      "price_mode": "BID_ASK",
+      "slippage_pips_per_side": 0.0,
+      "latency_proxy": "NONE",
+      "entry_fill": "eligible bar ask open for LONG, bid open for SHORT"
+    },
+    "ADVERSE_STRESS": {
+      "price_mode": "BID_ASK",
+      "slippage_pips_per_side": 0.3,
+      "latency_proxy": "one quote-event cannot be reconstructed from M5; use the eligible fill-bar worst executable extreme plus 0.3 pip per side",
+      "entry_fill": "ask high plus 0.3 pip for LONG, bid low minus 0.3 pip for SHORT",
+      "same_fill_bar_tp_allowed": false
+    },
+    "tp_fill": "frozen target when the executable favorable side first reaches it; adverse exit subtracts 0.3 pip per side",
+    "max_age_or_terminal_fill": "same-event midpoint for RAW; executable BID/ASK for BASE; executable BID/ASK plus adverse 0.3 pip for STRESS"
+  },
+  "inventory_and_gap_policy": {
+    "capacity_reserved_at_signal": true,
+    "same_pair_opposite_hedging": false,
+    "gap_halt": "an open lot is liquidated at the last executable close before a source gap and inventory resets; no price is synthesized",
+    "terminal_liquidation": true,
+    "terminal_open_inventory_required": 0,
+    "pending_order_at_gap_or_split_end": "expire with no fill"
+  },
+  "jpy_conversion": {
+    "units_are_base_currency": true,
+    "USD_JPY": "quote PnL is already JPY",
+    "AUD_USD_and_EUR_USD": "positive USD PnL converts at causal USD_JPY bid; negative USD PnL at causal USD_JPY ask",
+    "open_exit_rate": "exact same-source-time USD_JPY open",
+    "intrabar_tp_rate": "exact same-source-time USD_JPY open because no causal intrabar cross-rate path is stored",
+    "close_or_gap_terminal_rate": "exact same-source-time USD_JPY close",
+    "missing_exact_conversion": "JPY PnL is null and the admission gate fails"
+  },
+  "statistics": {
+    "hypothesis_family_size": 1,
+    "multiple_comparison_correction": "none; one fixed runtime configuration, no selection",
+    "cluster": "UTC decision day across all symbols",
+    "n_eff": "Kish effective count of UTC decision-day trade-count weights, also report active day clusters",
+    "block_bootstrap": "moving five-UTC-day block resampling of daily aggregate PnL divided by daily trade count",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20260828,
+    "one_sided_lcb_quantile": 0.05
+  },
+  "reporting": {
+    "initial_equity_jpy": 200000.0,
+    "required_metrics": [
+      "raw proposals and cost-pass count without an entry cost gate",
+      "same-signal fanout, fills, capacity blocks, missing strict fills",
+      "direction accuracy at max-age horizon, MFE, MAE and TP hit time",
+      "gross midpoint edge, observed spread, slippage, latency proxy and net edge",
+      "break-even round-trip cost",
+      "pair and anchored-calendar-month statistics",
+      "inventory count, age Q50/Q90/Q99, terminal liquidation and terminal open MTM",
+      "N_eff, five-day block-bootstrap LCB, equity multiple and max drawdown"
+    ]
+  },
+  "pass_fail": {
+    "discovery_density": {
+      "executed_trades_gte": 240,
+      "active_utc_decision_days_gte": 60,
+      "pairs_with_50_trades_gte": 2
+    },
+    "discovery": {
+      "RAW_SIGNAL_mean_pips_gt": 0.0,
+      "RAW_SIGNAL_95pct_block_bootstrap_lcb_pips_gt": 0.0
+    },
+    "locked_validation": {
+      "RAW_SIGNAL_mean_pips_gt": 0.0,
+      "EXECUTABLE_BASE_mean_pips_gt": 0.0,
+      "ADVERSE_STRESS_mean_pips_gt": 0.0,
+      "ADVERSE_STRESS_95pct_block_bootstrap_lcb_pips_gt": 0.0,
+      "ADVERSE_STRESS_positive_pairs_gte": 2,
+      "ADVERSE_STRESS_positive_calendar_month_fraction_gte": 0.6666666666666666,
+      "missing_jpy_conversions_eq": 0,
+      "terminal_open_inventory_eq": 0
+    },
+    "failure_conditions": [
+      "any preregistration, runtime binding, dataset prefix or review receipt hash mismatch",
+      "any semantic decode at or after 2025-08-28T04:05:00Z",
+      "any incomplete, non-M5, non-BA, crossed, duplicate, out-of-order or noncausal row",
+      "any cost-based raw-signal suppression",
+      "any missing exact fill or JPY conversion silently synthesized",
+      "any nonfinite accounting or leverage/size fitting"
+    ],
+    "interpretation": "a pass is an internal historical-replay gate only; it is not a guarantee, live-profit proof, strategy admission, or authority to trade"
+  },
+  "review_and_execution_gate": {
+    "result_execution_before_independent_review": false,
+    "required_receipt_path": "INDEPENDENT_REVIEW.json",
+    "required_receipt_status": "APPROVED_FOR_OFFLINE_REPLAY",
+    "receipt_must_bind": [
+      "preregistration file SHA256",
+      "preregistration canonical SHA256",
+      "runner file SHA256"
+    ],
+    "result_files_must_not_exist_before_review": [
+      "result.json",
+      "evidence_packet.json",
+      "signals.jsonl",
+      "trades.jsonl"
+    ]
+  },
+  "limitations": [
+    "M5 BID/ASK OHLC does not reconstruct OANDA quote-event sequence, partial fill, queue position or exact intrabar spread path.",
+    "The adverse latency arm is a declared conservative fill-bar envelope, not an exact reproduction of one live quote event.",
+    "Fees and financing are set to zero for this OANDA spread vehicle with a maximum thirty-minute contract; both remain explicit fields.",
+    "Locked validation ends in 2025-08 and is not current forward shadow evidence.",
+    "No result can guarantee future profit."
+  ]
+}

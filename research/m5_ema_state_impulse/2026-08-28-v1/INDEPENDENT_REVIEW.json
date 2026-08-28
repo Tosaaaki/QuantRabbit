@@ -1,0 +1,20 @@
+{
+  "status": "APPROVED_FOR_OFFLINE_REPLAY",
+  "reviewer_task_id": "/root/m5_runtime_strategy_replay/independent_review",
+  "reviewer_is_implementation_lane": false,
+  "reviewed_at_utc": "2026-08-28T08:02:20Z",
+  "preregistration_file_sha256": "0311d644dcd33cfb642181ab0d4965f74923ee031122a3b856ec187403d3bb35",
+  "preregistration_canonical_sha256": "e0867db99d04e64a01e4ced62b812c4ff09bc7cfe35a7cfbe459fc636819148d",
+  "runner_file_sha256": "26564f5e254fdd2a41a135cf50c506f9b045ab397806223ccda0a45d626e5a10",
+  "test_file_sha256": "7573fe6bf023488752cf9aae391709dc9f11178aff08c3caf325e1a47440ab64",
+  "p0_findings": 0,
+  "p1_findings": 0,
+  "p2_findings": 0,
+  "candle_files_opened": 0,
+  "candle_rows_decoded": 0,
+  "post_boundary_bytes_read": 0,
+  "network_attempts": 0,
+  "credential_reads": 0,
+  "external_order_attempts": 0,
+  "external_orders": 0
+}
