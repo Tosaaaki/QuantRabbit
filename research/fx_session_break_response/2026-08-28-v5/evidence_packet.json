@@ -1,0 +1,22 @@
+{
+  "attempt_exit_code": 1,
+  "attempt_number": 1,
+  "candidate_id": "FX_SESSION_BREAK_RESPONSE_SURFACE_V5",
+  "credential_reads": 0,
+  "dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+  "executed_runner_sha256": "a8a83d6ec8862907b8b36211bd8f94331e9857d967d13d423236c89545188632",
+  "external_orders": 0,
+  "family_count_required": 128,
+  "holdout_rows_decoded": 0,
+  "network_attempts": 0,
+  "packet_sha256": "c62bad127e7b6d9b747d921c53f73a74f6926d17fd5dee44160b17d6d77c07e2",
+  "preregistration_sha256": "6542095c980ec421d779f21b909dec8f860c5b745a349c8dbafea904d1be4b7e",
+  "profit_proven": false,
+  "reason_code": "MAX_T_ALL_128_STANDARDIZATION_FAILED",
+  "result_sha256": "b181205f8a8dc4c6c466a1d4fa37fdebbc7bc92716204694a363aa6fc7a570e8",
+  "schema": "QR_FX_SESSION_BREAK_RESPONSE_EVIDENCE_PACKET_V1",
+  "status": "REJECTED_DISCOVERY_FAMILY_UNSTANDARDIZABLE",
+  "strategy_admitted": false,
+  "validation_rows_decoded": 0,
+  "zero_observation_config_count": 20
+}

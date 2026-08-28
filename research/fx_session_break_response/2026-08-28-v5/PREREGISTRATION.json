@@ -1,0 +1,1693 @@
+{
+  "authority": {
+    "broker_mutation_allowed": false,
+    "credential_reads_allowed": 0,
+    "external_orders_allowed": 0,
+    "git_actions_allowed": 0,
+    "launchd_actions_allowed": 0,
+    "network_attempts_allowed": 0,
+    "offline_only": true
+  },
+  "calibration": {
+    "activity_quantiles": [
+      0.25,
+      0.5
+    ],
+    "breadth_q": 0.5,
+    "displacement_quantiles": [
+      0.5,
+      0.67
+    ],
+    "geometry_quantiles": [
+      0.5,
+      0.67
+    ],
+    "minimum_common_breadth_days_per_session": 45,
+    "minimum_displacement_threshold": 1.0,
+    "minimum_structural_events_per_session_mode": 24,
+    "minimum_valid_activity_days_per_pair_session": 45,
+    "pooling_on_minimum_failure": false,
+    "threshold_scope": "session x structural mode, pooled across the three preregistered pairs"
+  },
+  "candidate_id": "FX_SESSION_BREAK_RESPONSE_SURFACE_V5",
+  "chronology": {
+    "both_rails_touched": "AMBIGUOUS_NO_SIGNAL",
+    "candle_timestamp_semantics": "M5 open; complete bar closes five minutes later",
+    "completed_data_only": true,
+    "decision": "event-window final bar close",
+    "entry": "first exact executable M5 BID/ASK open strictly later than decision; the open equal to decision time is forbidden",
+    "exit": "fixed exact M5 open H24 or H48 bars after entry; no TP and no price SL",
+    "expected_step_seconds": 300,
+    "gap_rule": "missing required rail/event/entry/path/exit/conversion timestamp makes that signal unavailable; no synthesis or forward search"
+  },
+  "execution_arms": {
+    "ADVERSE_STRESS": "same path; observed ask/bid plus 0.9 pip slippage per side",
+    "EXECUTABLE_BASE": "same path; observed ask/bid plus 0.3 pip slippage per side",
+    "RAW_SIGNAL": "mid open to mid open; no spread/fee/slippage",
+    "adverse_slippage_pips_per_side": 0.9,
+    "base_slippage_pips_per_side": 0.3,
+    "cost_gate": false,
+    "exact_time_jpy_conversion": true,
+    "fee_pips_per_side": 0.0,
+    "latency_sensitivity": "+5 minutes to entry and identical H-bar holding interval",
+    "latency_sensitivity_bars": 1,
+    "shared_signal_id_and_lineage": true,
+    "terminal_liquidation_and_mtm": true,
+    "units": 1000
+  },
+  "family": {
+    "configs": [
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_FIX__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_FIX"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__ACCEPT_CONTINUATION__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "ACCEPT_CONTINUATION",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q50",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q50",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "ANY",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "ANY",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": false,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 24,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      },
+      {
+        "activity": "MODE_MATCHED",
+        "breadth": "MODE_MATCHED",
+        "config_id": "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+        "displacement_quantile": "Q67",
+        "geometry_quantile": "Q67",
+        "horizon_bars": 48,
+        "mode": "REJECT_FADE",
+        "selection_eligible": true,
+        "session": "LONDON_MIDDAY"
+      }
+    ],
+    "dimensions": {
+      "activity": [
+        "ANY",
+        "MODE_MATCHED"
+      ],
+      "breadth": [
+        "ANY",
+        "MODE_MATCHED"
+      ],
+      "displacement_quantile": [
+        "Q50",
+        "Q67"
+      ],
+      "geometry_quantile": [
+        "Q50",
+        "Q67"
+      ],
+      "horizon_bars": [
+        24,
+        48
+      ],
+      "mode": [
+        "ACCEPT_CONTINUATION",
+        "REJECT_FADE"
+      ],
+      "session": [
+        "LONDON_MIDDAY",
+        "LONDON_FIX"
+      ]
+    },
+    "size": 128
+  },
+  "indicator": {
+    "accept_displacement": "D_accept=abs(log(C_event/O_event))/(R+epsilon)",
+    "accept_geometry": "G_A=(PE*settle_A*persist_A)^(1/3)",
+    "accept_persist": "count(last six completed closes beyond the broken rail)/6",
+    "accept_settle": "upper clip((C_event-U)/(H_event-U+epsilon),0,1); lower clip((L-C_event)/(L-L_event+epsilon),0,1)",
+    "accept_structure": "event pierces exactly one rail and the final two completed closes settle beyond that rail",
+    "activity": "V=sum OANDA price-count volume over event; M=median(V over valid calibration days for same pair/session); A=V/(M+epsilon)",
+    "activity_mode_matched": "ACCEPT A>=pair/session A_Q50; REJECT A_Q25<=A<A_Q50",
+    "breadth": "B=abs(sum(u_i))/sum(abs(u_i)); all three exact session observations required",
+    "breadth_component": "u_i=q_i*log(C_event_i/O_event_i)/(R_i+epsilon)",
+    "breadth_mode_matched": "ACCEPT requires B>=session calibration Q50 and q_pair*break_side=sign(sum(u_i)); REJECT requires B<session calibration Q50",
+    "cost_is_entry_gate": false,
+    "direction": "ACCEPT_CONTINUATION follows break side; REJECT_FADE opposes break side",
+    "epsilon": 1e-12,
+    "event_returns": "r_k=log(C_k/C_(k-1)) inside the completed event path, with the event open as C_(-1)",
+    "midpoint": "arithmetic midpoint of BID/ASK for every OHLC field",
+    "path_efficiency": "PE=abs(sum(r_event))/(sum(abs(r_event))+epsilon)",
+    "rail": "U=max midpoint high in reference; L=min midpoint low in reference; R=log(U/L)>0",
+    "reject_displacement": "D_reject=abs(log(X_break_extreme/O_event))/(R+epsilon), X=H_event for upper and L_event for lower",
+    "reject_geometry": "G_R=((1-PE)*settle_R*reverse_R)^(1/3)",
+    "reject_reverse": "reverse_R=clip(-b*sum(last3 returns)/(sum(abs(last3 returns))+epsilon),0,1), b=+1 upper/-1 lower",
+    "reject_settle": "upper clip((H_event-C_event)/(H_event-U+epsilon),0,1); lower clip((C_event-L_event)/(L-L_event+epsilon),0,1)",
+    "reject_structure": "event pierces exactly one rail, final close returns strictly inside the rail, and the last-three-return sum is opposite break side",
+    "usd_orientation_q": {
+      "AUD_USD": -1,
+      "EUR_USD": -1,
+      "USD_JPY": 1
+    },
+    "volume_semantics": "OANDA_PRICE_COUNT_NOT_TRADED_VOLUME; activity proxy only, not traded volume or order flow"
+  },
+  "input": {
+    "byte_prefix_contract": {
+      "AUD_USD": {
+        "exclusive_byte_offset": 27186414,
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "prefix_rows": 74568,
+        "prefix_sha256": "79d959900555cc3b52ac1f759437bf4998f03c383e31629598355bc9250cd894"
+      },
+      "EUR_USD": {
+        "exclusive_byte_offset": 27205812,
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "prefix_rows": 74582,
+        "prefix_sha256": "0d1e76cad0ed725b05da593df241fba87549710d8ac15eb7478460fc808ad7f5"
+      },
+      "USD_JPY": {
+        "exclusive_byte_offset": 27222596,
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "prefix_rows": 74562,
+        "prefix_sha256": "bb102f9ff123fa45c2b248a851fbe073e3c33e0f1ff4d446b97bd157a748e4e2"
+      }
+    },
+    "canonical_dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+    "dataset_root": "research/oanda_history_capture/2026-08-28-v1/runs/oanda-live-m5-ba-730d-20260828T040500Z-40b27f46ae63",
+    "decoder_exclusive_end_utc": "2025-08-28T04:05:00.000000Z",
+    "discovery_prefix_contract": {
+      "AUD_USD": {
+        "exclusive_byte_offset": 20259438,
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "prefix_rows": 55566,
+        "prefix_sha256": "2c36f2888ea1419b479c5c15f00eb32cdc262554bc9758530e2641147fd37fb1"
+      },
+      "EUR_USD": {
+        "exclusive_byte_offset": 20273794,
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "prefix_rows": 55576,
+        "prefix_sha256": "850f0cb01a2f75e1e3320c30df1efd2700a292b73a1cc305869ec5bb5f52a9e2"
+      },
+      "USD_JPY": {
+        "exclusive_byte_offset": 20287549,
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "prefix_rows": 55560,
+        "prefix_sha256": "fb32e71eb8d539a96ffe4e4cdffbca3caba7054f41dfa3546589f3dd7aa23502"
+      }
+    },
+    "gap_report_sha256": "95e7f222a0579a7339db0c35e8299af9ca2c139425161638176e1eea6dbc32e7",
+    "granularity": "M5",
+    "manifest_sha256": "3408963dce76f6c2da5be7f766a48b4e1a91b3fbd03d7082f5369f8e1f2a4a00",
+    "post_boundary_label_computation_allowed": false,
+    "post_boundary_price_or_volume_decode_allowed": false,
+    "price_component": "BID_ASK",
+    "provider": "OANDA_V20_LIVE_CANDLES_IMMUTABLE_CAPTURE",
+    "symbols": [
+      "EUR_USD",
+      "USD_JPY",
+      "AUD_USD"
+    ]
+  },
+  "portfolio_and_reporting": {
+    "break_even_round_trip_cost": "c_star_pips=RAW mean pips",
+    "financing_model": "zero over maximum four-hour horizon; limitation disclosed",
+    "gross_leverage_observation_cap": 20.0,
+    "initial_equity_jpy": 200000.0,
+    "leverage_fitting": false,
+    "martingale": false,
+    "price_stop_loss": false,
+    "required": [
+      "gross/net/adverse expectancy and cost drag",
+      "direction accuracy, MFE/MAE, counts and N_eff",
+      "pair and anchored-month stability",
+      "plus-five-minute latency sensitivity",
+      "gap/unpriceable/terminal liquidation counts and terminal MTM",
+      "drawdown, ruin, leverage observation and hard guards"
+    ],
+    "units_per_signal": 1000
+  },
+  "schema": "QR_FX_SESSION_BREAK_RESPONSE_PREREGISTRATION_V1",
+  "selection": {
+    "bootstrap": "deterministic common five-day moving-block bootstrap",
+    "bootstrap_block_days": 5,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20260828,
+    "cluster": "UTC decision day, common USD-linked resamples across every pair/config",
+    "data": "discovery RAW_SIGNAL only",
+    "density_floor": {
+      "active_utc_days": 48,
+      "pairs_meeting_floor": 2,
+      "trades": 96,
+      "trades_per_qualifying_pair": 24
+    },
+    "eligible_configs": "the 32 MODE_MATCHED/MODE_MATCHED configs only",
+    "fixed_budget": 128,
+    "multiplicity": "one-sided 95% max-T FWER simultaneous LCB across all 128 configs",
+    "rank_order": [
+      "RAW corrected LCB descending",
+      "RAW mean descending",
+      "worst-pair RAW mean descending",
+      "positive anchored-month fraction descending",
+      "N_eff descending",
+      "config_id ascending"
+    ]
+  },
+  "sessions": {
+    "LONDON_FIX": {
+      "event": "same Europe/London local date 12:00-15:55",
+      "reference": "same Europe/London local date 08:00-11:55"
+    },
+    "LONDON_MIDDAY": {
+      "event": "same Europe/London local date 08:00-11:55",
+      "reference": "same UTC date 00:00-05:55 UTC"
+    },
+    "timezone": "Europe/London"
+  },
+  "splits": {
+    "calibration": {
+      "from_utc": "2024-08-28T04:05:00.000000Z",
+      "to_utc": "2024-11-28T04:05:00.000000Z",
+      "use": "threshold calibration only"
+    },
+    "discovery": {
+      "from_utc": "2024-11-28T04:05:00.000000Z",
+      "to_utc": "2025-05-28T04:05:00.000000Z",
+      "use": "fixed-budget selection among 32 MODE_MATCHED/MODE_MATCHED configs"
+    },
+    "locked_internal_validation": {
+      "from_utc": "2025-05-28T04:05:00.000000Z",
+      "to_utc": "2025-08-28T04:05:00.000000Z",
+      "use": "one locked winner; no parameter reselection"
+    },
+    "opened_development": {
+      "decode_allowed": false,
+      "from_utc": "2025-08-28T04:05:00.000000Z",
+      "to_utc": "2026-05-28T04:05:00.000000Z"
+    },
+    "untouched_holdout": {
+      "decode_allowed": false,
+      "from_utc": "2026-05-28T04:05:00.000000Z",
+      "to_utc": "2026-08-28T04:05:00.000000Z"
+    }
+  },
+  "status": "PREREGISTERED_RESEARCH_ONLY",
+  "validation": {
+    "base_and_adverse": "post-classification only; never changes winner",
+    "bootstrap": "one-sided 95% percentile LCB, same deterministic common five-day moving-block design",
+    "density_floor": {
+      "active_utc_days": 24,
+      "pairs_meeting_floor": 2,
+      "trades": 48,
+      "trades_per_qualifying_pair": 12
+    },
+    "interaction_daily_capacity": "three preregistered pair slots per session-day; absent signals contribute zero and each arm is divided by 3 before differencing",
+    "parameter_reselection": false,
+    "pass": [
+      "RAW mean pips > 0",
+      "RAW one-sided 95% LCB > 0",
+      "daily capacity-normalized interaction difference LCB versus exact ANY/ANY ablation > 0",
+      "at least 2 of 3 pairs have positive RAW mean",
+      "at least 2 of 3 anchored validation months have positive RAW mean",
+      "density floor passes",
+      "no ruin, nonfinite accounting, leverage fitting, terminal inventory omission, or hard-guard breach"
+    ],
+    "winner_locked_before_validation_decode": true
+  }
+}

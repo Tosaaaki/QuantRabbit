@@ -1,0 +1,112 @@
+{
+  "attempt": {
+    "attempt_number": 1,
+    "elapsed_real_seconds": 7.39,
+    "exit_code": 1,
+    "finished_at_utc": "2026-08-28T06:53:13.000000Z",
+    "rerun_permitted_for_this_candidate": false,
+    "started_command": "python3 replay_session_break_response.py --run-once"
+  },
+  "authority": {
+    "broker_mutations": 0,
+    "credential_reads": 0,
+    "external_order_attempts": 0,
+    "external_orders": 0,
+    "git_actions": 0,
+    "launchd_actions": 0,
+    "network_attempts": 0
+  },
+  "candidate_id": "FX_SESSION_BREAK_RESPONSE_SURFACE_V5",
+  "decode_audit": {
+    "discovery_prefix_rows_decoded": 166702,
+    "holdout_rows_decoded": 0,
+    "post_boundary_label_rows_computed": 0,
+    "post_boundary_price_or_volume_rows_decoded": 0,
+    "validation_rows_decoded": 0,
+    "winner_locked": false
+  },
+  "discovery_family_standardization": {
+    "configs_with_at_least_one_observation": 108,
+    "corrected_lcb_pips": null,
+    "family_count_required": 128,
+    "max_t_fwer_computed": false,
+    "standardized_count": null,
+    "standardized_count_required": 128,
+    "winner_selected": false,
+    "zero_observation_config_count": 20,
+    "zero_observation_config_ids": [
+      "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G50__BANY__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BANY__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AANY__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D50__G67__BMODE_MATCHED__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G50__BANY__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G50__BMODE_MATCHED__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BANY__AMODE_MATCHED__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AANY__H48",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H24",
+      "LONDON_MIDDAY__REJECT_FADE__D67__G67__BMODE_MATCHED__AMODE_MATCHED__H48"
+    ]
+  },
+  "execution_arms": {
+    "ADVERSE_STRESS": {
+      "equity_multiple": null,
+      "mean_pips": null,
+      "reason": "family standardization failed before winner selection",
+      "total_jpy": null,
+      "total_pips": null
+    },
+    "EXECUTABLE_BASE": {
+      "equity_multiple": null,
+      "mean_pips": null,
+      "reason": "family standardization failed before winner selection",
+      "total_jpy": null,
+      "total_pips": null
+    },
+    "RAW_SIGNAL": {
+      "equity_multiple": null,
+      "mean_pips": null,
+      "reason": "family standardization failed before winner selection",
+      "total_jpy": null,
+      "total_pips": null
+    }
+  },
+  "future_holdout_required": true,
+  "hashes": {
+    "dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+    "executed_runner_sha256": "a8a83d6ec8862907b8b36211bd8f94331e9857d967d13d423236c89545188632",
+    "preregistration_canonical_sha256": "37981d1cf749d397f4626aa60c379ddf63e69a700d4278647e078bd2872802ac",
+    "preregistration_sha256": "6542095c980ec421d779f21b909dec8f860c5b745a349c8dbafea904d1be4b7e"
+  },
+  "interpretation": {
+    "cost_edge_evaluated": false,
+    "gross_edge_evaluated": false,
+    "interaction_edge_evaluated": false,
+    "next_version_rule": "A materially new preregistered family may address zero-density cells; V5 thresholds and family remain immutable and rejected.",
+    "profit_claim_allowed": false
+  },
+  "locked_internal_validation": {
+    "N_eff": null,
+    "anchored_month_results": null,
+    "decoded": false,
+    "pair_results": null,
+    "reason": "winner selection failed before validation byte decode",
+    "terminal_inventory": null,
+    "trades": null
+  },
+  "profit_proven": false,
+  "reason_code": "MAX_T_ALL_128_STANDARDIZATION_FAILED",
+  "result_sha256": "b181205f8a8dc4c6c466a1d4fa37fdebbc7bc92716204694a363aa6fc7a570e8",
+  "schema": "QR_FX_SESSION_BREAK_RESPONSE_RESULT_V1",
+  "status": "REJECTED_DISCOVERY_FAMILY_UNSTANDARDIZABLE",
+  "strategy_admitted": false
+}
