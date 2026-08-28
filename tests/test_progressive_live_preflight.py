@@ -20,6 +20,32 @@ SPEC.loader.exec_module(preflight)
 
 
 class ProgressiveLivePreflightTests(unittest.TestCase):
+    def test_user_decision_and_external_account_wait_are_independent(self) -> None:
+        self.assertTrue(
+            preflight.waiting_on_external_state(
+                screen_blockers=[
+                    "FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED",
+                    "MINIMUM_MARGIN_BUFFER_NOT_MET",
+                    "MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT",
+                ],
+                fresh_signal_count=2,
+            )
+        )
+        self.assertFalse(
+            preflight.waiting_on_external_state(
+                screen_blockers=["FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED"],
+                fresh_signal_count=2,
+            )
+        )
+
+    def test_missing_fresh_signal_is_external_wait_even_before_release(self) -> None:
+        self.assertTrue(
+            preflight.waiting_on_external_state(
+                screen_blockers=["FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED"],
+                fresh_signal_count=0,
+            )
+        )
+
     def test_signal_model_uses_broker_minimum_margin_stop_and_factor(self) -> None:
         quotes = {
             "EUR_USD": SimpleNamespace(mid=1.16),

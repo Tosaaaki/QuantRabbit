@@ -43,10 +43,43 @@ DEFAULT_STATE_ROOT = (
 )
 MODE_LEDGER_CONTRACT = "QR_PROGRESSIVE_LIVE_MODE_LEDGER_V1"
 PREFLIGHT_CONTRACT = "QR_PROGRESSIVE_LIVE_PREFLIGHT_V1"
+EXTERNAL_STATE_BLOCKERS = frozenset(
+    {
+        "PENDING_ENTRY_ORDER_PRESENT",
+        "MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT",
+        "STRESS_MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT",
+        "MINIMUM_MARGIN_BUFFER_NOT_MET",
+        "CURRENCY_FACTOR_CONCENTRATION_ABOVE_BUDGET",
+    }
+)
 
 
 class PreflightBlocked(RuntimeError):
     """The preflight cannot prove a zero-authority or admission invariant."""
+
+
+def waiting_on_external_state(
+    *,
+    screen_blockers: list[str],
+    fresh_signal_count: int,
+) -> bool:
+    """Classify market/account waits independently from user authorization.
+
+    A missing risk release can coexist with an unsafe account or no current
+    signal.  Keeping these booleans independent lets the owner report both
+    conditions without treating user approval as proof that the external gate
+    is already clear.
+    """
+
+    if fresh_signal_count <= 0:
+        return True
+    return any(
+        blocker in EXTERNAL_STATE_BLOCKERS
+        or blocker.endswith("_QUOTE_MISSING")
+        or blocker.endswith("_QUOTE_STALE")
+        or blocker.endswith("_SPREAD_ANOMALY")
+        for blocker in screen_blockers
+    )
 
 
 def canonical_sha(value: Any) -> str:
@@ -615,7 +648,10 @@ def run_preflight(
             default=0,
         ),
         "needs_user_decision": release_sha is None,
-        "waiting_external_state": release_sha is not None and mode != RuntimeMode.THROTTLED_LIVE.value,
+        "waiting_external_state": waiting_on_external_state(
+            screen_blockers=screen["blockers"],
+            fresh_signal_count=len(signals),
+        ),
         "promotion_ready": release_sha is not None and mode == RuntimeMode.THROTTLED_LIVE.value,
         "live_permission": False,
         "broker_mutation_allowed": False,
