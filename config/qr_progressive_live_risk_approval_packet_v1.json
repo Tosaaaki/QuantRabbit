@@ -2,7 +2,7 @@
   "contract": "QR_PROGRESSIVE_LIVE_RISK_APPROVAL_PACKET_V1",
   "status": "NEEDS_USER_DECISION",
   "created_at_utc": "2026-08-28T13:50:30Z",
-  "software_critical_path_commit": "5e5d12a1387a289cfc453d33f8e4de09313e889b",
+  "software_critical_path_commit": "60f70695402b9923d79db50ca08a41661006fdcd",
   "initial_pairs": [
     "EUR_USD",
     "USD_JPY"
@@ -87,9 +87,9 @@
     "warning": "Historical thresholds are hypothesis-generating and do not guarantee a retained floor or future profit."
   },
   "software_evidence": {
-    "supervision_event_binding_commit": "5e5d12a1387a289cfc453d33f8e4de09313e889b",
-    "focused_tests": "27 passed, 10 subtests passed",
-    "full_regression": "5185 passed, 1 skipped, 1235 subtests passed",
+    "supervision_event_binding_commit": "60f70695402b9923d79db50ca08a41661006fdcd",
+    "focused_tests": "28 passed, 10 subtests passed",
+    "full_regression": "5186 passed, 1 skipped, 1235 subtests passed",
     "single_gateway": "LiveOrderGateway",
     "live_sync": "REFUSED_DIRTY_PROTECTED_LIVE",
     "live_propagation_count": 0,
@@ -115,5 +115,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "dd3d1285dc6eab81a2debfa86f49c18a972ea083494f560109bb143f05340bbb"
+  "packet_sha256": "88e3848dd74ecfb6bf9c019599abc5aca39c8506731224b22f0f760e977fa203"
 }
