@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_CHALLENGER_SEAL",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "classification": "UNADMITTED_CHALLENGER",
+  "strategy_official_historical_replay_ordinal": 1,
+  "runtime_corrective_ordinal": 1,
+  "runtime_revision": 2,
+  "runtime_corrective_reason": "COMPLETED_BAR_END_TIMESTAMP_BUCKETED_TO_NEXT_MONTH",
+  "preregistration": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREGISTRATION.json",
+    "sha256": "cf7488cba4361f729d1eb4c3de89d9b3696cae0aa42cc8322a201ce3750eff28"
+  },
+  "runtime": {
+    "path": "run_m5_ema_direction_post_entry_v1.py",
+    "sha256": "28dadec6d628bbdaf8b366b6537c3ea273948d7b0cbb583ef180c2fa2900b382"
+  },
+  "verification": {
+    "prereg_corrective_checkpoint_commit": "8b7def413bcb20e54398947cbdc0fcd281fe0628",
+    "test_path": "test_m5_ema_direction_post_entry_v1.py",
+    "test_sha256": "3b8db2039b22e599e94a6692399854095259a4e9fc8a130c9de5a9585730d16d",
+    "focused_tests_passed": 13,
+    "focused_tests_failed": 0,
+    "latest_focused_test_elapsed_seconds": "2.44",
+    "independent_verify_cli_passed": true,
+    "comparison_reproduced": true,
+    "secret_scan_matches": 0
+  },
+  "corrective_contract": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_RUNTIME_CORRECTIVE_R1.json",
+    "sha256": "9e57e1cdcd6b06c0dd36ebbf86803db1576055d9f532f741a779415df8ab5830"
+  },
+  "superseded_invalid_evidence": {
+    "path": "evidence/m5_ema_direction_post_entry_v1_official_001",
+    "classification": "RESULT_VALIDATION_FAILURE_MONTH_BOUNDARY",
+    "result_file_sha256": "a56598342d1976ad16e45396cca91476e82d115b17196176b0b189754157d660",
+    "packet_file_sha256": "bdd163fe2c42f42d44ba9b5ff56b4d313cd19de19f25420b30f09e44518468ac",
+    "immutable": true,
+    "admissible": false
+  },
+  "corrected_evidence": {
+    "path": "evidence/m5_ema_direction_post_entry_v1_corrective_001",
+    "source_manifest_file_sha256": "95663dee9243a18387967e320abbbfb9b262cb09a09bf385c82a7f41a6495400",
+    "raw_signal_ledger_file_sha256": "1499f73836889e01189064d0b8c61bd67e2e61c67af6ea53c918b5caa9cc47ff",
+    "result_file_sha256": "f2a9a7e9c4ee255d3b9d25a7f3b4006e014f1c40995a4b70ca7edcb671af356e",
+    "result_embedded_sha256": "d96518c736898599378b2c6520e708ba759b34aa03ee86f3281329d901f11581",
+    "comparison_file_sha256": "dd74039821521495a5e32412de1d2db85ab000815bfdff45e56f9d761b1e1cd2",
+    "comparison_embedded_sha256": "6db890f0158a8e052e178a818fe30dca478c3eb6408e566b19c65f92702ae2f9",
+    "packet_file_sha256": "4aa215ae96762bbb4a8e6f03f6e7167af05ee058aad333296ef4e62bf5579f5e",
+    "packet_embedded_sha256": "fb565ba54abc8d9864ea3da049c72cde89e54d05304be993d24ad3def668e054",
+    "artifact_manifest_file_sha256": "dbc5f4354486df08a83d7361ccd5853f0ac32d801934faf96594bb3e3133d877",
+    "artifact_manifest_embedded_sha256": "6b47c877318c2191d3bffeea3d56d7de8d69fa51b4009405417533801c2df6b9",
+    "verified": true
+  },
+  "runtime_corrective_invariant_receipt": {
+    "frozen_economic_projection_sha256": "95c4443cbade07e0d25a0d59265b0fc0c592f7b3cd40cb194902279d95f0ad45",
+    "signal_ledger_identical": true,
+    "source_manifest_identical": true,
+    "all_signal_action_disposition_target_pnl_selection_invariants_identical": true,
+    "only_month_day_cluster_and_n_eff_outputs_changed": true
+  },
+  "execution_counts": {
+    "completed_m5_bars_decoded": 78144,
+    "source_files_decoded": 3,
+    "tuning_raw_signals": 31929,
+    "walk_forward_raw_signals": 37147,
+    "all_period_raw_signals": 69076,
+    "walk_forward_completed_round_trips": 37147,
+    "configurations_evaluated_per_period": 12,
+    "cost_arms": 3,
+    "llm_calls": 0,
+    "external_orders": 0
+  },
+  "selected_walk_forward": {
+    "selected_config_id": "D_TP_Q40_PROFIT_GIVEBACK__H06",
+    "finite_max_age_completed_m5_bars": 6,
+    "pair_open_lot_cap": 24,
+    "portfolio_maximum_open_lots_observed": 18,
+    "fixed_notional_jpy_per_lot": "1000.000000",
+    "turnover_jpy": "74294000.000000",
+    "turnover_multiple_initial_equity": "371.470000000000",
+    "maximum_gross_notional_jpy": "18000.000000",
+    "maximum_absolute_currency_exposure_jpy": "18000.000000",
+    "inventory_age_completed_bars": {
+      "q50": "6.000000",
+      "q90": "6.000000",
+      "q99": "6.000000"
+    },
+    "terminal_inventory": 0,
+    "terminal_mtm_jpy": "0.000000",
+    "hard_guard_violation_count": 0,
+    "arms": {
+      "RAW_SIGNAL": {
+        "mean_net_expectancy_jpy": "-0.084505",
+        "total_pnl_jpy": "-3139.093405",
+        "ending_equity_multiple": "0.984304532975",
+        "monthly_multiples": {
+          "2026-05": "0.991642013815",
+          "2026-06": "0.992600675710"
+        },
+        "marked_running_peak_max_drawdown": "-0.015705144466",
+        "currency_time_clustered_n_eff": "43.812810"
+      },
+      "EXECUTABLE_BASE": {
+        "mean_net_expectancy_jpy": "-0.229716",
+        "total_pnl_jpy": "-8533.261969",
+        "cost_drag_vs_raw_jpy": "5394.168564",
+        "ending_equity_multiple": "0.957333690155",
+        "monthly_multiples": {
+          "2026-05": "0.978464501835",
+          "2026-06": "0.978404110072"
+        },
+        "marked_running_peak_max_drawdown": "-0.042671415353",
+        "currency_time_clustered_n_eff": "52.000000"
+      },
+      "ADVERSE_STRESS": {
+        "mean_net_expectancy_jpy": "-0.387733",
+        "total_pnl_jpy": "-14403.131083",
+        "cost_drag_vs_raw_jpy": "11264.037678",
+        "ending_equity_multiple": "0.927984344585",
+        "monthly_multiples": {
+          "2026-05": "0.964187594970",
+          "2026-06": "0.962452067861"
+        },
+        "marked_running_peak_max_drawdown": "-0.072011810774",
+        "currency_time_clustered_n_eff": "52.000000"
+      }
+    },
+    "pairs": {
+      "EUR_USD": {
+        "signals": 12384,
+        "direction_accuracy": "0.480853126515",
+        "gross_mfe_mean_pips": "2.537472",
+        "gross_mae_mean_pips": "-3.196439",
+        "base_mean_net_expectancy_jpy": "-0.216726",
+        "adverse_mean_net_expectancy_jpy": "-0.362152"
+      },
+      "USD_JPY": {
+        "signals": 12381,
+        "direction_accuracy": "0.462464646465",
+        "gross_mfe_mean_pips": "3.090393",
+        "gross_mae_mean_pips": "-3.863614",
+        "base_mean_net_expectancy_jpy": "-0.163459",
+        "adverse_mean_net_expectancy_jpy": "-0.280956"
+      },
+      "AUD_USD": {
+        "signals": 12382,
+        "direction_accuracy": "0.481900452489",
+        "gross_mfe_mean_pips": "2.487377",
+        "gross_mae_mean_pips": "-3.094496",
+        "base_mean_net_expectancy_jpy": "-0.308960",
+        "adverse_mean_net_expectancy_jpy": "-0.520087",
+        "reported_separately_after_source_schema_integrity_match": true
+      }
+    }
+  },
+  "admission": {
+    "status": "UNADMITTED_CHALLENGER",
+    "profit_unproven": true,
+    "development_positive_diagnostic": false,
+    "holdout_state": "UNOPENED",
+    "holdout_read_count": 0,
+    "two_x_or_three_x_used_for_selection": false,
+    "post_evaluation_leverage_change": false,
+    "shadow_auto_enable_allowed": false
+  },
+  "protected_r5": {
+    "source_file_count": 18,
+    "source_aggregate_sha256": "5b530abf7aa7d3db0f31826efc9f4645d2a9dceb7e10feb620d40f5f3c0ed016",
+    "evidence_file_count": 28,
+    "evidence_aggregate_sha256": "027bd900ba1fbd237b15e0cbd5e393648e36bcbabd629c53d81cf2286cab94a7",
+    "combined_file_count": 46,
+    "combined_aggregate_sha256": "a6f2c4990af89462d33dca0bee8fca0c3af700562de4f074c5f90331d3d87d13",
+    "changed": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "active_shadow_mutation": false
+  }
+}
