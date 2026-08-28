@@ -17,6 +17,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RUNNER_PATH = HERE / "run_m5_ema_direction_post_entry_v1.py"
 PREREG_PATH = HERE / "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREGISTRATION.json"
+SUPERSEDED_OUTPUT_ROOT = (
+    HERE / "evidence" / "m5_ema_direction_post_entry_v1_official_001"
+)
 
 SPEC = importlib.util.spec_from_file_location("m5_ema_direction_post_entry_v1", RUNNER_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -196,6 +199,24 @@ class EmaDirectionUnitTests(unittest.TestCase):
         with self.assertRaises(M.ChallengerError):
             M.nearest_rank([], D("0.4"))
 
+    def test_completed_interval_calendar_labels_do_not_spill_at_midnight(self) -> None:
+        may_end = M.parse_epoch_ns("2026-06-01T00:00:00.000000000Z")
+        june_end = M.parse_epoch_ns("2026-07-01T00:00:00.000000000Z")
+        self.assertEqual(M.utc_month(M.completed_interval_label_ns(may_end)), "2026-05")
+        self.assertEqual(M.utc_day(M.completed_interval_label_ns(may_end)), "2026-05-31")
+        self.assertEqual(M.utc_month(M.completed_interval_label_ns(june_end)), "2026-06")
+        self.assertEqual(
+            M.expected_calendar_months(
+                M.parse_epoch_ns("2026-05-01T00:00:00.000000000Z"),
+                june_end,
+            ),
+            ["2026-05", "2026-06"],
+        )
+        multiples = M.monthly_multiples(
+            [(may_end, D("110")), (june_end, D("121"))], D("100")
+        )
+        self.assertEqual(multiples, {"2026-05": "1.100000000000", "2026-06": "1.100000000000"})
+
     def test_one_common_exit_has_componentwise_cost_ordering(self) -> None:
         bars = constant_bars(3)
         signal = manual_signal(bars[0], 1, 1)
@@ -369,6 +390,25 @@ class EmaDirectionUnitTests(unittest.TestCase):
         with self.assertRaises(M.ChallengerError):
             M.validate_prereg(opened)
 
+    def test_corrective_comparison_rejects_frozen_economic_drift(self) -> None:
+        original = M.read_frozen_superseded_result(SUPERSEDED_OUTPUT_ROOT)
+        label_only = copy.deepcopy(original)
+        label_only["runtime_revision"] = 2
+        label_only["runtime_corrective_reason"] = M.RUNTIME_CORRECTIVE_REASON
+        label_only["runtime_corrective_ordinal"] = 1
+        selected = label_only["selected_config_id"]
+        label_only["walk_forward_results"][selected]["arms"]["EXECUTABLE_BASE"][
+            "monthly_multiples"
+        ] = {"2026-05": "0.97", "2026-06": "0.98"}
+        comparison = M.build_corrective_comparison(original, label_only, "a" * 64)
+        self.assertTrue(all(comparison["invariant_checks"].values()))
+        drifted = copy.deepcopy(label_only)
+        drifted["walk_forward_results"][selected]["arms"]["EXECUTABLE_BASE"][
+            "total_pnl_jpy"
+        ] = "0.000000"
+        with self.assertRaises(M.ChallengerError):
+            M.build_corrective_comparison(original, drifted, "b" * 64)
+
 
 class ContentAddressedEndToEndTest(unittest.TestCase):
     def test_compact_synthetic_build_verify_and_tamper_rejection(self) -> None:
@@ -387,14 +427,22 @@ class ContentAddressedEndToEndTest(unittest.TestCase):
             prereg_path = root / M.PREREG_NAME
             prereg_path.write_bytes(M.canonical_json_bytes(prereg))
 
-            built = M.official_build(prereg_path, input_root, output_root)
+            with self.assertRaises(M.ChallengerError):
+                M.official_build(
+                    prereg_path, input_root, output_root, SUPERSEDED_OUTPUT_ROOT
+                )
+            built = M.fixture_build(prereg_path, input_root, output_root)
             self.assertTrue(built["verified"])
             self.assertEqual(built["status"], "UNADMITTED_CHALLENGER")
             self.assertTrue(built["profit_unproven"])
             self.assertTrue(built["holdout_unopened"])
             self.assertEqual(built["external_orders"], 0)
-            verified = M.verify_artifacts(prereg_path, input_root, output_root)
+            verified = M.verify_fixture(prereg_path, input_root, output_root)
             self.assertTrue(verified["verified"])
+            with self.assertRaises(M.ChallengerError):
+                M.verify_artifacts(
+                    prereg_path, input_root, output_root, SUPERSEDED_OUTPUT_ROOT
+                )
             manifest = M.strict_json_file(output_root / M.ARTIFACT_MANIFEST_NAME)
             packet_path = output_root / manifest["packet_path"]
             packet = M.strict_json_file(packet_path)
@@ -406,10 +454,18 @@ class ContentAddressedEndToEndTest(unittest.TestCase):
 
             result_path = output_root / M.RESULT_NAME
             result = M.strict_json_file(result_path)
+            self.assertEqual(result["runtime_revision"], 2)
+            self.assertEqual(
+                list(
+                    result["walk_forward_results"][result["selected_config_id"]]["arms"]
+                    ["EXECUTABLE_BASE"]["monthly_multiples"]
+                ),
+                ["2026-05", "2026-06"],
+            )
             result["profit_unproven"] = False
             result_path.write_bytes(M.canonical_json_bytes(result))
             with self.assertRaises(M.ChallengerError):
-                M.verify_artifacts(prereg_path, input_root, output_root)
+                M.verify_fixture(prereg_path, input_root, output_root)
 
 
 if __name__ == "__main__":

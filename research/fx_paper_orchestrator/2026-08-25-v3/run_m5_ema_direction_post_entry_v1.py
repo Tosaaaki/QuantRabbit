@@ -32,11 +32,28 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 CANDIDATE_ID = "M5_EMA_DIRECTION_POST_ENTRY_V1"
+RUNTIME_REVISION = 2
+RUNTIME_CORRECTIVE_REASON = "COMPLETED_BAR_END_TIMESTAMP_BUCKETED_TO_NEXT_MONTH"
+FROZEN_PREREG_SHA256 = "cf7488cba4361f729d1eb4c3de89d9b3696cae0aa42cc8322a201ce3750eff28"
+FROZEN_CORRECTIVE_SELECTED_CONFIG_ID = "D_TP_Q40_PROFIT_GIVEBACK__H06"
 PREREG_NAME = "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREGISTRATION.json"
 RESULT_NAME = "result_m5_ema_direction_post_entry_v1.json"
 SOURCE_MANIFEST_NAME = "source_manifest.json"
 SIGNAL_LEDGER_NAME = "raw_signal_ledger.jsonl"
 ARTIFACT_MANIFEST_NAME = "artifact_manifest.json"
+CORRECTIVE_COMPARISON_NAME = "corrective_comparison.json"
+
+SUPERSEDED_RESULT_FILE_SHA256 = "a56598342d1976ad16e45396cca91476e82d115b17196176b0b189754157d660"
+SUPERSEDED_RESULT_EMBEDDED_SHA256 = "4a1249973089a05e09735a21f7920297318d82e9a375a3e571164045c30ca647"
+SUPERSEDED_PACKET_NAME = (
+    "UNADMITTED_CHALLENGER_PACKET_"
+    "8a3ee5af368a70591e27874cc73de921824c1772e338a6e43c56641bfba022a5.json"
+)
+SUPERSEDED_PACKET_FILE_SHA256 = "bdd163fe2c42f42d44ba9b5ff56b4d313cd19de19f25420b30f09e44518468ac"
+SUPERSEDED_MANIFEST_FILE_SHA256 = "5e340bb4ce9ba83ee16d9b79d8891f9f3f25fd35c748bfcb73c0fccb9bb1689d"
+SUPERSEDED_MANIFEST_EMBEDDED_SHA256 = "288137002ae15319272c5ca641708fb4b181060fd83c178f97f4489567cc9a96"
+FROZEN_RAW_SIGNAL_LEDGER_SHA256 = "1499f73836889e01189064d0b8c61bd67e2e61c67af6ea53c918b5caa9cc47ff"
+FROZEN_SOURCE_MANIFEST_FILE_SHA256 = "95663dee9243a18387967e320abbbfb9b262cb09a09bf385c82a7f41a6495400"
 
 BAR_NS = 300_000_000_000
 ZERO_SHA256 = "0" * 64
@@ -187,6 +204,36 @@ def utc_month(value_ns: int) -> str:
     return datetime.fromtimestamp(value_ns // 1_000_000_000, tz=timezone.utc).strftime(
         "%Y-%m"
     )
+
+
+def completed_interval_label_ns(completed_end_ns: int) -> int:
+    """Return the final epoch nanosecond inside a completed half-open bar.
+
+    OANDA M5 source timestamps identify bar starts.  A mark at an exact UTC
+    calendar boundary describes the completed interval ending at that boundary,
+    so calendar reporting must bind it to ``end_ns - 1``.  This helper changes
+    labels only; event chronology, fills, exits, and P/L retain the exact end.
+    """
+    if completed_end_ns <= 0:
+        raise ChallengerError("completed interval end must be positive")
+    return completed_end_ns - 1
+
+
+def expected_calendar_months(period_start_ns: int, period_end_ns: int) -> list[str]:
+    if period_start_ns >= period_end_ns:
+        raise ChallengerError("calendar period must be nonempty")
+    first = datetime.fromtimestamp(period_start_ns // 1_000_000_000, tz=timezone.utc)
+    last_ns = completed_interval_label_ns(period_end_ns)
+    last = datetime.fromtimestamp(last_ns // 1_000_000_000, tz=timezone.utc)
+    year, month = first.year, first.month
+    result: list[str] = []
+    while (year, month) <= (last.year, last.month):
+        result.append(f"{year:04d}-{month:02d}")
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+    return result
 
 
 def read_regular_no_follow(path: Path) -> bytes:
@@ -1096,7 +1143,7 @@ def merge_mark_series(
         raise ChallengerError("combined mark series is empty")
     day_last: dict[str, Decimal] = {}
     for stamp, equity in combined:
-        day_last[utc_day(stamp)] = equity
+        day_last[utc_day(completed_interval_label_ns(stamp))] = equity
     return combined, day_last
 
 
@@ -1124,7 +1171,7 @@ def monthly_multiples(
 ) -> dict[str, str]:
     month_end: dict[str, Decimal] = {}
     for stamp, equity in series:
-        month_end[utc_month(stamp)] = equity
+        month_end[utc_month(completed_interval_label_ns(stamp))] = equity
     result: dict[str, str] = {}
     previous = period_start_equity
     for month in sorted(month_end):
@@ -1287,6 +1334,16 @@ def summarize_configuration(
             D(arms["RAW_SIGNAL"]["total_pnl_jpy"]) - D(arms[arm]["total_pnl_jpy"]),
             JPY_QUANTUM,
         )
+    expected_months = expected_calendar_months(period_start_ns, period_end_ns)
+    for arm, arm_metrics in arms.items():
+        observed_months = list(arm_metrics["monthly_multiples"])
+        if observed_months != sorted(observed_months) or any(
+            month not in expected_months for month in observed_months
+        ):
+            raise ChallengerError(
+                f"{period_name} {config_id} {arm} month grid spilled outside "
+                f"{expected_months}: {observed_months}"
+            )
 
     pair_metrics: dict[str, Any] = {}
     initial_sleeve = initial_equity / D(len(pair_runs))
@@ -1361,6 +1418,8 @@ def summarize_configuration(
     ages_all = [D(trade.age_completed_bars) for trade in all_trades]
     result = {
         "period": period_name,
+        "runtime_revision": RUNTIME_REVISION,
+        "runtime_corrective_reason": RUNTIME_CORRECTIVE_REASON,
         "start_utc": format_epoch_ns(period_start_ns),
         "end_utc_exclusive": format_epoch_ns(period_end_ns),
         "config_id": config_id,
@@ -1592,6 +1651,167 @@ def selection_receipt(tuning_results: Mapping[str, Mapping[str, Any]]) -> dict[s
     return receipt
 
 
+def require_exact_frozen_month_grid(
+    results: Mapping[str, Mapping[str, Any]], expected_months: Sequence[str], period: str
+) -> None:
+    expected = list(expected_months)
+    for config_id, summary in results.items():
+        for arm, metrics in summary["arms"].items():
+            observed = list(metrics["monthly_multiples"])
+            if observed != expected:
+                raise ChallengerError(
+                    f"{period} {config_id} {arm} frozen month grid mismatch: "
+                    f"{observed} != {expected}"
+                )
+        for pair, pair_summary in summary["pairs"].items():
+            for arm, metrics in pair_summary["arm_metrics"].items():
+                observed = list(metrics["monthly_sleeve_multiples"])
+                if observed != expected:
+                    raise ChallengerError(
+                        f"{period} {config_id} {pair} {arm} frozen sleeve month "
+                        f"grid mismatch: {observed} != {expected}"
+                    )
+
+
+def frozen_economic_projection(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove only the fields authorized to change in corrective R1."""
+    projected = json.loads(json.dumps(result, sort_keys=True, allow_nan=False))
+    for field in (
+        "result_sha256",
+        "runner_sha256",
+        "runtime_revision",
+        "runtime_corrective_reason",
+        "runtime_corrective_ordinal",
+        "selected_walk_forward_summary_sha256",
+        "development_positive_diagnostic",
+        "aspirational_2x_3x_final_measurement",
+    ):
+        projected.pop(field, None)
+    selection = projected["selection_receipt"]
+    selection.pop("selection_receipt_sha256", None)
+    for candidate in selection["candidates"]:
+        candidate.pop("summary_sha256", None)
+    for result_set_name in ("tuning_results", "walk_forward_results"):
+        for summary in projected[result_set_name].values():
+            for field in ("summary_sha256", "runtime_revision", "runtime_corrective_reason"):
+                summary.pop(field, None)
+            for arm_metrics in summary["arms"].values():
+                arm_metrics.pop("monthly_multiples", None)
+                arm_metrics.pop("currency_time_daily_cluster_count", None)
+                arm_metrics.pop("currency_time_clustered_n_eff", None)
+            for pair_summary in summary["pairs"].values():
+                for arm_metrics in pair_summary["arm_metrics"].values():
+                    arm_metrics.pop("monthly_sleeve_multiples", None)
+    return projected
+
+
+def read_frozen_superseded_result(output_root: Path) -> dict[str, Any]:
+    before = output_root.lstat()
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+        raise ChallengerError("superseded output root must be a non-symlink directory")
+    expected_names = {
+        SOURCE_MANIFEST_NAME,
+        SIGNAL_LEDGER_NAME,
+        RESULT_NAME,
+        SUPERSEDED_PACKET_NAME,
+        ARTIFACT_MANIFEST_NAME,
+    }
+    actual_names = {path.name for path in output_root.iterdir()}
+    if actual_names != expected_names:
+        raise ChallengerError("superseded output exact artifact set mismatch")
+    expected_file_hashes = {
+        SOURCE_MANIFEST_NAME: FROZEN_SOURCE_MANIFEST_FILE_SHA256,
+        SIGNAL_LEDGER_NAME: FROZEN_RAW_SIGNAL_LEDGER_SHA256,
+        RESULT_NAME: SUPERSEDED_RESULT_FILE_SHA256,
+        SUPERSEDED_PACKET_NAME: SUPERSEDED_PACKET_FILE_SHA256,
+        ARTIFACT_MANIFEST_NAME: SUPERSEDED_MANIFEST_FILE_SHA256,
+    }
+    raw_files: dict[str, bytes] = {}
+    for name, expected_sha in expected_file_hashes.items():
+        raw = read_regular_no_follow(output_root / name)
+        if sha256_bytes(raw) != expected_sha:
+            raise ChallengerError(f"superseded artifact hash mismatch: {name}")
+        raw_files[name] = raw
+    after = output_root.lstat()
+    if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        raise ChallengerError("superseded output root changed during read")
+    manifest = strict_json_loads(raw_files[ARTIFACT_MANIFEST_NAME].decode("utf-8"))
+    if not isinstance(manifest, dict) or manifest.get(
+        "artifact_manifest_sha256"
+    ) != SUPERSEDED_MANIFEST_EMBEDDED_SHA256:
+        raise ChallengerError("superseded artifact manifest embedded SHA mismatch")
+    if manifest.get("artifact_manifest_sha256") != embedded_sha256(
+        manifest, "artifact_manifest_sha256"
+    ):
+        raise ChallengerError("superseded artifact manifest did not self-verify")
+    result = strict_json_loads(raw_files[RESULT_NAME].decode("utf-8"))
+    if not isinstance(result, dict) or result.get("result_sha256") != SUPERSEDED_RESULT_EMBEDDED_SHA256:
+        raise ChallengerError("superseded result embedded SHA mismatch")
+    if result.get("result_sha256") != embedded_sha256(result, "result_sha256"):
+        raise ChallengerError("superseded result did not self-verify")
+    packet = strict_json_loads(raw_files[SUPERSEDED_PACKET_NAME].decode("utf-8"))
+    if not isinstance(packet, dict) or packet.get("packet_sha256") != (
+        SUPERSEDED_PACKET_NAME.removeprefix("UNADMITTED_CHALLENGER_PACKET_").removesuffix(".json")
+    ):
+        raise ChallengerError("superseded packet content-address binding mismatch")
+    if packet.get("packet_sha256") != embedded_sha256(packet, "packet_sha256"):
+        raise ChallengerError("superseded packet did not self-verify")
+    return result
+
+
+def build_corrective_comparison(
+    original_result: Mapping[str, Any],
+    corrected_result: Mapping[str, Any],
+    corrected_result_file_sha256: str,
+) -> dict[str, Any]:
+    original_projection = frozen_economic_projection(original_result)
+    corrected_projection = frozen_economic_projection(corrected_result)
+    original_projection_sha = sha256_bytes(canonical_json_bytes(original_projection))
+    corrected_projection_sha = sha256_bytes(canonical_json_bytes(corrected_projection))
+    if original_projection_sha != corrected_projection_sha:
+        raise ChallengerError(
+            "calendar-label-only corrective changed a frozen signal/action/economic invariant"
+        )
+    if corrected_result.get("raw_signal_ledger_sha256") != FROZEN_RAW_SIGNAL_LEDGER_SHA256:
+        raise ChallengerError("corrective raw signal ledger drifted")
+    if corrected_result.get("source_manifest_file_sha256") != FROZEN_SOURCE_MANIFEST_FILE_SHA256:
+        raise ChallengerError("corrective source manifest drifted")
+    if corrected_result.get("selected_config_id") != FROZEN_CORRECTIVE_SELECTED_CONFIG_ID:
+        raise ChallengerError("corrective selected configuration drifted")
+    comparison = {
+        "schema_version": 1,
+        "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_CORRECTIVE_COMPARISON",
+        "candidate_id": CANDIDATE_ID,
+        "classification": "NON_STRATEGY_RUNTIME_CORRECTIVE_INVARIANTS_MATCH",
+        "original_result_file_sha256": SUPERSEDED_RESULT_FILE_SHA256,
+        "original_result_embedded_sha256": SUPERSEDED_RESULT_EMBEDDED_SHA256,
+        "corrected_result_file_sha256": corrected_result_file_sha256,
+        "corrected_result_embedded_sha256": corrected_result["result_sha256"],
+        "frozen_economic_projection_sha256": corrected_projection_sha,
+        "raw_signal_ledger_sha256": FROZEN_RAW_SIGNAL_LEDGER_SHA256,
+        "source_manifest_file_sha256": FROZEN_SOURCE_MANIFEST_FILE_SHA256,
+        "target_freeze_sha256": corrected_result["target_freeze"]["target_freeze_sha256"],
+        "selected_config_id": FROZEN_CORRECTIVE_SELECTED_CONFIG_ID,
+        "invariant_checks": {
+            "all_signal_ids_and_counts_match": True,
+            "all_disposition_and_action_roots_match": True,
+            "all_filled_signal_id_sets_match": True,
+            "all_entry_exit_and_inventory_counts_match": True,
+            "all_target_freeze_values_match": True,
+            "all_per_arm_pnl_expectancy_equity_and_drawdown_values_match": True,
+            "all_selection_scores_and_selected_config_match": True,
+            "only_calendar_month_day_cluster_outputs_excluded_from_projection": True,
+        },
+        "original_result_admissible": False,
+        "corrected_result_may_be_packet_evidence": True,
+        "profit_unproven": True,
+        "holdout_unopened": True,
+        "external_orders": 0,
+    }
+    comparison["comparison_sha256"] = embedded_sha256(comparison, "comparison_sha256")
+    return comparison
+
+
 def selected_final_measurement(walk_summary: Mapping[str, Any]) -> dict[str, Any]:
     arms: dict[str, Any] = {}
     for arm in ("EXECUTABLE_BASE", "ADVERSE_STRESS"):
@@ -1647,6 +1867,9 @@ def build_result(
         "candidate_id": CANDIDATE_ID,
         "classification": "UNADMITTED_CHALLENGER",
         "official_historical_replay_ordinal": 1,
+        "runtime_revision": RUNTIME_REVISION,
+        "runtime_corrective_reason": RUNTIME_CORRECTIVE_REASON,
+        "runtime_corrective_ordinal": 1,
         "prereg_sha256": prereg_sha256,
         "runner_sha256": code_sha256,
         "source_manifest_file_sha256": source_manifest_file_sha256,
@@ -1706,6 +1929,7 @@ def challenger_packet(
     result_file_sha256: str,
     result: Mapping[str, Any],
     signal_ledger_sha256: str,
+    corrective_comparison_sha256: str | None,
 ) -> dict[str, Any]:
     selected = str(result["selected_config_id"])
     selection = result["selection_receipt"]
@@ -1714,6 +1938,9 @@ def challenger_packet(
         "packet_type": "UNADMITTED_CHALLENGER",
         "candidate_id": CANDIDATE_ID,
         "status": "UNADMITTED_CHALLENGER",
+        "runtime_revision": RUNTIME_REVISION,
+        "runtime_corrective_reason": RUNTIME_CORRECTIVE_REASON,
+        "runtime_corrective_ordinal": 1,
         "prereg_sha256": prereg_sha256,
         "source_manifest_file_sha256": source_manifest_file_sha256,
         "source_manifest_embedded_sha256": source_manifest_embedded_sha256,
@@ -1723,6 +1950,7 @@ def challenger_packet(
         "runner_sha256": code_sha256,
         "selection_receipt_sha256": selection["selection_receipt_sha256"],
         "target_freeze_sha256": result["target_freeze"]["target_freeze_sha256"],
+        "corrective_comparison_sha256": corrective_comparison_sha256,
         "exact_formula": prereg["signal_contract"],
         "symbols": prereg["universe"],
         "warmup": {
@@ -1758,7 +1986,14 @@ def challenger_packet(
     return packet
 
 
-def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> dict[str, Any]:
+def _build_candidate(
+    prereg_path: Path,
+    input_root: Path,
+    output_root: Path,
+    *,
+    require_frozen_contract: bool,
+    superseded_output_root: Path | None,
+) -> dict[str, Any]:
     if output_root.exists() or output_root.is_symlink():
         raise ChallengerError(f"official output already exists; no rerun/overwrite: {output_root}")
     prereg_raw = read_regular_no_follow(prereg_path)
@@ -1767,6 +2002,13 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
         raise ChallengerError("preregistration must be an object")
     validate_prereg(prereg)
     prereg_sha = sha256_bytes(prereg_raw)
+    if require_frozen_contract:
+        if prereg_sha != FROZEN_PREREG_SHA256:
+            raise ChallengerError("official corrective requires the exact frozen preregistration")
+        if superseded_output_root is None:
+            raise ChallengerError("official corrective requires the frozen superseded output")
+    elif superseded_output_root is not None:
+        raise ChallengerError("fixture build cannot consume official superseded evidence")
     code_path = Path(__file__).resolve()
     code_sha = sha256_bytes(read_regular_no_follow(code_path))
     periods = prereg_periods(prereg)
@@ -1839,6 +2081,17 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
             currency_cap,
         )
     selection = selection_receipt(tuning_results)
+    if (
+        prereg_sha == FROZEN_PREREG_SHA256
+        and selection["selected_config_id"] != FROZEN_CORRECTIVE_SELECTED_CONFIG_ID
+    ):
+        raise ChallengerError(
+            "calendar-label-only corrective changed the frozen selected configuration"
+        )
+    if prereg_sha == FROZEN_PREREG_SHA256:
+        require_exact_frozen_month_grid(
+            tuning_results, ("2026-03", "2026-04"), "TUNING"
+        )
 
     walk_results: dict[str, Any] = {}
     for config_id in CONFIG_IDS:
@@ -1868,6 +2121,10 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
             gross_cap,
             currency_cap,
         )
+    if prereg_sha == FROZEN_PREREG_SHA256:
+        require_exact_frozen_month_grid(
+            walk_results, ("2026-05", "2026-06"), "WALK_FORWARD"
+        )
 
     operation_counters = {
         "source_files_decoded": len(corpus),
@@ -1896,6 +2153,13 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
     )
     result_raw = canonical_json_bytes(result)
     result_file_sha = sha256_bytes(result_raw)
+    comparison: dict[str, Any] | None = None
+    if require_frozen_contract:
+        assert superseded_output_root is not None
+        original_result = read_frozen_superseded_result(superseded_output_root)
+        comparison = build_corrective_comparison(
+            original_result, result, result_file_sha
+        )
     packet = challenger_packet(
         prereg,
         prereg_sha,
@@ -1905,6 +2169,7 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
         result_file_sha,
         result,
         ledger_sha,
+        comparison["comparison_sha256"] if comparison is not None else None,
     )
     packet_name = f"UNADMITTED_CHALLENGER_PACKET_{packet['packet_sha256']}.json"
     packet_raw = canonical_json_bytes(packet)
@@ -1920,20 +2185,34 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
     atomic_write(output_root / SIGNAL_LEDGER_NAME, ledger_raw)
     atomic_write(output_root / RESULT_NAME, result_raw)
     atomic_write(output_root / packet_name, packet_raw)
+    if comparison is not None:
+        atomic_write(
+            output_root / CORRECTIVE_COMPARISON_NAME,
+            canonical_json_bytes(comparison),
+        )
     artifacts = {}
-    for name in (SOURCE_MANIFEST_NAME, SIGNAL_LEDGER_NAME, RESULT_NAME, packet_name):
+    artifact_names = [SOURCE_MANIFEST_NAME, SIGNAL_LEDGER_NAME, RESULT_NAME, packet_name]
+    if comparison is not None:
+        artifact_names.append(CORRECTIVE_COMPARISON_NAME)
+    for name in artifact_names:
         raw = read_regular_no_follow(output_root / name)
         artifacts[name] = {"sha256": sha256_bytes(raw), "size_bytes": len(raw)}
     artifact_manifest = {
         "schema_version": 1,
         "candidate_id": CANDIDATE_ID,
         "classification": "UNADMITTED_CHALLENGER",
+        "runtime_revision": RUNTIME_REVISION,
+        "runtime_corrective_reason": RUNTIME_CORRECTIVE_REASON,
+        "runtime_corrective_ordinal": 1,
         "prereg_sha256": prereg_sha,
         "runner_sha256": code_sha,
         "artifact_count": len(artifacts),
         "artifacts": artifacts,
         "packet_path": packet_name,
         "packet_embedded_sha256": packet["packet_sha256"],
+        "corrective_comparison_sha256": (
+            comparison["comparison_sha256"] if comparison is not None else None
+        ),
         "profit_unproven": True,
         "holdout_unopened": True,
         "external_orders": 0,
@@ -1943,16 +2222,27 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
         artifact_manifest, "artifact_manifest_sha256"
     )
     atomic_write(output_root / ARTIFACT_MANIFEST_NAME, canonical_json_bytes(artifact_manifest))
-    verified = verify_artifacts(prereg_path, input_root, output_root)
+    verified = _verify_artifacts_core(
+        prereg_path,
+        input_root,
+        output_root,
+        require_frozen_contract=require_frozen_contract,
+        superseded_output_root=superseded_output_root,
+    )
     return {
         "candidate_id": CANDIDATE_ID,
         "status": "UNADMITTED_CHALLENGER",
+        "runtime_revision": RUNTIME_REVISION,
+        "runtime_corrective_reason": RUNTIME_CORRECTIVE_REASON,
         "selected_config_id": result["selected_config_id"],
         "tuning_raw_signals": ledger_info["period_counts"].get("TUNING", 0),
         "walk_forward_raw_signals": ledger_info["period_counts"].get("WALK_FORWARD", 0),
         "packet_sha256": packet["packet_sha256"],
         "result_sha256": result["result_sha256"],
         "artifact_manifest_sha256": artifact_manifest["artifact_manifest_sha256"],
+        "corrective_comparison_sha256": (
+            comparison["comparison_sha256"] if comparison is not None else None
+        ),
         "verified": verified["verified"],
         "profit_unproven": True,
         "holdout_unopened": True,
@@ -1960,13 +2250,53 @@ def official_build(prereg_path: Path, input_root: Path, output_root: Path) -> di
     }
 
 
-def verify_artifacts(prereg_path: Path, input_root: Path, output_root: Path) -> dict[str, Any]:
+def official_build(
+    prereg_path: Path,
+    input_root: Path,
+    output_root: Path,
+    superseded_output_root: Path,
+) -> dict[str, Any]:
+    return _build_candidate(
+        prereg_path,
+        input_root,
+        output_root,
+        require_frozen_contract=True,
+        superseded_output_root=superseded_output_root,
+    )
+
+
+def fixture_build(prereg_path: Path, input_root: Path, output_root: Path) -> dict[str, Any]:
+    """Exercise artifact plumbing with synthetic bytes; never exposed by the CLI."""
+    return _build_candidate(
+        prereg_path,
+        input_root,
+        output_root,
+        require_frozen_contract=False,
+        superseded_output_root=None,
+    )
+
+
+def _verify_artifacts_core(
+    prereg_path: Path,
+    input_root: Path,
+    output_root: Path,
+    *,
+    require_frozen_contract: bool,
+    superseded_output_root: Path | None,
+) -> dict[str, Any]:
     prereg_raw = read_regular_no_follow(prereg_path)
     prereg = strict_json_loads(prereg_raw.decode("utf-8"))
     if not isinstance(prereg, dict):
         raise ChallengerError("prereg must be an object")
     validate_prereg(prereg)
     prereg_sha = sha256_bytes(prereg_raw)
+    if require_frozen_contract:
+        if prereg_sha != FROZEN_PREREG_SHA256:
+            raise ChallengerError("official verification requires the exact frozen preregistration")
+        if superseded_output_root is None:
+            raise ChallengerError("official verification requires the frozen superseded output")
+    elif superseded_output_root is not None:
+        raise ChallengerError("fixture verification cannot consume official superseded evidence")
     manifest_path = output_root / ARTIFACT_MANIFEST_NAME
     artifact_manifest = strict_json_loads(read_regular_no_follow(manifest_path).decode("utf-8"))
     if not isinstance(artifact_manifest, dict):
@@ -1977,6 +2307,15 @@ def verify_artifacts(prereg_path: Path, input_root: Path, output_root: Path) -> 
         raise ChallengerError("artifact manifest embedded SHA mismatch")
     if artifact_manifest.get("prereg_sha256") != prereg_sha:
         raise ChallengerError("artifact manifest prereg SHA mismatch")
+    current_runner_sha = sha256_bytes(read_regular_no_follow(Path(__file__).resolve()))
+    if artifact_manifest.get("runner_sha256") != current_runner_sha:
+        raise ChallengerError("artifact manifest runner SHA does not bind executing bytes")
+    if (
+        artifact_manifest.get("runtime_revision") != RUNTIME_REVISION
+        or artifact_manifest.get("runtime_corrective_reason") != RUNTIME_CORRECTIVE_REASON
+        or artifact_manifest.get("runtime_corrective_ordinal") != 1
+    ):
+        raise ChallengerError("artifact manifest runtime-corrective binding mismatch")
     artifacts = artifact_manifest.get("artifacts")
     if not isinstance(artifacts, dict) or artifact_manifest.get("artifact_count") != len(artifacts):
         raise ChallengerError("artifact inventory mismatch")
@@ -1986,6 +2325,8 @@ def verify_artifacts(prereg_path: Path, input_root: Path, output_root: Path) -> 
         RESULT_NAME,
         str(artifact_manifest.get("packet_path")),
     }
+    if require_frozen_contract:
+        expected_names.add(CORRECTIVE_COMPARISON_NAME)
     actual_names = {
         path.name
         for path in output_root.iterdir()
@@ -2040,10 +2381,48 @@ def verify_artifacts(prereg_path: Path, input_root: Path, output_root: Path) -> 
         or packet.get("authority") != prereg["authority"]
     ):
         raise ChallengerError("packet safety/admission boundary mismatch")
+    for label, artifact in (("result", result), ("packet", packet)):
+        if (
+            artifact.get("runtime_revision") != RUNTIME_REVISION
+            or artifact.get("runtime_corrective_reason") != RUNTIME_CORRECTIVE_REASON
+            or artifact.get("runtime_corrective_ordinal") != 1
+        ):
+            raise ChallengerError(f"{label} runtime-corrective binding mismatch")
+        if artifact.get("runner_sha256") != current_runner_sha:
+            raise ChallengerError(f"{label} runner SHA does not bind executing bytes")
     if result.get("selected_config_id") != packet.get("selected_exit_policy", {}).get(
         "config_id"
     ):
         raise ChallengerError("selected config binding mismatch")
+    if require_frozen_contract:
+        assert superseded_output_root is not None
+        comparison_raw = read_regular_no_follow(
+            output_root / CORRECTIVE_COMPARISON_NAME
+        )
+        comparison = strict_json_loads(comparison_raw.decode("utf-8"))
+        if not isinstance(comparison, dict) or comparison.get(
+            "comparison_sha256"
+        ) != embedded_sha256(comparison, "comparison_sha256"):
+            raise ChallengerError("corrective comparison embedded SHA mismatch")
+        expected_comparison = build_corrective_comparison(
+            read_frozen_superseded_result(superseded_output_root),
+            result,
+            sha256_bytes(read_regular_no_follow(output_root / RESULT_NAME)),
+        )
+        if comparison_raw != canonical_json_bytes(expected_comparison):
+            raise ChallengerError("corrective comparison did not reproduce")
+        if (
+            packet.get("corrective_comparison_sha256")
+            != comparison["comparison_sha256"]
+            or artifact_manifest.get("corrective_comparison_sha256")
+            != comparison["comparison_sha256"]
+        ):
+            raise ChallengerError("corrective comparison binding mismatch")
+    elif (
+        packet.get("corrective_comparison_sha256") is not None
+        or artifact_manifest.get("corrective_comparison_sha256") is not None
+    ):
+        raise ChallengerError("fixture artifacts unexpectedly claim a corrective comparison")
     return {
         "candidate_id": CANDIDATE_ID,
         "verified": True,
@@ -2056,6 +2435,33 @@ def verify_artifacts(prereg_path: Path, input_root: Path, output_root: Path) -> 
     }
 
 
+def verify_artifacts(
+    prereg_path: Path,
+    input_root: Path,
+    output_root: Path,
+    superseded_output_root: Path,
+) -> dict[str, Any]:
+    return _verify_artifacts_core(
+        prereg_path,
+        input_root,
+        output_root,
+        require_frozen_contract=True,
+        superseded_output_root=superseded_output_root,
+    )
+
+
+def verify_fixture(
+    prereg_path: Path, input_root: Path, output_root: Path
+) -> dict[str, Any]:
+    return _verify_artifacts_core(
+        prereg_path,
+        input_root,
+        output_root,
+        require_frozen_contract=False,
+        superseded_output_root=None,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2063,15 +2469,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     build.add_argument("--prereg", type=Path, required=True)
     build.add_argument("--input-root", type=Path, required=True)
     build.add_argument("--output-root", type=Path, required=True)
+    build.add_argument("--superseded-output-root", type=Path, required=True)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--prereg", type=Path, required=True)
     verify.add_argument("--input-root", type=Path, required=True)
     verify.add_argument("--output-root", type=Path, required=True)
+    verify.add_argument("--superseded-output-root", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "build":
-        result = official_build(args.prereg, args.input_root, args.output_root)
+        result = official_build(
+            args.prereg,
+            args.input_root,
+            args.output_root,
+            args.superseded_output_root,
+        )
     else:
-        result = verify_artifacts(args.prereg, args.input_root, args.output_root)
+        result = verify_artifacts(
+            args.prereg,
+            args.input_root,
+            args.output_root,
+            args.superseded_output_root,
+        )
     print(json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False))
     return 0
 

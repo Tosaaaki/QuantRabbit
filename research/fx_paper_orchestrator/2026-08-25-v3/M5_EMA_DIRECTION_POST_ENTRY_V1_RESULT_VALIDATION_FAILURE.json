@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_RESULT_VALIDATION_FAILURE",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "classification": "RESULT_VALIDATION_FAILURE_MONTH_BOUNDARY",
+  "attempt": {
+    "historical_replay_ordinal": 1,
+    "output_path": "evidence/m5_ema_direction_post_entry_v1_official_001",
+    "runner_sha256": "d5561bf3c20f17918a61ceee47c83b77123ce718ffbe6fc73a9844d5702fa212",
+    "result_file_sha256": "a56598342d1976ad16e45396cca91476e82d115b17196176b0b189754157d660",
+    "result_embedded_sha256": "4a1249973089a05e09735a21f7920297318d82e9a375a3e571164045c30ca647",
+    "packet_file_sha256": "bdd163fe2c42f42d44ba9b5ff56b4d313cd19de19f25420b30f09e44518468ac",
+    "packet_embedded_sha256": "8a3ee5af368a70591e27874cc73de921824c1772e338a6e43c56641bfba022a5",
+    "artifact_manifest_file_sha256": "5e340bb4ce9ba83ee16d9b79d8891f9f3f25fd35c748bfcb73c0fccb9bb1689d",
+    "artifact_manifest_embedded_sha256": "288137002ae15319272c5ca641708fb4b181060fd83c178f97f4489567cc9a96"
+  },
+  "failure": {
+    "detected_by": "owner direct post-run monthly-grid readback",
+    "reason_code": "COMPLETED_BAR_END_TIMESTAMP_BUCKETED_TO_NEXT_MONTH",
+    "structural_fact": "M5 source timestamps are bar starts and mark timestamps are completed-bar ends; an end exactly at 00:00 UTC belongs to the half-open source interval ending at that boundary, so calendar labels must use end_ns minus one nanosecond",
+    "observed_invalid_month_keys": [
+      "2026-05",
+      "2026-06",
+      "2026-07"
+    ],
+    "expected_walk_forward_full_month_keys": [
+      "2026-05",
+      "2026-06"
+    ],
+    "strategy_signal_or_action_defect": false,
+    "economic_result_admissible": false,
+    "packet_admissible": false,
+    "profit_claim_allowed": false
+  },
+  "frozen_non_strategy_corrective": {
+    "single_changed_variable": "completed_bar_calendar_label_uses_end_epoch_ns_minus_one",
+    "signals_may_change": false,
+    "directions_may_change": false,
+    "fills_may_change": false,
+    "exit_events_may_change": false,
+    "per_trade_pnl_may_change": false,
+    "selected_configuration_may_change": false,
+    "target_freeze_may_change": false,
+    "monthly_day_cluster_labels_may_change": true,
+    "monthly_multiples_and_n_eff_may_change": true
+  },
+  "preserved_diagnostic_counts": {
+    "tuning_raw_signals": 31929,
+    "walk_forward_raw_signals": 37147,
+    "selected_config_id": "D_TP_Q40_PROFIT_GIVEBACK__H06",
+    "cap_rejected": 0,
+    "terminal_inventory": 0,
+    "external_orders": 0
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "active_shadow_mutation": false
+  }
+}

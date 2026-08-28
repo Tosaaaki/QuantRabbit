@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_RUNTIME_CORRECTIVE_R1",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "classification": "NON_STRATEGY_RUNTIME_COMPATIBILITY_CORRECTIVE",
+  "reason_code": "COMPLETED_BAR_END_TIMESTAMP_BUCKETED_TO_NEXT_MONTH",
+  "frozen_before_corrective_execution": true,
+  "original_preregistration": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREGISTRATION.json",
+    "sha256": "cf7488cba4361f729d1eb4c3de89d9b3696cae0aa42cc8322a201ce3750eff28"
+  },
+  "original_preregistration_seal": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREG_SEAL.json",
+    "sha256": "ab23e6c209e87a8862f8a674ff50c5f5334e5c39b6ccab6f769204f12651522b"
+  },
+  "validation_failure": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_RESULT_VALIDATION_FAILURE.json",
+    "sha256": "36dd093d3c8d1c85ec7cee1c1e349842340aa8e3face29aa05757a05ea3d8540"
+  },
+  "superseded_runtime": {
+    "runner_sha256": "d5561bf3c20f17918a61ceee47c83b77123ce718ffbe6fc73a9844d5702fa212",
+    "test_sha256": "cda13b05445fdc12402cce200b68f4d4aaca5c1995dabb096b5c31b083f827bc",
+    "output_path": "evidence/m5_ema_direction_post_entry_v1_official_001",
+    "result_file_sha256": "a56598342d1976ad16e45396cca91476e82d115b17196176b0b189754157d660",
+    "result_embedded_sha256": "4a1249973089a05e09735a21f7920297318d82e9a375a3e571164045c30ca647",
+    "packet_file_sha256": "bdd163fe2c42f42d44ba9b5ff56b4d313cd19de19f25420b30f09e44518468ac",
+    "packet_embedded_sha256": "8a3ee5af368a70591e27874cc73de921824c1772e338a6e43c56641bfba022a5",
+    "artifact_manifest_file_sha256": "5e340bb4ce9ba83ee16d9b79d8891f9f3f25fd35c748bfcb73c0fccb9bb1689d",
+    "artifact_manifest_embedded_sha256": "288137002ae15319272c5ca641708fb4b181060fd83c178f97f4489567cc9a96",
+    "raw_signal_ledger_sha256": "1499f73836889e01189064d0b8c61bd67e2e61c67af6ea53c918b5caa9cc47ff",
+    "source_manifest_file_sha256": "95663dee9243a18387967e320abbbfb9b262cb09a09bf385c82a7f41a6495400"
+  },
+  "single_changed_variable": {
+    "json_pointer": "/runtime/calendar_bucket_completed_interval_label",
+    "before": "utc_calendar_bucket(completed_bar_end_epoch_ns)",
+    "after": "utc_calendar_bucket(completed_bar_end_epoch_ns_minus_one)",
+    "unit": "integer epoch nanoseconds",
+    "rationale": "A completed M5 source interval is half-open [start,end); an end exactly at 00:00 UTC belongs to the calendar interval immediately before that boundary.",
+    "affected_outputs": [
+      "UTC decision-day cluster labels",
+      "monthly multiple labels",
+      "currency-time clustered N_eff derived from those day labels"
+    ]
+  },
+  "strategy_invariants": {
+    "signal_formula_unchanged": true,
+    "signal_ids_unchanged": true,
+    "directions_unchanged": true,
+    "decision_and_fill_chronology_unchanged": true,
+    "fixed_size_and_caps_unchanged": true,
+    "all_twelve_exit_policies_unchanged": true,
+    "all_three_cost_arms_unchanged": true,
+    "target_freeze_unchanged": true,
+    "per_trade_pnl_unchanged": true,
+    "selection_objective_unchanged": true,
+    "selected_config_id": "D_TP_Q40_PROFIT_GIVEBACK__H06",
+    "holdout_unopened": true,
+    "leverage_unchanged": true
+  },
+  "corrective_execution_contract": {
+    "strategy_official_ordinal": 1,
+    "runtime_corrective_ordinal": 1,
+    "rerun_is_new_strategy_hypothesis": false,
+    "output_path": "evidence/m5_ema_direction_post_entry_v1_corrective_001",
+    "expected_tuning_month_keys": [
+      "2026-03",
+      "2026-04"
+    ],
+    "expected_walk_forward_month_keys": [
+      "2026-05",
+      "2026-06"
+    ],
+    "comparison_must_bind_original_and_corrected": true,
+    "comparison_must_fail_if_signal_action_target_or_selection_changes": true,
+    "comparison_artifact_name": "corrective_comparison.json",
+    "official_cli_must_require_exact_frozen_prereg_and_superseded_output": true,
+    "original_invalid_output_must_remain_immutable": true
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "active_shadow_mutation": false
+  }
+}

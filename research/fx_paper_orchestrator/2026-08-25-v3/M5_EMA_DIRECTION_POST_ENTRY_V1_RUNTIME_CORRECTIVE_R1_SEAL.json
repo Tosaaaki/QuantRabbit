@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_RUNTIME_CORRECTIVE_R1_SEAL",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "classification": "NON_STRATEGY_RUNTIME_CORRECTIVE_PREREG_CHECKPOINT",
+  "runtime_corrective_contract": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_RUNTIME_CORRECTIVE_R1.json",
+    "sha256": "9e57e1cdcd6b06c0dd36ebbf86803db1576055d9f532f741a779415df8ab5830"
+  },
+  "result_validation_failure": {
+    "path": "M5_EMA_DIRECTION_POST_ENTRY_V1_RESULT_VALIDATION_FAILURE.json",
+    "sha256": "36dd093d3c8d1c85ec7cee1c1e349842340aa8e3face29aa05757a05ea3d8540"
+  },
+  "corrected_runtime": {
+    "path": "run_m5_ema_direction_post_entry_v1.py",
+    "sha256": "28dadec6d628bbdaf8b366b6537c3ea273948d7b0cbb583ef180c2fa2900b382",
+    "runtime_revision": 2,
+    "single_changed_variable": "completed_bar_calendar_label_uses_end_epoch_ns_minus_one"
+  },
+  "corrected_tests": {
+    "path": "test_m5_ema_direction_post_entry_v1.py",
+    "sha256": "3b8db2039b22e599e94a6692399854095259a4e9fc8a130c9de5a9585730d16d",
+    "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider test_m5_ema_direction_post_entry_v1.py",
+    "passed": 13,
+    "failed": 0,
+    "elapsed_seconds": "2.59",
+    "py_compile_passed": true,
+    "boundary_fixture": "2026-06-01T00:00:00Z labels May and 2026-07-01T00:00:00Z labels June"
+  },
+  "frozen_original_contracts": {
+    "preregistration_sha256": "cf7488cba4361f729d1eb4c3de89d9b3696cae0aa42cc8322a201ce3750eff28",
+    "preregistration_seal_sha256": "ab23e6c209e87a8862f8a674ff50c5f5334e5c39b6ccab6f769204f12651522b",
+    "superseded_runner_sha256": "d5561bf3c20f17918a61ceee47c83b77123ce718ffbe6fc73a9844d5702fa212",
+    "superseded_test_sha256": "cda13b05445fdc12402cce200b68f4d4aaca5c1995dabb096b5c31b083f827bc"
+  },
+  "protected_r5_readback": {
+    "source_files_count": 18,
+    "source_aggregate_sha256": "5b530abf7aa7d3db0f31826efc9f4645d2a9dceb7e10feb620d40f5f3c0ed016",
+    "evidence_files_count": 28,
+    "evidence_aggregate_sha256": "027bd900ba1fbd237b15e0cbd5e393648e36bcbabd629c53d81cf2286cab94a7",
+    "combined_files_count": 46,
+    "combined_aggregate_sha256": "a6f2c4990af89462d33dca0bee8fca0c3af700562de4f074c5f90331d3d87d13"
+  },
+  "execution_state": {
+    "runtime_corrective_official_execution_started": false,
+    "runtime_corrective_official_execution_count": 0,
+    "strategy_official_ordinal_remains": 1,
+    "original_invalid_output_preserved": true,
+    "corrective_output_path_reserved": "evidence/m5_ema_direction_post_entry_v1_corrective_001"
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "active_shadow_mutation": false
+  }
+}
