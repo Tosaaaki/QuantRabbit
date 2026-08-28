@@ -384,6 +384,13 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
     root = cohort_root(args.state_root, args.expected_commit, args.expected_source_sha256)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)
+    for ledger in (
+        root / "ledgers" / "fast_bot_shadow_ledger.jsonl",
+        root / "ledgers" / "fast_bot_outcome_ledger.jsonl",
+    ):
+        ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        ledger.touch(exist_ok=True, mode=0o600)
+        os.chmod(ledger, 0o600)
     lock_path = root / "runtime.lock"
     lock_handle = lock_path.open("a+")
     try:
@@ -484,7 +491,10 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
             )
         atomic_json(root / "state" / "status.json", status)
         if once:
-            return 0 if status["run_state"] == "RUNNING" else 2
+            succeeded = status["run_state"] == "RUNNING"
+            status.update(run_state="STOPPED_AFTER_ONCE", heartbeat_at_utc=utc_now())
+            atomic_json(root / "state" / "status.json", status)
+            return 0 if succeeded else 2
         remaining = max(1.0, float(args.interval_seconds) - (time.monotonic() - cycle_started))
         deadline = time.monotonic() + remaining
         while not STOP and time.monotonic() < deadline:
