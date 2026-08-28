@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -23,6 +25,7 @@ from quant_rabbit.fast_bot_promotion import (
     seal_supervision_receipt,
 )
 from quant_rabbit.inventory_controller import InventoryController
+from quant_rabbit.broker.execution import _intent_from_json, _progressive_promotion_live_send_issues
 
 
 class RecordingGateway:
@@ -210,6 +213,10 @@ class FastBotPromotionTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["intent"]["units"], 10)
         self.assertEqual(rows[0]["intent"]["side"], self.signal["side"])
+        self.assertEqual(
+            rows[0]["intent"]["market_context"]["method"],
+            self.signal["method"],
+        )
         self.assertEqual(rows[0]["intent"]["metadata"]["campaign_id"], self.live_campaign_id)
         self.assertEqual(rows[0]["intent"]["metadata"]["strategy_id"], self.live_strategy_id)
         self.assertNotEqual(
@@ -481,6 +488,64 @@ class FastBotPromotionTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "BLOCKED_LIVE_CONFIRMATION_REQUIRED")
         self.assertEqual(gateway.calls, [])
+
+    def test_gateway_progressive_authority_binds_exact_fresh_promotion(self) -> None:
+        promotion = self.build()
+        quote_at = datetime.now(timezone.utc)
+        promotion["bindings"]["signal_quote_timestamp_utc"] = quote_at.isoformat()
+        promotion["bindings"]["signal_entry_ttl_seconds"] = 60
+        promotion["expires_at_utc"] = (quote_at + timedelta(minutes=1)).isoformat()
+        metadata = promotion["intents_payload"]["results"][0]["intent"]["metadata"]
+        metadata["signal_quote_timestamp_utc"] = quote_at.isoformat()
+        metadata["signal_entry_ttl_seconds"] = 60
+        promotion["promotion_sha256"] = _canonical_sha(
+            {key: value for key, value in promotion.items() if key != "promotion_sha256"}
+        )
+        path = self.root / "promotion.json"
+        path.write_text(json.dumps(promotion), encoding="utf-8")
+        promoted = promotion["intents_payload"]["results"][0]["intent"]
+        intent = _intent_from_json(promoted)
+        request = {
+            "instrument": intent.pair,
+            "type": "LIMIT",
+            "units": str(intent.units),
+        }
+
+        issues = _progressive_promotion_live_send_issues(
+            path,
+            selected_lane_id=promotion["lane_id"],
+            intents_payload=promotion["intents_payload"],
+            send=True,
+            expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            intent=intent,
+            final_units=intent.units,
+            order_request=request,
+            conflicting_verified_decision_path=None,
+        )
+        self.assertEqual(issues, [])
+
+        changed = dict(promotion["intents_payload"])
+        changed["results"] = copy.deepcopy(changed["results"])
+        changed["results"][0]["intent"]["units"] += 1
+        blocked = _progressive_promotion_live_send_issues(
+            path,
+            selected_lane_id=promotion["lane_id"],
+            intents_payload=changed,
+            send=True,
+            expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            intent=intent,
+            final_units=intent.units,
+            order_request=request,
+            conflicting_verified_decision_path=None,
+        )
+        self.assertIn("FAST_BOT_PROMOTION_INTENTS_MISMATCH", {item["code"] for item in blocked})
+
+    def test_full_live_sizing_is_not_an_automatic_promotion_mode(self) -> None:
+        sizing = dict(self.sizing)
+        sizing["mode"] = "FULL_LIVE"
+        result = self.build(sizing_receipt=seal_sizing_receipt(sizing))
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("SIZING_RECEIPT_INVALID_OR_BLOCKED", result["blocking_reasons"])
 
 
 if __name__ == "__main__":

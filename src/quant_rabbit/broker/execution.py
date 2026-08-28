@@ -275,6 +275,7 @@ class LiveOrderGateway:
         target_report_path: Path | None = None,
         self_improvement_audit: Path | None = None,
         verified_decision_path: Path | None = None,
+        progressive_promotion_path: Path | None = None,
         guardian_action_receipt_path: Path | None = DEFAULT_GUARDIAN_ACTION_RECEIPT,
         qr_trader_run_watchdog_path: Path | None = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
@@ -323,6 +324,12 @@ class LiveOrderGateway:
         # This keeps direct/manual gateway invocation from bypassing the GPT
         # lane and capital-allocation decision.
         self.verified_decision_path = verified_decision_path
+        # The bot-first lane uses a deterministic, content-addressed promotion
+        # receipt instead of the retired GPT order-authority receipt.  Exactly
+        # one authorization path may be configured.  The receipt is validated
+        # again against the selected intent and final broker request inside
+        # ``run``; it does not bypass RiskEngine or the pre-POST broker fence.
+        self.progressive_promotion_path = progressive_promotion_path
         self.guardian_action_receipt_path = (
             guardian_action_receipt_path
             if guardian_action_receipt_path != DEFAULT_GUARDIAN_ACTION_RECEIPT
@@ -372,9 +379,17 @@ class LiveOrderGateway:
         confirm_live: bool = False,
     ) -> LiveOrderStageSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
+        progressive_promotion_sha_at_entry = (
+            _file_sha256(self.progressive_promotion_path)
+            if send and self.progressive_promotion_path is not None
+            else None
+        )
+        progressive_authorization = bool(
+            send and self.progressive_promotion_path is not None
+        )
         verified_decision_receipt_at_entry = (
             _freeze_verified_decision_receipt(self.verified_decision_path)
-            if send
+            if send and not progressive_authorization
             else _VerifiedDecisionReceiptFreeze(None, False, None, None, None)
         )
         verified_decision_sha_at_entry = (
@@ -411,10 +426,13 @@ class LiveOrderGateway:
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
         verified_intent = intent
-        intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
-            intent,
-            selected_lane_id=selected_lane_id,
-        )
+        if progressive_authorization:
+            decision_lineage_issues = []
+        else:
+            intent, decision_lineage_issues = self._intent_with_verified_decision_lineage(
+                intent,
+                selected_lane_id=selected_lane_id,
+            )
         requested_units = intent.units
         authorized_size_multiple = size_multiple
         scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
@@ -531,19 +549,33 @@ class LiveOrderGateway:
             verified_decision_path=self.verified_decision_path,
             selected=selected,
         )
-        gpt_verified_decision_issues = _gpt_verified_decision_live_send_issues(
-            self.verified_decision_path,
-            selected_lane_id=selected_lane_id,
-            intents_payload=intents_payload,
-            send=send,
-            expected_sha256=verified_decision_sha_at_entry,
-            predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
-            intent=intent,
-            base_units=requested_units,
-            authorized_size_multiple=authorized_size_multiple,
-            authorized_units=authorized_units,
-            final_units=intent.units,
-            order_request=order_request,
+        gpt_verified_decision_issues = (
+            _progressive_promotion_live_send_issues(
+                self.progressive_promotion_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                expected_sha256=progressive_promotion_sha_at_entry,
+                intent=intent,
+                final_units=intent.units,
+                order_request=order_request,
+                conflicting_verified_decision_path=self.verified_decision_path,
+            )
+            if progressive_authorization
+            else _gpt_verified_decision_live_send_issues(
+                self.verified_decision_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                expected_sha256=verified_decision_sha_at_entry,
+                predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
+                intent=intent,
+                base_units=requested_units,
+                authorized_size_multiple=authorized_size_multiple,
+                authorized_units=authorized_units,
+                final_units=intent.units,
+                order_request=order_request,
+            )
         )
         gpt_verified_decision_issues.extend(decision_lineage_issues)
         if numeric_allocation_requirement_issue is not None:
@@ -674,19 +706,33 @@ class LiveOrderGateway:
             scale_issues.extend(reconciliation.issues)
             pre_post_reconciliation = reconciliation.evidence
             risk_issues = [issue.__dict__ for issue in risk.issues]
-            final_gpt_allocation_issues = _gpt_verified_decision_live_send_issues(
-                self.verified_decision_path,
-                selected_lane_id=selected_lane_id,
-                intents_payload=intents_payload,
-                send=send,
-                expected_sha256=verified_decision_sha_at_entry,
-                predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
-                intent=intent,
-                base_units=requested_units,
-                authorized_size_multiple=authorized_size_multiple,
-                authorized_units=authorized_units,
-                final_units=intent.units,
-                order_request=order_request,
+            final_gpt_allocation_issues = (
+                _progressive_promotion_live_send_issues(
+                    self.progressive_promotion_path,
+                    selected_lane_id=selected_lane_id,
+                    intents_payload=intents_payload,
+                    send=send,
+                    expected_sha256=progressive_promotion_sha_at_entry,
+                    intent=intent,
+                    final_units=intent.units,
+                    order_request=order_request,
+                    conflicting_verified_decision_path=self.verified_decision_path,
+                )
+                if progressive_authorization
+                else _gpt_verified_decision_live_send_issues(
+                    self.verified_decision_path,
+                    selected_lane_id=selected_lane_id,
+                    intents_payload=intents_payload,
+                    send=send,
+                    expected_sha256=verified_decision_sha_at_entry,
+                    predictive_scout_trade_only=predictive_scout_intent_claimed(intent),
+                    intent=intent,
+                    base_units=requested_units,
+                    authorized_size_multiple=authorized_size_multiple,
+                    authorized_units=authorized_units,
+                    final_units=intent.units,
+                    order_request=order_request,
+                )
             )
             gpt_verified_decision_issues.extend(final_gpt_allocation_issues)
             sl_lint, sl_lint_issues = _sl_lint_result(
@@ -724,6 +770,32 @@ class LiveOrderGateway:
                 all_blocked = True
                 status = "BLOCKED"
         if (
+            send
+            and order_request is not None
+            and progressive_authorization
+        ):
+            progressive_change_issues = _progressive_promotion_live_send_issues(
+                self.progressive_promotion_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                expected_sha256=progressive_promotion_sha_at_entry,
+                intent=intent,
+                final_units=intent.units,
+                order_request=order_request,
+                conflicting_verified_decision_path=self.verified_decision_path,
+            )
+            gpt_verified_decision_issues.extend(progressive_change_issues)
+            if progressive_change_issues:
+                all_blocked = True
+                status = "BLOCKED"
+            else:
+                pre_reservation_capital_allocation_validated = (
+                    _pre_post_capital_allocation_edge_validated(
+                        pre_post_reconciliation
+                    )
+                )
+        elif (
             send
             and order_request is not None
             and self.verified_decision_path is not None
@@ -827,6 +899,22 @@ class LiveOrderGateway:
                 )
                 if claim_finalize_issue is not None:
                     ordinary_entry_claim_issues.append(claim_finalize_issue)
+                all_blocked = True
+                status = "BLOCKED"
+        if send and order_request is not None and not all_blocked and progressive_authorization:
+            final_progressive_issues = _progressive_promotion_live_send_issues(
+                self.progressive_promotion_path,
+                selected_lane_id=selected_lane_id,
+                intents_payload=intents_payload,
+                send=send,
+                expected_sha256=progressive_promotion_sha_at_entry,
+                intent=intent,
+                final_units=intent.units,
+                order_request=order_request,
+                conflicting_verified_decision_path=self.verified_decision_path,
+            )
+            final_pre_post_boundary_issues.extend(final_progressive_issues)
+            if final_progressive_issues:
                 all_blocked = True
                 status = "BLOCKED"
         if send and order_request is not None and not all_blocked:
@@ -10694,6 +10782,191 @@ def _pre_post_capital_allocation_edge_validated(
         and str(recheck.get("status") or "").upper()
         in {"PASSED", "BYPASSED"}
     )
+
+
+def _progressive_promotion_live_send_issues(
+    promotion_path: Path | None,
+    *,
+    selected_lane_id: str | None,
+    intents_payload: dict[str, Any],
+    send: bool,
+    expected_sha256: str | None,
+    intent: OrderIntent | None,
+    final_units: int | None,
+    order_request: dict[str, Any] | None,
+    conflicting_verified_decision_path: Path | None,
+) -> list[dict[str, str]]:
+    """Validate the deterministic fast-bot authority at every POST boundary.
+
+    This is deliberately an alternative to the legacy GPT order-authority
+    receipt, never an exception to gateway risk checks.  The sealed promotion
+    must contain the exact intents bytes consumed by the gateway and may only
+    authorize a still-fresh THROTTLED_LIVE micro order.  RiskEngine may reduce
+    units, but it cannot enlarge or change the promoted vehicle.
+    """
+
+    if not send:
+        return []
+    issues: list[RiskIssue] = []
+    if conflicting_verified_decision_path is not None:
+        issues.append(
+            RiskIssue(
+                "MULTIPLE_ENTRY_AUTHORITY_PATHS_CONFIGURED",
+                "progressive promotion and legacy GPT order authority cannot be configured together",
+            )
+        )
+    if promotion_path is None:
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_REQUIRED_FOR_LIVE_SEND",
+                "progressive fast-bot live send requires an exact sealed promotion receipt",
+            )
+        )
+        return [issue.__dict__ for issue in issues]
+    try:
+        raw = promotion_path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_UNREADABLE_FOR_LIVE_SEND",
+                f"progressive promotion receipt is unreadable: {type(exc).__name__}: {exc}",
+            )
+        )
+        return [issue.__dict__ for issue in issues]
+    current_sha256 = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is None or current_sha256 != expected_sha256:
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_BYTES_CHANGED_FOR_LIVE_SEND",
+                "promotion bytes differ from the receipt frozen at gateway entry",
+            )
+        )
+    if not isinstance(payload, dict):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_SCHEMA_INVALID",
+                "progressive promotion must be a JSON object",
+            )
+        )
+        return [issue.__dict__ for issue in issues]
+    seal = str(payload.get("promotion_sha256") or "")
+    body = {key: value for key, value in payload.items() if key != "promotion_sha256"}
+    body_sha = hashlib.sha256(
+        json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        payload.get("contract") != "QR_FAST_BOT_PROMOTION_DECISION_V1"
+        or seal != body_sha
+        or payload.get("status") != "ADMITTED"
+        or payload.get("live_permission") is not True
+        or payload.get("broker_mutation_allowed") is not True
+        or payload.get("external_mutation_gateway") != "LiveOrderGateway"
+    ):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_INVALID_FOR_LIVE_SEND",
+                "promotion contract, seal, status, permission, or gateway binding is invalid",
+            )
+        )
+    bindings = payload.get("bindings") if isinstance(payload.get("bindings"), dict) else {}
+    try:
+        quote_at = _parse_utc_timestamp(bindings.get("signal_quote_timestamp_utc"))
+        ttl_seconds = int(bindings.get("signal_entry_ttl_seconds"))
+        expires_at = _parse_utc_timestamp(payload.get("expires_at_utc"))
+        if (
+            quote_at is None
+            or expires_at is None
+            or ttl_seconds <= 0
+            or expires_at != quote_at + timedelta(seconds=ttl_seconds)
+            or datetime.now(timezone.utc) > expires_at
+        ):
+            raise ValueError("expired or missing expiry")
+    except (TypeError, ValueError):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_STALE_FOR_LIVE_SEND",
+                "promotion must retain the originating signal expiry through broker POST",
+            )
+        )
+    promoted_intents = payload.get("intents_payload")
+    if not isinstance(promoted_intents, dict) or promoted_intents != intents_payload:
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_INTENTS_MISMATCH",
+                "gateway intents are not byte-semantically identical to the sealed promotion intents",
+            )
+        )
+        return [issue.__dict__ for issue in issues]
+    rows = promoted_intents.get("results")
+    row = rows[0] if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict) else None
+    promoted = row.get("intent") if isinstance(row, dict) and isinstance(row.get("intent"), dict) else None
+    if (
+        row is None
+        or promoted is None
+        or row.get("status") != "LIVE_READY"
+        or row.get("risk_allowed") is not True
+        or str(row.get("lane_id") or "") != str(selected_lane_id or "")
+        or str(payload.get("lane_id") or "") != str(selected_lane_id or "")
+    ):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_LANE_MISMATCH",
+                "promotion must contain exactly one LIVE_READY risk-allowed selected lane",
+            )
+        )
+        return [issue.__dict__ for issue in issues]
+    metadata = promoted.get("metadata") if isinstance(promoted.get("metadata"), dict) else {}
+    if (
+        metadata.get("fast_bot_promotion_id") != payload.get("promotion_id")
+        or not str(metadata.get("campaign_id") or "").startswith("live-fb-")
+        or not str(metadata.get("source_shadow_campaign_id") or "").startswith("paper-fb-")
+        or any(metadata.get(key) != value for key, value in bindings.items())
+    ):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_BINDINGS_MISMATCH",
+                "live ownership and content-addressed promotion bindings are not preserved on the intent",
+            )
+        )
+    try:
+        promoted_units = abs(int(promoted.get("units")))
+        normalized_final_units = abs(int(final_units))
+        request_units = int((order_request or {}).get("units"))
+    except (TypeError, ValueError, OverflowError):
+        promoted_units = normalized_final_units = request_units = 0
+    expected_sign = 1 if intent is not None and intent.side == Side.LONG else -1
+    if (
+        promoted_units <= 0
+        or normalized_final_units <= 0
+        or normalized_final_units > promoted_units
+        or abs(request_units) != normalized_final_units
+        or request_units * expected_sign <= 0
+    ):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_UNITS_MISMATCH",
+                "final broker units must stay positive, preserve side, and never exceed deterministic sizing",
+            )
+        )
+    if intent is None or (
+        intent.pair != str(promoted.get("pair") or "").upper()
+        or intent.side.value != str(promoted.get("side") or "").upper()
+        or intent.order_type.value != str(promoted.get("order_type") or "").upper()
+    ):
+        issues.append(
+            RiskIssue(
+                "FAST_BOT_PROMOTION_VEHICLE_MISMATCH",
+                "gateway pair, side, or order type changed after deterministic promotion",
+            )
+        )
+    return [issue.__dict__ for issue in issues]
 
 
 def _gpt_verified_decision_live_send_issues(

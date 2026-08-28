@@ -1,0 +1,27 @@
+{
+  "contract": "QR_FAST_BOT_PROGRESSIVE_STRATEGY_PROFILE_V1",
+  "source_policy": "existing_live_candidate_lanes_only",
+  "profiles": [
+    {
+      "pair": "EUR_USD",
+      "direction": "SHORT",
+      "method": "BREAKOUT_FAILURE",
+      "status": "CANDIDATE",
+      "required_fix": "existing risk-repaired candidate; progressive live remains limited by sealed account-wide sizing"
+    },
+    {
+      "pair": "EUR_USD",
+      "direction": "SHORT",
+      "method": "RANGE_ROTATION",
+      "status": "CANDIDATE",
+      "required_fix": "existing method-specific candidate; progressive live remains limited by sealed account-wide sizing"
+    },
+    {
+      "pair": "EUR_USD",
+      "direction": "SHORT",
+      "method": "TREND_CONTINUATION",
+      "status": "CANDIDATE",
+      "required_fix": "existing risk-repaired candidate; progressive live remains limited by sealed account-wide sizing"
+    }
+  ]
+}

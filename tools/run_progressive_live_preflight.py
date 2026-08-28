@@ -550,6 +550,7 @@ def run_preflight(
             )
             signal_receipts.append(
                 {
+                    "signal": signal,
                     "signal_id": signal.get("signal_id"),
                     "signal_sha256": signal.get("signal_sha256"),
                     "pair": pair,

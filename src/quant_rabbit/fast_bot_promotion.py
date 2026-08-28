@@ -97,6 +97,7 @@ def build_fast_bot_promotion(
     if not _sha(software_sha) or not _sha(feature_sha):
         blockers.append("SOFTWARE_OR_FEATURE_BINDING_INVALID")
 
+    signal_expires_at_utc: str | None = None
     try:
         generated_at = _parse_utc(signal.get("generated_at_utc"))
         quote_at = _parse_utc(signal.get("quote_timestamp_utc"))
@@ -104,6 +105,10 @@ def build_fast_bot_promotion(
     except (TypeError, ValueError):
         blockers.append("SIGNAL_TIME_CONTRACT_INVALID")
     else:
+        signal_expires_at_utc = datetime.fromtimestamp(
+            quote_at.timestamp() + ttl_seconds,
+            tz=timezone.utc,
+        ).isoformat()
         if generated_at > now or quote_at > now or now.timestamp() > quote_at.timestamp() + ttl_seconds:
             blockers.append("SIGNAL_STALE_OR_FUTURE")
 
@@ -227,6 +232,8 @@ def build_fast_bot_promotion(
     )
     binding = {
         "signal_sha256": signal_sha,
+        "signal_quote_timestamp_utc": signal.get("quote_timestamp_utc"),
+        "signal_entry_ttl_seconds": signal.get("entry_ttl_seconds"),
         "forward_admission_sha256": proof_sha,
         "risk_contract_sha256": risk_sha,
         "software_version_sha256": software_sha,
@@ -248,6 +255,7 @@ def build_fast_bot_promotion(
         "contract": PROMOTION_DECISION_CONTRACT,
         "schema_version": 1,
         "generated_at_utc": now.isoformat(),
+        "expires_at_utc": signal_expires_at_utc,
         "status": status,
         "promotion_id": promotion_id,
         "lane_id": lane_id,
@@ -269,6 +277,15 @@ def build_fast_bot_promotion(
             "sl": float(signal["stop_loss"]),
             "thesis": "content-addressed fast-bot proposal under bounded supervision",
             "owner": "trader",
+            "market_context": {
+                "regime": str(supervision_receipt.get("regime") or ""),
+                "narrative": "deterministic fast-bot signal under sealed supervisor limits",
+                "chart_story": str(signal.get("feature_reason") or signal.get("method") or ""),
+                "method": str(signal.get("method") or ""),
+                "invalidation": "attached deterministic stop-loss geometry",
+                "event_risk": "bounded by account-wide progressive-live gates",
+                "session": str(signal.get("session") or ""),
+            },
             "metadata": {
                 **live_identity.to_metadata(),
                 "lane_id": lane_id,
@@ -542,7 +559,7 @@ def _deterministic_sized_units(
     )
     return units if (
         bindings_ok
-        and value.get("mode") in {"FULL_LIVE", "THROTTLED_LIVE"}
+        and value.get("mode") == "THROTTLED_LIVE"
         and value.get("mutation_allowed") is True
         and value.get("account_scope_includes_manual_and_tagless_positions") is True
         and manual_mutations == 0
