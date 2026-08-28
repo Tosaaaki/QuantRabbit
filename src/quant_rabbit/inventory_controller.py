@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
@@ -162,6 +163,12 @@ class InventoryController:
     events: list[dict[str, Any]] = field(default_factory=list)
     applied_receipt_ids: list[str] = field(default_factory=list)
     applied_event_dedupe_keys: list[str] = field(default_factory=list)
+    supervision_regime: str | None = None
+    allowed_strategy_ids: list[str] = field(default_factory=list)
+    supervision_risk_budget_cap_jpy: float = 0.0
+    supervision_max_positions_cap: int = 0
+    supervision_expires_at_utc: str | None = None
+    _persisted_revision: int = field(default=0, repr=False)
 
     @classmethod
     def open(
@@ -179,7 +186,12 @@ class InventoryController:
                     raise RuntimeError("an unfinished campaign already owns inventory state")
                 if not controller.cooldown_elapsed(now_utc):
                     raise RuntimeError("durable post-stop cooldown is still active")
-                controller = cls(state_path=state_path, campaign_id=campaign_id)
+                controller = cls(
+                    state_path=state_path,
+                    campaign_id=campaign_id,
+                    revision=controller.revision,
+                    _persisted_revision=controller.revision,
+                )
                 controller._record("CAMPAIGN_STARTED", now_utc)
                 controller._persist()
             return controller
@@ -216,6 +228,23 @@ class InventoryController:
             applied_event_dedupe_keys=[
                 str(item) for item in payload.get("applied_event_dedupe_keys", [])
             ],
+            supervision_regime=str(payload.get("supervision_regime") or "") or None,
+            allowed_strategy_ids=[
+                str(item) for item in payload.get("allowed_strategy_ids", [])
+            ],
+            supervision_risk_budget_cap_jpy=max(
+                0.0, _finite_float(payload.get("supervision_risk_budget_cap_jpy", 0.0))
+            ),
+            supervision_max_positions_cap=_nonnegative_int(
+                payload.get("supervision_max_positions_cap", 0),
+                "supervision_max_positions_cap",
+            ),
+            supervision_expires_at_utc=(
+                _utc_text(payload.get("supervision_expires_at_utc"))
+                if payload.get("supervision_expires_at_utc")
+                else None
+            ),
+            _persisted_revision=_nonnegative_int(payload.get("revision"), "revision"),
         )
         if any(lot.identity.campaign_id != controller.campaign_id for lot in lots.values()):
             raise RuntimeError("inventory lot is bound to another campaign")
@@ -349,11 +378,54 @@ class InventoryController:
             if self.state is InventoryState.RUNNING:
                 self.freeze_new(reason="LLM_RECEIPT_INVALID_DECISION", now_utc=now_utc)
             return "FREEZE_NEW_INVALID_DECISION"
+        regime = str(receipt.get("regime") or "").upper()
+        raw_strategies = receipt.get("allowed_strategy_ids")
+        try:
+            risk_budget_cap = _finite_float(receipt.get("risk_budget_cap_jpy", 0.0))
+            max_positions_cap = _nonnegative_int(
+                receipt.get("max_positions_cap", 0), "max_positions_cap"
+            )
+        except (TypeError, ValueError):
+            if self.state is InventoryState.RUNNING:
+                self.freeze_new(reason="LLM_RECEIPT_INVALID_STRUCTURE", now_utc=now_utc)
+            return "FREEZE_NEW_INVALID_STRUCTURE"
+        structured_valid = bool(
+            _IDENTIFIER_RE.fullmatch(regime)
+            and isinstance(raw_strategies, list)
+            and all(
+                isinstance(item, str) and _IDENTIFIER_RE.fullmatch(item)
+                for item in raw_strategies
+            )
+            and len(set(raw_strategies)) == len(raw_strategies)
+            and (
+                (
+                    decision == "ALLOW"
+                    and raw_strategies
+                    and risk_budget_cap > 0.0
+                    and max_positions_cap > 0
+                )
+                or (
+                    decision in {"FREEZE_NEW", "UNWIND"}
+                    and not raw_strategies
+                    and risk_budget_cap == 0.0
+                    and max_positions_cap == 0
+                )
+            )
+        )
+        if not structured_valid:
+            if self.state is InventoryState.RUNNING:
+                self.freeze_new(reason="LLM_RECEIPT_INVALID_STRUCTURE", now_utc=now_utc)
+            return "FREEZE_NEW_INVALID_STRUCTURE"
         self.applied_receipt_ids.append(receipt_id)
         self.applied_event_dedupe_keys.append(dedupe_key)
         self.applied_receipt_ids = self.applied_receipt_ids[-256:]
         self.applied_event_dedupe_keys = self.applied_event_dedupe_keys[-256:]
         self._record("LLM_SUPERVISION_APPLIED", now_utc, receipt_id=receipt_id, decision=decision)
+        self.supervision_regime = regime
+        self.allowed_strategy_ids = list(raw_strategies)
+        self.supervision_risk_budget_cap_jpy = risk_budget_cap
+        self.supervision_max_positions_cap = max_positions_cap
+        self.supervision_expires_at_utc = _format_utc(expires_at)
         if decision in {"FREEZE_NEW", "UNWIND"} and self.state is InventoryState.RUNNING:
             self.state = InventoryState.FREEZE_NEW
             self.stop_reason = f"LLM_{decision}"
@@ -526,8 +598,36 @@ class InventoryController:
             "events": list(self.events),
             "applied_receipt_ids": list(self.applied_receipt_ids),
             "applied_event_dedupe_keys": list(self.applied_event_dedupe_keys),
+            "supervision_regime": self.supervision_regime,
+            "allowed_strategy_ids": list(self.allowed_strategy_ids),
+            "supervision_risk_budget_cap_jpy": self.supervision_risk_budget_cap_jpy,
+            "supervision_max_positions_cap": self.supervision_max_positions_cap,
+            "supervision_expires_at_utc": self.supervision_expires_at_utc,
         }
-        _write_json_atomic(self.state_path, payload)
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.state_path.with_name(f".{self.state_path.name}.lock")
+        descriptor = os.open(
+            lock_path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "a+") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            if self.state_path.exists():
+                current = json.loads(self.state_path.read_text(encoding="utf-8"))
+                if current.get("contract") != INVENTORY_CONTRACT:
+                    raise RuntimeError("inventory state contract changed under lock")
+                current_revision = _nonnegative_int(
+                    current.get("revision"), "revision"
+                )
+                if current_revision != self._persisted_revision:
+                    raise RuntimeError(
+                        "inventory state changed concurrently; reopen before retry"
+                    )
+            elif self._persisted_revision != 0:
+                raise RuntimeError("inventory state disappeared under lock")
+            _write_json_atomic(self.state_path, payload)
+            self._persisted_revision = self.revision
 
 
 def broker_position_identity(position: BrokerPosition) -> LotIdentity | None:
@@ -543,10 +643,6 @@ def broker_position_identity(position: BrokerPosition) -> LotIdentity | None:
         extension = raw.get(key)
         if not isinstance(extension, Mapping):
             continue
-        try:
-            return LotIdentity.from_broker_client_id(extension.get("id"))
-        except ValueError:
-            pass
         comment = str(extension.get("comment") or "")
         tokens = {
             name: value
@@ -554,6 +650,12 @@ def broker_position_identity(position: BrokerPosition) -> LotIdentity | None:
             if "=" in token
             for name, value in [token.split("=", 1)]
         }
+        try:
+            identity = LotIdentity.from_broker_client_id(extension.get("id"))
+        except ValueError:
+            identity = None
+        if identity is not None and tokens.get("owner") == OWNER_TAG:
+            return identity
         try:
             return LotIdentity.from_metadata(tokens)
         except ValueError:

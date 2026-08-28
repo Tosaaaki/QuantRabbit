@@ -14,6 +14,18 @@ from quant_rabbit.trade_readiness import (
 
 
 NOW = datetime(2026, 8, 28, 10, 0, tzinfo=timezone.utc)
+LIMITS = ExplicitRiskLimits(
+    max_loss_per_order_jpy=500.0,
+    stop_drawdown_jpy=5_000.0,
+    minimum_margin_buffer_jpy=50_000.0,
+    max_post_entry_current_mcp=0.85,
+    max_post_entry_stress_mcp=0.90,
+    max_currency_factor_nav_multiple=3.0,
+    max_bot_positions=2,
+    mode_hysteresis_mcp=0.03,
+    forward_proof_sha256="a" * 64,
+    risk_contract_sha256="b" * 64,
+)
 
 
 class TradeReadinessTest(unittest.TestCase):
@@ -41,7 +53,7 @@ class TradeReadinessTest(unittest.TestCase):
                     "marginCloseoutPercent": "0.95145",
                 }
             },
-            limits=ExplicitRiskLimits(500.0, 5_000.0, 50_000.0),
+            limits=LIMITS,
             software_ready=True,
             now_utc=NOW,
         )
@@ -54,7 +66,8 @@ class TradeReadinessTest(unittest.TestCase):
         self.assertIn("EXISTING_NO_TOUCH_POSITIONS", result["observations"])
         self.assertIn("CURRENCY_FACTOR_CONCENTRATION_ABOVE_BUDGET", result["blockers"])
         self.assertIn("MINIMUM_MARGIN_BUFFER_NOT_MET", result["blockers"])
-        self.assertIn("MARGIN_CLOSEOUT_PERCENT_ABOVE_HARD_CAP", result["blockers"])
+        self.assertIn("MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT", result["blockers"])
+        self.assertIn("STRESS_MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT", result["blockers"])
         self.assertLess(result["currency_exposure"]["USD"], 0.0)
 
     def test_flat_account_with_three_limits_and_fresh_quotes_reaches_final_screen(self) -> None:
@@ -75,7 +88,7 @@ class TradeReadinessTest(unittest.TestCase):
                     "marginCloseoutPercent": "0",
                 }
             },
-            limits=ExplicitRiskLimits(500.0, 5_000.0, 50_000.0),
+            limits=LIMITS,
             software_ready=True,
             now_utc=NOW,
         )
@@ -98,6 +111,7 @@ class TradeReadinessTest(unittest.TestCase):
             now_utc=NOW,
         )
         self.assertEqual(result["status"], "ready_waiting_for_risk_limits")
+        self.assertEqual(result["lifecycle"], "needs_user_decision")
         self.assertEqual(result["orders_sent"], 0)
 
     def test_mode_hysteresis_and_broker_minimum_keep_unsafe_signal_shadow_only(self) -> None:
@@ -107,9 +121,10 @@ class TradeReadinessTest(unittest.TestCase):
             margin_jpy_per_unit=5.0,
             closeout_margin_jpy_per_unit=2.5,
             stress_closeout_margin_jpy_per_unit=3.0,
+            loss_jpy_per_unit=1.0,
             factor_delta_jpy_per_unit={"USD": 159.0},
         )
-        limits = ExplicitRiskLimits(500.0, 5_000.0, 50_000.0)
+        limits = LIMITS
         unsafe = size_signal_for_runtime_mode(
             previous_mode=RuntimeMode.SHADOW_ONLY,
             inventory_state="RUNNING",
@@ -117,6 +132,10 @@ class TradeReadinessTest(unittest.TestCase):
             nav_jpy=282_890.0,
             margin_available_jpy=12_500.0,
             current_mcp=0.9558,
+            stress_baseline_mcp=1.02,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
             factor_exposure_jpy={"USD": -6_000_000.0},
             limits=limits,
             software_ready=True,
@@ -133,15 +152,20 @@ class TradeReadinessTest(unittest.TestCase):
             nav_jpy=300_000.0,
             margin_available_jpy=100_000.0,
             current_mcp=0.80,
+            stress_baseline_mcp=0.83,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
             factor_exposure_jpy={"USD": 0.0},
             limits=limits,
             software_ready=True,
             signal=SignalSizingInput(
-                requested_units=100,
+                requested_units=1_000,
                 broker_minimum_units=1,
                 margin_jpy_per_unit=1.0,
                 closeout_margin_jpy_per_unit=0.1,
                 stress_closeout_margin_jpy_per_unit=0.2,
+                loss_jpy_per_unit=1.0,
                 factor_delta_jpy_per_unit={"USD": 159.0},
             ),
         )
@@ -155,23 +179,28 @@ class TradeReadinessTest(unittest.TestCase):
             nav_jpy=300_000.0,
             margin_available_jpy=100_000.0,
             current_mcp=0.84,
+            stress_baseline_mcp=0.88,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
             factor_exposure_jpy={"USD": 0.0},
             limits=limits,
             software_ready=True,
             signal=SignalSizingInput(
-                requested_units=100,
+                requested_units=1_000,
                 broker_minimum_units=1,
                 margin_jpy_per_unit=1.0,
                 closeout_margin_jpy_per_unit=0.1,
                 stress_closeout_margin_jpy_per_unit=0.2,
+                loss_jpy_per_unit=1.0,
                 factor_delta_jpy_per_unit={"USD": 159.0},
             ),
         )
         self.assertEqual(retained["mode"], "THROTTLED_LIVE")
 
     def test_gate_deterioration_with_bot_inventory_freezes_then_draining_overrides(self) -> None:
-        signal = SignalSizingInput(10, 1, 1.0, 1.0, 1.0, {"USD": 1.0})
-        limits = ExplicitRiskLimits(500.0, 5_000.0, 50_000.0)
+        signal = SignalSizingInput(10, 1, 1.0, 1.0, 1.0, 1.0, {"USD": 1.0})
+        limits = LIMITS
         frozen = size_signal_for_runtime_mode(
             previous_mode=RuntimeMode.THROTTLED_LIVE,
             inventory_state="RUNNING",
@@ -179,6 +208,10 @@ class TradeReadinessTest(unittest.TestCase):
             nav_jpy=100_000.0,
             margin_available_jpy=1_000.0,
             current_mcp=0.95,
+            stress_baseline_mcp=1.0,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=1,
+            cooldown_elapsed=True,
             factor_exposure_jpy={},
             limits=limits,
             software_ready=True,
@@ -193,12 +226,140 @@ class TradeReadinessTest(unittest.TestCase):
             nav_jpy=100_000.0,
             margin_available_jpy=1_000.0,
             current_mcp=0.95,
+            stress_baseline_mcp=1.0,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=1,
+            cooldown_elapsed=True,
             factor_exposure_jpy={},
             limits=limits,
             software_ready=True,
             signal=signal,
         )
         self.assertEqual(draining["mode"], "DRAINING")
+
+    def test_live_mutation_requires_forward_seal_and_enforces_loss_drawdown_and_stress(self) -> None:
+        signal = SignalSizingInput(
+            requested_units=1_000,
+            broker_minimum_units=1,
+            margin_jpy_per_unit=1.0,
+            closeout_margin_jpy_per_unit=0.1,
+            stress_closeout_margin_jpy_per_unit=0.2,
+            loss_jpy_per_unit=2.0,
+            factor_delta_jpy_per_unit={"USD": 159.0},
+        )
+        unsealed = ExplicitRiskLimits(
+            **{
+                name: getattr(LIMITS, name)
+                for name in LIMITS.__dataclass_fields__
+                if name != "forward_proof_sha256"
+            },
+            forward_proof_sha256=None,
+        )
+        result = size_signal_for_runtime_mode(
+            previous_mode=RuntimeMode.SHADOW_ONLY,
+            inventory_state="RUNNING",
+            has_bot_inventory=False,
+            nav_jpy=300_000.0,
+            margin_available_jpy=200_000.0,
+            current_mcp=0.50,
+            stress_baseline_mcp=0.60,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
+            factor_exposure_jpy={"USD": 0.0, "EUR": 0.0, "JPY": 0.0},
+            limits=unsealed,
+            software_ready=True,
+            signal=signal,
+        )
+        self.assertEqual(result["mode"], "SHADOW_ONLY")
+        self.assertFalse(result["mutation_allowed"])
+
+        admitted = size_signal_for_runtime_mode(
+            previous_mode=RuntimeMode.SHADOW_ONLY,
+            inventory_state="RUNNING",
+            has_bot_inventory=False,
+            nav_jpy=300_000.0,
+            margin_available_jpy=200_000.0,
+            current_mcp=0.50,
+            stress_baseline_mcp=0.60,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
+            factor_exposure_jpy={"USD": 0.0, "EUR": 0.0, "JPY": 0.0},
+            limits=LIMITS,
+            software_ready=True,
+            signal=signal,
+        )
+        self.assertEqual(admitted["calculated_units"], 250)
+        self.assertEqual(admitted["mode"], "THROTTLED_LIVE")
+        self.assertTrue(admitted["mutation_allowed"])
+
+        stopped = size_signal_for_runtime_mode(
+            previous_mode=RuntimeMode.THROTTLED_LIVE,
+            inventory_state="RUNNING",
+            has_bot_inventory=True,
+            nav_jpy=300_000.0,
+            margin_available_jpy=200_000.0,
+            current_mcp=0.50,
+            stress_baseline_mcp=0.60,
+            campaign_drawdown_jpy=5_000.0,
+            current_bot_position_count=1,
+            cooldown_elapsed=True,
+            factor_exposure_jpy={"USD": 0.0, "EUR": 0.0, "JPY": 0.0},
+            limits=LIMITS,
+            software_ready=True,
+            signal=signal,
+        )
+        self.assertEqual(stopped["mode"], "FREEZE_NEW")
+        self.assertEqual(stopped["transition_reason"], "STOP_DRAWDOWN_REACHED")
+
+    def test_factor_reduction_cannot_cross_zero_into_opposite_concentration(self) -> None:
+        result = size_signal_for_runtime_mode(
+            previous_mode=RuntimeMode.SHADOW_ONLY,
+            inventory_state="RUNNING",
+            has_bot_inventory=False,
+            nav_jpy=100_000.0,
+            margin_available_jpy=500_000.0,
+            current_mcp=0.10,
+            stress_baseline_mcp=0.20,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
+            factor_exposure_jpy={"USD": -250_000.0},
+            limits=LIMITS,
+            software_ready=True,
+            signal=SignalSizingInput(
+                requested_units=10_000,
+                broker_minimum_units=1,
+                margin_jpy_per_unit=1.0,
+                closeout_margin_jpy_per_unit=0.001,
+                stress_closeout_margin_jpy_per_unit=0.001,
+                loss_jpy_per_unit=0.01,
+                factor_delta_jpy_per_unit={"USD": 100.0},
+            ),
+        )
+        self.assertEqual(result["calculated_units"], 5_500)
+        self.assertEqual(result["mode"], "THROTTLED_LIVE")
+
+    def test_non_finite_runtime_inputs_fail_closed(self) -> None:
+        result = size_signal_for_runtime_mode(
+            previous_mode=RuntimeMode.SHADOW_ONLY,
+            inventory_state="RUNNING",
+            has_bot_inventory=False,
+            nav_jpy=100_000.0,
+            margin_available_jpy=float("nan"),
+            current_mcp=0.10,
+            stress_baseline_mcp=0.20,
+            campaign_drawdown_jpy=0.0,
+            current_bot_position_count=0,
+            cooldown_elapsed=True,
+            factor_exposure_jpy={},
+            limits=LIMITS,
+            software_ready=True,
+            signal=SignalSizingInput(10, 1, 1.0, 1.0, 1.0, 1.0, {}),
+        )
+        self.assertEqual(result["mode"], "SHADOW_ONLY")
+        self.assertFalse(result["mutation_allowed"])
 
 
 if __name__ == "__main__":

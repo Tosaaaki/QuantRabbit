@@ -58,6 +58,21 @@ class InventoryControllerTest(unittest.TestCase):
             raw={"tradeClientExtensions": order["tradeClientExtensions"]},
         )
         self.assertEqual(broker_position_identity(tagged), identity)
+        forged_or_legacy = BrokerPosition(
+            trade_id="legacy-1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=10,
+            entry_price=1.1,
+            owner=Owner.TRADER,
+            raw={
+                "tradeClientExtensions": {
+                    "id": identity.broker_client_id(),
+                    "comment": "qr-vnext",
+                }
+            },
+        )
+        self.assertIsNone(broker_position_identity(forged_or_legacy))
         manual = BrokerPosition(
             trade_id="manual-1",
             pair="EUR_USD",
@@ -185,6 +200,23 @@ class InventoryControllerTest(unittest.TestCase):
             )
             self.assertEqual(next_campaign.state, InventoryState.RUNNING)
 
+    def test_concurrent_stale_writer_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "inventory.json"
+            first = InventoryController.open(
+                state_path,
+                campaign_id="campaign-20260828",
+                now_utc=NOW,
+            )
+            stale = InventoryController.open(
+                state_path,
+                campaign_id="campaign-20260828",
+                now_utc=NOW,
+            )
+            first.register_pending_entry("pending-1", now_utc=NOW)
+            with self.assertRaisesRegex(RuntimeError, "changed concurrently"):
+                stale.register_pending_entry("pending-2", now_utc=NOW)
+
     def test_event_receipt_is_bound_deduped_and_expiry_or_timeout_freezes_new(self) -> None:
         event = {"event_id": "event-1", "dedupe_key": "EUR_USD|REGIME_FLIP"}
         receipt = {
@@ -193,6 +225,10 @@ class InventoryControllerTest(unittest.TestCase):
             "dedupe_key": "EUR_USD|REGIME_FLIP",
             "feature_snapshot_sha256": "a" * 64,
             "decision": "UNWIND",
+            "regime": "MIXED",
+            "allowed_strategy_ids": [],
+            "risk_budget_cap_jpy": 0.0,
+            "max_positions_cap": 0,
             "generated_at_utc": NOW.isoformat(),
             "expires_at_utc": (NOW + timedelta(minutes=5)).isoformat(),
         }

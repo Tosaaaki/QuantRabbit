@@ -19,6 +19,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-loss-per-order-jpy", type=float)
     parser.add_argument("--stop-drawdown-jpy", type=float)
     parser.add_argument("--minimum-margin-buffer-jpy", type=float)
+    parser.add_argument("--max-post-entry-current-mcp", type=float)
+    parser.add_argument("--max-post-entry-stress-mcp", type=float)
+    parser.add_argument("--max-currency-factor-nav-multiple", type=float)
+    parser.add_argument("--max-bot-positions", type=int)
+    parser.add_argument("--mode-hysteresis-mcp", type=float)
+    parser.add_argument("--forward-proof-sha256")
+    parser.add_argument("--risk-contract-sha256")
     return parser.parse_args()
 
 
@@ -34,6 +41,13 @@ def main() -> int:
             max_loss_per_order_jpy=args.max_loss_per_order_jpy,
             stop_drawdown_jpy=args.stop_drawdown_jpy,
             minimum_margin_buffer_jpy=args.minimum_margin_buffer_jpy,
+            max_post_entry_current_mcp=args.max_post_entry_current_mcp,
+            max_post_entry_stress_mcp=args.max_post_entry_stress_mcp,
+            max_currency_factor_nav_multiple=args.max_currency_factor_nav_multiple,
+            max_bot_positions=args.max_bot_positions,
+            mode_hysteresis_mcp=args.mode_hysteresis_mcp,
+            forward_proof_sha256=args.forward_proof_sha256,
+            risk_contract_sha256=args.risk_contract_sha256,
         ),
         software_ready=args.software_ready,
         now_utc=datetime.now(timezone.utc),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -13,14 +14,8 @@ from quant_rabbit.risk import RiskPolicy
 
 
 READINESS_CONTRACT = "QR_TRADE_READINESS_V1"
-HARD_MAX_MARGIN_CLOSEOUT_PERCENT = 0.85
-THROTTLED_PROMOTE_CURRENT_MCP = 0.82
-THROTTLED_PROMOTE_STRESS_MCP = 0.87
-THROTTLED_RETAIN_CURRENT_MCP = 0.85
-THROTTLED_RETAIN_STRESS_MCP = 0.90
-FULL_PROMOTE_CURRENT_MCP = 0.70
-FULL_PROMOTE_STRESS_MCP = 0.75
-FACTOR_BUDGET_NAV_MULTIPLE = 3.0
+STRESS_PIPS = 25.0
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class RuntimeMode(str, Enum):
@@ -36,17 +31,52 @@ class ExplicitRiskLimits:
     max_loss_per_order_jpy: float | None = None
     stop_drawdown_jpy: float | None = None
     minimum_margin_buffer_jpy: float | None = None
+    max_post_entry_current_mcp: float | None = None
+    max_post_entry_stress_mcp: float | None = None
+    max_currency_factor_nav_multiple: float | None = None
+    max_bot_positions: int | None = None
+    mode_hysteresis_mcp: float | None = None
+    forward_proof_sha256: str | None = None
+    risk_contract_sha256: str | None = None
 
     @property
-    def complete(self) -> bool:
-        return all(
+    def numeric_complete(self) -> bool:
+        numeric_complete = all(
             _positive(value)
             for value in (
                 self.max_loss_per_order_jpy,
                 self.stop_drawdown_jpy,
                 self.minimum_margin_buffer_jpy,
+                self.max_currency_factor_nav_multiple,
+                self.mode_hysteresis_mcp,
             )
         )
+        current_cap = _number(self.max_post_entry_current_mcp)
+        stress_cap = _number(self.max_post_entry_stress_mcp)
+        hysteresis = _number(self.mode_hysteresis_mcp)
+        position_cap = self.max_bot_positions
+        return bool(
+            numeric_complete
+            and current_cap is not None
+            and stress_cap is not None
+            and hysteresis is not None
+            and 0.0 < current_cap < stress_cap < 1.0
+            and 0.0 < hysteresis < current_cap
+            and isinstance(position_cap, int)
+            and not isinstance(position_cap, bool)
+            and position_cap > 0
+        )
+
+    @property
+    def proof_sealed(self) -> bool:
+        return bool(
+            _SHA256_RE.fullmatch(str(self.forward_proof_sha256 or ""))
+            and _SHA256_RE.fullmatch(str(self.risk_contract_sha256 or ""))
+        )
+
+    @property
+    def complete(self) -> bool:
+        return self.numeric_complete and self.proof_sealed
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +86,7 @@ class SignalSizingInput:
     margin_jpy_per_unit: float
     closeout_margin_jpy_per_unit: float
     stress_closeout_margin_jpy_per_unit: float
+    loss_jpy_per_unit: float
     factor_delta_jpy_per_unit: Mapping[str, float]
 
 
@@ -67,6 +98,10 @@ def size_signal_for_runtime_mode(
     nav_jpy: float,
     margin_available_jpy: float,
     current_mcp: float,
+    stress_baseline_mcp: float,
+    campaign_drawdown_jpy: float,
+    current_bot_position_count: int,
+    cooldown_elapsed: bool,
     factor_exposure_jpy: Mapping[str, float],
     limits: ExplicitRiskLimits,
     software_ready: bool,
@@ -78,9 +113,12 @@ def size_signal_for_runtime_mode(
         return _mode_receipt(RuntimeMode.DRAINING, 0, signal, "INVENTORY_DRAINING")
     if inventory_state == RuntimeMode.FREEZE_NEW.value:
         return _mode_receipt(RuntimeMode.FREEZE_NEW, 0, signal, "INVENTORY_FREEZE_NEW")
-    if not software_ready or not limits.complete:
+    if not software_ready or not limits.complete or not cooldown_elapsed:
         return _mode_receipt(
-            RuntimeMode.SHADOW_ONLY, 0, signal, "SOFTWARE_OR_EXPLICIT_LIMITS_INCOMPLETE"
+            RuntimeMode.SHADOW_ONLY,
+            0,
+            signal,
+            "SOFTWARE_RISK_PROOF_OR_COOLDOWN_BLOCKED",
         )
     if any(
         not _positive(value)
@@ -89,9 +127,29 @@ def size_signal_for_runtime_mode(
             signal.margin_jpy_per_unit,
             signal.closeout_margin_jpy_per_unit,
             signal.stress_closeout_margin_jpy_per_unit,
+            signal.loss_jpy_per_unit,
         )
     ):
         return _mode_receipt(RuntimeMode.SHADOW_ONLY, 0, signal, "MARGIN_MODEL_INVALID")
+    if (
+        not math.isfinite(float(margin_available_jpy))
+        or margin_available_jpy < 0.0
+        or not math.isfinite(float(current_mcp))
+        or current_mcp < 0.0
+        or not math.isfinite(float(stress_baseline_mcp))
+        or stress_baseline_mcp < current_mcp
+        or not math.isfinite(float(campaign_drawdown_jpy))
+        or campaign_drawdown_jpy < 0.0
+        or isinstance(current_bot_position_count, bool)
+        or not isinstance(current_bot_position_count, int)
+        or current_bot_position_count < 0
+    ):
+        return _mode_receipt(RuntimeMode.SHADOW_ONLY, 0, signal, "STRESS_BASELINE_INVALID")
+    if campaign_drawdown_jpy >= float(limits.stop_drawdown_jpy or 0.0):
+        mode = RuntimeMode.FREEZE_NEW if has_bot_inventory else RuntimeMode.SHADOW_ONLY
+        return _mode_receipt(mode, 0, signal, "STOP_DRAWDOWN_REACHED")
+    if current_bot_position_count >= int(limits.max_bot_positions or 0):
+        return _mode_receipt(RuntimeMode.SHADOW_ONLY, 0, signal, "MAX_BOT_POSITIONS_REACHED")
 
     requested = max(0, int(signal.requested_units))
     minimum = max(1, int(signal.broker_minimum_units))
@@ -105,7 +163,7 @@ def size_signal_for_runtime_mode(
     current_mcp_capacity = max(
         0,
         math.floor(
-            (THROTTLED_RETAIN_CURRENT_MCP - current_mcp)
+            (float(limits.max_post_entry_current_mcp or 0.0) - current_mcp)
             * nav_jpy
             / signal.closeout_margin_jpy_per_unit
         ),
@@ -113,27 +171,49 @@ def size_signal_for_runtime_mode(
     stress_mcp_capacity = max(
         0,
         math.floor(
-            (THROTTLED_RETAIN_STRESS_MCP - current_mcp)
+            (float(limits.max_post_entry_stress_mcp or 0.0) - stress_baseline_mcp)
             * nav_jpy
             / signal.stress_closeout_margin_jpy_per_unit
         ),
     )
-    factor_budget = nav_jpy * FACTOR_BUDGET_NAV_MULTIPLE
+    loss_capacity = max(
+        0,
+        math.floor(float(limits.max_loss_per_order_jpy or 0.0) / signal.loss_jpy_per_unit),
+    )
+    factor_budget = nav_jpy * float(limits.max_currency_factor_nav_multiple or 0.0)
     factor_capacities = [requested]
     for currency, delta_per_unit in signal.factor_delta_jpy_per_unit.items():
         delta = float(delta_per_unit)
         current = float(factor_exposure_jpy.get(currency, 0.0))
         if not math.isfinite(delta) or not math.isfinite(current):
             return _mode_receipt(RuntimeMode.SHADOW_ONLY, 0, signal, "FACTOR_MODEL_INVALID")
-        if delta == 0.0 or current * delta < 0.0:
+        if delta == 0.0:
             continue
-        remaining = factor_budget - abs(current)
-        factor_capacities.append(max(0, math.floor(remaining / abs(delta))))
+        if delta > 0.0:
+            capacity = math.floor((factor_budget - current) / delta)
+        else:
+            capacity = math.floor((factor_budget + current) / abs(delta))
+        factor_capacities.append(max(0, capacity))
     units = min(
-        [requested, buffer_capacity, current_mcp_capacity, stress_mcp_capacity, *factor_capacities]
+        [
+            requested,
+            buffer_capacity,
+            current_mcp_capacity,
+            stress_mcp_capacity,
+            loss_capacity,
+            *factor_capacities,
+        ]
     )
     post_current_mcp = current_mcp + units * signal.closeout_margin_jpy_per_unit / nav_jpy
-    post_stress_mcp = current_mcp + units * signal.stress_closeout_margin_jpy_per_unit / nav_jpy
+    post_stress_mcp = (
+        stress_baseline_mcp
+        + units * signal.stress_closeout_margin_jpy_per_unit / nav_jpy
+    )
+    post_factor_exposure = {
+        currency: float(factor_exposure_jpy.get(currency, 0.0))
+        + units * float(delta_per_unit)
+        for currency, delta_per_unit in signal.factor_delta_jpy_per_unit.items()
+    }
 
     if units < minimum:
         mode = RuntimeMode.FREEZE_NEW if has_bot_inventory else RuntimeMode.SHADOW_ONLY
@@ -145,39 +225,31 @@ def size_signal_for_runtime_mode(
             post_current_mcp=post_current_mcp,
             post_stress_mcp=post_stress_mcp,
         )
-    if post_current_mcp > THROTTLED_RETAIN_CURRENT_MCP or post_stress_mcp > THROTTLED_RETAIN_STRESS_MCP:
+    if (
+        post_current_mcp > float(limits.max_post_entry_current_mcp or 0.0)
+        or post_stress_mcp > float(limits.max_post_entry_stress_mcp or 0.0)
+        or any(abs(value) > factor_budget for value in post_factor_exposure.values())
+    ):
         mode = RuntimeMode.FREEZE_NEW if has_bot_inventory else RuntimeMode.SHADOW_ONLY
         return _mode_receipt(
             mode,
             0,
             signal,
-            "POST_ENTRY_MARGIN_GATE_FAILED",
+            "POST_ENTRY_MARGIN_OR_FACTOR_GATE_FAILED",
             post_current_mcp=post_current_mcp,
             post_stress_mcp=post_stress_mcp,
         )
 
-    if (
-        post_current_mcp <= FULL_PROMOTE_CURRENT_MCP
-        and post_stress_mcp <= FULL_PROMOTE_STRESS_MCP
-        and margin_available_jpy >= 2.0 * float(limits.minimum_margin_buffer_jpy or 0.0)
-    ):
+    retained_live = previous_mode in {RuntimeMode.THROTTLED_LIVE, RuntimeMode.FULL_LIVE}
+    hysteresis = 0.0 if retained_live else float(limits.mode_hysteresis_mcp or 0.0)
+    promote_current = float(limits.max_post_entry_current_mcp or 0.0) - hysteresis
+    promote_stress = float(limits.max_post_entry_stress_mcp or 0.0) - hysteresis
+    if post_current_mcp > promote_current or post_stress_mcp > promote_stress:
+        mode = RuntimeMode.SHADOW_ONLY
+    elif units == requested:
         mode = RuntimeMode.FULL_LIVE
     else:
-        promote_current = (
-            THROTTLED_RETAIN_CURRENT_MCP
-            if previous_mode in {RuntimeMode.THROTTLED_LIVE, RuntimeMode.FULL_LIVE}
-            else THROTTLED_PROMOTE_CURRENT_MCP
-        )
-        promote_stress = (
-            THROTTLED_RETAIN_STRESS_MCP
-            if previous_mode in {RuntimeMode.THROTTLED_LIVE, RuntimeMode.FULL_LIVE}
-            else THROTTLED_PROMOTE_STRESS_MCP
-        )
-        mode = (
-            RuntimeMode.THROTTLED_LIVE
-            if post_current_mcp <= promote_current and post_stress_mcp <= promote_stress
-            else RuntimeMode.SHADOW_ONLY
-        )
+        mode = RuntimeMode.THROTTLED_LIVE
     if mode is RuntimeMode.SHADOW_ONLY:
         units = 0
     return _mode_receipt(
@@ -226,6 +298,11 @@ def screen_trade_readiness(
     margin_used = _number(account.get("marginUsed"))
     nav = _number(account.get("NAV"))
     mcp = _number(account.get("marginCloseoutPercent"))
+    stress_mcp = estimate_account_stress_mcp(
+        snapshot=snapshot,
+        raw_account=raw_account,
+        stress_pips=STRESS_PIPS,
+    )
 
     system_positions = [
         position for position in snapshot.positions if broker_position_identity(position) is not None
@@ -275,36 +352,55 @@ def screen_trade_readiness(
     blockers: list[str] = []
     if not software_ready:
         blockers.append("SOFTWARE_READINESS_NOT_SEALED")
-    if not limits.complete:
-        blockers.append("EXPLICIT_THREE_RISK_LIMITS_NOT_FIXED")
+    if not limits.numeric_complete:
+        blockers.append("EXPLICIT_RISK_LIMITS_NOT_FIXED")
+    elif not limits.proof_sealed:
+        blockers.append("FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED")
     if system_positions:
         blockers.append("BOT_INVENTORY_NOT_FLAT")
     if pending_entries:
         blockers.append("PENDING_ENTRY_ORDER_PRESENT")
-    if mcp is None or mcp >= HARD_MAX_MARGIN_CLOSEOUT_PERCENT:
-        blockers.append("MARGIN_CLOSEOUT_PERCENT_ABOVE_HARD_CAP")
+    if limits.numeric_complete and (
+        mcp is None or mcp > float(limits.max_post_entry_current_mcp or 0.0)
+    ):
+        blockers.append("MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT")
+    if limits.numeric_complete and (
+        stress_mcp is None
+        or stress_mcp > float(limits.max_post_entry_stress_mcp or 0.0)
+    ):
+        blockers.append("STRESS_MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT")
     if (
         limits.minimum_margin_buffer_jpy is not None
         and (margin_available is None or margin_available < limits.minimum_margin_buffer_jpy)
     ):
         blockers.append("MINIMUM_MARGIN_BUFFER_NOT_MET")
     factor_exposure_jpy = _currency_factor_jpy(snapshot)
-    factor_budget_jpy = (nav or 0.0) * FACTOR_BUDGET_NAV_MULTIPLE
-    if factor_budget_jpy <= 0.0 or any(
+    factor_budget_jpy = (nav or 0.0) * float(
+        limits.max_currency_factor_nav_multiple or 0.0
+    )
+    if limits.numeric_complete and (factor_budget_jpy <= 0.0 or any(
         abs(value) > factor_budget_jpy for value in factor_exposure_jpy.values()
-    ):
+    )):
         blockers.append("CURRENCY_FACTOR_CONCENTRATION_ABOVE_BUDGET")
     blockers.extend(quote_blockers)
 
     if not software_ready:
         status = "software_unready"
-    elif not limits.complete:
+    elif not limits.numeric_complete:
         status = "ready_waiting_for_risk_limits"
+    elif not limits.proof_sealed:
+        status = "ready_waiting_for_forward_admission"
     elif blockers:
         status = "ready_waiting_for_margin"
     else:
         status = "ready_for_final_screen"
-    lifecycle = "waiting_external_state" if status.startswith("ready_waiting") else status
+    lifecycle = (
+        "needs_user_decision"
+        if status == "ready_waiting_for_risk_limits"
+        else "waiting_external_state"
+        if status.startswith("ready_waiting")
+        else status
+    )
 
     return {
         "contract": READINESS_CONTRACT,
@@ -318,16 +414,31 @@ def screen_trade_readiness(
         "software_ready": software_ready,
         "risk_limits": {
             "complete": limits.complete,
+            "numeric_complete": limits.numeric_complete,
+            "proof_sealed": limits.proof_sealed,
             "max_loss_per_order_jpy": limits.max_loss_per_order_jpy,
             "stop_drawdown_jpy": limits.stop_drawdown_jpy,
             "minimum_margin_buffer_jpy": limits.minimum_margin_buffer_jpy,
+            "max_post_entry_current_mcp": limits.max_post_entry_current_mcp,
+            "max_post_entry_stress_mcp": limits.max_post_entry_stress_mcp,
+            "max_currency_factor_nav_multiple": limits.max_currency_factor_nav_multiple,
+            "max_bot_positions": limits.max_bot_positions,
+            "mode_hysteresis_mcp": limits.mode_hysteresis_mcp,
+            "forward_proof_sha256": limits.forward_proof_sha256,
+            "risk_contract_sha256": limits.risk_contract_sha256,
         },
         "account": {
             "nav_jpy": nav,
             "margin_used_jpy": margin_used,
             "margin_available_jpy": margin_available,
             "margin_closeout_percent": mcp,
-            "hard_max_margin_closeout_percent": HARD_MAX_MARGIN_CLOSEOUT_PERCENT,
+            "stress_margin_closeout_percent": stress_mcp,
+            "stress_pips": STRESS_PIPS,
+            "margin_available_nav_ratio": (
+                margin_available / nav
+                if margin_available is not None and nav is not None and nav > 0.0
+                else None
+            ),
             "open_position_count": len(snapshot.positions),
             "no_touch_position_count": len(no_touch_positions),
             "system_owned_position_count": len(system_positions),
@@ -371,11 +482,53 @@ def _currency_factor_jpy(snapshot: BrokerSnapshot) -> dict[str, float]:
         rates["USD"] = usd_to_jpy
     if usd_to_jpy is not None and eur_usd is not None:
         rates["EUR"] = eur_usd.mid * usd_to_jpy
-    return {
+    result = {
         currency: round(value * rates[currency], 6)
         for currency, value in sorted(raw.items())
         if currency in rates
     }
+    return {currency: result.get(currency, 0.0) for currency in ("USD", "EUR", "JPY")}
+
+
+def estimate_account_stress_mcp(
+    *,
+    snapshot: BrokerSnapshot,
+    raw_account: Mapping[str, Any],
+    stress_pips: float,
+) -> float | None:
+    """Conservatively shock every open lot adversely without mutating it."""
+
+    account = raw_account.get("account") if isinstance(raw_account.get("account"), Mapping) else raw_account
+    closeout_nav = _number(account.get("marginCloseoutNAV")) or _number(account.get("NAV"))
+    closeout_margin = _number(account.get("marginCloseoutMarginUsed")) or _number(
+        account.get("marginUsed")
+    )
+    if not _positive(closeout_nav) or closeout_margin is None or closeout_margin < 0.0:
+        return None
+    shock = _number(stress_pips)
+    if shock is None or shock <= 0.0:
+        return None
+    total_loss_jpy = 0.0
+    usd_jpy = snapshot.quotes.get("USD_JPY")
+    for position in snapshot.positions:
+        if "_" not in position.pair:
+            return None
+        quote_currency = position.pair.split("_", 1)[1]
+        pip_value_quote = position.units / instrument_pip_factor(position.pair)
+        if quote_currency == "JPY":
+            quote_to_jpy = 1.0
+        elif quote_currency == "USD" and usd_jpy is not None:
+            quote_to_jpy = usd_jpy.mid
+        else:
+            conversion = _number(snapshot.home_conversions.get(quote_currency))
+            if conversion is None or conversion <= 0.0:
+                return None
+            quote_to_jpy = conversion
+        total_loss_jpy += shock * pip_value_quote * quote_to_jpy
+    stressed_nav = closeout_nav - total_loss_jpy
+    if stressed_nav <= 0.0:
+        return math.inf
+    return closeout_margin / stressed_nav
 
 
 def _positive(value: object) -> bool:

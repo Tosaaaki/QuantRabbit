@@ -81,11 +81,33 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
         "dedupe_key": allow_event["dedupe_key"],
         "feature_snapshot_sha256": feature_sha,
         "decision": "ALLOW",
+        "regime": "MIXED",
+        "allowed_strategy_ids": [
+            "range_rotation",
+            "trend_continuation",
+        ],
+        "risk_budget_cap_jpy": 500.0,
+        "max_positions_cap": 2,
         "generated_at_utc": now_utc.isoformat(),
         "expires_at_utc": (now_utc + timedelta(minutes=5)).isoformat(),
     }
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        stale_controller = InventoryController.open(
+            Path(temp_dir) / "stale_inventory.json",
+            campaign_id=str(signals[0]["campaign_id"]),
+            now_utc=now_utc,
+        )
+        stale_result = stale_controller.apply_supervision_receipt(
+            event=allow_event,
+            receipt={
+                **allow_receipt,
+                "receipt_id": "stale-allow-current-regime",
+                "generated_at_utc": (now_utc - timedelta(minutes=10)).isoformat(),
+                "expires_at_utc": (now_utc - timedelta(minutes=5)).isoformat(),
+            },
+            now_utc=now_utc,
+        )
         controller = InventoryController.open(
             Path(temp_dir) / "inventory.json",
             campaign_id=str(signals[0]["campaign_id"]),
@@ -160,6 +182,10 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             "dedupe_key": unwind_event["dedupe_key"],
             "feature_snapshot_sha256": feature_sha,
             "decision": "UNWIND",
+            "regime": "MIXED",
+            "allowed_strategy_ids": [],
+            "risk_budget_cap_jpy": 0.0,
+            "max_positions_cap": 0,
             "generated_at_utc": (now_utc + timedelta(seconds=4)).isoformat(),
             "expires_at_utc": (now_utc + timedelta(minutes=5)).isoformat(),
         }
@@ -208,7 +234,15 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             "duplicate_effective_applications": 0
             if duplicate_result == "DUPLICATE_IGNORED"
             else 1,
-            "stale_decision_applications": 0,
+            "stale_decision_applications": (
+                0 if stale_result == "FREEZE_NEW_INVALID_RECEIPT" else 1
+            ),
+            "stale_receipt_result": stale_result,
+            "supervision_regime": controller.supervision_regime,
+            "supervision_risk_budget_cap_jpy": (
+                controller.supervision_risk_budget_cap_jpy
+            ),
+            "supervision_max_positions_cap": controller.supervision_max_positions_cap,
             "unwind_receipt_result": unwind_result,
             "staged_gateway_order_count": len(staged_orders),
             "staged_gateway_client_ids": [
