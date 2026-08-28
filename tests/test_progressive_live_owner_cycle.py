@@ -15,6 +15,35 @@ SPEC.loader.exec_module(owner_cycle)
 
 
 class ProgressiveLiveOwnerCycleTest(unittest.TestCase):
+    def test_supervision_is_bound_to_actual_preflight_event(self) -> None:
+        class RecordingInventory:
+            def __init__(self) -> None:
+                self.event = None
+
+            def apply_supervision_receipt(self, *, event, receipt, now_utc):
+                self.event = event
+                return "APPLIED_ALLOW"
+
+        inventory = RecordingInventory()
+        result = owner_cycle._apply_supervision_to_inventory(
+            inventory,
+            supervision={
+                "event_id": "receipt-self-asserted-event",
+                "dedupe_key": "receipt-self-asserted-event",
+            },
+            mode_event={"event_id": "qrplm:" + "a" * 64},
+            now_utc=owner_cycle.datetime.now(owner_cycle.timezone.utc),
+        )
+
+        self.assertEqual(result, "APPLIED_ALLOW")
+        self.assertEqual(
+            inventory.event,
+            {
+                "event_id": "qrplm:" + "a" * 64,
+                "dedupe_key": "qrplm:" + "a" * 64,
+            },
+        )
+
     def test_unaccepted_or_unsafe_preflight_never_constructs_write_client(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

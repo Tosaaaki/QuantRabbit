@@ -77,6 +77,25 @@ def _mode_event(preflight: Mapping[str, Any]) -> dict[str, Any]:
     raise RuntimeError("PREFLIGHT_MODE_EVENT_NOT_FOUND")
 
 
+def _apply_supervision_to_inventory(
+    inventory: InventoryController,
+    *,
+    supervision: Mapping[str, Any],
+    mode_event: Mapping[str, Any],
+    now_utc: datetime,
+) -> str:
+    """Apply supervision only against the actual current preflight identity."""
+
+    event_id = str(mode_event.get("event_id") or "")
+    if not event_id:
+        raise RuntimeError("PREFLIGHT_MODE_EVENT_ID_MISSING")
+    return inventory.apply_supervision_receipt(
+        event={"event_id": event_id, "dedupe_key": event_id},
+        receipt=supervision,
+        now_utc=now_utc,
+    )
+
+
 def _no_send_result(preflight: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "contract": OWNER_CYCLE_CONTRACT,
@@ -428,15 +447,13 @@ def run_owner_cycle(
         raise RuntimeError("SEALED_SIGNAL_OR_SIZING_MISSING")
 
     supervision = read_json(supervision_receipt_path)
-    apply_status = inventory.apply_supervision_receipt(
-        event={
-            "event_id": supervision.get("event_id"),
-            "dedupe_key": supervision.get("dedupe_key"),
-        },
-        receipt=supervision,
+    apply_status = _apply_supervision_to_inventory(
+        inventory,
+        supervision=supervision,
+        mode_event=event,
         now_utc=now,
     )
-    if apply_status not in {"APPLIED_ALLOW", "DUPLICATE_RECEIPT"}:
+    if apply_status not in {"APPLIED_ALLOW", "DUPLICATE_IGNORED"}:
         raise RuntimeError(f"SUPERVISION_NOT_APPLIED:{apply_status}")
     promotion = build_fast_bot_promotion(
         signal=signal,

@@ -41,6 +41,7 @@ LIVE_SOURCE_PATHS = (
     Path("src/quant_rabbit/broker/position_execution.py"),
     Path("tools/run_progressive_live_preflight.py"),
     Path("tools/run_progressive_live_owner_cycle.py"),
+    Path("tools/seal_progressive_live_supervision_receipt.py"),
     Path("config/fast_bot_progressive_strategy_profile_v1.json"),
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
