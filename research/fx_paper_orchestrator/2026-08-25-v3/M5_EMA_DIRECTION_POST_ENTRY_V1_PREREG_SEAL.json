@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREG_SEAL",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "classification": "FROZEN_BEFORE_HISTORICAL_OUTCOME_REPLAY",
+  "base_commit": "15c7d205a78a14116651046b5fa2741d37e72cf2",
+  "branch": "codex/episode-fx-paper-orchestrator-v2-checkpoint-20260828",
+  "frozen_files": {
+    "M5_EMA_DIRECTION_POST_ENTRY_V1_PREREGISTRATION.json": {
+      "sha256": "cf7488cba4361f729d1eb4c3de89d9b3696cae0aa42cc8322a201ce3750eff28",
+      "size_bytes": 10970
+    },
+    "run_m5_ema_direction_post_entry_v1.py": {
+      "sha256": "d5561bf3c20f17918a61ceee47c83b77123ce718ffbe6fc73a9844d5702fa212",
+      "size_bytes": 81705
+    },
+    "test_m5_ema_direction_post_entry_v1.py": {
+      "sha256": "cda13b05445fdc12402cce200b68f4d4aaca5c1995dabb096b5c31b083f827bc",
+      "size_bytes": 16782
+    }
+  },
+  "source_bindings": {
+    "AUD_USD": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+    "EUR_USD": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+    "USD_JPY": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+  },
+  "non_outcome_signal_density_preflight": {
+    "classification": "READ_ONLY_CAUSAL_SIGNAL_COUNT_NOT_STRATEGY_EVIDENCE",
+    "outcome_fields_read": 0,
+    "pnl_computed": false,
+    "integrity_error_count": 0,
+    "completed_m5_bars": 78144,
+    "tuning_signals": {
+      "AUD_USD": 10643,
+      "EUR_USD": 10644,
+      "USD_JPY": 10642,
+      "total": 31929
+    },
+    "walk_forward_signals": {
+      "AUD_USD": 12382,
+      "EUR_USD": 12384,
+      "USD_JPY": 12381,
+      "total": 37147
+    },
+    "natural_proposals_zero_reproduced": false
+  },
+  "test_receipt": {
+    "py_compile": "PASS",
+    "focused_test_file": "test_m5_ema_direction_post_entry_v1.py",
+    "focused_tests_passed": 11,
+    "focused_tests_failed": 0,
+    "focused_elapsed_seconds": "2.46",
+    "real_historical_outcome_replay_used_by_tests": false
+  },
+  "configuration_budget": {
+    "signal_family_count": 1,
+    "configuration_count": 12,
+    "max_age_values": [
+      6,
+      12,
+      24
+    ],
+    "post_entry_policy_count": 4,
+    "may_expand_after_result": false
+  },
+  "execution_state": {
+    "official_historical_replay_started": false,
+    "official_historical_replay_completed": false,
+    "official_ordinal_limit": 1,
+    "holdout_state": "UNOPENED",
+    "holdout_read_count": 0
+  },
+  "protected_state": {
+    "r5_source_file_count": 18,
+    "r5_source_aggregate_sha256": "5b530abf7aa7d3db0f31826efc9f4645d2a9dceb7e10feb620d40f5f3c0ed016",
+    "r5_evidence_file_count": 28,
+    "r5_evidence_aggregate_sha256": "027bd900ba1fbd237b15e0cbd5e393648e36bcbabd629c53d81cf2286cab94a7",
+    "r5_combined_file_count": 46,
+    "r5_combined_aggregate_sha256": "a6f2c4990af89462d33dca0bee8fca0c3af700562de4f074c5f90331d3d87d13",
+    "r5_modified": false,
+    "preexisting_untracked_v3_drafts_staged": false
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "network_access_for_replay": false,
+    "active_shadow_mutation": false
+  }
+}

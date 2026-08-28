@@ -1,0 +1,260 @@
+{
+  "artifact_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "candidate_id": "M5_EMA_DIRECTION_POST_ENTRY_V1",
+  "schema_version": 1,
+  "status": "PREREGISTERED_UNEXECUTED",
+  "classification": "PAPER_ONLY_UNADMITTED_CHALLENGER",
+  "purpose": "Close the natural_proposals_zero diagnosis with one causal high-density EMA direction-state proposal stream, then compare only post-entry exit and inventory policies.",
+  "parent_baseline": {
+    "id": "R5_FIXED_UNADMITTED_BASELINE",
+    "must_remain_unchanged": true,
+    "source_file_count": 18,
+    "source_aggregate_sha256": "5b530abf7aa7d3db0f31826efc9f4645d2a9dceb7e10feb620d40f5f3c0ed016",
+    "evidence_file_count": 28,
+    "evidence_aggregate_sha256": "027bd900ba1fbd237b15e0cbd5e393648e36bcbabd629c53d81cf2286cab94a7",
+    "combined_file_count": 46,
+    "combined_aggregate_sha256": "a6f2c4990af89462d33dca0bee8fca0c3af700562de4f074c5f90331d3d87d13"
+  },
+  "single_family_contract": {
+    "family": "M5_EMA_DIRECTION_STATE_WITH_POST_ENTRY_POLICY",
+    "signal_family_count": 1,
+    "entry_formula_count": 1,
+    "post_entry_configuration_count": 12,
+    "configuration_budget_may_expand_after_results": false,
+    "actual_llm_used": false
+  },
+  "source_contract": {
+    "root": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z",
+    "provider": "OANDA_HISTORICAL_SNAPSHOT",
+    "granularity": "M5",
+    "price_component": "BID_ASK",
+    "completed_only": true,
+    "source_bar_time_semantics": "BAR_OPEN_UTC",
+    "files": {
+      "AUD_USD": {
+        "relative_path": "AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+      },
+      "EUR_USD": {
+        "relative_path": "EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+      },
+      "USD_JPY": {
+        "relative_path": "USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+      }
+    },
+    "required_integrity": [
+      "exact_source_sha256",
+      "strict_input_order_monotonicity",
+      "pair_and_granularity_identity",
+      "complete_true",
+      "price_BA",
+      "positive_finite_decimal_prices",
+      "ask_not_below_bid_for_ohlc",
+      "identical_schema_across_included_pairs"
+    ],
+    "historical_arrival_sequence_heartbeat_available": false,
+    "feed_quality_or_live_continuity_claim_allowed": false
+  },
+  "universe": {
+    "primary": [
+      "EUR_USD",
+      "USD_JPY"
+    ],
+    "secondary_separate_if_identical_integrity": [
+      "AUD_USD"
+    ],
+    "cross_pair_result_pooling_for_admission": false
+  },
+  "periods": {
+    "tuning": {
+      "start_utc_inclusive": "2026-03-11T00:00:00Z",
+      "end_utc_exclusive": "2026-05-01T00:00:00Z"
+    },
+    "walk_forward": {
+      "start_utc_inclusive": "2026-05-01T00:00:00Z",
+      "end_utc_exclusive": "2026-07-01T00:00:00Z",
+      "full_months": [
+        "2026-05",
+        "2026-06"
+      ]
+    },
+    "holdout": {
+      "label": "FUTURE_FX_HOLDOUT_AFTER_2026_07_15",
+      "state": "UNOPENED",
+      "may_read": false,
+      "may_execute": false
+    }
+  },
+  "signal_contract": {
+    "input": "completed M5 BID/ASK bar",
+    "mid_close_formula": "mid_close_t=(bid_close_t+ask_close_t)/2 using exact Decimal arithmetic",
+    "ema_formula": "EMA_s,t=alpha_s*mid_close_t+(1-alpha_s)*EMA_s,t-1; alpha_s=2/(s+1); EMA_s is seeded by the arithmetic mean of the first s completed mid closes",
+    "fast_span_completed_bars": 3,
+    "slow_span_completed_bars": 12,
+    "minimum_warmup_completed_bars": 12,
+    "direction_formula": "LONG when EMA3_t-EMA12_t > 0, SHORT when it is < 0, and carry the most recent nonzero direction on exact equality",
+    "exact_zero_tie_break": "carry the previous nonzero direction; if the first eligible bar is exactly equal, use LONG",
+    "emission_frequency": "exactly one RAW_SIGNAL for each eligible completed bar after warmup",
+    "cross_only": false,
+    "cost_used_for_signal_or_entry_gate": false,
+    "signal_id_formula": "sha256(candidate_id|pair|decision_epoch_ns|direction)",
+    "same_signal_id_across_cost_arms": true,
+    "same_decision_direction_size_across_cost_arms": true,
+    "raw_signal_suppression_by_predicted_profit": false
+  },
+  "chronology": {
+    "decision": "bar open timestamp plus exactly 300 seconds, after the M5 bar is complete",
+    "fill": "the next source-record open for that pair at or after the decision timestamp, with source record ordinal strictly later than the decision bar",
+    "same_bar_fill": false,
+    "max_age_unit": "observed completed M5 holding bars, not wall-clock bars",
+    "market_gap": "the next observed executable record remains the fill/exit; elapsed wall time remains visible and financing uses it",
+    "terminal": "all remaining inventory is forcibly liquidated at the final in-period completed bar executable BID/ASK close"
+  },
+  "position_contract": {
+    "fixed_notional_jpy_per_lot": 1000,
+    "initial_equity_jpy": 200000,
+    "adds": false,
+    "averaging_multiplier": false,
+    "martingale": false,
+    "individual_price_stop_loss": false,
+    "pair_open_lot_cap": 24,
+    "portfolio_open_lot_cap": 72,
+    "gross_notional_cap_jpy": 72000,
+    "currency_absolute_exposure_cap_jpy": 72000,
+    "currency_exposure_basis": "signed fixed-JPY-risk incidence by base and quote currency",
+    "terminal_inventory_required": 0,
+    "terminal_mtm_hidden": false
+  },
+  "configuration_family": {
+    "max_age_candidates_completed_m5_bars": [
+      6,
+      12,
+      24
+    ],
+    "policy_candidates": [
+      {
+        "policy_id": "A_MAX_AGE_ONLY",
+        "rule": "close at next executable open after max_age completed holding bars"
+      },
+      {
+        "policy_id": "B_OPPOSITE_SIGNAL_OLDEST_FIRST",
+        "rule": "at the next signal fill open, close at most one oldest opposite-direction lot before opening the new fixed lot; all remaining lots retain the same finite max age"
+      },
+      {
+        "policy_id": "C_TRAINING_MFE_Q40_TP",
+        "rule": "freeze pair x direction x max_age nearest-rank Q40 of tuning-only executable-side gross MFE; enter with that fixed absolute TP distance and the same finite max age"
+      },
+      {
+        "policy_id": "D_TP_Q40_PROFIT_GIVEBACK",
+        "rule": "policy C plus: after a completed close reaches at least half the frozen TP distance, if completed-close progress falls to at most half of its causal peak, close at the next executable open"
+      }
+    ],
+    "tp_training": {
+      "data": "only tuning signals whose fill and full candidate max-age observation are both before tuning end",
+      "statistic": "nearest-rank ceil(0.40*n) of executable-side favorable excursion in pips",
+      "strata": "pair x direction x max_age",
+      "minimum_target": "one fixed instrument tick",
+      "fallback_or_pooling": false,
+      "cost_used": false,
+      "walk_forward_used": false
+    },
+    "tp_execution": {
+      "long_touch": "completed bar BID high reaches the frozen absolute target",
+      "short_touch": "completed bar ASK low reaches the frozen absolute target",
+      "mid_touch_allowed": false,
+      "fill_price": "exact frozen target with no favorable improvement; cost arms are applied after the common exit event",
+      "priority": "TP touch before giveback or max-age close scheduled from the same completed bar"
+    },
+    "configuration_ids": [
+      "A_MAX_AGE_ONLY__H06",
+      "A_MAX_AGE_ONLY__H12",
+      "A_MAX_AGE_ONLY__H24",
+      "B_OPPOSITE_SIGNAL_OLDEST_FIRST__H06",
+      "B_OPPOSITE_SIGNAL_OLDEST_FIRST__H12",
+      "B_OPPOSITE_SIGNAL_OLDEST_FIRST__H24",
+      "C_TRAINING_MFE_Q40_TP__H06",
+      "C_TRAINING_MFE_Q40_TP__H12",
+      "C_TRAINING_MFE_Q40_TP__H24",
+      "D_TP_Q40_PROFIT_GIVEBACK__H06",
+      "D_TP_Q40_PROFIT_GIVEBACK__H12",
+      "D_TP_Q40_PROFIT_GIVEBACK__H24"
+    ]
+  },
+  "cost_arms": {
+    "RAW_SIGNAL": {
+      "entry_and_exit": "midpoint",
+      "slippage_pips_per_side": "0",
+      "commission_bps_per_side": "0",
+      "financing_bps_per_day": "0"
+    },
+    "EXECUTABLE_BASE": {
+      "entry_and_exit": "actual BID/ASK side",
+      "slippage_pips_per_side": "0.3",
+      "commission_bps_per_side": "0",
+      "financing_bps_per_day": "0.5"
+    },
+    "ADVERSE_STRESS": {
+      "entry_and_exit": "actual BID/ASK side",
+      "slippage_pips_per_side": "0.9",
+      "commission_bps_per_side": "0.2",
+      "financing_bps_per_day": "1.5"
+    },
+    "strict_ordering_required": "ADVERSE_STRESS costs are componentwise no easier than EXECUTABLE_BASE and at least one component is strictly worse",
+    "exit_event_shared_across_arms": true,
+    "fixed_jpy_pnl": "notional_jpy * direction * (exit_price-entry_price)/entry_price minus declared costs; short uses the same linear fixed-notional convention"
+  },
+  "selection_contract": {
+    "selection_data": "tuning only",
+    "selection_objective": "maximize the minimum of BASE and ADVERSE tuning log growth among configurations with positive BASE and ADVERSE mean net expectancy; if none qualify, choose the largest minimum only as a diagnostic comparator",
+    "tie_break": "lexicographically smallest configuration_id",
+    "walk_forward_used_for_selection": false,
+    "holdout_used_for_selection": false,
+    "two_x_or_three_x_used_for_selection": false,
+    "post_evaluation_leverage_change": false,
+    "selected_configuration_count": 1
+  },
+  "required_metrics": [
+    "raw_signals_per_day",
+    "generated_and_filled_signal_counts",
+    "gross_fixed_horizon_direction_accuracy",
+    "gross_MFE_and_MAE",
+    "BASE_and_ADVERSE_net_expectancy",
+    "cost_drag",
+    "turnover",
+    "inventory_age_Q50_Q90_Q99",
+    "terminal_inventory_and_MTM",
+    "pair_month_arm_multiple",
+    "portfolio_month_arm_multiple",
+    "marked_running_peak_drawdown",
+    "currency_and_gross_cap_observation",
+    "currency_time_clustered_N_eff"
+  ],
+  "admission_contract": {
+    "output_status": "UNADMITTED_CHALLENGER",
+    "profit_unproven": true,
+    "holdout_unopened": true,
+    "shadow_auto_enable": false,
+    "strategy_adoption_allowed": false,
+    "two_x_and_three_x": "reported only as final aspirational measurements after freeze and never used for discovery, filtering, tuning, or leverage"
+  },
+  "execution_contract": {
+    "historical_replay_ordinal_limit": 1,
+    "restart_policy": "output directory must not preexist; a partial output is an explicit failed attempt and is never silently overwritten",
+    "content_addressed_outputs": true,
+    "external_order_count": 0
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false,
+    "network_access": false,
+    "feed_or_launchd_mutation": false
+  }
+}
