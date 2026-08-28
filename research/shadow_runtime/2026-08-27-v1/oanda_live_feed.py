@@ -13,7 +13,7 @@ import ssl
 import sys
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -32,13 +32,22 @@ from shadow_runtime import (
 PROVIDER = "OANDA_V20_LIVE_PRICING_STREAM"
 REST_HOST = "https://api-fxtrade.oanda.com"
 STREAM_HOST = "https://stream-fxtrade.oanda.com"
+REST_NETLOC = "api-fxtrade.oanda.com"
 STREAM_NETLOC = "stream-fxtrade.oanda.com"
 APPROVED_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit-live/.env.local")
 SYMBOLS = ("EUR_USD", "USD_JPY")
 CONTINUITY = "HEARTBEAT_ONLY"
 LOSSLESS = False
 MAX_HEARTBEAT_GAP_SECONDS = 15.0
-LEDGERS = ("raw_bbo", "feed_quality", "decisions", "virtual_fills", "pnl", "control")
+LEDGERS = (
+    "raw_bbo",
+    "historical_warmup_m5",
+    "feed_quality",
+    "decisions",
+    "virtual_fills",
+    "pnl",
+    "control",
+)
 LEGACY_SEGMENT_ID = "LEGACY_UNSEGMENTED"
 
 
@@ -161,6 +170,20 @@ class OandaLiveRecorder:
             or llm_policy.get("external_order_authority") is not False
         ):
             raise IntegrityError("paper/LLM authority boundary mismatch")
+        warmup = self.contract.get("historical_warmup")
+        if (
+            not isinstance(warmup, dict)
+            or warmup.get("provider") != "OANDA_V20_LIVE_HOST_HISTORICAL_CANDLES"
+            or warmup.get("timeframe") != "M5"
+            or warmup.get("price") != "BA"
+            or type(warmup.get("request_count")) is not int
+            or not 1 <= warmup["request_count"] <= 5000
+            or warmup.get("completed_only") is not True
+            or warmup.get("strict_contiguous") is not True
+            or warmup.get("excluded_from_forward_pnl") is not True
+            or warmup.get("may_create_proposals_fills_or_pnl") is not False
+        ):
+            raise IntegrityError("historical warmup contract mismatch")
 
     def fresh_state(self) -> dict[str, Any]:
         return {
@@ -270,6 +293,160 @@ class OandaLiveRecorder:
         state = copy.deepcopy(self.state)
         state["counters"]["credential_reads"] += 1
         self._persist(state)
+
+    def mark_network_attempt(self) -> None:
+        state = copy.deepcopy(self.state)
+        state["counters"]["network_attempts"] += 1
+        self._persist(state)
+
+    def historical_warmup_ready(self, instrument: str, expected_count: int) -> bool:
+        """Return true only for one complete, reusable warmup prefix."""
+        rows = [
+            row["payload"]
+            for row in self.ledgers["historical_warmup_m5"].rows
+            if row["payload"].get("instrument") == instrument
+        ]
+        if not rows:
+            return False
+        if len(rows) != expected_count:
+            raise IntegrityError("HISTORICAL_WARMUP_PARTIAL")
+        rows.sort(key=lambda payload: payload["start_utc"])
+        starts = [parse_utc(payload["start_utc"]) for payload in rows]
+        if any(current - prior != timedelta(minutes=5) for prior, current in zip(starts, starts[1:])):
+            raise IntegrityError("HISTORICAL_WARMUP_GAP")
+        if any(
+            payload.get("feature_source") != "OANDA_HISTORICAL_M5_WARMUP"
+            or payload.get("warmup_only") is not True
+            or payload.get("excluded_from_forward_pnl") is not True
+            or payload.get("proposals") != 0
+            or payload.get("virtual_fills") != 0
+            or payload.get("pnl_records") != 0
+            or payload.get("external_order_attempts") != 0
+            or payload.get("external_orders") != 0
+            for payload in rows
+        ):
+            raise IntegrityError("HISTORICAL_WARMUP_BOUNDARY_INVALID")
+        return True
+
+    def _historical_warmup_payload(
+        self,
+        *,
+        instrument: str,
+        fetched_at: datetime,
+        response_sha256: str,
+        request_sha256: str,
+        candle: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        if instrument not in SYMBOLS or not valid_sha256(response_sha256) or not valid_sha256(request_sha256):
+            raise IntegrityError("HISTORICAL_WARMUP_IDENTITY_INVALID")
+        start = parse_oanda_time(str(candle["time"]))
+        end = start + timedelta(minutes=5)
+        if candle.get("complete") is not True or end > fetched_at:
+            raise IntegrityError("HISTORICAL_WARMUP_NONCAUSAL")
+        bid = candle.get("bid")
+        ask = candle.get("ask")
+        if not isinstance(bid, dict) or not isinstance(ask, dict):
+            raise IntegrityError("HISTORICAL_WARMUP_BID_ASK_MISSING")
+        normalized: dict[str, float] = {}
+        for side, body in (("bid", bid), ("ask", ask)):
+            for field in ("o", "h", "l", "c"):
+                try:
+                    value = float(body[field])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise IntegrityError("HISTORICAL_WARMUP_PRICE_INVALID") from exc
+                if not math.isfinite(value) or value <= 0:
+                    raise IntegrityError("HISTORICAL_WARMUP_PRICE_INVALID")
+                normalized[f"{side}_{field}"] = value
+            if not (
+                normalized[f"{side}_l"]
+                <= min(normalized[f"{side}_o"], normalized[f"{side}_c"])
+                <= max(normalized[f"{side}_o"], normalized[f"{side}_c"])
+                <= normalized[f"{side}_h"]
+            ):
+                raise IntegrityError("HISTORICAL_WARMUP_OHLC_INVALID")
+        if normalized["bid_o"] > normalized["ask_o"] or normalized["bid_c"] > normalized["ask_c"]:
+            raise IntegrityError("HISTORICAL_WARMUP_BID_ASK_CROSSED")
+        candle_input = {
+            "instrument": instrument,
+            "time": utc_text(start),
+            "complete": True,
+            "bid": {key: normalized[f"bid_{key}"] for key in ("o", "h", "l", "c")},
+            "ask": {key: normalized[f"ask_{key}"] for key in ("o", "h", "l", "c")},
+        }
+        input_sha256 = canonical_hash(candle_input)
+        payload = {
+            "schema_version": 1,
+            "event": "HISTORICAL_M5_WARMUP",
+            "instrument": instrument,
+            "timeframe": "M5",
+            "feature_source": "OANDA_HISTORICAL_M5_WARMUP",
+            "start_utc": utc_text(start),
+            "end_utc": utc_text(end),
+            "source_time_utc": utc_text(start),
+            "arrival_time_utc": utc_text(fetched_at),
+            "response_sha256": response_sha256,
+            "request_sha256": request_sha256,
+            "input_sha256": input_sha256,
+            **normalized,
+            "warmup_only": True,
+            "excluded_from_forward_pnl": True,
+            "proposals": 0,
+            "virtual_fills": 0,
+            "pnl_records": 0,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+        }
+        return payload, f"warmup::{instrument}::{utc_text(start)}"
+
+    def record_historical_warmup(
+        self,
+        *,
+        instrument: str,
+        fetched_at: datetime,
+        response_sha256: str,
+        request_sha256: str,
+        candle: dict[str, Any],
+    ) -> None:
+        """Append one verified feature-only candle without creating decisions."""
+        self.record_historical_warmup_batch(
+            instrument=instrument,
+            fetched_at=fetched_at,
+            response_sha256=response_sha256,
+            request_sha256=request_sha256,
+            candles=[candle],
+        )
+
+    def record_historical_warmup_batch(
+        self,
+        *,
+        instrument: str,
+        fetched_at: datetime,
+        response_sha256: str,
+        request_sha256: str,
+        candles: list[dict[str, Any]],
+    ) -> None:
+        """Validate a response fully, then append its new rows in one ledger write."""
+        normalized = [
+            self._historical_warmup_payload(
+                instrument=instrument,
+                fetched_at=fetched_at,
+                response_sha256=response_sha256,
+                request_sha256=request_sha256,
+                candle=candle,
+            )
+            for candle in candles
+        ]
+        planned: list[dict[str, Any]] = []
+        ledger = self.ledgers["historical_warmup_m5"]
+        for payload, record_id in normalized:
+            existing = ledger.by_id.get(record_id)
+            if existing is not None:
+                if existing["payload"].get("input_sha256") != payload["input_sha256"]:
+                    raise IntegrityError("HISTORICAL_WARMUP_CONFLICT")
+                continue
+            ledger.plan(payload, record_id, planned)
+        ledger.append_rows(planned)
+        self._persist(copy.deepcopy(self.state))
 
     def connect_established(self, arrival: datetime) -> None:
         state = copy.deepcopy(self.state)
@@ -400,8 +577,26 @@ class OandaLiveRecorder:
             bids, asks = payload.get("bids"), payload.get("asks")
             if not isinstance(bids, list) or not bids or not isinstance(asks, list) or not asks:
                 raise ValueError
-            bid = max(float(level["price"]) for level in bids if isinstance(level, dict))
-            ask = min(float(level["price"]) for level in asks if isinstance(level, dict))
+            bid_levels = [
+                (float(level["price"]), int(level["liquidity"]))
+                for level in bids
+                if isinstance(level, dict)
+            ]
+            ask_levels = [
+                (float(level["price"]), int(level["liquidity"]))
+                for level in asks
+                if isinstance(level, dict)
+            ]
+            if (
+                len(bid_levels) != len(bids)
+                or len(ask_levels) != len(asks)
+                or any(not math.isfinite(price) or price <= 0 or liquidity <= 0 for price, liquidity in bid_levels + ask_levels)
+            ):
+                raise ValueError
+            bid = max(price for price, _ in bid_levels)
+            ask = min(price for price, _ in ask_levels)
+            bid_liquidity = sum(liquidity for price, liquidity in bid_levels if price == bid)
+            ask_liquidity = sum(liquidity for price, liquidity in ask_levels if price == ask)
             if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask <= bid:
                 raise ValueError
             source = parse_oanda_time(str(payload["time"]))
@@ -416,6 +611,8 @@ class OandaLiveRecorder:
                 "arrival_time_utc": utc_text(arrival),
                 "bid": bid,
                 "ask": ask,
+                "bid_liquidity": bid_liquidity,
+                "ask_liquidity": ask_liquidity,
                 "spread": ask - bid,
                 "tradeable": payload.get("status") == "tradeable",
                 "continuity": CONTINUITY,
@@ -558,6 +755,107 @@ class OandaLiveRecorder:
                 return self.status()
             finally:
                 connection.close()
+
+
+def fetch_completed_m5_warmup(
+    account_id: str,
+    token: str,
+    instrument: str,
+    count: int,
+    recorder: OandaLiveRecorder,
+    *,
+    connection_factory: Callable[..., Any] = http.client.HTTPSConnection,
+    now_factory: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> int:
+    """Fetch and persist one strict completed OANDA BID/ASK M5 prefix."""
+    if instrument not in SYMBOLS or type(count) is not int or not 1 <= count <= 5000:
+        raise ValueError("HISTORICAL_WARMUP_REQUEST_INVALID")
+    if recorder.historical_warmup_ready(instrument, count):
+        return 0
+    requested_at = now_factory().astimezone(timezone.utc)
+    boundary_epoch = int(requested_at.timestamp()) // 300 * 300
+    to_time = datetime.fromtimestamp(boundary_epoch, timezone.utc)
+    request_identity = {
+        "method": "GET",
+        "host": REST_HOST,
+        "path_template": "/v3/accounts/{accountID}/instruments/{instrument}/candles",
+        "instrument": instrument,
+        "price": "BA",
+        "granularity": "M5",
+        "count": count,
+        "to": utc_text(to_time),
+    }
+    request_sha256 = canonical_hash(request_identity)
+    query = urllib.parse.urlencode({
+        "price": "BA",
+        "granularity": "M5",
+        "count": count,
+        "to": utc_text(to_time),
+    })
+    path = (
+        f"/v3/accounts/{urllib.parse.quote(account_id, safe='')}/instruments/"
+        f"{instrument}/candles?{query}"
+    )
+    recorder.mark_network_attempt()
+    connection = connection_factory(
+        REST_NETLOC,
+        timeout=MAX_HEARTBEAT_GAP_SECONDS,
+        context=ssl.create_default_context(),
+    )
+    try:
+        connection.request(
+            "GET",
+            path,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept-Datetime-Format": "RFC3339",
+            },
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            raise FeedQualityError(f"HISTORICAL_HTTP_STATUS_{response.status}")
+        raw = response.read()
+    finally:
+        connection.close()
+    response_sha256 = hashlib.sha256(raw).hexdigest()
+    try:
+        payload = json.loads(raw.decode("utf-8", "strict"))
+    except Exception as exc:
+        raise FeedQualityError("HISTORICAL_WARMUP_RESPONSE_INVALID") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("instrument") != instrument
+        or payload.get("granularity") != "M5"
+        or not isinstance(payload.get("candles"), list)
+        or not payload["candles"]
+    ):
+        raise FeedQualityError("HISTORICAL_WARMUP_SCHEMA_MISMATCH")
+    candles = payload["candles"]
+    starts: list[datetime] = []
+    for candle in candles:
+        if not isinstance(candle, dict) or candle.get("complete") is not True:
+            raise FeedQualityError("HISTORICAL_WARMUP_INCOMPLETE")
+        try:
+            start = parse_oanda_time(str(candle["time"]))
+        except Exception as exc:
+            raise FeedQualityError("HISTORICAL_WARMUP_TIME_INVALID") from exc
+        if start + timedelta(minutes=5) > to_time or start + timedelta(minutes=5) > requested_at:
+            raise FeedQualityError("HISTORICAL_WARMUP_FUTURE")
+        starts.append(start)
+    if starts != sorted(starts) or len(starts) != len(set(starts)):
+        raise FeedQualityError("HISTORICAL_WARMUP_OVERLAP")
+    if any(current - prior != timedelta(minutes=5) for prior, current in zip(starts, starts[1:])):
+        raise FeedQualityError("HISTORICAL_WARMUP_GAP")
+    if len(candles) != count:
+        raise FeedQualityError("HISTORICAL_WARMUP_COUNT_MISMATCH")
+    recorder.record_historical_warmup_batch(
+        instrument=instrument,
+        fetched_at=requested_at,
+        response_sha256=response_sha256,
+        request_sha256=request_sha256,
+        candles=candles,
+    )
+    return len(candles)
 
 
 def main(argv: list[str] | None = None) -> int:

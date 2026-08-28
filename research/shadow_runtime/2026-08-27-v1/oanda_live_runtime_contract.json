@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "provider": "OANDA_V20_LIVE_PRICING_STREAM",
   "strategy_status": "RESEARCH_NOT_ADMITTED",
   "shadow_status": "OBSERVATION_AUTHORIZED",
@@ -30,9 +30,15 @@
   "actual_llm_enabled": true,
   "launchd_enabled": true,
   "historical_warmup": {
+    "provider": "OANDA_V20_LIVE_HOST_HISTORICAL_CANDLES",
     "timeframe": "M5",
+    "price": "BA",
+    "request_count": 32,
     "completed_only": true,
-    "excluded_from_forward_pnl": true
+    "strict_contiguous": true,
+    "dedicated_ledger": "feed/ledgers/historical_warmup_m5.jsonl",
+    "excluded_from_forward_pnl": true,
+    "may_create_proposals_fills_or_pnl": false
   },
   "step34": {
     "r5_natural_signal_available": false,
@@ -58,6 +64,11 @@
     "hard_max_open_positions_per_instrument": 1,
     "hard_max_open_positions_total": 2,
     "entry_cost_gate_used": false,
+    "require_tradeable_bbo": true,
+    "require_side_liquidity": true,
+    "persist_latency_event_consumption": true,
+    "llm_unwind_semantics": "ONE_OLDEST_POSITION_PER_POLICY_DECISION",
+    "jpy_conversion_quote_max_age_seconds": 15,
     "raw_signal_always_recorded": true,
     "terminal_mtm_required": true,
     "individual_price_sl": false,
@@ -91,7 +102,10 @@
       "tp_atr_multiple": "Half of local M5 ATR is the first high-turnover TP hypothesis; the observed-spread floor prevents a target inside paid spread.",
       "max_age_bars": "Six M5 bars create a finite thirty-minute inventory contract without an individual price stop.",
       "virtual_units": "One thousand base units is an accounting normalization only and never a broker or risk-sizing decision.",
-      "adverse_slippage": "Zero-point-three pip per side is a declared stress observation, never an entry rejection gate."
+      "adverse_slippage": "Zero-point-three pip per side is a declared stress observation, never an entry rejection gate.",
+      "warmup_request_count": "Thirty-two completed M5 candles provide bounded feature startup depth; any gap, overlap, future, or incomplete candle rejects the whole warmup response.",
+      "llm_unwind": "One oldest virtual position per content-addressed LLM policy decision prevents a single mode decision from silently becoming a close-all instruction.",
+      "jpy_conversion_quote_max_age": "EUR/USD quote PnL is converted only with a causal, tradeable USD/JPY side no more than fifteen arrival-seconds old; otherwise JPY PnL remains null."
     }
   },
   "llm_inventory_policy": {

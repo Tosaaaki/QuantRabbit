@@ -43,6 +43,11 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         "hard_max_open_positions_per_instrument",
         "hard_max_open_positions_total",
         "entry_cost_gate_used",
+        "require_tradeable_bbo",
+        "require_side_liquidity",
+        "persist_latency_event_consumption",
+        "llm_unwind_semantics",
+        "jpy_conversion_quote_max_age_seconds",
         "arms",
     }
     missing = required - set(config)
@@ -52,6 +57,13 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         raise PaperConfigError("paper strategy must be enabled on M5")
     if config["entry_cost_gate_used"] is not False:
         raise PaperConfigError("cost must not suppress raw signals")
+    if (
+        config["require_tradeable_bbo"] is not True
+        or config["require_side_liquidity"] is not True
+        or config["persist_latency_event_consumption"] is not True
+        or config["llm_unwind_semantics"] != "ONE_OLDEST_POSITION_PER_POLICY_DECISION"
+    ):
+        raise PaperConfigError("paper execution safety contract mismatch")
     if not isinstance(config["strategy_id"], str) or not config["strategy_id"]:
         raise PaperConfigError("strategy_id invalid")
     integer_fields = (
@@ -64,6 +76,7 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         "virtual_units",
         "hard_max_open_positions_per_instrument",
         "hard_max_open_positions_total",
+        "jpy_conversion_quote_max_age_seconds",
     )
     for name in integer_fields:
         if type(config[name]) is not int or config[name] <= 0:
@@ -117,23 +130,68 @@ def _mid(bar: dict[str, Any], field: str) -> float:
     return (float(bar[f"bid_{field}"]) + float(bar[f"ask_{field}"])) / 2.0
 
 
-def _contiguous_tail(
+def completed_bar_input_window(
     bars: list[dict[str, Any]],
     minimum: int,
 ) -> list[dict[str, Any]] | None:
+    """Return one causal M5 feature window ending in LIVE evidence.
+
+    Historical OANDA BID/ASK candles may prefix the window as feature-only
+    warmup.  They may never follow a LIVE row, overlap it, bridge a missing M5
+    interval, or become the final decision row.  LIVE rows must additionally
+    remain inside one source-attested feed segment.
+    """
+    if type(minimum) is not int or minimum <= 0:
+        raise ValueError("minimum input window invalid")
     if len(bars) < minimum:
         return None
     tail = bars[-minimum:]
     instrument = tail[0].get("instrument")
-    segment_id = tail[0].get("segment_id")
-    if not instrument or not segment_id:
+    if not instrument:
         return None
+    saw_live = False
+    live_segment_id: str | None = None
+    prior_start = None
     for prior, current in zip(tail, tail[1:]):
-        if current.get("instrument") != instrument or current.get("segment_id") != segment_id:
+        if current.get("instrument") != instrument:
             return None
         if parse_utc(current["start_utc"]) - parse_utc(prior["start_utc"]) != timedelta(minutes=5):
             return None
+    for bar in tail:
+        start = parse_utc(bar["start_utc"])
+        end = parse_utc(bar["end_utc"])
+        if end - start != timedelta(minutes=5) or (prior_start is not None and start <= prior_start):
+            return None
+        prior_start = start
+        source = bar.get("feature_source", "LIVE_ATTESTED_M5")
+        if source == "OANDA_HISTORICAL_M5_WARMUP":
+            if (
+                saw_live
+                or bar.get("warmup_only") is not True
+                or bar.get("excluded_from_forward_pnl") is not True
+            ):
+                return None
+            continue
+        if source != "LIVE_ATTESTED_M5":
+            return None
+        segment_id = bar.get("segment_id")
+        if not isinstance(segment_id, str) or not segment_id:
+            return None
+        if live_segment_id is None:
+            live_segment_id = segment_id
+        elif segment_id != live_segment_id:
+            return None
+        saw_live = True
+    if not saw_live or tail[-1].get("feature_source", "LIVE_ATTESTED_M5") != "LIVE_ATTESTED_M5":
+        return None
     return tail
+
+
+def _contiguous_tail(
+    bars: list[dict[str, Any]],
+    minimum: int,
+) -> list[dict[str, Any]] | None:
+    return completed_bar_input_window(bars, minimum)
 
 
 def evaluate_completed_bar_signal(
@@ -187,8 +245,35 @@ def evaluate_completed_bar_signal(
         "tp_distance_price": tp_distance,
         "entry_cost_gate_used": False,
         "completed_bar_count_used": len(tail),
+        "historical_warmup_bar_count_used": sum(
+            bar.get("feature_source") == "OANDA_HISTORICAL_M5_WARMUP" for bar in tail
+        ),
         "segment_id": tail[-1]["segment_id"],
     }
+
+
+def executable_bbo_available(
+    event: dict[str, Any],
+    direction: int,
+    *,
+    entry: bool,
+    required_units: int,
+) -> bool:
+    """Prove the selected virtual side is currently tradeable and deep enough."""
+    if direction not in {-1, 1} or type(required_units) is not int or required_units <= 0:
+        return False
+    if event.get("tradeable") is not True:
+        return False
+    liquidity_field = (
+        "ask_liquidity"
+        if (entry and direction > 0) or (not entry and direction < 0)
+        else "bid_liquidity"
+    )
+    liquidity = event.get(liquidity_field)
+    if isinstance(liquidity, bool) or not isinstance(liquidity, (int, float)):
+        return False
+    amount = float(liquidity)
+    return math.isfinite(amount) and amount >= required_units
 
 
 def virtual_price(
@@ -197,11 +282,19 @@ def virtual_price(
     arm_config: dict[str, Any],
     *,
     entry: bool,
+    required_units: int | None = None,
 ) -> float:
     bid = _finite_number(event["bid"], "bid", positive=True)
     ask = _finite_number(event["ask"], "ask", positive=True)
     if ask <= bid or direction not in {-1, 1}:
         raise ValueError("invalid executable BBO")
+    if required_units is not None and not executable_bbo_available(
+        event,
+        direction,
+        entry=entry,
+        required_units=required_units,
+    ):
+        raise ValueError("selected BBO side is not executable")
     if arm_config["price_mode"] == "MID":
         return (bid + ask) / 2.0
     slip = float(arm_config["slippage_pips_per_side"]) * pip_size(event["instrument"])

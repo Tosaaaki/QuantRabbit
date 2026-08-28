@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import signal
 import subprocess
@@ -13,9 +14,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from oanda_live_feed import OandaLiveRecorder, load_approved_live_credentials, valid_sha256
+from oanda_live_feed import (
+    OandaLiveRecorder,
+    fetch_completed_m5_warmup,
+    load_approved_live_credentials,
+    valid_sha256,
+)
 from oanda_paper_execution import (
+    completed_bar_input_window,
     evaluate_completed_bar_signal,
+    executable_bbo_available,
     pip_size,
     pnl_pips,
     quote_pnl,
@@ -37,12 +45,12 @@ from shadow_runtime import (
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-SERVICE_ROOT = PACKAGE_ROOT / "runs" / "oanda_live_launchd_v2"
+SERVICE_ROOT = PACKAGE_ROOT / "runs" / "oanda_live_launchd_v4"
 SOURCE_COMMIT = "907195888ae5671d18084d59a4458dc70f3df7c8"
 SHARED_RUNTIME_HASH = canonical_hash({
     "source_commit": SOURCE_COMMIT,
     "oanda_contract_sha256": sha256_file(PACKAGE_ROOT / "oanda_live_runtime_contract.json"),
-    "topology": "OANDA_LIVE_GET_ONLY_ZERO_ORDER_PAPER_TRADER_V2",
+    "topology": "OANDA_LIVE_GET_ONLY_ZERO_ORDER_PAPER_TRADER_V4",
 })
 RUNTIME_SOURCE_PATHS = (
     PACKAGE_ROOT / "oanda_launchd_runtime.py",
@@ -70,6 +78,7 @@ OANDA_RUNTIME_CONTRACT = json.loads(
     secure_read(PACKAGE_ROOT / "oanda_live_runtime_contract.json").decode("utf-8", "strict")
 )
 PAPER_CONFIG = OANDA_RUNTIME_CONTRACT["paper_execution"]
+HISTORICAL_WARMUP_CONFIG = OANDA_RUNTIME_CONTRACT["historical_warmup"]
 LLM_POLICY_CONFIG = OANDA_RUNTIME_CONTRACT["llm_inventory_policy"]
 validate_paper_config(PAPER_CONFIG)
 LABELS = {
@@ -105,6 +114,14 @@ def run_feed(max_seconds: float) -> int:
     root = SERVICE_ROOT / "feed"
     recorder = OandaLiveRecorder(root)
     recorder.mark_approved_credential_file_read()
+    for instrument in OANDA_RUNTIME_CONTRACT["symbols"]:
+        fetch_completed_m5_warmup(
+            account_id,
+            token,
+            instrument,
+            int(HISTORICAL_WARMUP_CONFIG["request_count"]),
+            recorder,
+        )
     status = recorder.run_live(
         account_id,
         token,
@@ -293,6 +310,7 @@ def _bar_from_events(instrument: str, bucket: int, events: list[dict[str, Any]])
         "start_utc": utc_text(datetime.fromtimestamp(bucket, timezone.utc)),
         "end_utc": utc_text(datetime.fromtimestamp(bucket + 300, timezone.utc)),
         "period_state": "SEALED",
+        "feature_source": "LIVE_ATTESTED_M5",
         "event_count": len(events),
         "first_source_time_utc": events[0]["event_time_utc"],
         "last_source_time_utc": events[-1]["event_time_utc"],
@@ -446,6 +464,7 @@ def _bot_counts(
     market_events: int,
     paper_ledgers: dict[str, HashLedger] | None = None,
     open_inventory_count: int = 0,
+    historical_warmup_m5: int = 0,
 ) -> dict[str, int]:
     skip_rows = [
         row for row in control.rows
@@ -493,6 +512,7 @@ def _bot_counts(
     return {
         "market_events": market_events,
         "completed_m5": len(completed.rows),
+        "historical_warmup_m5": historical_warmup_m5,
         "completed_m5_total": len(completed.rows),
         "completed_m5_eligible": eligible,
         "skipped_m5": len(skipped_keys),
@@ -593,6 +613,9 @@ class IncrementalBot:
     def __init__(self) -> None:
         self.feed_raw = HashLedger(SERVICE_ROOT / "feed" / "ledgers" / "raw_bbo.jsonl")
         self.feed_control = HashLedger(SERVICE_ROOT / "feed" / "ledgers" / "control.jsonl")
+        self.historical_warmup = HashLedger(
+            SERVICE_ROOT / "feed" / "ledgers" / "historical_warmup_m5.jsonl"
+        )
         root = SERVICE_ROOT / "bot"
         real_dir(root)
         real_dir(root / "ledgers")
@@ -618,14 +641,18 @@ class IncrementalBot:
             "max_open_positions": PAPER_CONFIG["hard_max_open_positions_total"],
             "source": "BOT_DEFAULT_BEFORE_FIRST_LLM_RECEIPT",
             "valid_until": None,
+            "effective_at_utc": None,
         }
+        self.llm_unwind_consumed: set[str] = set()
         self.processed_rows = 0
         # Rebuild bars and the open source bucket without retroactively creating
         # signals, fills, or exits.  Only rows appended after this activation are
         # eligible for new paper decisions.
         self._consume_new_rows(replay=True)
         self._rebuild_histories()
+        self._reconcile_paper_transactions()
         self._rebuild_paper_state()
+        self._replay_durable_execution_events()
         self._refresh_llm_policy()
 
     def _record_skip(self, payload: dict[str, Any]) -> None:
@@ -679,20 +706,184 @@ class IncrementalBot:
 
     def _rebuild_histories(self) -> None:
         self.histories = {}
+        seen: dict[tuple[str, str], str] = {}
+        for row in sorted(
+            self.historical_warmup.rows,
+            key=lambda value: (value["payload"]["instrument"], value["payload"]["start_utc"]),
+        ):
+            payload = row["payload"]
+            key = (payload["instrument"], payload["start_utc"])
+            if key in seen:
+                raise IntegrityError("BOT_WARMUP_DUPLICATE_TIME")
+            seen[key] = row["record_hash"]
+            self.histories.setdefault(payload["instrument"], []).append(payload)
         for row in sorted(
             self._eligible_rows(),
             key=lambda value: (value["payload"]["instrument"], value["payload"]["start_utc"]),
         ):
-            self.histories.setdefault(row["payload"]["instrument"], []).append(row["payload"])
+            payload = row["payload"]
+            key = (payload["instrument"], payload["start_utc"])
+            if key in seen:
+                raise IntegrityError("BOT_WARMUP_LIVE_OVERLAP")
+            seen[key] = row["record_hash"]
+            self.histories.setdefault(payload["instrument"], []).append(payload)
+
+    def _position_from_fill(
+        self,
+        fill_row: dict[str, Any],
+        expected: dict[str, Any],
+    ) -> dict[str, Any]:
+        fill = fill_row["payload"]
+        identity_fields = (
+            "expected_order_id",
+            "signal_id",
+            "execution_arm",
+            "instrument",
+            "direction",
+            "units",
+        )
+        if any(fill.get(field) != expected.get(field) for field in identity_fields):
+            raise IntegrityError("PAPER_FILL_EXPECTED_ORDER_MISMATCH")
+        fill_source = parse_utc(fill["fill_source_time_utc"])
+        return {
+            "schema_version": 1,
+            "event": "OPEN",
+            "position_id": fill["position_id"],
+            "expected_order_id": fill["expected_order_id"],
+            "signal_id": fill["signal_id"],
+            "fill_record_hash": fill_row["record_hash"],
+            "execution_arm": fill["execution_arm"],
+            "instrument": fill["instrument"],
+            "direction": fill["direction"],
+            "units": fill["units"],
+            "entry_price": fill["virtual_entry_price"],
+            "entry_mid": fill["entry_mid"],
+            "tp_price": fill["virtual_entry_price"]
+            + fill["direction"] * expected["tp_distance_price"],
+            "fill_source_time_utc": fill["fill_source_time_utc"],
+            "fill_arrival_time_utc": fill["fill_arrival_time_utc"],
+            "max_age_at_utc": utc_text(
+                fill_source + timedelta(minutes=5 * expected["max_age_bars"])
+            ),
+            "individual_price_sl": False,
+            "external_orders": 0,
+        }
+
+    @staticmethod
+    def _realized_pnl_from_close(
+        position: dict[str, Any],
+        close_row: dict[str, Any],
+    ) -> dict[str, Any]:
+        close = close_row["payload"]
+        required = {
+            "gross_pips",
+            "execution_cost_pips",
+            "net_pips",
+            "break_even_round_trip_cost_pips",
+            "pnl_quote",
+            "pnl_jpy",
+            "jpy_conversion_status",
+            "conversion_bbo_event_id",
+            "conversion_source_time_utc",
+            "conversion_arrival_time_utc",
+            "conversion_bid",
+            "conversion_ask",
+            "conversion_rate",
+            "conversion_side",
+            "conversion_quote_age_seconds",
+            "conversion_tradeable",
+            "conversion_liquidity",
+        }
+        if required - set(close):
+            raise IntegrityError("PAPER_CLOSE_RECOVERY_FIELDS_MISSING")
+        return {
+            "schema_version": 1,
+            "event": "REALIZED_PNL",
+            "position_id": position["position_id"],
+            "signal_id": position["signal_id"],
+            "close_record_hash": close_row["record_hash"],
+            "execution_arm": position["execution_arm"],
+            "instrument": position["instrument"],
+            "reason": close["reason"],
+            "gross_pips": close["gross_pips"],
+            "execution_cost_pips": close["execution_cost_pips"],
+            "net_pips": close["net_pips"],
+            "break_even_round_trip_cost_pips": close[
+                "break_even_round_trip_cost_pips"
+            ],
+            "pnl_quote": close["pnl_quote"],
+            "pnl_jpy": close["pnl_jpy"],
+            "jpy_conversion_status": close["jpy_conversion_status"],
+            "conversion_bbo_event_id": close["conversion_bbo_event_id"],
+            "conversion_source_time_utc": close["conversion_source_time_utc"],
+            "conversion_arrival_time_utc": close["conversion_arrival_time_utc"],
+            "conversion_bid": close["conversion_bid"],
+            "conversion_ask": close["conversion_ask"],
+            "conversion_rate": close["conversion_rate"],
+            "conversion_side": close["conversion_side"],
+            "conversion_quote_age_seconds": close["conversion_quote_age_seconds"],
+            "conversion_tradeable": close["conversion_tradeable"],
+            "conversion_liquidity": close["conversion_liquidity"],
+            "terminal_mtm_included": True,
+            "research_status": "RESEARCH_NOT_ADMITTED",
+            "profit_proven": False,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+        }
+
+    def _reconcile_paper_transactions(self) -> None:
+        """Complete split-ledger transactions from their durable first half."""
+        expected = {
+            row["payload"]["expected_order_id"]: row["payload"]
+            for row in self.paper_ledgers["expected_orders"].rows
+        }
+        for fill_row in self.paper_ledgers["virtual_fills"].rows:
+            fill = fill_row["payload"]
+            order = expected.get(fill.get("expected_order_id"))
+            if order is None:
+                raise IntegrityError("PAPER_FILL_WITHOUT_EXPECTED_ORDER")
+            position = self._position_from_fill(fill_row, order)
+            record_id = f"inventory-open::{position['position_id']}"
+            existing = self.paper_ledgers["inventory"].by_id.get(record_id)
+            if existing is None:
+                self._append_paper("inventory", position, record_id)
+            elif existing["payload"] != position:
+                raise IntegrityError("PAPER_FILL_OPEN_RECONCILIATION_MISMATCH")
+
+        opens = {
+            row["payload"]["position_id"]: row["payload"]
+            for row in self.paper_ledgers["inventory"].rows
+            if row["payload"].get("event") == "OPEN"
+        }
+        for close_row in self.paper_ledgers["inventory"].rows:
+            close = close_row["payload"]
+            if close.get("event") != "CLOSE":
+                continue
+            position = opens.get(close["position_id"])
+            if position is None:
+                raise IntegrityError("PAPER_CLOSE_WITHOUT_OPEN")
+            pnl = self._realized_pnl_from_close(position, close_row)
+            record_id = f"pnl::{position['position_id']}"
+            existing = self.paper_ledgers["pnl"].by_id.get(record_id)
+            if existing is None:
+                self._append_paper("pnl", pnl, record_id)
+            elif existing["payload"] != pnl:
+                raise IntegrityError("PAPER_CLOSE_PNL_RECONCILIATION_MISMATCH")
 
     def _rebuild_paper_state(self) -> None:
         self.open_positions = {}
+        self.llm_unwind_consumed = set()
         for row in self.paper_ledgers["inventory"].rows:
             payload = row["payload"]
             if payload.get("event") == "OPEN":
                 self.open_positions[payload["position_id"]] = payload
             elif payload.get("event") == "CLOSE":
                 self.open_positions.pop(payload["position_id"], None)
+            if payload.get("llm_unwind_policy_consumed") is True:
+                source = payload.get("llm_policy_source")
+                if not isinstance(source, str) or not source:
+                    raise IntegrityError("LLM_UNWIND_CONSUMPTION_INVALID")
+                self.llm_unwind_consumed.add(source)
         filled = {
             row["payload"]["expected_order_id"]
             for row in self.paper_ledgers["virtual_fills"].rows
@@ -703,6 +894,16 @@ class IncrementalBot:
             if row["payload"].get("event") == "VIRTUAL_ORDER_EXPIRED_NO_FILL"
         }
         self.pending_orders = {}
+        latency_events: dict[str, set[str]] = {}
+        for row in self.control.rows:
+            payload = row["payload"]
+            if payload.get("event") != "VIRTUAL_ORDER_LATENCY_EVENT_CONSUMED":
+                continue
+            expected_order_id = payload.get("expected_order_id")
+            event_id = payload.get("bbo_event_id")
+            if not isinstance(expected_order_id, str) or not isinstance(event_id, str):
+                raise IntegrityError("PAPER_LATENCY_RECEIPT_INVALID")
+            latency_events.setdefault(expected_order_id, set()).add(event_id)
         for row in self.paper_ledgers["expected_orders"].rows:
             payload = row["payload"]
             if (
@@ -710,21 +911,50 @@ class IncrementalBot:
                 and payload["expected_order_id"] not in filled
                 and payload["expected_order_id"] not in expired
             ):
+                configured_latency = PAPER_CONFIG["arms"][payload["execution_arm"]][
+                    "entry_latency_events"
+                ]
+                consumed_event_ids = latency_events.get(payload["expected_order_id"], set())
+                if len(consumed_event_ids) > configured_latency:
+                    raise IntegrityError("PAPER_LATENCY_RECEIPT_OVERFLOW")
                 self.pending_orders[payload["expected_order_id"]] = {
                     **payload,
-                    "latency_remaining": PAPER_CONFIG["arms"][payload["execution_arm"]][
-                        "entry_latency_events"
-                    ],
+                    "latency_remaining": configured_latency - len(consumed_event_ids),
+                    "latency_consumed_event_ids": set(consumed_event_ids),
                 }
+    def _replay_durable_execution_events(self) -> None:
+        """Recover deterministic exits and fills without recreating signals."""
+        self.last_quotes = {}
         for row in self.feed_raw.rows:
             event = row["payload"]
+            self._set_llm_policy_at(parse_utc(event["arrival_time_utc"]))
             self.last_quotes[event["instrument"]] = event
+            self._close_positions(event)
+            self._fill_pending_orders(event)
 
-    def _refresh_llm_policy(self) -> None:
-        self.llm_receipts.refresh()
-        if not self.llm_receipts.rows:
+    def _set_llm_policy_at(self, at: datetime) -> None:
+        """Apply the latest receipt that was durably known strictly before at."""
+        candidates: list[tuple[datetime, int, dict[str, Any]]] = []
+        for row in self.llm_receipts.rows:
+            receipt = row["payload"]
+            try:
+                arrival = parse_utc(receipt["arrival_timestamp_utc"])
+            except Exception as exc:
+                raise IntegrityError("LLM_RECEIPT_ARRIVAL_INVALID") from exc
+            if arrival < at:
+                candidates.append((arrival, int(row["sequence_no"]), row))
+        if not candidates:
+            self.llm_policy = {
+                "action": "ADD",
+                "max_open_positions": PAPER_CONFIG["hard_max_open_positions_total"],
+                "source": "BOT_DEFAULT_BEFORE_FIRST_LLM_RECEIPT",
+                "valid_until": None,
+                "effective_at_utc": None,
+            }
             return
-        receipt = self.llm_receipts.rows[-1]["payload"]
+        _, _, receipt_row = max(candidates, key=lambda item: (item[0], item[1]))
+        receipt = receipt_row["payload"]
+        receipt_identity = receipt_row["record_hash"]
         if (
             receipt.get("kind") != "ACTUAL_LLM_INVENTORY_RECEIPT"
             or receipt.get("runtime_hash") != SHARED_RUNTIME_HASH
@@ -735,27 +965,56 @@ class IncrementalBot:
             self.llm_policy = {
                 "action": "FREEZE",
                 "max_open_positions": 0,
-                "source": "INVALID_LLM_RECEIPT_FAIL_CLOSED",
+                "source": receipt_identity,
                 "valid_until": None,
+                "effective_at_utc": receipt["arrival_timestamp_utc"],
             }
             return
         output = receipt.get("output", {})
         valid_until = output.get("valid_until")
-        if not isinstance(valid_until, str) or parse_utc(valid_until) <= datetime.now(timezone.utc):
+        if not isinstance(valid_until, str):
+            valid_until_time = None
+        else:
+            try:
+                valid_until_time = parse_utc(valid_until)
+            except Exception:
+                valid_until_time = None
+        if valid_until_time is None or valid_until_time <= at:
             self.llm_policy = {
                 "action": "FREEZE",
                 "max_open_positions": 0,
-                "source": "EXPIRED_LLM_RECEIPT_FAIL_CLOSED",
+                "source": receipt_identity,
                 "valid_until": valid_until,
+                "effective_at_utc": receipt["arrival_timestamp_utc"],
+            }
+            return
+        if (
+            output.get("action") not in ALLOWED_ACTIONS
+            or type(output.get("max_open_positions")) is not int
+            or not 0
+            <= output["max_open_positions"]
+            <= int(LLM_POLICY_CONFIG["hard_max_open_positions"])
+        ):
+            self.llm_policy = {
+                "action": "FREEZE",
+                "max_open_positions": 0,
+                "source": receipt_identity,
+                "valid_until": valid_until,
+                "effective_at_utc": receipt["arrival_timestamp_utc"],
             }
             return
         hard_cap = int(LLM_POLICY_CONFIG["hard_max_open_positions"])
         self.llm_policy = {
             "action": output["action"],
             "max_open_positions": min(hard_cap, int(output["max_open_positions"])),
-            "source": receipt["output_sha256"],
+            "source": receipt_identity,
             "valid_until": valid_until,
+            "effective_at_utc": receipt["arrival_timestamp_utc"],
         }
+
+    def _refresh_llm_policy(self) -> None:
+        self.llm_receipts.refresh()
+        self._set_llm_policy_at(datetime.now(timezone.utc))
 
     def _paper_capacity_reason(self, arm: str, instrument: str) -> str | None:
         relevant_open = [
@@ -780,8 +1039,15 @@ class IncrementalBot:
                 return "LLM_OPEN_POSITION_CAP"
         return None
 
-    def _emit_paper_signal(self, bar_row: dict[str, Any]) -> None:
+    def _emit_paper_signal(
+        self,
+        bar_row: dict[str, Any],
+        *,
+        decision_arrival: datetime,
+    ) -> None:
         bar = bar_row["payload"]
+        if decision_arrival <= parse_utc(bar["arrival_watermark_utc"]):
+            raise IntegrityError("PAPER_DECISION_ARRIVAL_NOT_AFTER_BAR")
         history = self.histories.setdefault(bar["instrument"], [])
         if not history or history[-1].get("start_utc") != bar["start_utc"]:
             history.append(bar)
@@ -802,6 +1068,14 @@ class IncrementalBot:
             )
             self.control.append_rows(planned)
             return
+        minimum = max(
+            PAPER_CONFIG["slow_ema_bars"] + 1,
+            PAPER_CONFIG["momentum_bars"] + 1,
+            PAPER_CONFIG["atr_bars"] + 1,
+        )
+        input_window = completed_bar_input_window(history, minimum)
+        if input_window is None or input_window[-1]["start_utc"] != bar["start_utc"]:
+            raise IntegrityError("PAPER_FEATURE_WINDOW_MISMATCH")
         signal_id = "paper-signal::" + canonical_hash(
             {
                 "strategy_id": PAPER_CONFIG["strategy_id"],
@@ -819,7 +1093,9 @@ class IncrementalBot:
             "instrument": bar["instrument"],
             "decision_source_time_utc": bar["end_utc"],
             "decision_arrival_watermark_utc": bar["arrival_watermark_utc"],
+            "decision_arrival_time_utc": utc_text(decision_arrival),
             "completed_bar_hash": bar_row["record_hash"],
+            "feature_input_window_sha256": canonical_hash(input_window),
             "paper_config_sha256": canonical_hash(PAPER_CONFIG),
             **signal,
             "research_status": "RESEARCH_NOT_ADMITTED",
@@ -845,6 +1121,7 @@ class IncrementalBot:
                 "units": PAPER_CONFIG["virtual_units"],
                 "decision_source_time_utc": bar["end_utc"],
                 "decision_arrival_watermark_utc": bar["arrival_watermark_utc"],
+                "decision_arrival_time_utc": utc_text(decision_arrival),
                 "order_expires_at_utc": utc_text(
                     decision_time
                     + timedelta(minutes=5 * PAPER_CONFIG["expected_order_ttl_bars"])
@@ -862,6 +1139,7 @@ class IncrementalBot:
                 self.pending_orders[expected_order_id] = {
                     **expected,
                     "latency_remaining": PAPER_CONFIG["arms"][arm]["entry_latency_events"],
+                    "latency_consumed_event_ids": set(),
                 }
 
     def _seal(
@@ -871,6 +1149,7 @@ class IncrementalBot:
         events: list[dict[str, Any]],
         *,
         replay: bool,
+        decision_arrival: datetime | None = None,
     ) -> None:
         skip = _skip_payload(
             instrument,
@@ -896,19 +1175,111 @@ class IncrementalBot:
         }, f"no-proposal::{row['record_hash']}", control_planned)
         self.control.append_rows(control_planned)
         if not replay and row["payload"].get("feed_continuity_eligible") is True:
-            self._emit_paper_signal(row)
+            if decision_arrival is None:
+                raise IntegrityError("PAPER_DECISION_ARRIVAL_MISSING")
+            self._emit_paper_signal(row, decision_arrival=decision_arrival)
 
-    def _quote_to_jpy(self, instrument: str, quote_amount: float) -> tuple[float | None, str]:
+    def _quote_to_jpy(
+        self,
+        instrument: str,
+        quote_amount: float,
+        valuation_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Bind quote-currency PnL to one causal executable JPY conversion."""
         quote_currency = instrument.split("_", 1)[1]
         if quote_currency == "JPY":
-            return quote_amount, "QUOTE_IS_JPY"
+            return {
+                "pnl_jpy": quote_amount,
+                "jpy_conversion_status": "QUOTE_IS_JPY",
+                "conversion_bbo_event_id": None,
+                "conversion_source_time_utc": None,
+                "conversion_arrival_time_utc": None,
+                "conversion_bid": None,
+                "conversion_ask": None,
+                "conversion_rate": 1.0,
+                "conversion_side": "QUOTE_IS_JPY",
+                "conversion_quote_age_seconds": 0.0,
+                "conversion_tradeable": None,
+                "conversion_liquidity": None,
+            }
         if quote_currency == "USD":
             usd_jpy = self.last_quotes.get("USD_JPY")
             if usd_jpy is None:
-                return None, "USD_JPY_CONVERSION_MISSING"
-            conversion = (float(usd_jpy["bid"]) + float(usd_jpy["ask"])) / 2.0
-            return quote_amount * conversion, "USD_JPY_MID_AT_EXIT"
-        return None, "UNSUPPORTED_QUOTE_CURRENCY"
+                return self._null_jpy_conversion("USD_JPY_CONVERSION_MISSING")
+            valuation_source = parse_utc(valuation_event["event_time_utc"])
+            valuation_arrival = parse_utc(valuation_event["arrival_time_utc"])
+            conversion_source = parse_utc(usd_jpy["event_time_utc"])
+            conversion_arrival = parse_utc(usd_jpy["arrival_time_utc"])
+            age_seconds = (valuation_arrival - conversion_arrival).total_seconds()
+            side = "BID" if quote_amount >= 0 else "ASK"
+            liquidity_field = "bid_liquidity" if side == "BID" else "ask_liquidity"
+            liquidity = usd_jpy.get(liquidity_field)
+            rate = float(usd_jpy["bid"] if side == "BID" else usd_jpy["ask"])
+            rejected = {
+                "conversion_bbo_event_id": usd_jpy.get("event_id"),
+                "conversion_source_time_utc": usd_jpy.get("event_time_utc"),
+                "conversion_arrival_time_utc": usd_jpy.get("arrival_time_utc"),
+                "conversion_bid": usd_jpy.get("bid"),
+                "conversion_ask": usd_jpy.get("ask"),
+                "conversion_rate": rate,
+                "conversion_side": side,
+                "conversion_quote_age_seconds": age_seconds,
+                "conversion_tradeable": usd_jpy.get("tradeable"),
+                "conversion_liquidity": liquidity,
+            }
+            if conversion_source > valuation_source or age_seconds < 0:
+                return self._null_jpy_conversion(
+                    "USD_JPY_CONVERSION_FUTURE",
+                    **rejected,
+                )
+            if age_seconds > PAPER_CONFIG["jpy_conversion_quote_max_age_seconds"]:
+                return self._null_jpy_conversion(
+                    "USD_JPY_CONVERSION_STALE",
+                    **rejected,
+                )
+            if (
+                usd_jpy.get("tradeable") is not True
+                or isinstance(liquidity, bool)
+                or not isinstance(liquidity, (int, float))
+                or not math.isfinite(float(liquidity))
+                or float(liquidity) < PAPER_CONFIG["virtual_units"]
+            ):
+                return self._null_jpy_conversion(
+                    "USD_JPY_CONVERSION_NOT_EXECUTABLE",
+                    **rejected,
+                )
+            return {
+                "pnl_jpy": quote_amount * rate,
+                "jpy_conversion_status": f"USD_JPY_EXECUTABLE_{side}_AT_VALUATION",
+                "conversion_bbo_event_id": usd_jpy["event_id"],
+                "conversion_source_time_utc": usd_jpy["event_time_utc"],
+                "conversion_arrival_time_utc": usd_jpy["arrival_time_utc"],
+                "conversion_bid": usd_jpy["bid"],
+                "conversion_ask": usd_jpy["ask"],
+                "conversion_rate": rate,
+                "conversion_side": side,
+                "conversion_quote_age_seconds": age_seconds,
+                "conversion_tradeable": True,
+                "conversion_liquidity": float(liquidity),
+            }
+        return self._null_jpy_conversion("UNSUPPORTED_QUOTE_CURRENCY")
+
+    @staticmethod
+    def _null_jpy_conversion(status: str, **candidate: Any) -> dict[str, Any]:
+        return {
+            "pnl_jpy": None,
+            "jpy_conversion_status": status,
+            "conversion_bbo_event_id": candidate.get("conversion_bbo_event_id"),
+            "conversion_source_time_utc": candidate.get("conversion_source_time_utc"),
+            "conversion_arrival_time_utc": candidate.get("conversion_arrival_time_utc"),
+            "conversion_bid": candidate.get("conversion_bid"),
+            "conversion_ask": candidate.get("conversion_ask"),
+            "conversion_rate": candidate.get("conversion_rate"),
+            "conversion_side": candidate.get("conversion_side"),
+            "conversion_quote_age_seconds": candidate.get("conversion_quote_age_seconds"),
+            "conversion_tradeable": candidate.get("conversion_tradeable"),
+            "conversion_liquidity": candidate.get("conversion_liquidity"),
+        }
 
     def _llm_inventory_summary(self) -> dict[str, Any]:
         positions = []
@@ -990,7 +1361,7 @@ class IncrementalBot:
                 continue
             if (
                 event_source < parse_utc(pending["decision_source_time_utc"])
-                or event_arrival <= parse_utc(pending["decision_arrival_watermark_utc"])
+                or event_arrival <= parse_utc(pending["decision_arrival_time_utc"])
             ):
                 continue
             if event_source > parse_utc(pending["order_expires_at_utc"]):
@@ -1010,12 +1381,49 @@ class IncrementalBot:
                 self.control.append_rows(planned)
                 self.pending_orders.pop(expected_order_id)
                 continue
+            if not executable_bbo_available(
+                event,
+                pending["direction"],
+                entry=True,
+                required_units=pending["units"],
+            ):
+                continue
+            consumed_event_ids = pending["latency_consumed_event_ids"]
+            if event["event_id"] in consumed_event_ids:
+                continue
             if pending["latency_remaining"] > 0:
+                remaining_after = pending["latency_remaining"] - 1
+                planned: list[dict[str, Any]] = []
+                self.control.plan(
+                    {
+                        "schema_version": 1,
+                        "event": "VIRTUAL_ORDER_LATENCY_EVENT_CONSUMED",
+                        "expected_order_id": expected_order_id,
+                        "signal_id": pending["signal_id"],
+                        "execution_arm": pending["execution_arm"],
+                        "bbo_event_id": event["event_id"],
+                        "event_source_time_utc": event["event_time_utc"],
+                        "event_arrival_time_utc": event["arrival_time_utc"],
+                        "remaining_after": remaining_after,
+                        "external_order_attempts": 0,
+                        "external_orders": 0,
+                    },
+                    f"paper-latency::{expected_order_id}::{event['event_id']}",
+                    planned,
+                )
+                self.control.append_rows(planned)
                 pending["latency_remaining"] -= 1
+                consumed_event_ids.add(event["event_id"])
                 continue
             arm = pending["execution_arm"]
             arm_config = PAPER_CONFIG["arms"][arm]
-            entry_price = virtual_price(event, pending["direction"], arm_config, entry=True)
+            entry_price = virtual_price(
+                event,
+                pending["direction"],
+                arm_config,
+                entry=True,
+                required_units=pending["units"],
+            )
             mid = (float(event["bid"]) + float(event["ask"])) / 2.0
             position_id = f"position::{pending['signal_id']}::{arm}"
             fill = {
@@ -1033,6 +1441,9 @@ class IncrementalBot:
                 "fill_arrival_time_utc": event["arrival_time_utc"],
                 "bid": event["bid"],
                 "ask": event["ask"],
+                "bid_liquidity": event["bid_liquidity"],
+                "ask_liquidity": event["ask_liquidity"],
+                "tradeable": True,
                 "entry_mid": mid,
                 "virtual_entry_price": entry_price,
                 "price_mode": arm_config["price_mode"],
@@ -1043,52 +1454,84 @@ class IncrementalBot:
                 "external_orders": 0,
             }
             fill_row = self._append_paper("virtual_fills", fill, f"fill::{expected_order_id}")
-            max_age_at = event_source + timedelta(minutes=5 * pending["max_age_bars"])
-            position = {
-                "schema_version": 1,
-                "event": "OPEN",
-                "position_id": position_id,
-                "expected_order_id": expected_order_id,
-                "signal_id": pending["signal_id"],
-                "fill_record_hash": fill_row["record_hash"],
-                "execution_arm": arm,
-                "instrument": pending["instrument"],
-                "direction": pending["direction"],
-                "units": pending["units"],
-                "entry_price": entry_price,
-                "entry_mid": mid,
-                "tp_price": entry_price + pending["direction"] * pending["tp_distance_price"],
-                "fill_source_time_utc": event["event_time_utc"],
-                "fill_arrival_time_utc": event["arrival_time_utc"],
-                "max_age_at_utc": utc_text(max_age_at),
-                "individual_price_sl": False,
-                "external_orders": 0,
-            }
+            position = self._position_from_fill(fill_row, pending)
             self._append_paper("inventory", position, f"inventory-open::{position_id}")
             self.open_positions[position_id] = position
             self.pending_orders.pop(expected_order_id)
             if arm == "ACTUAL_LLM_INVENTORY":
                 self._write_llm_trigger("INVENTORY_OPENED", event_arrival)
 
+    def _oldest_llm_unwind_target(
+        self,
+        event_arrival: datetime,
+    ) -> tuple[str | None, str | None]:
+        source = self.llm_policy.get("source")
+        effective_at = self.llm_policy.get("effective_at_utc")
+        valid_until = self.llm_policy.get("valid_until")
+        if (
+            self.llm_policy.get("action") != "UNWIND"
+            or not isinstance(source, str)
+            or not source
+            or source in self.llm_unwind_consumed
+            or (
+                effective_at is not None
+                and event_arrival <= parse_utc(effective_at)
+            )
+            or (
+                valid_until is not None
+                and event_arrival >= parse_utc(valid_until)
+            )
+        ):
+            return None, None
+        candidates = [
+            position
+            for position in self.open_positions.values()
+            if position["execution_arm"] == "ACTUAL_LLM_INVENTORY"
+        ]
+        if not candidates:
+            return None, source
+        oldest = min(
+            candidates,
+            key=lambda position: (
+                parse_utc(position["fill_source_time_utc"]),
+                parse_utc(position["fill_arrival_time_utc"]),
+                position["position_id"],
+            ),
+        )
+        return oldest["position_id"], source
+
     def _close_positions(self, event: dict[str, Any]) -> None:
         event_source = parse_utc(event["event_time_utc"])
         event_arrival = parse_utc(event["arrival_time_utc"])
+        unwind_target, unwind_source = self._oldest_llm_unwind_target(event_arrival)
         for position_id, position in list(self.open_positions.items()):
             if position["instrument"] != event["instrument"]:
                 continue
             arm = position["execution_arm"]
+            if (
+                event_source < parse_utc(position["fill_source_time_utc"])
+                or event_arrival <= parse_utc(position["fill_arrival_time_utc"])
+                or not executable_bbo_available(
+                    event,
+                    position["direction"],
+                    entry=False,
+                    required_units=position["units"],
+                )
+            ):
+                continue
             exit_price = virtual_price(
                 event,
                 position["direction"],
                 PAPER_CONFIG["arms"][arm],
                 entry=False,
+                required_units=position["units"],
             )
             tp_hit = (
                 exit_price >= position["tp_price"]
                 if position["direction"] > 0
                 else exit_price <= position["tp_price"]
             )
-            llm_unwind = arm == "ACTUAL_LLM_INVENTORY" and self.llm_policy["action"] == "UNWIND"
+            llm_unwind = position_id == unwind_target and unwind_source is not None
             aged_out = event_source >= parse_utc(position["max_age_at_utc"])
             if not (tp_hit or llm_unwind or aged_out):
                 continue
@@ -1099,7 +1542,11 @@ class IncrementalBot:
                 position["direction"],
                 position["units"],
             )
-            pnl_jpy, conversion_status = self._quote_to_jpy(position["instrument"], quote_amount)
+            conversion = self._quote_to_jpy(
+                position["instrument"],
+                quote_amount,
+                event,
+            )
             exit_mid = (float(event["bid"]) + float(event["ask"])) / 2.0
             gross_pips = pnl_pips(
                 position["entry_mid"],
@@ -1127,6 +1574,15 @@ class IncrementalBot:
                 "exit_source_time_utc": event["event_time_utc"],
                 "exit_arrival_time_utc": event["arrival_time_utc"],
                 "virtual_exit_price": exit_price,
+                "exit_mid": exit_mid,
+                "gross_pips": gross_pips,
+                "execution_cost_pips": gross_pips - net_pips,
+                "net_pips": net_pips,
+                "break_even_round_trip_cost_pips": gross_pips,
+                "pnl_quote": quote_amount,
+                **conversion,
+                "llm_unwind_policy_consumed": llm_unwind,
+                "llm_policy_source": unwind_source if llm_unwind else None,
                 "external_orders": 0,
             }
             close_row = self._append_paper(
@@ -1134,30 +1590,11 @@ class IncrementalBot:
                 close,
                 f"inventory-close::{position_id}",
             )
-            pnl = {
-                "schema_version": 1,
-                "event": "REALIZED_PNL",
-                "position_id": position_id,
-                "signal_id": position["signal_id"],
-                "close_record_hash": close_row["record_hash"],
-                "execution_arm": arm,
-                "instrument": position["instrument"],
-                "reason": reason,
-                "gross_pips": gross_pips,
-                "execution_cost_pips": gross_pips - net_pips,
-                "net_pips": net_pips,
-                "break_even_round_trip_cost_pips": gross_pips,
-                "pnl_quote": quote_amount,
-                "pnl_jpy": pnl_jpy,
-                "jpy_conversion_status": conversion_status,
-                "terminal_mtm_included": True,
-                "research_status": "RESEARCH_NOT_ADMITTED",
-                "profit_proven": False,
-                "external_order_attempts": 0,
-                "external_orders": 0,
-            }
+            pnl = self._realized_pnl_from_close(position, close_row)
             self._append_paper("pnl", pnl, f"pnl::{position_id}")
             self.open_positions.pop(position_id)
+            if llm_unwind and unwind_source is not None:
+                self.llm_unwind_consumed.add(unwind_source)
             if arm == "ACTUAL_LLM_INVENTORY":
                 self._write_llm_trigger("INVENTORY_CLOSED", event_arrival)
 
@@ -1179,7 +1616,11 @@ class IncrementalBot:
                 position["direction"],
                 position["units"],
             )
-            pnl_jpy, conversion_status = self._quote_to_jpy(position["instrument"], quote_amount)
+            conversion = self._quote_to_jpy(
+                position["instrument"],
+                quote_amount,
+                quote,
+            )
             payload = {
                 "schema_version": 1,
                 "event": "TERMINAL_MTM",
@@ -1197,8 +1638,12 @@ class IncrementalBot:
                     position["instrument"],
                 ),
                 "unrealized_pnl_quote": quote_amount,
-                "unrealized_pnl_jpy": pnl_jpy,
-                "jpy_conversion_status": conversion_status,
+                "unrealized_pnl_jpy": conversion["pnl_jpy"],
+                **{
+                    key: value
+                    for key, value in conversion.items()
+                    if key != "pnl_jpy"
+                },
                 "terminal_mtm_included": True,
                 "realized": False,
                 "research_status": "RESEARCH_NOT_ADMITTED",
@@ -1216,6 +1661,9 @@ class IncrementalBot:
         for row in self.feed_raw.rows[self.processed_rows:]:
             event = {**row["payload"], "raw_record_hash": row["record_hash"]}
             instrument = event["instrument"]
+            event_arrival = parse_utc(event["arrival_time_utc"])
+            if not replay:
+                self._set_llm_policy_at(event_arrival)
             bucket = int(parse_utc(event["event_time_utc"]).timestamp()) // 300 * 300
             identity = _register_segment_provenance(
                 event,
@@ -1256,13 +1704,21 @@ class IncrementalBot:
             elif bucket > current[0]:
                 if not replay:
                     self._close_positions(event)
-                self._seal(instrument, current[0], current[1], replay=replay)
+                self._seal(
+                    instrument,
+                    current[0],
+                    current[1],
+                    replay=replay,
+                    decision_arrival=event_arrival if not replay else None,
+                )
                 self.buckets[instrument] = (bucket, [event])
-                if not replay:
-                    self._fill_pending_orders(event)
         self.processed_rows = len(self.feed_raw.rows)
 
     def process_once(self) -> dict[str, int]:
+        warmup_rows = len(self.historical_warmup.rows)
+        self.historical_warmup.refresh()
+        if len(self.historical_warmup.rows) != warmup_rows:
+            self._rebuild_histories()
         self.feed_control.refresh()
         self.declared_provenance = _declared_feed_provenance(self.feed_control)
         self.feed_raw.refresh()
@@ -1274,6 +1730,7 @@ class IncrementalBot:
             len(self.feed_raw.rows),
             self.paper_ledgers,
             len(self.open_positions),
+            len(self.historical_warmup.rows),
         )
 
 
