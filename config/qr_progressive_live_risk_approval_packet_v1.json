@@ -96,16 +96,19 @@
     "external_order_attempts": 0,
     "external_orders": 0
   },
-  "current_external_state_at_2026_08_28T13_50_30Z": {
-    "margin_closeout_percent": 0.95011,
-    "stress_margin_closeout_percent": 0.9876013602773768,
-    "margin_available_jpy": 14191.2839,
-    "nav_jpy": 284291.2577,
-    "manual_tagless_position_count": 3,
+  "current_external_state_at_2026_08_28T14_01_24Z": {
+    "margin_closeout_percent": 0.05104,
+    "stress_margin_closeout_percent": 0.051184465729387826,
+    "margin_available_jpy": 276335.8716,
+    "nav_jpy": 291183.3962,
+    "manual_tagless_position_count": 2,
     "bot_owned_position_count": 0,
-    "attached_tp_count": 2,
+    "attached_tp_count": 1,
     "mode": "SHADOW_ONLY",
-    "orders_sent": 0
+    "orders_sent": 0,
+    "current_gate_blockers": [
+      "FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED"
+    ]
   },
   "acceptance": {
     "accepted_by_user": false,
@@ -115,5 +118,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "88e3848dd74ecfb6bf9c019599abc5aca39c8506731224b22f0f760e977fa203"
+  "packet_sha256": "7919c4c83e268c4c8a1b648efc44fc7710efad98dedcae443217e40d489eee69"
 }
