@@ -1,0 +1,69 @@
+{
+  "admission_status": "HISTORICAL_INPUT_ONLY_NOT_FORWARD_PNL",
+  "canonical_dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+  "capture_status": "VERIFIED",
+  "credential_value_hits": 0,
+  "credential_values_persisted": 0,
+  "external_order_attempts": 0,
+  "external_orders": 0,
+  "forward_pnl_included": false,
+  "gap_summary": {
+    "AUD_USD": {
+      "known_holiday_intervals": 6,
+      "known_holiday_slots": 1058,
+      "unexplained_weekday_intervals": 35,
+      "unexplained_weekday_slots": 130,
+      "weekend_closed_intervals": 104,
+      "weekend_closed_slots": 59904
+    },
+    "EUR_USD": {
+      "known_holiday_intervals": 4,
+      "known_holiday_slots": 1056,
+      "unexplained_weekday_intervals": 17,
+      "unexplained_weekday_slots": 109,
+      "weekend_closed_intervals": 104,
+      "weekend_closed_slots": 59904
+    },
+    "USD_JPY": {
+      "known_holiday_intervals": 6,
+      "known_holiday_slots": 1061,
+      "unexplained_weekday_intervals": 41,
+      "unexplained_weekday_slots": 141,
+      "weekend_closed_intervals": 104,
+      "weekend_closed_slots": 59904
+    },
+    "missing_prices_synthesized": 0,
+    "unexplained_weekday_gap_present": true
+  },
+  "historical_input_only": true,
+  "http_method_allowlist": [
+    "GET"
+  ],
+  "manifest_sha256": "3408963dce76f6c2da5be7f766a48b4e1a91b3fbd03d7082f5369f8e1f2a4a00",
+  "network_attempts": 129,
+  "plan_sha256": "40b27f46ae636a2f6df3d3aa1f220859162390cf56ebe89a62886c1ccaa855af",
+  "profit_evidence": false,
+  "provider": "OANDA_V20_LIVE_CANDLES",
+  "recorded_at_utc": "2026-08-28T04:23:29.915368Z",
+  "rows": {
+    "AUD_USD": 149148,
+    "EUR_USD": 149171,
+    "USD_JPY": 149134,
+    "total": 447453
+  },
+  "run_id": "oanda-live-m5-ba-730d-20260828T040500Z-40b27f46ae63",
+  "schema": "QR_OANDA_HISTORY_CAPTURE_EVIDENCE_V1",
+  "successful_windows": 129,
+  "symbols": [
+    "EUR_USD",
+    "USD_JPY",
+    "AUD_USD"
+  ],
+  "verification_command_network_attempts": 0,
+  "window": {
+    "from_utc": "2024-08-28T04:05:00.000000Z",
+    "to_utc": "2026-08-28T04:05:00.000000Z"
+  },
+  "window_receipt_chain_head": "0391907e50f2fb2978be51f867a385b6671ea977dcaee0c2e02ca56444f96cce",
+  "window_receipts_sha256": "243f6eeba4de3204c6a227ebfb55fa6f1c61f5a8778a7f5c1b65a4d58eb60994"
+}
