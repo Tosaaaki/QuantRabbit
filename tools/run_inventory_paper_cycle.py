@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one GET-quote, stage-only fast-bot/LLM/inventory paper cycle."""
+"""Run one GET-quote fast-bot/LLM/inventory paper cycle without gateway claims."""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             now_utc=now_utc + timedelta(minutes=1), cooldown=timedelta(minutes=30)
         )
         return {
-            "contract": "QR_INVENTORY_PAPER_CYCLE_READBACK_V1",
+            "contract": "QR_INVENTORY_PAPER_CYCLE_READBACK_V2",
             "status": "PAPER_LOOP_FLAT",
             "broker_http_methods_used": ["GET"],
             "broker_write_performed": False,
@@ -244,10 +244,12 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             ),
             "supervision_max_positions_cap": controller.supervision_max_positions_cap,
             "unwind_receipt_result": unwind_result,
-            "staged_gateway_order_count": len(staged_orders),
-            "staged_gateway_client_ids": [
+            "canonical_order_request_count": len(staged_orders),
+            "canonical_order_client_ids": [
                 order["clientExtensions"]["id"] for order in staged_orders
             ],
+            "live_order_gateway_invocation_count": 0,
+            "external_mutation_gateway": "LiveOrderGateway",
             "partial_scale_out_lot_count": len(
                 [action for action in first_actions if action.action == "REDUCE_BOT_LOT"]
             ),

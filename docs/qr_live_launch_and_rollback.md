@@ -30,6 +30,35 @@ current repository contract separately admits the exact live version.
 7. Start the isolated paper lane from the same market snapshot without sharing
    order, PnL, inventory, campaign, or strategy ledgers with live.
 
+## Promotion and single-gateway boundary
+
+- `quant_rabbit.fast_bot_promotion.build_fast_bot_promotion` is the only
+  fast-bot promotion adapter. It is broker-free and emits no intent unless the
+  exact signal, applied structured supervision receipt, deterministic sizing
+  receipt, forward-admission proof, accepted risk contract, software hash,
+  campaign state, cooldown, and strategy/position caps all bind.
+- The promoted identity is a distinct `live-fb-*` campaign and `live-*`
+  strategy. The source `paper-fb-*` campaign remains provenance only, so live
+  and paper orders, PnL, inventory, and ledgers cannot share ownership IDs.
+- The sealed sizing receipt must include the whole account, including observed
+  manual/tagless exposure, and pass post-entry margin available, current/stress
+  MCP, currency-factor concentration, campaign DD, account/quote age, and
+  spread gates. It records zero manual/tagless mutations; the existing Gateway
+  repeats its ordinary final fresh-snapshot `RiskEngine` checks before POST.
+- LLM supervision may name regime, allowed strategies, a risk-budget cap, and
+  a position cap. Any pair, side, units, order type, price, TP, or SL field in
+  the LLM receipt blocks promotion.
+- `dispatch_promotion_once` reserves the content-addressed promotion before it
+  invokes the existing `LiveOrderGateway`. A gateway exception consumes that
+  reservation as `UNKNOWN_GATEWAY_RESULT_NO_RETRY`; it cannot create a second
+  broker attempt.
+- `tools/run_inventory_paper_cycle.py` builds canonical OANDA order requests
+  only. Its readback explicitly records `live_order_gateway_invocation_count=0`
+  and must not describe those requests as Gateway staging.
+- The current risk candidate has no accepted user-decision record and no
+  forward-proof hash, so this boundary remains `NOT_ADMITTED` and emits no
+  live intent from current artifacts.
+
 ## Degradation and rollback
 
 - Gate failure with no bot inventory: `SHADOW_ONLY`.

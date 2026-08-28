@@ -21,14 +21,16 @@ class InventoryPaperCycleTest(unittest.TestCase):
         self.assertEqual(result["orders_sent"], 0)
         self.assertFalse(result["broker_write_performed"])
         self.assertEqual(result["fast_bot_signal_count"], 2)
-        self.assertEqual(result["staged_gateway_order_count"], 2)
+        self.assertEqual(result["canonical_order_request_count"], 2)
+        self.assertEqual(result["live_order_gateway_invocation_count"], 0)
+        self.assertEqual(result["external_mutation_gateway"], "LiveOrderGateway")
         self.assertEqual(result["partial_scale_out_lot_count"], 2)
         self.assertEqual(result["terminal_liquidation_lot_count"], 2)
         self.assertEqual(result["duplicate_effective_applications"], 0)
         self.assertEqual(result["stale_decision_applications"], 0)
         self.assertEqual(result["remaining_bot_owned_units"], 0)
         self.assertEqual(result["final_inventory_state"], "STOPPED")
-        self.assertEqual(len(set(result["staged_gateway_client_ids"])), 2)
+        self.assertEqual(len(set(result["canonical_order_client_ids"])), 2)
 
 
 if __name__ == "__main__":
