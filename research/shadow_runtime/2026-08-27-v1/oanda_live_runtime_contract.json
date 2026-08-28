@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "provider": "OANDA_V20_LIVE_PRICING_STREAM",
+  "strategy_status": "RESEARCH_NOT_ADMITTED",
+  "shadow_status": "OBSERVATION_AUTHORIZED",
+  "profit_unproven": true,
+  "live_market_data_read": true,
+  "live_account_read_for_pricing": true,
+  "live_order_authority": false,
+  "external_orders": 0,
+  "rest_host": "https://api-fxtrade.oanda.com",
+  "stream_host": "https://stream-fxtrade.oanda.com",
+  "symbols": ["EUR_USD", "USD_JPY"],
+  "fallback_providers": [],
+  "continuity": "HEARTBEAT_ONLY",
+  "lossless": false,
+  "http_method_allowlist": ["GET"],
+  "egress_allowlist": [
+    "GET https://stream-fxtrade.oanda.com/v3/accounts/{accountID}/pricing/stream",
+    "GET https://api-fxtrade.oanda.com/v3/accounts/{accountID}/instruments/{instrument}/candles",
+    "GET https://api-fxtrade.oanda.com/v3/accounts/{accountID}/instruments"
+  ],
+  "active_checkpoint_egress": [
+    "GET https://api-fxtrade.oanda.com/v3/accounts/{accountID}/instruments/{instrument}/candles",
+    "GET https://stream-fxtrade.oanda.com/v3/accounts/{accountID}/pricing/stream"
+  ],
+  "credential_source": "/Users/tossaki/App/QuantRabbit-live/.env.local",
+  "credential_values_persisted": false,
+  "bot_only": true,
+  "actual_llm_enabled": false,
+  "launchd_enabled": false,
+  "historical_warmup": {
+    "timeframe": "M5",
+    "completed_only": true,
+    "excluded_from_forward_pnl": true
+  },
+  "step34": {
+    "r5_natural_signal_available": false,
+    "r5_candidate_scope": "ACCOUNTING_ONLY_NOT_CAUSAL_SIGNAL_ADMISSION",
+    "canary_arm": "PLUMBING_CANARY_NON_EVIDENCE",
+    "canary_max_proposals": 1,
+    "canary_profit_evidence": false,
+    "external_orders": 0
+  },
+  "r5_binding": {
+    "source_commit": "15c7d205a78a14116651046b5fa2741d37e72cf2",
+    "source_files_aggregate_sha256": "5b530abf7aa7d3db0f31826efc9f4645d2a9dceb7e10feb620d40f5f3c0ed016",
+    "evidence_aggregate_sha256": "027bd900ba1fbd237b15e0cbd5e393648e36bcbabd629c53d81cf2286cab94a7",
+    "combined_aggregate_sha256": "a6f2c4990af89462d33dca0bee8fca0c3af700562de4f074c5f90331d3d87d13"
+  }
+}
