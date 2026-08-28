@@ -1,0 +1,1 @@
+{"inventory_policy_sha256":"31e44ed6e87264a563578c0a442c1c2cc092fb2df579f304bbb52520735bb550","max_currency_notional_jpy_micros":1000000000,"max_gross_notional_jpy_micros":1000000000,"max_open_positions":1,"policy_id":"FROZEN_INVENTORY_POLICY_V2","same_pair_collision":"REJECT_NEW","schema_version":2,"terminal_liquidation":true}

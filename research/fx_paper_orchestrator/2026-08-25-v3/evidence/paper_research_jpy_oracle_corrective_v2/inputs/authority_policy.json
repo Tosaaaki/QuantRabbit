@@ -1,0 +1,1 @@
+{"authority_policy_sha256":"1db39b074b781ae10c7be607565bfae538651b5c7bdb0ebf12919f5e79ce0d44","broker_account_access":false,"credential_access":false,"deploy":false,"external_config_mutation":false,"external_orders":0,"live_authority":false,"order_endpoint":false,"paper_only":true,"policy_id":"FROZEN_PAPER_AUTHORITY_V1","schema_version":2}

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:quantrabbit:paper-research-jpy-oracle:v2",
+  "title": "QuantRabbit accounting-only independent JPY oracle V2 request",
+  "$comment": "Artifact descriptors are strict metadata only. Referenced JSON is decoded by the fixed runtime with duplicate-key, negative-zero, bool-as-number, unknown-field, authority-type, and recursive producer profit/outcome rejection. This request remains local-unanchored accounting-only and non-admissible.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_blob",
+    "source_manifest",
+    "proposal",
+    "execution_policy",
+    "inventory_policy",
+    "accounting_policy",
+    "evaluation_policy",
+    "instrument_registry",
+    "authority_policy",
+    "output_directory"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "source_blob": {"$ref": "#/$defs/source_blob_artifact"},
+    "source_manifest": {"$ref": "#/$defs/source_manifest_artifact"},
+    "proposal": {"$ref": "#/$defs/proposal_artifact"},
+    "execution_policy": {"$ref": "#/$defs/execution_policy_artifact"},
+    "inventory_policy": {"$ref": "#/$defs/inventory_policy_artifact"},
+    "accounting_policy": {"$ref": "#/$defs/accounting_policy_artifact"},
+    "evaluation_policy": {"$ref": "#/$defs/evaluation_policy_artifact"},
+    "instrument_registry": {"$ref": "#/$defs/instrument_registry_artifact"},
+    "authority_policy": {"$ref": "#/$defs/authority_policy_artifact"},
+    "output_directory": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "relative_path", "sha256", "size_bytes"],
+      "properties": {
+        "artifact_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"},
+        "relative_path": {"type": "string", "maxLength": 512, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}(?:/[A-Za-z0-9][A-Za-z0-9_.-]{0,127})*$"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 0, "maximum": 2147483648}
+      }
+    },
+    "json_artifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"size_bytes": {"maximum": 33554432}}}
+      ]
+    },
+    "source_blob_artifact": {"allOf": [{"$ref": "#/$defs/artifact"}, {"properties": {"artifact_id": {"const": "source_blob"}}}]},
+    "source_manifest_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "source_manifest"}}}]},
+    "proposal_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "proposal"}}}], "$comment": "Referenced proposal content must be ex-ante only; identifier, fill, path, MFE/MAE, PnL, cost, equity, DD/CVaR, profit, and return fields are recursively forbidden."},
+    "execution_policy_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "execution_policy"}}}]},
+    "inventory_policy_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "inventory_policy"}}}]},
+    "accounting_policy_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "accounting_policy"}}}]},
+    "evaluation_policy_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "evaluation_policy"}}}]},
+    "instrument_registry_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "instrument_registry"}}}]},
+    "authority_policy_artifact": {"allOf": [{"$ref": "#/$defs/json_artifact"}, {"properties": {"artifact_id": {"const": "authority_policy"}}}], "$comment": "Referenced authority content requires exact JSON booleans for authority flags and exact integer zero, not boolean false, for external_orders."}
+  }
+}

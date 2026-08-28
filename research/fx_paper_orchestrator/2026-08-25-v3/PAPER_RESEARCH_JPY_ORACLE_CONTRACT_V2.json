@@ -1,0 +1,333 @@
+{
+  "schema_version": 2,
+  "contract_id": "PAPER_RESEARCH_JPY_ORACLE_V2",
+  "classification": "FUTURE_ONLY_ACCOUNTING_ONLY_LOCAL_UNANCHORED_NOT_ADMISSIBLE",
+  "anchor_status": "LOCAL_UNANCHORED",
+  "admission_status": "NON_ADMISSIBLE",
+  "causal_signal_admission": false,
+  "admission_requires_separate_as_of_detector_replay_receipt": true,
+  "supersedes": {
+    "remote_commit": "9a2fbde9d107a9be08f666ef1edb6decdd1fc78c",
+    "prior_checkpoint_status": "SUPERSEDED_NOT_ADMISSIBLE",
+    "prior_audit_sha256": "58f5099ba73291a71e0b173a9b91f5438fe7f317aa2823fbcc4078a9d3a0af52"
+  },
+  "authority": {
+    "paper_only": true,
+    "live_authority": false,
+    "broker_account_access": false,
+    "credential_access": false,
+    "order_endpoint": false,
+    "external_orders": 0,
+    "deploy": false,
+    "external_config_mutation": false
+  },
+  "authority_exact_types": {
+    "paper_only": "EXACT_BOOLEAN_TRUE_NOT_INTEGER",
+    "live_authority": "EXACT_BOOLEAN_FALSE_NOT_INTEGER",
+    "broker_account_access": "EXACT_BOOLEAN_FALSE_NOT_INTEGER",
+    "credential_access": "EXACT_BOOLEAN_FALSE_NOT_INTEGER",
+    "order_endpoint": "EXACT_BOOLEAN_FALSE_NOT_INTEGER",
+    "external_orders": "EXACT_INTEGER_ZERO_NOT_BOOLEAN",
+    "deploy": "EXACT_BOOLEAN_FALSE_NOT_INTEGER",
+    "external_config_mutation": "EXACT_BOOLEAN_FALSE_NOT_INTEGER"
+  },
+  "forbidden_imports": [
+    "jpy_accounting_v2",
+    "shadow_jpy_accounting_v1",
+    "paper_research_template_runner_v3",
+    "paper_research_orchestrator_v2",
+    "paper_research_system_v3",
+    "result_validator"
+  ],
+  "canonical_encoding": {
+    "json": "UTF8_RFC8259_CANONICAL_SORTED_KEYS_NO_INSIGNIFICANT_WHITESPACE_SINGLE_LF_ARTIFACT",
+    "duplicate_keys": "REJECT",
+    "negative_zero": "REJECT",
+    "float": "REJECT",
+    "bool_as_number": "REJECT",
+    "unknown_fields": "REJECT_AT_EVERY_SCHEMA_LEVEL"
+  },
+  "canonical_number_contract": {
+    "price": "INTEGER_SUBPIP_NUMERATOR_AND_INTEGER_DENOMINATOR",
+    "position": "INTEGER_BASE_MICROUNITS",
+    "account": "INTEGER_JPY_MICROS",
+    "time": "INTEGER_EPOCH_NANOSECONDS",
+    "ratios": "DECIMAL_TEXT",
+    "positive_cost_rounding": "CEILING_TO_JPY_MICROS",
+    "signed_asset_rounding": "CONSERVATIVE_TOWARD_LOWER_JPY_EQUITY"
+  },
+  "trusted_capability_boundary": {
+    "bootstrap_claim_scope": "CALLER_ASSERTED_LOCAL_BOOTSTRAP_CONTENT_BINDING_ONLY_NOT_EXECUTION_ATTESTATION",
+    "bootstrap_self_attestation_limit": "PYTHON_C_MODE_CANNOT_PROVE_THE_BYTES_ALREADY_EXECUTED_OR_THE_CALLER_PROCESS_IDENTITY",
+    "request_contains_roots": false,
+    "request_paths": "CANONICAL_RELATIVE_ARTIFACT_IDS_ONLY",
+    "input_root": "TRUSTED_LAUNCHER_DIRECTORY_FD",
+    "output_root": "TRUSTED_LAUNCHER_DIRECTORY_FD",
+    "code_contract_schema": "TRUSTED_LAUNCHER_READ_ONLY_FDS_WITH_LOCAL_CONTENT_HASH_BINDING_CALLER_ASSERTED_EXECUTION_ONLY",
+    "path_resolution": "OPENAT_EACH_COMPONENT_O_NOFOLLOW_FSTAT",
+    "pre_external_anchor_release_evidence_eligible": false,
+    "release_output_commit": "PRIVATE_STAGING_DIRECTORY_WRITE_ALL_FILE_AND_DIRECTORY_FSYNC_NATIVE_RENAMEATX_NP_RENAME_EXCL",
+    "test_adapter_output_commit": "EXCLUSIVE_FINAL_DIRECTORY_AND_COMMIT_LAST_NOT_RELEASE_EVIDENCE",
+    "existing_partial_output": "SEALED_RELEASE_VERIFY_COMPLETE_OR_FAIL_VISIBLE_WITHOUT_OVERWRITE",
+    "direct_path_adapter_evidence_status": "NOT_RELEASE_EVIDENCE"
+  },
+  "artifact_size_limits_bytes": {
+    "source_blob": 2147483648,
+    "oracle_ledger": 2147483648,
+    "canonical_json_artifact": 33554432,
+    "request": 33554432,
+    "manifest": 33554432,
+    "commit": 33554432,
+    "verifier_receipt": 33554432
+  },
+  "inputs": {
+    "source": ["EXACT_BBO_BLOB_BYTES", "CONTENT_HASHED_SOURCE_MANIFEST"],
+    "proposal": "EX_ANTE_ONLY_WITHOUT_IDENTIFIERS_OR_OUTCOMES",
+    "policies": [
+      "FROZEN_EXECUTION_POLICY",
+      "FROZEN_INVENTORY_POLICY",
+      "FROZEN_ACCOUNTING_POLICY",
+      "FROZEN_EVALUATION_POLICY",
+      "FROZEN_INSTRUMENT_REGISTRY",
+      "FROZEN_AUTHORITY_POLICY"
+    ],
+    "producer_result_or_self_reported_metrics_used": false
+  },
+  "source_feed_contract": {
+    "provider_allowlist_frozen": true,
+    "instrument_allowlist_frozen": true,
+    "stream_sequence_policy_frozen": true,
+    "stream_source_and_arrival_gap_policy_frozen": true,
+    "single_provider_per_instrument_per_run": true,
+    "lossless_claim_requires_contiguous_sequence": true,
+    "future_or_quality_flagged_events": "FAIL_CLOSED"
+  },
+  "proposal_provenance": {
+    "completed_data_prefix_root_recomputed": true,
+    "decision_source_event_bound": true,
+    "detector_and_generator_hash_bound": true,
+    "direction_recomputed_by_this_oracle": false,
+    "future_price_perturbation_changes_prior_signal_identity": false,
+    "classification_when_detector_receipt_absent": "ACCOUNTING_ONLY_NOT_ADMISSIBLE"
+  },
+  "instrument_units": {
+    "price_scale_frozen_per_instrument": true,
+    "pip_ticks_frozen_per_instrument": true,
+    "midstream_scale_change": "FAIL_CLOSED",
+    "slippage_unit": "INTEGER_MICROPIPS_PER_SIDE"
+  },
+  "notional_and_conversion_semantics": {
+    "proposal_notional_jpy_micros": "COMMON_TARGET_JPY_RISK_NOTIONAL_IDENTICAL_ACROSS_ARMS",
+    "arm_units": "FLOOR_BASE_MICROUNITS_FROM_EACH_ARM_ACTUAL_ENTRY_FILL_AND_CAUSAL_EXECUTABLE_JPY_CONVERSION",
+    "filled_notional_jpy_micros": "OUTWARD_ROUNDED_ACTUAL_ENTRY_FILL_NOTIONAL_FROM_ARM_UNITS",
+    "marked_notional_jpy_micros": "OUTWARD_ROUNDED_ACTUAL_EXECUTABLE_MARK_OR_LIQUIDATION_NOTIONAL_FROM_ARM_UNITS",
+    "cap_margin_and_currency_exposure_basis": "ACTUAL_MARKED_NOTIONAL_NOT_PROPOSAL_TARGET",
+    "gross_and_margin_scalar_basis": "ACTUAL_EXECUTABLE_MARKED_NOTIONAL_UNCHANGED_BY_SIGNED_CURRENCY_NODE_PROJECTION",
+    "currency_exposure_vector_basis": "SIGNED_NATIVE_BASE_UNITS_AND_NEGATED_CURRENT_EXECUTABLE_LIQUIDATION_QUOTE_COUNTERVALUE_CONVERTED_INDEPENDENTLY",
+    "opening_quote_cash_sign": "NEGATIVE_DIRECTION",
+    "mark_and_liquidation_quote_cash_sign": "POSITIVE_DIRECTION",
+    "positive_currency_asset_conversion": "SELL_SIDE_EXECUTABLE_BID",
+    "negative_currency_liability_conversion": "BUYBACK_SIDE_EXECUTABLE_ASK",
+    "currency_node_conversion_universe": "ANY_FROZEN_REGISTRY_CURRENCY_WITH_EXACTLY_ONE_CAUSAL_PATH_TO_JPY_INDEPENDENT_OF_SUPPORTED_QUOTE_CURRENCIES",
+    "currency_node_rounding": "SUM_EXACT_PER_CURRENCY_THEN_SIGNED_OUTWARD_ONCE_POSITIVE_CEILING_NEGATIVE_FLOOR",
+    "conversion_chronology": "COMPLETED_SOURCE_EVENT_AND_ARRIVAL_AT_OR_BEFORE_VALUATION_WITH_FROZEN_STALENESS",
+    "conversion_path": "UNAMBIGUOUS_FROZEN_INSTRUMENT_REGISTRY_PATH_ONLY",
+    "conversion_failure": "MISSING_STALE_FUTURE_NONPOSITIVE_INVERTED_OR_AMBIGUOUS_FAIL_CLOSED"
+  },
+  "proposal_recursive_forbidden_fields": [
+    "signal_id",
+    "fill",
+    "fill_price",
+    "path",
+    "mfe",
+    "mae",
+    "pnl",
+    "cost",
+    "equity",
+    "drawdown",
+    "dd",
+    "cvar",
+    "profit",
+    "return"
+  ],
+  "corrective_invariants": {
+    "same_pair_collision": "REJECT_NEW_ENFORCED_AT_FILL_ARRIVAL",
+    "same_pair_opposite_netting_claim": "NOT_APPLICABLE_BECAUSE_REJECT_NEW_PREVENTS_THE_SECOND_SIMULTANEOUS_POSITION",
+    "currency_exposure": "PER_LOT_NATIVE_BASE_EQUALS_DIRECTION_TIMES_UNITS;NATIVE_QUOTE_EQUALS_NEGATIVE_DIRECTION_TIMES_UNITS_TIMES_CURRENT_ARM_EXECUTABLE_LIQUIDATION_PRICE;EACH_SIGNED_NODE_IS_INDEPENDENTLY_CONVERTED_AT_ONE_CAUSAL_MARK_CUTOFF_BEFORE_EXACT_CROSS_LOT_NETTING;ABS_OR_EQUAL_MAGNITUDE_REUSE_IS_FORBIDDEN",
+    "cross_pair_shared_currency_netting": "REACHABLE_SIGNED_CURRENCY_NODE_AGGREGATION_ACROSS_DISTINCT_PAIRS",
+    "inventory_caps": "MAX_GROSS_AND_MAX_SIGNED_CURRENCY_NODE_MAGNITUDE_ARE_HARD_GUARDS_AT_ENTRY_EVERY_CAUSAL_EVENT_SYNTHETIC_MONTH_BOUNDARY_ATTRIBUTION_CLOCK_AND_TERMINAL_PRELIQUIDATION_MARK",
+    "risk_closeout_precedence": "EQUITY_FREE_MARGIN_RATIO_OR_EVALUATION_MARGIN_CAP_FIRST_AS_MARGIN_CLOSEOUT;OTHERWISE_INVENTORY_GROSS_OR_CURRENCY_CAP_AS_INVENTORY_CAP_CLOSEOUT",
+    "post_closeout_admission": "PERMANENT_ACCOUNT_HALTED_FOR_THE_ARM",
+    "age_and_financing_clock": "ACTUAL_FILL_ARRIVAL_EPOCH_NS_TO_MARK_OR_EXIT_ARRIVAL_EPOCH_NS",
+    "quote_staleness": "FROZEN_SOURCE_WATERMARK_ARRIVAL_AND_SOURCE_TO_ARRIVAL_AGE",
+    "inventory_release_order": "ARRIVAL_ORDER_ONLY",
+    "month_grid": "ALL_UTC_MONTHS_INTERSECTING_PERIOD_WITH_COMPLETE_MONTHS_EXPLICIT",
+    "cross_month_positions": "CAUSAL_EXECUTABLE_MONTH_END_MTM",
+    "partial_months": "NON_COMPARABLE",
+    "drawdown": "EXECUTABLE_MARKED_EQUITY_FROM_RUNNING_PEAK",
+    "cluster_risk_aggregation": "EXACT_RATIONAL_ECONOMIC_NET_PNL_SUMMED_PER_TIME_CURRENCY_CLUSTER_BEFORE_ONE_CONSERVATIVE_DIRECTED_ROUND",
+    "cluster_return_field": "signed_return",
+    "cluster_return_definition": "SIGNED_CLUSTER_NET_PNL_DIVIDED_BY_FROZEN_INITIAL_EQUITY_NOT_WEALTH_MULTIPLE",
+    "cvar": "TIME_CURRENCY_CLUSTER_SIGNED_PORTFOLIO_RETURN_ECONOMIC_LOT_PARTITION_INVARIANT",
+    "margin": "EVENT_LEVEL_MARKED_EQUITY_REQUIRED_AND_FREE_MARGIN_WITH_CLOSEOUT",
+    "risk_valuation_schedule": "EVERY_ECONOMIC_STATE_CHANGE_PLUS_SYNTHETIC_UTC_MONTH_AND_TERMINAL_CUTOFFS_EVEN_WITHOUT_A_MARKET_ARRIVAL",
+    "terminal_pre_liquidation_sequence": "MARK_FINANCING_AND_CLOSEOUT_EVALUATED_AT_PERIOD_END_MINUS_ONE_NS",
+    "rejected_disposition_identity": "REJECTED_ROWS_RETAIN_ECONOMIC_LOT_ID_DISTINCT_FROM_SIGNAL_ID",
+    "currency_time_cluster_observation_order": "CANONICAL_ASCENDING_CLUSTER_ID",
+    "ruin": "EQUITY_NONPOSITIVE_CLOSEOUT_AND_NEW_PROPOSAL_HALT",
+    "adverse_ordering": "EVERY_COST_PARAMETER_NOT_EASIER_THAN_BASE_AND_AT_LEAST_ONE_STRICT",
+    "gross_path": "COMMON_COST_INDEPENDENT_REFERENCE_WITH_LATENCY_OPPORTUNITY_COST_SEPARATE",
+    "unrepresentable_size": "ALL_ARMS_SIZE_ROUNDED_TO_ZERO_DISPOSITION"
+  },
+  "oracle_outputs": {
+    "signal_id_generated_by_oracle": true,
+    "all_proposals_have_all_arm_dispositions": true,
+    "arms": ["RAW_SIGNAL", "EXECUTABLE_BASE", "ADVERSE_STRESS"],
+    "terminal_inventory_mtm_jpy_micros": 0,
+    "external_orders": 0,
+    "authority_exact_schema": true,
+    "ledger_canonical_bytes_and_hash_chain_bound": true,
+    "raw_source_manifest_sha256_bound": true,
+    "economic_net_pnl_exact_fraction_preserved": true,
+    "cluster_signed_return_not_wealth_multiple": true,
+    "producer_profit_or_admission_fields": "REJECT"
+  },
+  "double_entry_reference_diagnostics": {
+    "engine_id": "EVENT_SOURCED_DOUBLE_ENTRY_REFERENCE_V1",
+    "role": "INDEPENDENT_DOUBLE_ENTRY_ACCOUNTING_DIAGNOSTIC_ONLY",
+    "code_source": "paper_research_double_entry_reference_v2.py",
+    "contract_source": "PAPER_RESEARCH_DOUBLE_ENTRY_REFERENCE_CONTRACT_V2.json",
+    "frozen_source_files": [
+      "paper_research_double_entry_reference_v2.py",
+      "PAPER_RESEARCH_DOUBLE_ENTRY_REFERENCE_CONTRACT_V2.json",
+      "test_paper_research_double_entry_reference_v2.py",
+      "test_paper_research_double_entry_reference_v2_runtime_mutations.py"
+    ],
+    "verifier_request_descriptors": {
+      "reference_code_snapshot": "inputs/reference_code_snapshot.py",
+      "reference_contract_snapshot": "inputs/reference_contract_snapshot.json"
+    },
+    "launcher_fd_options": {
+      "reference_code": "--reference-code-fd",
+      "reference_contract": "--reference-contract-fd"
+    },
+    "launcher_fd_scope": "REFERENCE_CODE_AND_CONTRACT_FDS_TERMINATE_AT_THE_SEALED_LAUNCHER_AND_ARE_NOT_FORWARDED_TO_THE_VERIFIER",
+    "receipt_fields": [
+      "reference_engine_id",
+      "reference_code_sha256",
+      "reference_contract_sha256",
+      "reference_input_root_sha256",
+      "reference_journal_root_sha256",
+      "reference_journal_transaction_count",
+      "reference_all_transactions_balanced",
+      "reference_economic_projection_sha256",
+      "reference_result_sha256",
+      "reference_accounting_diagnostics_only",
+      "reference_n_eff_statistical_admission_allowed",
+      "reference_direction_accuracy_profit_gate_allowed"
+    ],
+    "content_binding": {
+      "all_four_reference_sources_in_checkpoint_source_hash_set": true,
+      "request_snapshot_hashes_equal_frozen_source_hashes": true,
+      "launcher_sealed_fd_bytes_equal_request_snapshot_bytes": true,
+      "receipt_reference_hashes_equal_frozen_source_hashes": true,
+      "verifier_release_content_binding_includes_reference_hashes": true,
+      "reference_projection_hash_bound_to_input_journal_ledger_metrics_and_provenance": true,
+      "receipt_and_verifier_release_binding_include_exact_reference_result_sha256": true
+    },
+    "reference_result_canonicalization": {
+      "exact_key_count": 11,
+      "ledger_bytes_encoding": "STRICT_STANDARD_PADDED_ASCII_BASE64_WITH_CANONICAL_ROUND_TRIP",
+      "encoding": "UTF8_RFC8259_CANONICAL_SORTED_KEYS_NO_INSIGNIFICANT_WHITESPACE_SINGLE_TERMINAL_LF",
+      "sha256_recipe": "SHA256_OF_THE_EXACT_CANONICAL_REFERENCE_RESULT_BYTES_INCLUDING_THE_TERMINAL_LF",
+      "persistence": "IN_MEMORY_ONLY_NO_ADDITIONAL_RUNTIME_OR_EVIDENCE_ARTIFACT"
+    },
+    "phase_3_execution_boundary": {
+      "reference_replay_owner": "SEALED_FD_LAUNCHER",
+      "reference_input": "EXACT_NINE_RAW_ARTIFACT_BYTE_STRINGS_FROM_AN_IMMUTABLE_SORTED_TUPLE_BUNDLE",
+      "verifier_receives_only_immutable_sorted_tuple_bundles_reference_result_bytes_and_hashes": true,
+      "verifier_live_callable_received": false,
+      "verifier_module_received": false,
+      "verifier_file_descriptor_received": false,
+      "verifier_filesystem_path_received": false,
+      "verifier_write_closure_received": false,
+      "verifier_rename_closure_received": false,
+      "verifier_returns": "CANONICAL_RECEIPT_AND_COMMIT_BYTES_TO_THE_SEALED_LAUNCHER",
+      "publication_owner": "SEALED_FD_LAUNCHER_VALIDATES_THEN_PUBLISHES",
+      "additional_reference_result_artifact_written": false
+    },
+    "expected_golden_fixture_journal_transaction_count": 22,
+    "accounting_diagnostics_only": true,
+    "causal_signal_admission": false,
+    "release_evidence_eligible": false,
+    "admission_status": "NON_ADMISSIBLE",
+    "n_eff_statistical_admission_allowed": false,
+    "direction_accuracy_profit_gate_allowed": false,
+    "profitability_or_admission_override_allowed": false
+  },
+  "verification": {
+    "verifier_is_separate_process": true,
+    "verifier_request_schema": "paper_research_oracle_verifier_schema_v2.json",
+    "verifier_imports_oracle_runner_or_accounting": false,
+    "verifier_recomputes_expected_canonical_ledger_bytes": false,
+    "launcher_precomputes_canonical_reference_result_from_exact_nine_raw_inputs": true,
+    "verifier_validates_canonical_reference_result_and_exact_oracle_match": true,
+    "independently_derived_golden_ledger_count": 1,
+    "golden_fixture_id": "GOLDEN_USDJPY_LONG_V1",
+    "metamorphic_invariants": [
+      "CROSS_PAIR_SHARED_CURRENCY_EXPOSURE_NETTING",
+      "ECONOMIC_LOT_PARTITION_INVARIANT_CLUSTER_CVAR",
+      "EMPTY_MONTHS_RETAINED",
+      "ADVERSE_NEVER_EASIER_THAN_BASE",
+      "FUTURE_PRICE_PERTURBATION_PRIOR_SIGNAL_INVARIANT"
+    ],
+    "oracle_release_triplet_pinned_in_verifier": true,
+    "verifier_pair_pinned_in_launcher": true,
+    "double_entry_reference_pair_pinned_in_launcher": true,
+    "double_entry_reference_replays_same_nine_raw_input_artifacts": true,
+    "double_entry_reference_result_role": "DIAGNOSTICS_ONLY_NON_ADMISSIBLE",
+    "exact_checkpoint_artifact_counts": {
+      "sealed_runtime": 22,
+      "pre_audit": 26,
+      "nonterminal": 27,
+      "total_with_terminal_commit": 28
+    },
+    "profit_and_admission_read_oracle_metrics_only": true,
+    "content_binding_claim": "LOCAL_EXACT_BYTES_HASH_CHAIN_RELEASE_PAIR_AND_CANONICAL_REFERENCE_RESULT_BINDING_NOT_EXECUTION_ATTESTATION",
+    "pre_anchor_status": "LOCAL_UNANCHORED_ACCOUNTING_ONLY_NOT_ADMISSIBLE",
+    "runtime_environment_scope": "HOST_LOCAL_NON_HERMETIC_STDLIB_NOT_BYTE_PINNED",
+    "external_anchor_effect": "SEPARATE_REMOTE_READBACK_MAY_ANCHOR_CONTENT_BUT_CANNOT_UPGRADE_CAUSAL_OR_ADMISSION_STATUS"
+  },
+  "evidence_lifecycle_policy": {
+    "policy_kind": "IMMUTABLE_EVIDENCE_DERIVED_STATE_MACHINE",
+    "state_receipt_chain": [
+      "evidence/paper_research_jpy_oracle_corrective_v2/verifier_output/verifier_receipt.json",
+      "evidence/paper_research_jpy_oracle_corrective_v2/oracle_checkpoint_v2.json",
+      "evidence/paper_research_jpy_oracle_corrective_v2/CHECKPOINT_COMMIT.json"
+    ],
+    "state_selection": "DERIVE_FROM_EXACT_RECEIPT_AUDIT_TERMINAL_BYTES_AND_CURRENT_VALIDATION_NEVER_FROM_CONTRACT_CURRENT_STATE_OR_REGENERATION_HISTORY",
+    "exact_allowed_states": {
+      "LEGACY_STALE_NON_ATTESTING": {
+        "reference_result_sha256": "ABSENT_FROM_RECEIPT_AND_VERIFIER_RELEASE_CONTENT_BINDING",
+        "current_validation": "MUST_NOT_SUCCEED",
+        "execution_attestation_eligible": false,
+        "release_evidence_eligible": false,
+        "admission_eligible": false
+      },
+      "FUTURE_ONLY_ACCOUNTING_ONLY_LOCAL_UNANCHORED_NOT_ADMISSIBLE": {
+        "reference_result_sha256": "PRESENT_AND_EXACT_BOUND_IN_RECEIPT_AND_VERIFIER_RELEASE_CONTENT_BINDING",
+        "current_validation": "MUST_SUCCEED",
+        "execution_attestation_eligible": false,
+        "release_evidence_eligible": false,
+        "admission_eligible": false
+      }
+    },
+    "mixed_partial_or_unknown_state": "REJECT"
+  },
+  "legacy_boundary": {
+    "v25_through_v41_seals_changed": false,
+    "retroactive_official_oracle_pass_allowed": false,
+    "coverage_sidecar_only": true,
+    "coverage_states": ["RECONSTRUCTABLE", "RETROACTIVE", "MISSING"]
+  }
+}
