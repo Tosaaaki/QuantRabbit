@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import json
 import secrets
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+import oanda_live_feed as feed_module
 from oanda_live_feed import (
     CONTINUITY,
     LOSSLESS,
@@ -17,6 +21,7 @@ from oanda_live_feed import (
     SYMBOLS,
     OandaLiveRecorder,
 )
+from shadow_runtime import IntegrityError, utc_text
 
 ROOT = Path(__file__).resolve().parent
 
@@ -38,7 +43,8 @@ class OandaLiveFeedTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.recorder = OandaLiveRecorder(self.root)
         self.now = datetime(2026, 8, 28, tzinfo=timezone.utc)
-        self.recorder.connect_started()
+        self.feed_attestation = "a" * 64
+        self.recorder.connect_started(self.feed_attestation)
         self.recorder.connect_established(self.now)
 
     def tearDown(self):
@@ -52,13 +58,138 @@ class OandaLiveFeedTest(unittest.TestCase):
         self.assertEqual(status["counters"]["heartbeats"], 1)
         self.assertEqual(len(self.recorder.ledgers["raw_bbo"].rows), 1)
         self.assertEqual(len(self.recorder.ledgers["feed_quality"].rows), 2)
+        raw = self.recorder.ledgers["raw_bbo"].rows[0]["payload"]
+        self.assertEqual(raw["segment_id"], "segment-00000001")
+        self.assertEqual(raw["segment_started_at_utc"], utc_text(self.now))
+        self.assertEqual(raw["feed_service_attestation_hash"], self.feed_attestation)
+        self.assertEqual(raw["feed_provenance_status"], "ATTESTED")
+        connection = next(
+            row["payload"] for row in self.recorder.ledgers["control"].rows
+            if row["payload"].get("event") == "LIVE_PRICING_CONNECTED"
+        )
+        self.assertEqual(connection["segment_id"], raw["segment_id"])
+        self.assertEqual(connection["segment_started_at_utc"], raw["segment_started_at_utc"])
+        self.assertEqual(connection["feed_service_attestation_hash"], self.feed_attestation)
+        heartbeat = next(
+            row["payload"] for row in self.recorder.ledgers["feed_quality"].rows
+            if row["payload"].get("type") == "HEARTBEAT"
+        )
+        self.assertEqual(heartbeat["feed_service_attestation_hash"], self.feed_attestation)
+
+    def test_missing_or_invalid_feed_service_attestation_fails_closed(self):
+        for index, value in enumerate((None, "not-a-sha256", "A" * 64)):
+            with self.subTest(value=value):
+                recorder = OandaLiveRecorder(self.root / f"attestation-{index}")
+                with self.assertRaises(IntegrityError):
+                    recorder.connect_started(value)  # type: ignore[arg-type]
+                self.assertEqual(len(recorder.ledgers["raw_bbo"].rows), 0)
+                self.assertEqual(len(recorder.ledgers["control"].rows), 0)
+
+    def test_run_live_requires_attestation_before_any_network_or_ledger_write(self):
+        recorder = OandaLiveRecorder(self.root / "run-live-no-attestation")
+        with patch.object(feed_module.http.client, "HTTPSConnection") as connection:
+            with self.assertRaisesRegex(IntegrityError, "FEED_SERVICE_ATTESTATION_REQUIRED"):
+                recorder.run_live("unused-account", "unused-token", 0.01, runtime_hash=None)
+        self.assertFalse(connection.called)
+        status = recorder.status()
+        self.assertEqual(status["counters"]["network_attempts"], 0)
+        self.assertEqual(status["counters"]["credential_reads"], 0)
+        self.assertEqual(len(recorder.ledgers["raw_bbo"].rows), 0)
+        self.assertEqual(len(recorder.ledgers["control"].rows), 0)
+
+    def test_direct_main_is_disabled_before_credentials_network_or_attested_rows(self):
+        direct_root = self.root / "direct-main-disabled"
+        stderr = io.StringIO()
+        with (
+            patch.object(feed_module, "load_approved_live_credentials") as credentials,
+            patch.object(feed_module.http.client, "HTTPSConnection") as connection,
+            contextlib.redirect_stderr(stderr),
+        ):
+            exit_code = feed_module.main([
+                "--runtime-root", str(direct_root),
+                "--seconds", "0.01",
+            ])
+        self.assertEqual(exit_code, 3)
+        self.assertFalse(credentials.called)
+        self.assertFalse(connection.called)
+        self.assertIn("FEED_SERVICE_ATTESTATION_REQUIRED", stderr.getvalue())
+        self.assertIn("oanda_launchd_runtime.py feed", stderr.getvalue())
+        self.assertFalse(direct_root.exists())
+
+    def test_reconnect_assigns_new_segment_identity_to_raw_events(self):
+        first = self.recorder.ingest_line(
+            price("EUR_USD", "2026-08-28T00:00:01Z", "1.1600", "1.1602"),
+            self.now + timedelta(seconds=1),
+        )
+        self.recorder.invalidate("STREAM_EOF", self.now + timedelta(seconds=2))
+        self.recorder.connect_started(self.feed_attestation)
+        reconnect_at = self.now + timedelta(seconds=3)
+        self.recorder.connect_established(reconnect_at)
+        second = self.recorder.ingest_line(
+            price("EUR_USD", "2026-08-28T00:00:04Z", "1.1601", "1.1603"),
+            self.now + timedelta(seconds=4),
+        )
+        self.assertNotEqual(first["segment_id"], second["segment_id"])
+        self.assertEqual(second["segment_id"], "segment-00000002")
+        self.assertEqual(second["segment_started_at_utc"], utc_text(reconnect_at))
+        rows = [row["payload"] for row in self.recorder.ledgers["raw_bbo"].rows]
+        self.assertEqual([row["segment_id"] for row in rows], ["segment-00000001", "segment-00000002"])
+
+    def test_identical_market_event_replayed_after_reconnect_is_idempotent(self):
+        raw = price("USD_JPY", "2026-08-28T00:00:01Z", "147.00", "147.02")
+        self.recorder.ingest_line(raw, self.now + timedelta(seconds=1))
+        self.recorder.invalidate("STREAM_EOF", self.now + timedelta(seconds=2))
+        self.recorder.connect_started(self.feed_attestation)
+        self.recorder.connect_established(self.now + timedelta(seconds=3))
+        self.recorder.ingest_line(raw, self.now + timedelta(seconds=4))
+        self.assertFalse(self.recorder.status()["feed_blocked"])
+        self.assertEqual(self.recorder.status()["counters"]["duplicate_events"], 1)
+        self.assertEqual(len(self.recorder.ledgers["raw_bbo"].rows), 1)
+
+    def test_repeated_stream_eof_receipts_are_scoped_to_segments(self):
+        self.recorder.invalidate("STREAM_EOF", self.now + timedelta(seconds=1))
+        self.recorder.connect_started(self.feed_attestation)
+        self.recorder.connect_established(self.now + timedelta(seconds=2))
+        self.recorder.invalidate("STREAM_EOF", self.now + timedelta(seconds=3))
+        invalidations = [
+            row for row in self.recorder.ledgers["control"].rows
+            if row["payload"].get("event") == "FEED_INVALID"
+        ]
+        self.assertEqual(len(invalidations), 2)
+        self.assertEqual(
+            {row["payload"]["segment_id"] for row in invalidations},
+            {"segment-00000001", "segment-00000002"},
+        )
+
+    def test_heartbeat_replay_is_idempotent_within_segment_and_distinct_across_segments(self):
+        raw = (json.dumps({"type": "HEARTBEAT", "time": "2026-08-28T00:00:05Z"}) + "\n").encode()
+        self.recorder.ingest_line(raw, self.now + timedelta(seconds=1))
+        replay = self.recorder.ingest_line(raw, self.now + timedelta(seconds=2))
+        self.assertTrue(replay["duplicate"])
+        self.assertEqual(self.recorder.status()["counters"]["heartbeats"], 1)
+        self.assertEqual(self.recorder.status()["counters"]["duplicate_heartbeats"], 1)
+        self.recorder.invalidate("STREAM_EOF", self.now + timedelta(seconds=3))
+        self.recorder.connect_started(self.feed_attestation)
+        self.recorder.connect_established(self.now + timedelta(seconds=4))
+        self.assertFalse(self.recorder.status()["heartbeat_current"])
+        self.recorder.ingest_line(raw, self.now + timedelta(seconds=5))
+        self.assertTrue(self.recorder.status()["heartbeat_current"])
+        heartbeats = [
+            row for row in self.recorder.ledgers["feed_quality"].rows
+            if row["payload"].get("type") == "HEARTBEAT"
+        ]
+        self.assertEqual(len(heartbeats), 2)
+        self.assertEqual(
+            {row["payload"]["segment_id"] for row in heartbeats},
+            {"segment-00000001", "segment-00000002"},
+        )
 
     def test_only_two_symbols_are_accepted(self):
         for index, symbol in enumerate(SYMBOLS):
             self.recorder.ingest_line(price(symbol, f"2026-08-28T00:00:0{index + 1}Z", "1.1", "1.2"), self.now + timedelta(seconds=index + 1))
         self.assertEqual(self.recorder.status()["counters"]["market_events_accepted"], 2)
         other = OandaLiveRecorder(self.root / "other")
-        other.connect_started()
+        other.connect_started(self.feed_attestation)
         other.connect_established(self.now)
         other.ingest_line(price("AUD_USD", "2026-08-28T00:00:01Z", "1.1", "1.2"), self.now + timedelta(seconds=1))
         self.assertTrue(other.status()["feed_blocked"])
@@ -87,7 +218,7 @@ class OandaLiveFeedTest(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 recorder = OandaLiveRecorder(self.root / name)
-                recorder.connect_started()
+                recorder.connect_started(self.feed_attestation)
                 recorder.connect_established(self.now)
                 recorder.ingest_line(price("EUR_USD", "2026-08-28T00:00:01Z", "1.1", "1.2"), arrival)
                 self.assertEqual(recorder.status()["block_reason"], name)
@@ -95,7 +226,7 @@ class OandaLiveFeedTest(unittest.TestCase):
     def test_malformed_and_unknown_objects_fail_closed(self):
         for index, raw in enumerate((b"\xff", b"{}\n", b"[]\n")):
             recorder = OandaLiveRecorder(self.root / f"bad-{index}")
-            recorder.connect_started()
+            recorder.connect_started(self.feed_attestation)
             recorder.connect_established(self.now)
             recorder.ingest_line(raw, self.now + timedelta(seconds=1))
             self.assertEqual(recorder.status()["block_reason"], "MALFORMED_OR_UNKNOWN_STREAM_OBJECT")

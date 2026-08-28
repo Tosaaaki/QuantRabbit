@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import oanda_launchd_runtime as runtime
 from oanda_launchd_manage import preinstall
-from shadow_runtime import HashLedger, atomic_json, canonical_bytes, canonical_hash, utc_text
+from shadow_runtime import HashLedger, IntegrityError, atomic_json, canonical_bytes, canonical_hash, utc_text
 
 
 class LaunchdRuntimeTest(unittest.TestCase):
@@ -41,6 +41,45 @@ class LaunchdRuntimeTest(unittest.TestCase):
             }
             ledger.plan(payload, f"event-{index}", planned)
         ledger.append_rows(planned)
+
+    def _segmented_raw(self, entries, root=None):
+        target_root = self.root if root is None else Path(root)
+        path = target_root / "feed" / "ledgers" / "raw_bbo.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ledger = HashLedger(path)
+        planned = []
+        connections = {}
+        for index, item in enumerate(entries):
+            symbol, stamp, segment_id, segment_start = item[:4]
+            arrival = item[4] if len(item) >= 5 else stamp + timedelta(milliseconds=10)
+            feed_attestation = item[5] if len(item) >= 6 else "f" * 64
+            connections.setdefault(segment_id, (segment_start, feed_attestation))
+            payload = {
+                "event_id": f"segmented-event-{index}",
+                "instrument": symbol,
+                "event_time_utc": utc_text(stamp),
+                "arrival_time_utc": utc_text(arrival),
+                "bid": 1.1 + index / 10000,
+                "ask": 1.2 + index / 10000,
+                "segment_id": segment_id,
+                "segment_started_at_utc": utc_text(segment_start),
+                "feed_service_attestation_hash": feed_attestation,
+                "feed_provenance_status": "ATTESTED",
+            }
+            ledger.plan(payload, f"segmented-event-{index}", planned)
+        ledger.append_rows(planned)
+        control = HashLedger(path.parent / "control.jsonl")
+        control_planned = []
+        for index, (segment_id, (segment_start, feed_attestation)) in enumerate(connections.items(), 1):
+            control.plan({
+                "event": "LIVE_PRICING_CONNECTED",
+                "segment_id": segment_id,
+                "segment_started_at_utc": utc_text(segment_start),
+                "feed_service_attestation_hash": feed_attestation,
+                "feed_provenance_status": "ATTESTED",
+            }, f"fixture-connect::{index}", control_planned)
+        control.append_rows(control_planned)
+        return ledger
 
     def test_plists_lint_and_have_only_oanda_labels(self):
         result = preinstall()
@@ -70,6 +109,21 @@ class LaunchdRuntimeTest(unittest.TestCase):
             }),
         )
 
+    def test_launchd_feed_wrapper_passes_verified_source_attestation(self):
+        with (
+            patch.object(runtime, "load_approved_live_credentials", return_value=("account", "token")),
+            patch.object(runtime, "OandaLiveRecorder") as recorder_type,
+        ):
+            recorder_type.return_value.run_live.return_value = {"feed_blocked": False}
+            exit_code = runtime.run_feed(1.25)
+        self.assertEqual(exit_code, 0)
+        recorder_type.return_value.run_live.assert_called_once_with(
+            "account",
+            "token",
+            1.25,
+            runtime_hash=runtime.SERVICE_ATTESTATION_HASH,
+        )
+
     def test_bot_replay_is_idempotent_and_hash_bound(self):
         self._raw()
         with patch.object(runtime, "SERVICE_ROOT", self.root):
@@ -77,8 +131,20 @@ class LaunchdRuntimeTest(unittest.TestCase):
             second = runtime.bot_process_once()
         self.assertEqual(first, second)
         self.assertEqual(first["completed_m5"], 2)
+        self.assertEqual(first["completed_m5_total"], 2)
+        self.assertEqual(first["completed_m5_eligible"], 0)
+        self.assertEqual(first["legacy_invalidated_m5"], 2)
+        self.assertEqual(first["skipped_m5"], 0)
         self.assertEqual(first["natural_r5_proposals"], 0)
         self.assertEqual(first["external_orders"], 0)
+        control = HashLedger(self.root / "bot" / "ledgers" / "control.jsonl")
+        invalidations = [
+            row["payload"] for row in control.rows
+            if row["payload"].get("event") == "BAR_EVIDENCE_INVALIDATED"
+        ]
+        self.assertEqual(len(invalidations), 2)
+        self.assertTrue(all(row["evidence_eligible"] is False for row in invalidations))
+        self.assertTrue(all(row["external_orders"] == 0 for row in invalidations))
 
     def test_incremental_bot_tails_new_rows_and_matches_full_replay(self):
         self._raw()
@@ -101,13 +167,331 @@ class LaunchdRuntimeTest(unittest.TestCase):
             updated = processor.process_once()
             repeated = processor.process_once()
             expected = runtime._completed_bars(writer)
-            actual = [row["payload"] for row in processor.completed.rows]
+            actual = [
+                row["payload"] for row in processor.completed.rows
+                if row["payload"].get("feed_continuity_eligible") is True
+            ]
         self.assertEqual(initial["completed_m5"], 2)
         self.assertEqual(updated["completed_m5"], 4)
+        self.assertEqual(updated["completed_m5_eligible"], 0)
+        self.assertEqual(updated["legacy_invalidated_m5"], 4)
         self.assertEqual(repeated, updated)
         order = lambda bar: (bar["instrument"], bar["start_utc"])
         self.assertEqual(sorted(actual, key=order), sorted(expected, key=order))
+        self.assertEqual(expected, [])
         self.assertEqual(processor.processed_rows, len(writer.rows))
+
+    def test_reconnect_mid_bucket_skips_boundary_and_resumes_next_full_bucket(self):
+        base = datetime(2026, 8, 28, 1, 0, tzinfo=timezone.utc)
+        writer = self._segmented_raw((
+            ("EUR_USD", base + timedelta(minutes=2), "segment-00000001", base + timedelta(minutes=2)),
+            ("EUR_USD", base + timedelta(minutes=5, seconds=5), "segment-00000001", base + timedelta(minutes=2)),
+            ("EUR_USD", base + timedelta(minutes=6), "segment-00000001", base + timedelta(minutes=2)),
+            ("EUR_USD", base + timedelta(minutes=7), "segment-00000002", base + timedelta(minutes=7)),
+            ("EUR_USD", base + timedelta(minutes=10, seconds=5), "segment-00000002", base + timedelta(minutes=7)),
+            ("EUR_USD", base + timedelta(minutes=14, seconds=55), "segment-00000002", base + timedelta(minutes=7)),
+            ("EUR_USD", base + timedelta(minutes=15, seconds=5), "segment-00000002", base + timedelta(minutes=7)),
+        ))
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            first = processor.process_once()
+            control_before = [row["record_hash"] for row in processor.control.rows]
+            restarted = runtime.IncrementalBot()
+            second = restarted.process_once()
+            control_after = [row["record_hash"] for row in restarted.control.rows]
+        self.assertEqual(first, second)
+        self.assertEqual(first["completed_m5_total"], 1)
+        self.assertEqual(first["completed_m5_eligible"], 1)
+        self.assertEqual(first["skipped_m5"], 2)
+        self.assertEqual(first["legacy_invalidated_m5"], 0)
+        self.assertEqual(first["natural_r5_proposals"], 0)
+        self.assertEqual(first["virtual_fills"], 0)
+        self.assertEqual(first["external_orders"], 0)
+        self.assertEqual(control_before, control_after)
+        bar = restarted.completed.rows[0]["payload"]
+        self.assertEqual(bar["start_utc"], utc_text(base + timedelta(minutes=10)))
+        self.assertEqual(bar["segment_id"], "segment-00000002")
+        self.assertEqual(bar["feed_service_attestation_hash"], "f" * 64)
+        self.assertEqual(bar["bot_service_attestation_hash"], runtime.SERVICE_ATTESTATION_HASH)
+        self.assertTrue(bar["feed_continuity_eligible"])
+        skip_rows = [
+            row["payload"] for row in restarted.control.rows
+            if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
+        ]
+        self.assertEqual(
+            {row["reason"] for row in skip_rows},
+            {"M5_FIRST_PARTIAL_BUCKET_AFTER_CONNECT", "M5_SEGMENT_BOUNDARY_WITHIN_BUCKET"},
+        )
+        self.assertTrue(all(row["external_orders"] == 0 for row in skip_rows))
+        self.assertEqual(runtime._completed_bars(writer), [bar])
+
+    def test_clean_reconnect_still_skips_first_new_segment_bucket(self):
+        base = datetime(2026, 8, 28, 2, 0, tzinfo=timezone.utc)
+        writer = self._segmented_raw((
+            ("USD_JPY", base + timedelta(seconds=1), "segment-00000001", base),
+            ("USD_JPY", base + timedelta(minutes=5, seconds=1), "segment-00000001", base),
+            ("USD_JPY", base + timedelta(minutes=10, seconds=1), "segment-00000002", base + timedelta(minutes=10)),
+            ("USD_JPY", base + timedelta(minutes=15, seconds=1), "segment-00000002", base + timedelta(minutes=10)),
+            ("USD_JPY", base + timedelta(minutes=20, seconds=1), "segment-00000002", base + timedelta(minutes=10)),
+        ))
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            counters = runtime.bot_process_once()
+            completed = HashLedger(self.root / "bot" / "ledgers" / "completed_m5.jsonl")
+            control = HashLedger(self.root / "bot" / "ledgers" / "control.jsonl")
+        self.assertEqual(counters["completed_m5_total"], 2)
+        self.assertEqual(counters["completed_m5_eligible"], 2)
+        self.assertEqual(counters["skipped_m5"], 2)
+        self.assertEqual(
+            [row["payload"]["start_utc"] for row in completed.rows],
+            [utc_text(base + timedelta(minutes=5)), utc_text(base + timedelta(minutes=15))],
+        )
+        skips = [row["payload"] for row in control.rows if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"]
+        self.assertEqual({row["start_utc"] for row in skips}, {
+            utc_text(base), utc_text(base + timedelta(minutes=10)),
+        })
+        self.assertTrue(all(row["reason"] == "M5_FIRST_PARTIAL_BUCKET_AFTER_CONNECT" for row in skips))
+
+    def test_snapshot_source_before_connect_bucket_does_not_admit_connect_bucket(self):
+        base = datetime(2026, 8, 28, 4, 0, tzinfo=timezone.utc)
+        segment_start = base + timedelta(seconds=1)
+        self._segmented_raw((
+            ("EUR_USD", base - timedelta(seconds=1), "segment-00000003", segment_start, segment_start + timedelta(milliseconds=10)),
+            ("EUR_USD", base + timedelta(seconds=5), "segment-00000003", segment_start, base + timedelta(seconds=6)),
+            ("EUR_USD", base + timedelta(minutes=5, seconds=1), "segment-00000003", segment_start, base + timedelta(minutes=5, seconds=2)),
+            ("EUR_USD", base + timedelta(minutes=10, seconds=1), "segment-00000003", segment_start, base + timedelta(minutes=10, seconds=2)),
+        ))
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            counters = runtime.bot_process_once()
+            completed = HashLedger(self.root / "bot" / "ledgers" / "completed_m5.jsonl")
+            control = HashLedger(self.root / "bot" / "ledgers" / "control.jsonl")
+        self.assertEqual(counters["completed_m5_eligible"], 1)
+        self.assertEqual(counters["skipped_m5"], 2)
+        self.assertEqual(completed.rows[0]["payload"]["start_utc"], utc_text(base + timedelta(minutes=5)))
+        skips = [row["payload"] for row in control.rows if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"]
+        self.assertEqual(
+            {row["reason"] for row in skips},
+            {"M5_PRECONNECT_STALE_SNAPSHOT_BUCKET", "M5_FIRST_PARTIAL_BUCKET_AFTER_CONNECT"},
+        )
+
+    def test_reconnect_snapshot_regression_invalidates_previously_sealed_bucket(self):
+        base = datetime(2026, 8, 28, 4, 0, tzinfo=timezone.utc)
+        first_start = base - timedelta(minutes=10)
+        second_start = base + timedelta(seconds=1)
+        writer = self._segmented_raw((
+            ("EUR_USD", base - timedelta(minutes=5) + timedelta(seconds=1), "segment-00000001", first_start),
+            ("EUR_USD", base + timedelta(milliseconds=500), "segment-00000001", first_start),
+            ("EUR_USD", base - timedelta(seconds=1), "segment-00000002", second_start, second_start + timedelta(milliseconds=10)),
+            ("EUR_USD", base + timedelta(seconds=5), "segment-00000002", second_start, base + timedelta(seconds=6)),
+            ("EUR_USD", base + timedelta(minutes=5, seconds=1), "segment-00000002", second_start),
+            ("EUR_USD", base + timedelta(minutes=10, seconds=1), "segment-00000002", second_start),
+        ))
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            first = processor.process_once()
+            control_head = processor.control.last_hash
+            full = runtime.bot_process_once()
+            after_full = HashLedger(self.root / "bot" / "ledgers" / "control.jsonl")
+            restarted = runtime.IncrementalBot()
+            second = restarted.process_once()
+        self.assertEqual(first, full)
+        self.assertEqual(first, second)
+        self.assertEqual(control_head, after_full.last_hash)
+        self.assertEqual(control_head, restarted.control.last_hash)
+        self.assertEqual(first["completed_m5_total"], 2)
+        self.assertEqual(first["completed_m5_eligible"], 1)
+        self.assertEqual(first["skipped_m5"], 1)
+        self.assertEqual(first["late_stale_invalidated_m5"], 1)
+        self.assertEqual(first["external_orders"], 0)
+        invalidated_hashes = {
+            control["payload"]["bar_record_hash"]
+            for control in restarted.control.rows
+            if control["payload"].get("event") == "BAR_EVIDENCE_INVALIDATED"
+        }
+        eligible = [
+            row["payload"] for row in restarted.completed.rows
+            if row["payload"].get("feed_continuity_eligible") is True
+            and row["record_hash"] not in invalidated_hashes
+            and (row["payload"]["instrument"], row["payload"]["start_utc"])
+            not in {
+                (control["payload"]["instrument"], control["payload"]["start_utc"])
+                for control in restarted.control.rows
+                if control["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
+            }
+        ]
+        self.assertEqual([bar["start_utc"] for bar in eligible], [utc_text(base + timedelta(minutes=5))])
+        reasons = {
+            row["payload"]["reason"] for row in restarted.control.rows
+            if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
+        }
+        self.assertEqual(reasons, {"M5_SEGMENT_BOUNDARY_WITHIN_BUCKET"})
+        self.assertEqual(
+            {
+                row["payload"]["reason"] for row in restarted.control.rows
+                if row["payload"].get("event") == "BAR_EVIDENCE_INVALIDATED"
+            },
+            {"LATE_SEGMENT_STALE_SNAPSHOT"},
+        )
+
+        fresh_root = self.root / "fresh-full"
+        fresh_raw = HashLedger(fresh_root / "feed" / "ledgers" / "raw_bbo.jsonl")
+        planned = []
+        for row in writer.rows:
+            fresh_raw.plan(row["payload"], row["record_id"], planned)
+        fresh_raw.append_rows(planned)
+        source_feed_control = HashLedger(self.root / "feed" / "ledgers" / "control.jsonl")
+        fresh_feed_control = HashLedger(fresh_root / "feed" / "ledgers" / "control.jsonl")
+        control_planned = []
+        for row in source_feed_control.rows:
+            fresh_feed_control.plan(row["payload"], row["record_id"], control_planned)
+        fresh_feed_control.append_rows(control_planned)
+        with patch.object(runtime, "SERVICE_ROOT", fresh_root):
+            fresh_counts = runtime.bot_process_once()
+            fresh_completed = HashLedger(fresh_root / "bot" / "ledgers" / "completed_m5.jsonl")
+            fresh_control = HashLedger(fresh_root / "bot" / "ledgers" / "control.jsonl")
+        fresh_invalidated_hashes = {
+            row["payload"]["bar_record_hash"]
+            for row in fresh_control.rows
+            if row["payload"].get("event") == "BAR_EVIDENCE_INVALIDATED"
+        }
+        fresh_skipped_keys = {
+            (row["payload"]["instrument"], row["payload"]["start_utc"])
+            for row in fresh_control.rows
+            if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
+        }
+        fresh_eligible = [
+            row["payload"] for row in fresh_completed.rows
+            if row["payload"].get("feed_continuity_eligible") is True
+            and row["record_hash"] not in fresh_invalidated_hashes
+            and (row["payload"]["instrument"], row["payload"]["start_utc"])
+            not in fresh_skipped_keys
+        ]
+        self.assertEqual(fresh_counts, first)
+        self.assertEqual(
+            {canonical_hash(bar) for bar in eligible},
+            {canonical_hash(bar) for bar in fresh_eligible},
+        )
+        evidence_semantics = lambda ledger: {
+            (
+                row["payload"].get("event"),
+                row["payload"].get("reason"),
+                row["payload"].get("instrument"),
+                row["payload"].get("start_utc"),
+            )
+            for row in ledger.rows
+            if row["payload"].get("event") in {
+                "M5_CAUSAL_EVIDENCE_SKIPPED",
+                "BAR_EVIDENCE_INVALIDATED",
+            }
+        }
+        self.assertEqual(
+            evidence_semantics(restarted.control),
+            evidence_semantics(fresh_control),
+        )
+
+    def test_missing_mismatched_or_malformed_feed_attestation_fails_closed(self):
+        base = datetime(2026, 8, 28, 5, 0, tzinfo=timezone.utc)
+        missing_root = self.root / "missing-provenance"
+        missing_raw = HashLedger(missing_root / "feed" / "ledgers" / "raw_bbo.jsonl")
+        missing_planned = []
+        missing_raw.plan({
+            "event_id": "missing-provenance-event",
+            "instrument": "EUR_USD",
+            "event_time_utc": utc_text(base + timedelta(minutes=1)),
+            "arrival_time_utc": utc_text(base + timedelta(minutes=1, milliseconds=10)),
+            "bid": 1.1,
+            "ask": 1.2,
+            "segment_id": "segment-missing",
+            "segment_started_at_utc": utc_text(base),
+            "feed_service_attestation_hash": "f" * 64,
+            "feed_provenance_status": "ATTESTED",
+        }, "missing-provenance-event", missing_planned)
+        missing_raw.append_rows(missing_planned)
+
+        malformed_root = self.root / "malformed-provenance"
+        self._segmented_raw((
+            ("EUR_USD", base + timedelta(minutes=1), "segment-malformed", base, base + timedelta(minutes=1, seconds=1), "bad"),
+            ("EUR_USD", base + timedelta(minutes=6), "segment-malformed", base, base + timedelta(minutes=6, seconds=1), "bad"),
+        ), malformed_root)
+
+        mismatch_root = self.root / "mismatched-provenance"
+        self._segmented_raw((
+            ("EUR_USD", base + timedelta(minutes=1), "segment-mismatch", base - timedelta(minutes=5), base + timedelta(minutes=1, seconds=1), "a" * 64),
+            ("EUR_USD", base + timedelta(minutes=6), "segment-mismatch", base - timedelta(minutes=5), base + timedelta(minutes=6, seconds=1), "b" * 64),
+        ), mismatch_root)
+
+        for target_root in (missing_root, malformed_root, mismatch_root):
+            with self.subTest(root=target_root.name), patch.object(runtime, "SERVICE_ROOT", target_root):
+                with self.assertRaises(IntegrityError):
+                    runtime.bot_process_once()
+                self.assertFalse((target_root / "bot" / "ledgers" / "expected_orders.jsonl").exists())
+
+    def test_rolling_hybrid_old_bar_is_invalidated_and_next_full_bucket_resumes(self):
+        base = datetime(2026, 8, 28, 6, 0, tzinfo=timezone.utc)
+        hybrid_root = self.root / "hybrid"
+        writer = self._segmented_raw((
+            ("USD_JPY", base + timedelta(seconds=1), "segment-new-feed", base - timedelta(minutes=5)),
+            ("USD_JPY", base + timedelta(minutes=5, seconds=1), "segment-new-feed", base - timedelta(minutes=5)),
+            ("USD_JPY", base + timedelta(minutes=10, seconds=1), "segment-new-feed", base - timedelta(minutes=5)),
+        ), hybrid_root)
+        with patch.object(runtime, "SERVICE_ROOT", hybrid_root):
+            first_bar = runtime._closed_bucket_outcomes(writer)[0][0]
+            self.assertIsNotNone(first_bar)
+            old_payload = {
+                key: value for key, value in first_bar.items()
+                if key not in {
+                    "segment_id",
+                    "segment_started_at_utc",
+                    "feed_service_attestation_hash",
+                    "bot_service_attestation_hash",
+                    "feed_continuity_eligible",
+                }
+            }
+            self.assertTrue({
+                "segment_id",
+                "segment_started_at_utc",
+                "feed_service_attestation_hash",
+                "bot_service_attestation_hash",
+                "feed_continuity_eligible",
+            }.isdisjoint(old_payload))
+            completed = HashLedger(hybrid_root / "bot" / "ledgers" / "completed_m5.jsonl")
+            completed_planned = []
+            old_row = completed.plan(
+                old_payload,
+                f"m5::{old_payload['instrument']}::{old_payload['start_utc']}",
+                completed_planned,
+            )
+            completed.append_rows(completed_planned)
+
+            processor = runtime.IncrementalBot()
+            incremental = processor.process_once()
+            control_head = processor.control.last_hash
+            full = runtime.bot_process_once()
+            restarted = runtime.IncrementalBot()
+            after_restart = restarted.process_once()
+
+        self.assertEqual(incremental, full)
+        self.assertEqual(incremental, after_restart)
+        self.assertEqual(control_head, restarted.control.last_hash)
+        self.assertEqual(incremental["completed_m5_total"], 2)
+        self.assertEqual(incremental["completed_m5_eligible"], 1)
+        self.assertEqual(incremental["hybrid_invalidated_m5"], 1)
+        self.assertEqual(incremental["skipped_m5"], 0)
+        self.assertEqual(incremental["virtual_fills"], 0)
+        self.assertEqual(incremental["external_orders"], 0)
+        invalidations = [
+            row["payload"] for row in restarted.control.rows
+            if row["payload"].get("reason") == "ROLLING_HYBRID_ATTESTATION_MIGRATION"
+        ]
+        self.assertEqual(len(invalidations), 1)
+        self.assertEqual(invalidations[0]["bar_record_hash"], old_row["record_hash"])
+        eligible = [
+            row["payload"] for row in restarted.completed.rows
+            if row["payload"].get("feed_continuity_eligible") is True
+            and row["record_hash"] != old_row["record_hash"]
+        ]
+        self.assertEqual([bar["start_utc"] for bar in eligible], [utc_text(base + timedelta(minutes=5))])
+        self.assertEqual(eligible[0]["feed_service_attestation_hash"], "f" * 64)
+        self.assertEqual(eligible[0]["bot_service_attestation_hash"], runtime.SERVICE_ATTESTATION_HASH)
 
     def test_hash_ledger_reader_waits_for_locked_append(self):
         path = self.root / "concurrent.jsonl"

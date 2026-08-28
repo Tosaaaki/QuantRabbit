@@ -39,6 +39,7 @@ CONTINUITY = "HEARTBEAT_ONLY"
 LOSSLESS = False
 MAX_HEARTBEAT_GAP_SECONDS = 15.0
 LEDGERS = ("raw_bbo", "feed_quality", "decisions", "virtual_fills", "pnl", "control")
+LEGACY_SEGMENT_ID = "LEGACY_UNSEGMENTED"
 
 
 class FeedQualityError(RuntimeError):
@@ -97,6 +98,23 @@ def parse_oanda_time(value: str) -> datetime:
     return datetime.fromisoformat(text).astimezone(timezone.utc)
 
 
+def _market_event_digest(event: dict[str, Any]) -> str:
+    """Bind the market fact while allowing an identical replay after reconnect."""
+    transport_keys = {
+        "arrival_time_utc", "segment_id", "segment_started_at_utc",
+        "feed_service_attestation_hash", "feed_provenance_status",
+    }
+    return canonical_hash({key: value for key, value in event.items() if key not in transport_keys})
+
+
+def valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 class OandaLiveRecorder:
     def __init__(self, runtime_root: Path):
         self.runtime_root = Path(runtime_root)
@@ -144,6 +162,10 @@ class OandaLiveRecorder:
             "feed_connected": False,
             "connection_established": False,
             "segment_id": None,
+            "segment_started_at_utc": None,
+            "feed_service_attestation_hash": None,
+            "feed_provenance_status": "LEGACY_MIGRATION_UNATTESTED",
+            "segment_heartbeats": 0,
             "fresh_symbols": [],
             "feed_blocked": False,
             "block_reason": None,
@@ -157,6 +179,7 @@ class OandaLiveRecorder:
                 "connections": 0,
                 "segments": 0,
                 "heartbeats": 0,
+                "duplicate_heartbeats": 0,
                 "market_events_received": 0,
                 "market_events_accepted": 0,
                 "duplicate_events": 0,
@@ -206,7 +229,9 @@ class OandaLiveRecorder:
         self.ledgers[ledger].append_rows(planned)
         return row
 
-    def connect_started(self) -> None:
+    def connect_started(self, service_attestation_hash: str) -> None:
+        if not valid_sha256(service_attestation_hash):
+            raise IntegrityError("FEED_SERVICE_ATTESTATION_INVALID")
         state = copy.deepcopy(self.state)
         state["counters"].setdefault("segments", 0)
         state["counters"]["segments"] += 1
@@ -216,6 +241,10 @@ class OandaLiveRecorder:
             feed_blocked=False,
             block_reason=None,
             segment_id=f"segment-{state['counters']['segments']:08d}",
+            segment_started_at_utc=None,
+            feed_service_attestation_hash=service_attestation_hash,
+            feed_provenance_status="ATTESTED",
+            segment_heartbeats=0,
             fresh_symbols=[],
             last_arrival_utc=None,
             last_source_time={},
@@ -235,12 +264,22 @@ class OandaLiveRecorder:
             run_state="RUNNING",
             feed_connected=True,
             connection_established=True,
+            segment_started_at_utc=utc_text(arrival),
             last_arrival_utc=utc_text(arrival),
         )
         state["counters"]["connections"] += 1
         self._append(
             "control",
-            {"event": "LIVE_PRICING_CONNECTED", "host": STREAM_HOST, "symbols": list(SYMBOLS), "at_utc": utc_text(arrival)},
+            {
+                "event": "LIVE_PRICING_CONNECTED",
+                "host": STREAM_HOST,
+                "symbols": list(SYMBOLS),
+                "segment_id": state["segment_id"],
+                "segment_started_at_utc": state["segment_started_at_utc"],
+                "feed_service_attestation_hash": state["feed_service_attestation_hash"],
+                "feed_provenance_status": state["feed_provenance_status"],
+                "at_utc": utc_text(arrival),
+            },
             f"connect::{state['counters']['connections']}",
         )
         self._persist(state)
@@ -258,8 +297,17 @@ class OandaLiveRecorder:
             state["counters"]["malformed"] += 1
         self._append(
             "control",
-            {"event": "FEED_INVALID", "reason": reason, "at_utc": utc_text(arrival or datetime.now(timezone.utc)), "external_orders": 0},
-            f"halt::{reason}",
+            {
+                "event": "FEED_INVALID",
+                "reason": reason,
+                "segment_id": state.get("segment_id"),
+                "segment_started_at_utc": state.get("segment_started_at_utc"),
+                "feed_service_attestation_hash": state.get("feed_service_attestation_hash"),
+                "feed_provenance_status": state.get("feed_provenance_status"),
+                "at_utc": utc_text(arrival or datetime.now(timezone.utc)),
+                "external_orders": 0,
+            },
+            f"halt::{reason}::{state.get('segment_id') or LEGACY_SEGMENT_ID}",
         )
         self._persist(state)
 
@@ -283,6 +331,17 @@ class OandaLiveRecorder:
                 raise ValueError
             state = copy.deepcopy(self.state)
             self._validate_arrival(state, arrival)
+            if not isinstance(state.get("segment_id"), str) or not state["segment_id"]:
+                raise FeedQualityError("SEGMENT_IDENTITY_MISSING")
+            if not isinstance(state.get("segment_started_at_utc"), str):
+                raise FeedQualityError("SEGMENT_IDENTITY_MISSING")
+            provenance_status = state.get("feed_provenance_status")
+            feed_attestation = state.get("feed_service_attestation_hash")
+            if provenance_status == "ATTESTED":
+                if not valid_sha256(feed_attestation):
+                    raise FeedQualityError("FEED_SERVICE_ATTESTATION_INVALID")
+            elif provenance_status != "LEGACY_MIGRATION_UNATTESTED" or feed_attestation is not None:
+                raise FeedQualityError("FEED_SERVICE_ATTESTATION_INVALID")
             object_type = payload.get("type")
             if object_type == "HEARTBEAT":
                 source = parse_oanda_time(str(payload["time"]))
@@ -290,18 +349,38 @@ class OandaLiveRecorder:
                 if prior and source < parse_oanda_time(prior):
                     raise FeedQualityError("SOURCE_TIME_REGRESSION")
                 state["last_source_time"]["HEARTBEAT"] = utc_text(source)
-                state["counters"]["heartbeats"] += 1
-                self._append(
-                    "feed_quality",
-                    {"type": "HEARTBEAT", "source_time_utc": utc_text(source), "arrival_time_utc": utc_text(arrival), "raw_sha256": raw_hash},
-                    f"heartbeat::{raw_hash}",
-                )
-                self._persist(state)
-                return {
+                heartbeat = {
                     "type": "HEARTBEAT",
                     "source_time_utc": utc_text(source),
                     "arrival_time_utc": utc_text(arrival),
+                    "segment_id": state["segment_id"],
+                    "segment_started_at_utc": state["segment_started_at_utc"],
+                    "feed_service_attestation_hash": feed_attestation,
+                    "feed_provenance_status": provenance_status,
+                    "raw_sha256": raw_hash,
                 }
+                record_id = f"heartbeat::{state['segment_id']}::{raw_hash}"
+                existing = self.ledgers["feed_quality"].by_id.get(record_id)
+                if existing is not None:
+                    existing_fact = {
+                        key: value for key, value in existing["payload"].items()
+                        if key != "arrival_time_utc"
+                    }
+                    current_fact = {
+                        key: value for key, value in heartbeat.items()
+                        if key != "arrival_time_utc"
+                    }
+                    if existing_fact != current_fact:
+                        raise FeedQualityError("CONFLICTING_DUPLICATE")
+                    state["counters"].setdefault("duplicate_heartbeats", 0)
+                    state["counters"]["duplicate_heartbeats"] += 1
+                    self._persist(state)
+                    return {**heartbeat, "duplicate": True}
+                state["counters"]["heartbeats"] += 1
+                state["segment_heartbeats"] = int(state.get("segment_heartbeats", 0)) + 1
+                self._append("feed_quality", heartbeat, record_id)
+                self._persist(state)
+                return heartbeat
             instrument = payload.get("instrument")
             if instrument not in SYMBOLS or object_type not in {None, "PRICE"}:
                 raise ValueError
@@ -328,17 +407,17 @@ class OandaLiveRecorder:
                 "tradeable": payload.get("status") == "tradeable",
                 "continuity": CONTINUITY,
                 "lossless": LOSSLESS,
+                "segment_id": state["segment_id"],
+                "segment_started_at_utc": state["segment_started_at_utc"],
+                "feed_service_attestation_hash": feed_attestation,
+                "feed_provenance_status": provenance_status,
                 "raw_sha256": raw_hash,
             }
-            event_digest = canonical_hash(
-                {key: value for key, value in event.items() if key != "arrival_time_utc"}
-            )
+            event_digest = _market_event_digest(event)
             raw_record_id = f"event::{event['event_id']}"
             existing = self.ledgers["raw_bbo"].by_id.get(raw_record_id)
             if existing is not None:
-                existing_digest = canonical_hash(
-                    {key: value for key, value in existing["payload"].items() if key != "arrival_time_utc"}
-                )
+                existing_digest = _market_event_digest(existing["payload"])
                 if existing_digest != event_digest:
                     raise FeedQualityError("CONFLICTING_DUPLICATE")
                 state["counters"]["duplicate_events"] += 1
@@ -353,7 +432,15 @@ class OandaLiveRecorder:
             raw_row = self._append("raw_bbo", event, raw_record_id)
             self._append(
                 "feed_quality",
-                {"accepted": True, "event_id": event["event_id"], "raw_record_hash": raw_row["record_hash"]},
+                {
+                    "accepted": True,
+                    "event_id": event["event_id"],
+                    "raw_record_hash": raw_row["record_hash"],
+                    "segment_id": state["segment_id"],
+                    "segment_started_at_utc": state["segment_started_at_utc"],
+                    "feed_service_attestation_hash": feed_attestation,
+                    "feed_provenance_status": provenance_status,
+                },
                 f"quality::{event['event_id']}",
             )
             self._persist(state)
@@ -387,11 +474,14 @@ class OandaLiveRecorder:
             "feed_connected": self.state["feed_connected"],
             "connection_established": self.state["connection_established"],
             "segment_id": self.state.get("segment_id"),
+            "segment_started_at_utc": self.state.get("segment_started_at_utc"),
+            "feed_service_attestation_hash": self.state.get("feed_service_attestation_hash"),
+            "feed_provenance_status": self.state.get("feed_provenance_status"),
             "fresh_symbol_count": len(self.state.get("fresh_symbols", [])),
             "segment_warmed": set(self.state.get("fresh_symbols", [])) == set(SYMBOLS),
             "feed_blocked": self.state["feed_blocked"],
             "block_reason": self.state["block_reason"],
-            "heartbeat_current": self.state["counters"]["heartbeats"] >= 1,
+            "heartbeat_current": int(self.state.get("segment_heartbeats", 0)) >= 1,
             "credential_values_absent": True,
             "live_order_authority": False,
             "external_orders": 0,
@@ -410,12 +500,16 @@ class OandaLiveRecorder:
         stop_when: Callable[[], bool] | None = None,
         runtime_hash: str | None = None,
     ) -> dict[str, Any]:
+        if runtime_hash is None:
+            raise IntegrityError("FEED_SERVICE_ATTESTATION_REQUIRED")
+        if not valid_sha256(runtime_hash):
+            raise IntegrityError("FEED_SERVICE_ATTESTATION_INVALID")
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
         deadline = time.monotonic() + max_seconds
-        strategy_hash = runtime_hash or canonical_hash({"contract": self.contract_hash, "provider": PROVIDER})
+        strategy_hash = runtime_hash
         with RuntimeLock(self.runtime_root, strategy_hash) as lock:
-            self.connect_started()
+            self.connect_started(strategy_hash)
             connection = http.client.HTTPSConnection(
                 STREAM_NETLOC,
                 timeout=MAX_HEARTBEAT_GAP_SECONDS,
@@ -457,17 +551,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--seconds", type=float, default=20.0)
-    args = parser.parse_args(argv)
-    try:
-        account_id, token = load_approved_live_credentials()
-        recorder = OandaLiveRecorder(args.runtime_root)
-        recorder.mark_approved_credential_file_read()
-        status = recorder.run_live(account_id, token, args.seconds)
-        print(json.dumps(status, sort_keys=True))
-        return 2 if status["feed_blocked"] else 0
-    except Exception as exc:
-        print(json.dumps({"error": type(exc).__name__}), file=sys.stderr)
-        return 3
+    parser.parse_args(argv)
+    print(json.dumps({
+        "error": "FEED_SERVICE_ATTESTATION_REQUIRED",
+        "operator_action": "use oanda_launchd_runtime.py feed",
+        "network_attempts": 0,
+        "credential_reads": 0,
+        "external_orders": 0,
+    }, sort_keys=True), file=sys.stderr)
+    return 3
 
 
 if __name__ == "__main__":
