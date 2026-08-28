@@ -146,8 +146,21 @@ class OandaLiveRecorder:
             raise IntegrityError("method allowlist mismatch")
         if self.contract["live_order_authority"] or self.contract["external_orders"] != 0:
             raise IntegrityError("order authority mismatch")
-        if not self.contract["bot_only"] or self.contract["actual_llm_enabled"]:
+        if self.contract["bot_only"] or not self.contract["actual_llm_enabled"]:
             raise IntegrityError("arm boundary mismatch")
+        paper = self.contract.get("paper_execution")
+        llm_policy = self.contract.get("llm_inventory_policy")
+        if (
+            not isinstance(paper, dict)
+            or paper.get("enabled") is not True
+            or paper.get("entry_cost_gate_used") is not False
+            or paper.get("external_order_authority") is not False
+            or not isinstance(llm_policy, dict)
+            or llm_policy.get("enabled") is not True
+            or llm_policy.get("individual_order_control") is not False
+            or llm_policy.get("external_order_authority") is not False
+        ):
+            raise IntegrityError("paper/LLM authority boundary mismatch")
 
     def fresh_state(self) -> dict[str, Any]:
         return {

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "provider": "OANDA_V20_LIVE_PRICING_STREAM",
   "strategy_status": "RESEARCH_NOT_ADMITTED",
   "shadow_status": "OBSERVATION_AUTHORIZED",
@@ -26,9 +26,9 @@
   ],
   "credential_source": "/Users/tossaki/App/QuantRabbit-live/.env.local",
   "credential_values_persisted": false,
-  "bot_only": true,
-  "actual_llm_enabled": false,
-  "launchd_enabled": false,
+  "bot_only": false,
+  "actual_llm_enabled": true,
+  "launchd_enabled": true,
   "historical_warmup": {
     "timeframe": "M5",
     "completed_only": true,
@@ -41,6 +41,70 @@
     "canary_max_proposals": 1,
     "canary_profit_evidence": false,
     "external_orders": 0
+  },
+  "paper_execution": {
+    "enabled": true,
+    "strategy_id": "M5_EMA_STATE_IMPULSE_INVENTORY_V1",
+    "timeframe": "M5",
+    "fast_ema_bars": 3,
+    "slow_ema_bars": 6,
+    "momentum_bars": 3,
+    "atr_bars": 6,
+    "tp_atr_multiple": 0.5,
+    "tp_spread_multiple_floor": 1.5,
+    "max_age_bars": 6,
+    "expected_order_ttl_bars": 1,
+    "virtual_units": 1000,
+    "hard_max_open_positions_per_instrument": 1,
+    "hard_max_open_positions_total": 2,
+    "entry_cost_gate_used": false,
+    "raw_signal_always_recorded": true,
+    "terminal_mtm_required": true,
+    "individual_price_sl": false,
+    "external_order_authority": false,
+    "arms": {
+      "RAW_SIGNAL": {
+        "price_mode": "MID",
+        "slippage_pips_per_side": 0.0,
+        "entry_latency_events": 0
+      },
+      "EXECUTABLE_BASE": {
+        "price_mode": "BID_ASK",
+        "slippage_pips_per_side": 0.0,
+        "entry_latency_events": 0
+      },
+      "ADVERSE_STRESS": {
+        "price_mode": "BID_ASK",
+        "slippage_pips_per_side": 0.3,
+        "entry_latency_events": 1
+      },
+      "ACTUAL_LLM_INVENTORY": {
+        "price_mode": "BID_ASK",
+        "slippage_pips_per_side": 0.0,
+        "entry_latency_events": 0
+      }
+    },
+    "parameter_rationale": {
+      "ema_bars": "Three versus six completed M5 bars is a preregistered fast intraday state comparison, not a profitability-fitted threshold.",
+      "momentum_bars": "Three completed M5 bars confirm that the current impulse agrees with the EMA state.",
+      "atr_bars": "Six completed M5 ranges size the exit from the same local market scale as the signal.",
+      "tp_atr_multiple": "Half of local M5 ATR is the first high-turnover TP hypothesis; the observed-spread floor prevents a target inside paid spread.",
+      "max_age_bars": "Six M5 bars create a finite thirty-minute inventory contract without an individual price stop.",
+      "virtual_units": "One thousand base units is an accounting normalization only and never a broker or risk-sizing decision.",
+      "adverse_slippage": "Zero-point-three pip per side is a declared stress observation, never an entry rejection gate."
+    }
+  },
+  "llm_inventory_policy": {
+    "enabled": true,
+    "arm": "ACTUAL_LLM_INVENTORY",
+    "allowed_actions": ["ADD", "FREEZE", "UNWIND", "RESET"],
+    "hard_max_open_positions": 2,
+    "individual_order_control": false,
+    "direction_control": false,
+    "fill_control": false,
+    "tp_control": false,
+    "hard_guard_mutation": false,
+    "external_order_authority": false
   },
   "r5_binding": {
     "source_commit": "15c7d205a78a14116651046b5fa2741d37e72cf2",

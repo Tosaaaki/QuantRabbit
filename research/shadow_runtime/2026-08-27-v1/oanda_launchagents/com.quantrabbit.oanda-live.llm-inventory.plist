@@ -8,8 +8,8 @@
     <string>llm</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1</string>
-  <key>WatchPaths</key><array><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/triggers/llm_inventory_request.json</string></array>
+  <key>WatchPaths</key><array><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v2/triggers/llm_inventory_request.json</string></array>
   <key>ProcessType</key><string>Background</string><key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/llm.out.log</string>
-  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/llm.err.log</string>
+  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v2/logs/llm.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v2/logs/llm.err.log</string>
 </dict></plist>

@@ -10,6 +10,6 @@
   <key>WorkingDirectory</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1</string>
   <key>RunAtLoad</key><true/><key>StartInterval</key><integer>15</integer>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/watchdog.out.log</string>
-  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/watchdog.err.log</string>
+  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v2/logs/watchdog.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v2/logs/watchdog.err.log</string>
 </dict></plist>

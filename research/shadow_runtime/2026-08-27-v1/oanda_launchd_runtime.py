@@ -14,6 +14,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from oanda_live_feed import OandaLiveRecorder, load_approved_live_credentials, valid_sha256
+from oanda_paper_execution import (
+    evaluate_completed_bar_signal,
+    pip_size,
+    pnl_pips,
+    quote_pnl,
+    validate_paper_config,
+    virtual_price,
+)
 from shadow_runtime import (
     HashLedger,
     IntegrityError,
@@ -29,16 +37,17 @@ from shadow_runtime import (
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-SERVICE_ROOT = PACKAGE_ROOT / "runs" / "oanda_live_launchd_v1"
+SERVICE_ROOT = PACKAGE_ROOT / "runs" / "oanda_live_launchd_v2"
 SOURCE_COMMIT = "907195888ae5671d18084d59a4458dc70f3df7c8"
 SHARED_RUNTIME_HASH = canonical_hash({
     "source_commit": SOURCE_COMMIT,
     "oanda_contract_sha256": sha256_file(PACKAGE_ROOT / "oanda_live_runtime_contract.json"),
-    "topology": "OANDA_LIVE_GET_ONLY_ZERO_ORDER_V1",
+    "topology": "OANDA_LIVE_GET_ONLY_ZERO_ORDER_PAPER_TRADER_V2",
 })
 RUNTIME_SOURCE_PATHS = (
     PACKAGE_ROOT / "oanda_launchd_runtime.py",
     PACKAGE_ROOT / "oanda_live_feed.py",
+    PACKAGE_ROOT / "oanda_paper_execution.py",
     PACKAGE_ROOT / "shadow_runtime.py",
     PACKAGE_ROOT / "oanda_live_runtime_contract.json",
     PACKAGE_ROOT / "oanda_launchagents" / "com.quantrabbit.oanda-live.feed-recorder.plist",
@@ -57,6 +66,12 @@ SERVICE_ATTESTATION_HASH = canonical_hash({
     "candidate_runtime_hash": SHARED_RUNTIME_HASH,
     "runtime_source_sha256": RUNTIME_SOURCE_HASHES,
 })
+OANDA_RUNTIME_CONTRACT = json.loads(
+    secure_read(PACKAGE_ROOT / "oanda_live_runtime_contract.json").decode("utf-8", "strict")
+)
+PAPER_CONFIG = OANDA_RUNTIME_CONTRACT["paper_execution"]
+LLM_POLICY_CONFIG = OANDA_RUNTIME_CONTRACT["llm_inventory_policy"]
+validate_paper_config(PAPER_CONFIG)
 LABELS = {
     "feed": "com.quantrabbit.oanda-live.feed-recorder",
     "bot": "com.quantrabbit.oanda-live.bot-shadow",
@@ -388,10 +403,24 @@ def _plan_completed_bar(
             raise IntegrityError("BOT_EXISTING_BAR_PROVENANCE_INVALID")
         if existing_core != expected_core:
             raise IntegrityError("BOT_COMPLETED_BAR_CONFLICT")
-        if not all(
-            field in bar for field in provenance_fields
-        ):
+        if not all(field in bar for field in provenance_fields):
             raise IntegrityError("BOT_EXISTING_BAR_ATTESTATION_INVALID")
+        existing_has_provenance = all(
+            field in existing["payload"] for field in provenance_fields
+        )
+        if existing_has_provenance:
+            for field in (
+                "segment_id",
+                "segment_started_at_utc",
+                "feed_service_attestation_hash",
+                "feed_continuity_eligible",
+            ):
+                if existing["payload"][field] != bar[field]:
+                    raise IntegrityError("BOT_EXISTING_BAR_PROVENANCE_CONFLICT")
+            # The aggregation result and feed provenance are immutable market
+            # evidence.  A later bot release has a different bot attestation,
+            # but must reuse the identical prior bar rather than invalidate it.
+            return existing, False
         return existing, True
     planned: list[dict[str, Any]] = []
     row = completed.plan(bar, record_id, planned)
@@ -411,7 +440,13 @@ def _skip_record_id(payload: dict[str, Any]) -> str:
     return f"skip-m5::{receipt_id}"
 
 
-def _bot_counts(completed: HashLedger, control: HashLedger, market_events: int) -> dict[str, int]:
+def _bot_counts(
+    completed: HashLedger,
+    control: HashLedger,
+    market_events: int,
+    paper_ledgers: dict[str, HashLedger] | None = None,
+    open_inventory_count: int = 0,
+) -> dict[str, int]:
     skip_rows = [
         row for row in control.rows
         if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
@@ -446,6 +481,15 @@ def _bot_counts(completed: HashLedger, control: HashLedger, market_events: int) 
         and (row["payload"]["instrument"], row["payload"]["start_utc"]) not in skipped_keys
         for row in completed.rows
     )
+    paper_ledgers = paper_ledgers or {}
+    proposals = paper_ledgers.get("proposals")
+    expected_orders = paper_ledgers.get("expected_orders")
+    fills = paper_ledgers.get("virtual_fills")
+    inventory = paper_ledgers.get("inventory")
+    pnl = paper_ledgers.get("pnl")
+    llm_receipts = paper_ledgers.get("llm_receipts")
+    inventory_rows = [] if inventory is None else inventory.rows
+    pnl_rows = [] if pnl is None else pnl.rows
     return {
         "market_events": market_events,
         "completed_m5": len(completed.rows),
@@ -457,8 +501,19 @@ def _bot_counts(completed: HashLedger, control: HashLedger, market_events: int) 
         "late_stale_invalidated_m5": late_invalidated,
         "hybrid_invalidated_m5": hybrid_invalidated,
         "natural_r5_proposals": 0,
-        "virtual_fills": 0,
-        "llm_calls": 0,
+        "natural_paper_proposals": 0 if proposals is None else len(proposals.rows),
+        "expected_orders": 0 if expected_orders is None else len(expected_orders.rows),
+        "virtual_fills": 0 if fills is None else len(fills.rows),
+        "virtual_exits": sum(row["payload"].get("event") == "CLOSE" for row in inventory_rows),
+        "open_inventory_count": open_inventory_count,
+        "pnl_records": len(pnl_rows),
+        "realized_pnl_records": sum(
+            row["payload"].get("event") == "REALIZED_PNL" for row in pnl_rows
+        ),
+        "terminal_mtm_records": sum(
+            row["payload"].get("event") == "TERMINAL_MTM" for row in pnl_rows
+        ),
+        "llm_calls": 0 if llm_receipts is None else len(llm_receipts.rows),
         "external_order_attempts": 0,
         "external_orders": 0,
     }
@@ -541,14 +596,37 @@ class IncrementalBot:
         root = SERVICE_ROOT / "bot"
         real_dir(root)
         real_dir(root / "ledgers")
+        real_dir(SERVICE_ROOT / "triggers")
         self.completed = HashLedger(root / "ledgers" / "completed_m5.jsonl")
         self.control = HashLedger(root / "ledgers" / "control.jsonl")
+        self.paper_ledgers = {
+            name: HashLedger(root / "ledgers" / f"{name}.jsonl")
+            for name in ("proposals", "expected_orders", "virtual_fills", "inventory", "pnl")
+        }
+        self.llm_receipts = HashLedger(SERVICE_ROOT / "llm" / "ledgers" / "receipts.jsonl")
+        self.paper_ledgers["llm_receipts"] = self.llm_receipts
         self.buckets: dict[str, tuple[int, list[dict[str, Any]]]] = {}
         self.connection_start_buckets: dict[str, set[int]] = {}
         self.declared_provenance = _declared_feed_provenance(self.feed_control)
         self.observed_provenance: dict[str, tuple[str, str]] = {}
+        self.histories: dict[str, list[dict[str, Any]]] = {}
+        self.pending_orders: dict[str, dict[str, Any]] = {}
+        self.open_positions: dict[str, dict[str, Any]] = {}
+        self.last_quotes: dict[str, dict[str, Any]] = {}
+        self.llm_policy = {
+            "action": "ADD",
+            "max_open_positions": PAPER_CONFIG["hard_max_open_positions_total"],
+            "source": "BOT_DEFAULT_BEFORE_FIRST_LLM_RECEIPT",
+            "valid_until": None,
+        }
         self.processed_rows = 0
-        self._consume_new_rows()
+        # Rebuild bars and the open source bucket without retroactively creating
+        # signals, fills, or exits.  Only rows appended after this activation are
+        # eligible for new paper decisions.
+        self._consume_new_rows(replay=True)
+        self._rebuild_histories()
+        self._rebuild_paper_state()
+        self._refresh_llm_policy()
 
     def _record_skip(self, payload: dict[str, Any]) -> None:
         planned: list[dict[str, Any]] = []
@@ -574,7 +652,226 @@ class IncrementalBot:
             return
         self._record_bar_invalidation(bar_row, "LEGACY_RAW_WITHOUT_SEGMENT_METADATA")
 
-    def _seal(self, instrument: str, bucket: int, events: list[dict[str, Any]]) -> None:
+    def _append_paper(self, ledger: str, payload: dict[str, Any], record_id: str) -> dict[str, Any]:
+        planned: list[dict[str, Any]] = []
+        row = self.paper_ledgers[ledger].plan(payload, record_id, planned)
+        self.paper_ledgers[ledger].append_rows(planned)
+        return row
+
+    def _eligible_rows(self) -> list[dict[str, Any]]:
+        invalidated = {
+            row["payload"].get("bar_record_hash")
+            for row in self.control.rows
+            if row["payload"].get("event") == "BAR_EVIDENCE_INVALIDATED"
+        }
+        skipped = {
+            (row["payload"].get("instrument"), row["payload"].get("start_utc"))
+            for row in self.control.rows
+            if row["payload"].get("event") == "M5_CAUSAL_EVIDENCE_SKIPPED"
+        }
+        return [
+            row
+            for row in self.completed.rows
+            if row["payload"].get("feed_continuity_eligible") is True
+            and row["record_hash"] not in invalidated
+            and (row["payload"].get("instrument"), row["payload"].get("start_utc")) not in skipped
+        ]
+
+    def _rebuild_histories(self) -> None:
+        self.histories = {}
+        for row in sorted(
+            self._eligible_rows(),
+            key=lambda value: (value["payload"]["instrument"], value["payload"]["start_utc"]),
+        ):
+            self.histories.setdefault(row["payload"]["instrument"], []).append(row["payload"])
+
+    def _rebuild_paper_state(self) -> None:
+        self.open_positions = {}
+        for row in self.paper_ledgers["inventory"].rows:
+            payload = row["payload"]
+            if payload.get("event") == "OPEN":
+                self.open_positions[payload["position_id"]] = payload
+            elif payload.get("event") == "CLOSE":
+                self.open_positions.pop(payload["position_id"], None)
+        filled = {
+            row["payload"]["expected_order_id"]
+            for row in self.paper_ledgers["virtual_fills"].rows
+        }
+        expired = {
+            row["payload"].get("expected_order_id")
+            for row in self.control.rows
+            if row["payload"].get("event") == "VIRTUAL_ORDER_EXPIRED_NO_FILL"
+        }
+        self.pending_orders = {}
+        for row in self.paper_ledgers["expected_orders"].rows:
+            payload = row["payload"]
+            if (
+                payload.get("status") == "PENDING"
+                and payload["expected_order_id"] not in filled
+                and payload["expected_order_id"] not in expired
+            ):
+                self.pending_orders[payload["expected_order_id"]] = {
+                    **payload,
+                    "latency_remaining": PAPER_CONFIG["arms"][payload["execution_arm"]][
+                        "entry_latency_events"
+                    ],
+                }
+        for row in self.feed_raw.rows:
+            event = row["payload"]
+            self.last_quotes[event["instrument"]] = event
+
+    def _refresh_llm_policy(self) -> None:
+        self.llm_receipts.refresh()
+        if not self.llm_receipts.rows:
+            return
+        receipt = self.llm_receipts.rows[-1]["payload"]
+        if (
+            receipt.get("kind") != "ACTUAL_LLM_INVENTORY_RECEIPT"
+            or receipt.get("runtime_hash") != SHARED_RUNTIME_HASH
+            or receipt.get("individual_order_control") is not False
+            or receipt.get("hard_guard_mutation") is not False
+            or receipt.get("external_orders") != 0
+        ):
+            self.llm_policy = {
+                "action": "FREEZE",
+                "max_open_positions": 0,
+                "source": "INVALID_LLM_RECEIPT_FAIL_CLOSED",
+                "valid_until": None,
+            }
+            return
+        output = receipt.get("output", {})
+        valid_until = output.get("valid_until")
+        if not isinstance(valid_until, str) or parse_utc(valid_until) <= datetime.now(timezone.utc):
+            self.llm_policy = {
+                "action": "FREEZE",
+                "max_open_positions": 0,
+                "source": "EXPIRED_LLM_RECEIPT_FAIL_CLOSED",
+                "valid_until": valid_until,
+            }
+            return
+        hard_cap = int(LLM_POLICY_CONFIG["hard_max_open_positions"])
+        self.llm_policy = {
+            "action": output["action"],
+            "max_open_positions": min(hard_cap, int(output["max_open_positions"])),
+            "source": receipt["output_sha256"],
+            "valid_until": valid_until,
+        }
+
+    def _paper_capacity_reason(self, arm: str, instrument: str) -> str | None:
+        relevant_open = [
+            position for position in self.open_positions.values()
+            if position["execution_arm"] == arm
+        ]
+        relevant_pending = [
+            order for order in self.pending_orders.values()
+            if order["execution_arm"] == arm
+        ]
+        if any(position["instrument"] == instrument for position in relevant_open) or any(
+            order["instrument"] == instrument for order in relevant_pending
+        ):
+            return "HARD_INSTRUMENT_INVENTORY_CAP"
+        hard_total = int(PAPER_CONFIG["hard_max_open_positions_total"])
+        if len(relevant_open) + len(relevant_pending) >= hard_total:
+            return "HARD_TOTAL_INVENTORY_CAP"
+        if arm == "ACTUAL_LLM_INVENTORY":
+            if self.llm_policy["action"] != "ADD":
+                return f"LLM_MODE_{self.llm_policy['action']}"
+            if len(relevant_open) + len(relevant_pending) >= self.llm_policy["max_open_positions"]:
+                return "LLM_OPEN_POSITION_CAP"
+        return None
+
+    def _emit_paper_signal(self, bar_row: dict[str, Any]) -> None:
+        bar = bar_row["payload"]
+        history = self.histories.setdefault(bar["instrument"], [])
+        if not history or history[-1].get("start_utc") != bar["start_utc"]:
+            history.append(bar)
+        signal = evaluate_completed_bar_signal(history, PAPER_CONFIG)
+        if signal is None:
+            planned: list[dict[str, Any]] = []
+            self.control.plan(
+                {
+                    "event": "PAPER_RAW_SIGNAL_NOT_EMITTED",
+                    "strategy_id": PAPER_CONFIG["strategy_id"],
+                    "bar_record_hash": bar_row["record_hash"],
+                    "reason": "STRUCTURE_NOT_ALIGNED_OR_WARMUP_INCOMPLETE",
+                    "entry_cost_gate_used": False,
+                    "external_orders": 0,
+                },
+                f"paper-no-signal::{bar_row['record_hash']}",
+                planned,
+            )
+            self.control.append_rows(planned)
+            return
+        signal_id = "paper-signal::" + canonical_hash(
+            {
+                "strategy_id": PAPER_CONFIG["strategy_id"],
+                "bar_record_hash": bar_row["record_hash"],
+                "paper_config_sha256": canonical_hash(PAPER_CONFIG),
+            }
+        )
+        proposal = {
+            "schema_version": 1,
+            "event": "RAW_SIGNAL",
+            "signal_id": signal_id,
+            "strategy_id": PAPER_CONFIG["strategy_id"],
+            "runtime_hash": SHARED_RUNTIME_HASH,
+            "service_attestation_hash": SERVICE_ATTESTATION_HASH,
+            "instrument": bar["instrument"],
+            "decision_source_time_utc": bar["end_utc"],
+            "decision_arrival_watermark_utc": bar["arrival_watermark_utc"],
+            "completed_bar_hash": bar_row["record_hash"],
+            "paper_config_sha256": canonical_hash(PAPER_CONFIG),
+            **signal,
+            "research_status": "RESEARCH_NOT_ADMITTED",
+            "shadow_observation": True,
+            "profit_proven": False,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+        }
+        proposal_row = self._append_paper("proposals", proposal, signal_id)
+        decision_time = parse_utc(bar["end_utc"])
+        for arm in PAPER_CONFIG["arms"]:
+            expected_order_id = f"expected::{signal_id}::{arm}"
+            blocked_reason = self._paper_capacity_reason(arm, bar["instrument"])
+            expected = {
+                "schema_version": 1,
+                "event": "EXPECTED_ORDER",
+                "expected_order_id": expected_order_id,
+                "signal_id": signal_id,
+                "proposal_record_hash": proposal_row["record_hash"],
+                "execution_arm": arm,
+                "instrument": bar["instrument"],
+                "direction": signal["direction"],
+                "units": PAPER_CONFIG["virtual_units"],
+                "decision_source_time_utc": bar["end_utc"],
+                "decision_arrival_watermark_utc": bar["arrival_watermark_utc"],
+                "order_expires_at_utc": utc_text(
+                    decision_time
+                    + timedelta(minutes=5 * PAPER_CONFIG["expected_order_ttl_bars"])
+                ),
+                "tp_distance_price": signal["tp_distance_price"],
+                "max_age_bars": PAPER_CONFIG["max_age_bars"],
+                "status": "PENDING" if blocked_reason is None else "BLOCKED",
+                "blocked_reason": blocked_reason,
+                "external_submission_allowed": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+            }
+            self._append_paper("expected_orders", expected, expected_order_id)
+            if blocked_reason is None:
+                self.pending_orders[expected_order_id] = {
+                    **expected,
+                    "latency_remaining": PAPER_CONFIG["arms"][arm]["entry_latency_events"],
+                }
+
+    def _seal(
+        self,
+        instrument: str,
+        bucket: int,
+        events: list[dict[str, Any]],
+        *,
+        replay: bool,
+    ) -> None:
         skip = _skip_payload(
             instrument,
             bucket,
@@ -598,8 +895,324 @@ class IncrementalBot:
             "external_orders": 0,
         }, f"no-proposal::{row['record_hash']}", control_planned)
         self.control.append_rows(control_planned)
+        if not replay and row["payload"].get("feed_continuity_eligible") is True:
+            self._emit_paper_signal(row)
 
-    def _consume_new_rows(self) -> None:
+    def _quote_to_jpy(self, instrument: str, quote_amount: float) -> tuple[float | None, str]:
+        quote_currency = instrument.split("_", 1)[1]
+        if quote_currency == "JPY":
+            return quote_amount, "QUOTE_IS_JPY"
+        if quote_currency == "USD":
+            usd_jpy = self.last_quotes.get("USD_JPY")
+            if usd_jpy is None:
+                return None, "USD_JPY_CONVERSION_MISSING"
+            conversion = (float(usd_jpy["bid"]) + float(usd_jpy["ask"])) / 2.0
+            return quote_amount * conversion, "USD_JPY_MID_AT_EXIT"
+        return None, "UNSUPPORTED_QUOTE_CURRENCY"
+
+    def _llm_inventory_summary(self) -> dict[str, Any]:
+        positions = []
+        for position in sorted(self.open_positions.values(), key=lambda value: value["position_id"]):
+            if position["execution_arm"] != "ACTUAL_LLM_INVENTORY":
+                continue
+            quote = self.last_quotes.get(position["instrument"])
+            unrealized_pips = None
+            if quote is not None:
+                mark = virtual_price(
+                    quote,
+                    position["direction"],
+                    PAPER_CONFIG["arms"][position["execution_arm"]],
+                    entry=False,
+                )
+                unrealized_pips = pnl_pips(
+                    position["entry_price"],
+                    mark,
+                    position["direction"],
+                    position["instrument"],
+                )
+            positions.append(
+                {
+                    "position_id": position["position_id"],
+                    "instrument": position["instrument"],
+                    "direction": position["direction"],
+                    "opened_at_utc": position["fill_source_time_utc"],
+                    "max_age_at_utc": position["max_age_at_utc"],
+                    "unrealized_pips": unrealized_pips,
+                }
+            )
+        realized = sum(
+            float(row["payload"].get("pnl_jpy") or 0.0)
+            for row in self.paper_ledgers["pnl"].rows
+            if row["payload"].get("execution_arm") == "ACTUAL_LLM_INVENTORY"
+            and row["payload"].get("event") == "REALIZED_PNL"
+        )
+        return {
+            "positions": positions,
+            "open_inventory_count": len(positions),
+            "realized_pnl_jpy": realized,
+            "hard_max_open_positions": LLM_POLICY_CONFIG["hard_max_open_positions"],
+            "current_policy": copy.deepcopy(self.llm_policy),
+        }
+
+    def _write_llm_trigger(self, event_kind: str, at: datetime) -> None:
+        summary = self._llm_inventory_summary()
+        snapshot_hash = canonical_hash(summary)
+        trigger_id = canonical_hash(
+            {
+                "event_kind": event_kind,
+                "inventory_snapshot_hash": snapshot_hash,
+                "inventory_ledger_head": self.paper_ledgers["inventory"].last_hash,
+            }
+        )
+        trigger = {
+            "schema_version": 2,
+            "trigger_id": trigger_id,
+            "runtime_hash": SHARED_RUNTIME_HASH,
+            "inventory_snapshot_hash": snapshot_hash,
+            "open_inventory_count": summary["open_inventory_count"],
+            "created_at_utc": utc_text(at),
+            "event_kind": event_kind,
+            "inventory_summary": summary,
+            "allowed_actions": list(ALLOWED_ACTIONS),
+            "hard_guard_mutation_allowed": False,
+            "individual_order_control_allowed": False,
+            "research_status": "RESEARCH_NOT_ADMITTED",
+            "profit_proven": False,
+            "external_orders": 0,
+        }
+        atomic_json(SERVICE_ROOT / "triggers" / "llm_inventory_request.json", trigger)
+
+    def _fill_pending_orders(self, event: dict[str, Any]) -> None:
+        event_source = parse_utc(event["event_time_utc"])
+        event_arrival = parse_utc(event["arrival_time_utc"])
+        for expected_order_id, pending in list(self.pending_orders.items()):
+            if pending["instrument"] != event["instrument"]:
+                continue
+            if (
+                event_source < parse_utc(pending["decision_source_time_utc"])
+                or event_arrival <= parse_utc(pending["decision_arrival_watermark_utc"])
+            ):
+                continue
+            if event_source > parse_utc(pending["order_expires_at_utc"]):
+                planned: list[dict[str, Any]] = []
+                self.control.plan(
+                    {
+                        "event": "VIRTUAL_ORDER_EXPIRED_NO_FILL",
+                        "expected_order_id": expected_order_id,
+                        "signal_id": pending["signal_id"],
+                        "execution_arm": pending["execution_arm"],
+                        "at_utc": event["event_time_utc"],
+                        "external_orders": 0,
+                    },
+                    f"paper-expired::{expected_order_id}",
+                    planned,
+                )
+                self.control.append_rows(planned)
+                self.pending_orders.pop(expected_order_id)
+                continue
+            if pending["latency_remaining"] > 0:
+                pending["latency_remaining"] -= 1
+                continue
+            arm = pending["execution_arm"]
+            arm_config = PAPER_CONFIG["arms"][arm]
+            entry_price = virtual_price(event, pending["direction"], arm_config, entry=True)
+            mid = (float(event["bid"]) + float(event["ask"])) / 2.0
+            position_id = f"position::{pending['signal_id']}::{arm}"
+            fill = {
+                "schema_version": 1,
+                "event": "VIRTUAL_FILL",
+                "position_id": position_id,
+                "expected_order_id": expected_order_id,
+                "signal_id": pending["signal_id"],
+                "execution_arm": arm,
+                "instrument": pending["instrument"],
+                "direction": pending["direction"],
+                "units": pending["units"],
+                "first_executable_bbo_event_id": event["event_id"],
+                "fill_source_time_utc": event["event_time_utc"],
+                "fill_arrival_time_utc": event["arrival_time_utc"],
+                "bid": event["bid"],
+                "ask": event["ask"],
+                "entry_mid": mid,
+                "virtual_entry_price": entry_price,
+                "price_mode": arm_config["price_mode"],
+                "slippage_pips_per_side": arm_config["slippage_pips_per_side"],
+                "latency_events": arm_config["entry_latency_events"],
+                "external_submission_allowed": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+            }
+            fill_row = self._append_paper("virtual_fills", fill, f"fill::{expected_order_id}")
+            max_age_at = event_source + timedelta(minutes=5 * pending["max_age_bars"])
+            position = {
+                "schema_version": 1,
+                "event": "OPEN",
+                "position_id": position_id,
+                "expected_order_id": expected_order_id,
+                "signal_id": pending["signal_id"],
+                "fill_record_hash": fill_row["record_hash"],
+                "execution_arm": arm,
+                "instrument": pending["instrument"],
+                "direction": pending["direction"],
+                "units": pending["units"],
+                "entry_price": entry_price,
+                "entry_mid": mid,
+                "tp_price": entry_price + pending["direction"] * pending["tp_distance_price"],
+                "fill_source_time_utc": event["event_time_utc"],
+                "fill_arrival_time_utc": event["arrival_time_utc"],
+                "max_age_at_utc": utc_text(max_age_at),
+                "individual_price_sl": False,
+                "external_orders": 0,
+            }
+            self._append_paper("inventory", position, f"inventory-open::{position_id}")
+            self.open_positions[position_id] = position
+            self.pending_orders.pop(expected_order_id)
+            if arm == "ACTUAL_LLM_INVENTORY":
+                self._write_llm_trigger("INVENTORY_OPENED", event_arrival)
+
+    def _close_positions(self, event: dict[str, Any]) -> None:
+        event_source = parse_utc(event["event_time_utc"])
+        event_arrival = parse_utc(event["arrival_time_utc"])
+        for position_id, position in list(self.open_positions.items()):
+            if position["instrument"] != event["instrument"]:
+                continue
+            arm = position["execution_arm"]
+            exit_price = virtual_price(
+                event,
+                position["direction"],
+                PAPER_CONFIG["arms"][arm],
+                entry=False,
+            )
+            tp_hit = (
+                exit_price >= position["tp_price"]
+                if position["direction"] > 0
+                else exit_price <= position["tp_price"]
+            )
+            llm_unwind = arm == "ACTUAL_LLM_INVENTORY" and self.llm_policy["action"] == "UNWIND"
+            aged_out = event_source >= parse_utc(position["max_age_at_utc"])
+            if not (tp_hit or llm_unwind or aged_out):
+                continue
+            reason = "TP" if tp_hit else "LLM_OLDEST_FIRST_UNWIND" if llm_unwind else "MAX_AGE"
+            quote_amount = quote_pnl(
+                position["entry_price"],
+                exit_price,
+                position["direction"],
+                position["units"],
+            )
+            pnl_jpy, conversion_status = self._quote_to_jpy(position["instrument"], quote_amount)
+            exit_mid = (float(event["bid"]) + float(event["ask"])) / 2.0
+            gross_pips = pnl_pips(
+                position["entry_mid"],
+                exit_mid,
+                position["direction"],
+                position["instrument"],
+            )
+            net_pips = pnl_pips(
+                position["entry_price"],
+                exit_price,
+                position["direction"],
+                position["instrument"],
+            )
+            close = {
+                "schema_version": 1,
+                "event": "CLOSE",
+                "position_id": position_id,
+                "signal_id": position["signal_id"],
+                "execution_arm": arm,
+                "instrument": position["instrument"],
+                "direction": position["direction"],
+                "units": position["units"],
+                "reason": reason,
+                "exit_bbo_event_id": event["event_id"],
+                "exit_source_time_utc": event["event_time_utc"],
+                "exit_arrival_time_utc": event["arrival_time_utc"],
+                "virtual_exit_price": exit_price,
+                "external_orders": 0,
+            }
+            close_row = self._append_paper(
+                "inventory",
+                close,
+                f"inventory-close::{position_id}",
+            )
+            pnl = {
+                "schema_version": 1,
+                "event": "REALIZED_PNL",
+                "position_id": position_id,
+                "signal_id": position["signal_id"],
+                "close_record_hash": close_row["record_hash"],
+                "execution_arm": arm,
+                "instrument": position["instrument"],
+                "reason": reason,
+                "gross_pips": gross_pips,
+                "execution_cost_pips": gross_pips - net_pips,
+                "net_pips": net_pips,
+                "break_even_round_trip_cost_pips": gross_pips,
+                "pnl_quote": quote_amount,
+                "pnl_jpy": pnl_jpy,
+                "jpy_conversion_status": conversion_status,
+                "terminal_mtm_included": True,
+                "research_status": "RESEARCH_NOT_ADMITTED",
+                "profit_proven": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+            }
+            self._append_paper("pnl", pnl, f"pnl::{position_id}")
+            self.open_positions.pop(position_id)
+            if arm == "ACTUAL_LLM_INVENTORY":
+                self._write_llm_trigger("INVENTORY_CLOSED", event_arrival)
+
+    def record_terminal_mtm(self) -> None:
+        """Persist every still-open virtual position at the latest observed BBO."""
+        for position_id, position in self.open_positions.items():
+            quote = self.last_quotes.get(position["instrument"])
+            if quote is None:
+                continue
+            exit_price = virtual_price(
+                quote,
+                position["direction"],
+                PAPER_CONFIG["arms"][position["execution_arm"]],
+                entry=False,
+            )
+            quote_amount = quote_pnl(
+                position["entry_price"],
+                exit_price,
+                position["direction"],
+                position["units"],
+            )
+            pnl_jpy, conversion_status = self._quote_to_jpy(position["instrument"], quote_amount)
+            payload = {
+                "schema_version": 1,
+                "event": "TERMINAL_MTM",
+                "position_id": position_id,
+                "signal_id": position["signal_id"],
+                "execution_arm": position["execution_arm"],
+                "instrument": position["instrument"],
+                "mark_bbo_event_id": quote["event_id"],
+                "mark_source_time_utc": quote["event_time_utc"],
+                "virtual_exit_price": exit_price,
+                "unrealized_pips": pnl_pips(
+                    position["entry_price"],
+                    exit_price,
+                    position["direction"],
+                    position["instrument"],
+                ),
+                "unrealized_pnl_quote": quote_amount,
+                "unrealized_pnl_jpy": pnl_jpy,
+                "jpy_conversion_status": conversion_status,
+                "terminal_mtm_included": True,
+                "realized": False,
+                "research_status": "RESEARCH_NOT_ADMITTED",
+                "profit_proven": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+            }
+            self._append_paper(
+                "pnl",
+                payload,
+                f"terminal-mtm::{position_id}::{quote['event_id']}",
+            )
+
+    def _consume_new_rows(self, *, replay: bool = False) -> None:
         for row in self.feed_raw.rows[self.processed_rows:]:
             event = {**row["payload"], "raw_record_hash": row["record_hash"]}
             instrument = event["instrument"]
@@ -632,21 +1245,36 @@ class IncrementalBot:
                         self._record_skip(payload)
                     continue
                 raise IntegrityError("BOT_SOURCE_BUCKET_REGRESSION")
+            self.last_quotes[instrument] = event
             if current is None:
                 self.buckets[instrument] = (bucket, [event])
             elif bucket == current[0]:
+                if not replay:
+                    self._close_positions(event)
+                    self._fill_pending_orders(event)
                 current[1].append(event)
             elif bucket > current[0]:
-                self._seal(instrument, current[0], current[1])
+                if not replay:
+                    self._close_positions(event)
+                self._seal(instrument, current[0], current[1], replay=replay)
                 self.buckets[instrument] = (bucket, [event])
+                if not replay:
+                    self._fill_pending_orders(event)
         self.processed_rows = len(self.feed_raw.rows)
 
     def process_once(self) -> dict[str, int]:
         self.feed_control.refresh()
         self.declared_provenance = _declared_feed_provenance(self.feed_control)
         self.feed_raw.refresh()
-        self._consume_new_rows()
-        return _bot_counts(self.completed, self.control, len(self.feed_raw.rows))
+        self._refresh_llm_policy()
+        self._consume_new_rows(replay=False)
+        return _bot_counts(
+            self.completed,
+            self.control,
+            len(self.feed_raw.rows),
+            self.paper_ledgers,
+            len(self.open_positions),
+        )
 
 
 def bot_process_once() -> dict[str, int]:
@@ -738,6 +1366,8 @@ def run_bot(max_seconds: float) -> int:
             counters = processor.process_once()
             lock.heartbeat(service_status(counters))
             time.sleep(2.0)
+        processor.process_once()
+        processor.record_terminal_mtm()
         counters = processor.process_once()
         lock.heartbeat(service_status(counters, "STOPPED_GRACEFULLY"))
     return 0
@@ -748,13 +1378,24 @@ def llm_output_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
-            "currency_cap": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+            "max_open_positions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": int(LLM_POLICY_CONFIG["hard_max_open_positions"]),
+            },
             "mode": {"type": "string", "enum": ["SHADOW_ONLY"]},
             "valid_until": {"type": "string"},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "reason": {"type": "string", "maxLength": 240},
         },
-        "required": ["action", "currency_cap", "mode", "valid_until", "confidence", "reason"],
+        "required": [
+            "action",
+            "max_open_positions",
+            "mode",
+            "valid_until",
+            "confidence",
+            "reason",
+        ],
         "additionalProperties": False,
     }
 
@@ -783,28 +1424,75 @@ def process_llm_trigger(runner: Callable[[str], dict[str, Any]] = actual_model) 
     if not trigger_path.exists():
         return {"triggers": 0, "llm_calls": len(receipts.rows), "external_order_attempts": 0, "external_orders": 0}
     trigger = json.loads(secure_read(trigger_path).decode("utf-8", "strict"))
-    required = {"trigger_id", "runtime_hash", "inventory_snapshot_hash", "open_inventory_count", "created_at_utc", "evidence_eligible", "profit_evidence", "external_orders"}
+    required = {
+        "schema_version",
+        "trigger_id",
+        "runtime_hash",
+        "inventory_snapshot_hash",
+        "open_inventory_count",
+        "created_at_utc",
+        "event_kind",
+        "inventory_summary",
+        "allowed_actions",
+        "hard_guard_mutation_allowed",
+        "individual_order_control_allowed",
+        "research_status",
+        "profit_proven",
+        "external_orders",
+    }
     if set(trigger) != required or trigger["runtime_hash"] != SHARED_RUNTIME_HASH:
         raise RuntimeError("LLM_TRIGGER_SCHEMA_MISMATCH")
-    if trigger["evidence_eligible"] or trigger["profit_evidence"] or trigger["external_orders"] != 0:
+    if (
+        trigger["schema_version"] != 2
+        or trigger["allowed_actions"] != list(ALLOWED_ACTIONS)
+        or trigger["hard_guard_mutation_allowed"] is not False
+        or trigger["individual_order_control_allowed"] is not False
+        or trigger["research_status"] != "RESEARCH_NOT_ADMITTED"
+        or trigger["profit_proven"] is not False
+        or trigger["external_orders"] != 0
+        or canonical_hash(trigger["inventory_summary"]) != trigger["inventory_snapshot_hash"]
+        or trigger["inventory_summary"].get("open_inventory_count")
+        != trigger["open_inventory_count"]
+    ):
         raise RuntimeError("LLM_TRIGGER_AUTHORITY_MISMATCH")
     record_id = f"llm::{trigger['trigger_id']}"
     if any(row["record_id"] == record_id for row in receipts.rows):
         return {"triggers": 1, "llm_calls": len(receipts.rows), "external_order_attempts": 0, "external_orders": 0}
     request_time = datetime.now(timezone.utc)
+    created_at = parse_utc(trigger["created_at_utc"])
+    if created_at > request_time + timedelta(seconds=5) or request_time - created_at > timedelta(minutes=10):
+        raise RuntimeError("LLM_TRIGGER_STALE")
     prompt = (
-        "Return one JSON inventory decision. Allowed action: ADD/FREEZE/UNWIND/RESET. "
-        "mode=SHADOW_ONLY; currency_cap=0..1000000000 JPY microunits; valid_until within 2h. "
-        "Do not control order, direction, fill, TP, SL, leverage, cost, or hard guard. External orders=0. "
+        "Manage only the supplied virtual FX inventory. Return one JSON decision. "
+        "Allowed action: ADD/FREEZE/UNWIND/RESET. mode=SHADOW_ONLY; "
+        f"max_open_positions=0..{LLM_POLICY_CONFIG['hard_max_open_positions']}; "
+        "valid_until within 2h. ADD permits only bot-generated future proposals within the cap. "
+        "FREEZE stops adds. UNWIND asks the bot to close oldest inventory deterministically. "
+        "RESET is valid only when flat. Do not select an individual order, direction, fill, TP, SL, "
+        "leverage, cost, or hard guard. External orders=0. "
         f"request_time={utc_text(request_time)} snapshot={canonical_bytes(trigger).decode()}"
     )
     output = runner(prompt)
-    if set(output) != {"action", "currency_cap", "mode", "valid_until", "confidence", "reason"}:
+    if set(output) != {
+        "action",
+        "max_open_positions",
+        "mode",
+        "valid_until",
+        "confidence",
+        "reason",
+    }:
         raise RuntimeError("LLM_OUTPUT_SCHEMA_MISMATCH")
     if output["action"] not in ALLOWED_ACTIONS or output["mode"] != "SHADOW_ONLY":
         raise RuntimeError("LLM_OUTPUT_AUTHORITY_MISMATCH")
-    if type(output["currency_cap"]) is not int or not 0 <= output["currency_cap"] <= 1000000000:
+    if (
+        type(output["max_open_positions"]) is not int
+        or not 0
+        <= output["max_open_positions"]
+        <= int(LLM_POLICY_CONFIG["hard_max_open_positions"])
+    ):
         raise RuntimeError("LLM_OUTPUT_CAP_MISMATCH")
+    if output["action"] == "RESET" and trigger["open_inventory_count"] != 0:
+        raise RuntimeError("LLM_RESET_REQUIRES_FLAT_INVENTORY")
     if not request_time < parse_utc(output["valid_until"]) <= request_time + timedelta(hours=2):
         raise RuntimeError("LLM_OUTPUT_EXPIRY_MISMATCH")
     decision_time = datetime.now(timezone.utc)
@@ -867,7 +1555,12 @@ def run_watchdog() -> int:
         "bot_bars_eligible": int(bot["counters"].get("completed_m5_eligible", 0)),
         "bot_bars_skipped": int(bot["counters"].get("skipped_m5", 0)),
         "bot_bars_legacy_invalidated": int(bot["counters"].get("legacy_invalidated_m5", 0)),
-        "llm_calls": 0,
+        "paper_signals": int(bot["counters"].get("natural_paper_proposals", 0)),
+        "virtual_fills": int(bot["counters"].get("virtual_fills", 0)),
+        "virtual_exits": int(bot["counters"].get("virtual_exits", 0)),
+        "open_inventory_count": int(bot["counters"].get("open_inventory_count", 0)),
+        "pnl_records": int(bot["counters"].get("pnl_records", 0)),
+        "llm_calls": int(bot["counters"].get("llm_calls", 0)),
         "external_order_attempts": 0,
         "external_orders": 0,
     }

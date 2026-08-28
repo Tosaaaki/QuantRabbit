@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import oanda_launchd_runtime as runtime
-from oanda_launchd_manage import preinstall
+from oanda_launchd_manage import plist_paths, preinstall
 from shadow_runtime import HashLedger, IntegrityError, atomic_json, canonical_bytes, canonical_hash, utc_text
 
 
@@ -87,11 +87,17 @@ class LaunchdRuntimeTest(unittest.TestCase):
         self.assertEqual(result["lint_failures"], 0)
         self.assertEqual(result["candidate_runtime_hash"], runtime.SHARED_RUNTIME_HASH)
         self.assertEqual(result["service_attestation_hash"], runtime.SERVICE_ATTESTATION_HASH)
+        self.assertEqual(runtime.SERVICE_ROOT.name, "oanda_live_launchd_v2")
+        for path in plist_paths():
+            plist_text = path.read_text(encoding="utf-8")
+            self.assertIn("oanda_live_launchd_v2", plist_text)
+            self.assertNotIn("oanda_live_launchd_v1", plist_text)
 
     def test_service_attestation_binds_every_executable_source(self):
         expected = {
             "oanda_launchd_runtime.py",
             "oanda_live_feed.py",
+            "oanda_paper_execution.py",
             "shadow_runtime.py",
             "oanda_live_runtime_contract.json",
             "oanda_launchagents/com.quantrabbit.oanda-live.feed-recorder.plist",
@@ -180,6 +186,124 @@ class LaunchdRuntimeTest(unittest.TestCase):
         self.assertEqual(sorted(actual, key=order), sorted(expected, key=order))
         self.assertEqual(expected, [])
         self.assertEqual(processor.processed_rows, len(writer.rows))
+
+    def test_natural_signal_fans_out_to_four_virtual_arms_and_realizes_pnl(self):
+        base = datetime(2026, 8, 28, 3, 0, tzinfo=timezone.utc)
+        segment_start = base - timedelta(minutes=5)
+        raw_path = self.root / "feed" / "ledgers" / "raw_bbo.jsonl"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        writer = HashLedger(raw_path)
+        feed_control = HashLedger(raw_path.parent / "control.jsonl")
+        control_planned = []
+        feed_control.plan({
+            "event": "LIVE_PRICING_CONNECTED",
+            "segment_id": "segment-paper",
+            "segment_started_at_utc": utc_text(segment_start),
+            "feed_service_attestation_hash": "f" * 64,
+            "feed_provenance_status": "ATTESTED",
+        }, "fixture-connect::paper", control_planned)
+        feed_control.append_rows(control_planned)
+
+        def event(index, stamp, mid):
+            spread = 0.00008
+            return {
+                "event_id": f"paper-event-{index}",
+                "instrument": "EUR_USD",
+                "event_time_utc": utc_text(stamp),
+                "arrival_time_utc": utc_text(stamp + timedelta(milliseconds=20)),
+                "bid": mid - spread / 2,
+                "ask": mid + spread / 2,
+                "segment_id": "segment-paper",
+                "segment_started_at_utc": utc_text(segment_start),
+                "feed_service_attestation_hash": "f" * 64,
+                "feed_provenance_status": "ATTESTED",
+            }
+
+        initial_mids = [
+            1.10000, 1.10008, 1.10018, 1.10032,
+            1.10051, 1.10076, 1.10108, 1.10147,
+        ]
+        planned = []
+        for index, mid in enumerate(initial_mids):
+            payload = event(index, base + timedelta(minutes=5 * index, seconds=1), mid)
+            writer.plan(payload, payload["event_id"], planned)
+        writer.append_rows(planned)
+
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            warm = processor.process_once()
+            self.assertEqual(warm["natural_paper_proposals"], 0)
+
+            planned = []
+            first_executable = event(8, base + timedelta(minutes=40, seconds=1), 1.10160)
+            writer.plan(first_executable, first_executable["event_id"], planned)
+            writer.append_rows(planned)
+            opened = processor.process_once()
+            self.assertEqual(opened["natural_paper_proposals"], 1)
+            self.assertEqual(opened["expected_orders"], 4)
+            self.assertEqual(opened["virtual_fills"], 3)
+            self.assertEqual(opened["open_inventory_count"], 3)
+
+            planned = []
+            adverse_fill = event(9, base + timedelta(minutes=40, seconds=2), 1.10162)
+            writer.plan(adverse_fill, adverse_fill["event_id"], planned)
+            writer.append_rows(planned)
+            all_open = processor.process_once()
+            self.assertEqual(all_open["virtual_fills"], 4)
+            self.assertEqual(all_open["open_inventory_count"], 4)
+            processor.record_terminal_mtm()
+            marked = processor.process_once()
+            self.assertEqual(marked["terminal_mtm_records"], 4)
+
+            planned = []
+            tp_quote = event(10, base + timedelta(minutes=40, seconds=3), 1.10250)
+            writer.plan(tp_quote, tp_quote["event_id"], planned)
+            writer.append_rows(planned)
+            closed = processor.process_once()
+            self.assertEqual(closed["virtual_exits"], 4)
+            self.assertEqual(closed["realized_pnl_records"], 4)
+            self.assertEqual(closed["pnl_records"], 8)
+            self.assertEqual(closed["open_inventory_count"], 0)
+            self.assertEqual(closed["external_order_attempts"], 0)
+            self.assertEqual(closed["external_orders"], 0)
+
+            signal_ids = {
+                row["payload"]["signal_id"]
+                for ledger in (
+                    processor.paper_ledgers["proposals"],
+                    processor.paper_ledgers["expected_orders"],
+                    processor.paper_ledgers["virtual_fills"],
+                    processor.paper_ledgers["pnl"],
+                )
+                for row in ledger.rows
+            }
+            self.assertEqual(len(signal_ids), 1)
+            self.assertTrue(
+                all(
+                    row["payload"].get("external_orders") == 0
+                    for ledger in processor.paper_ledgers.values()
+                    for row in ledger.rows
+                )
+            )
+            base_pnl = next(
+                row["payload"]
+                for row in processor.paper_ledgers["pnl"].rows
+                if row["payload"]["execution_arm"] == "EXECUTABLE_BASE"
+                and row["payload"]["event"] == "REALIZED_PNL"
+            )
+            self.assertGreater(base_pnl["net_pips"], 0)
+            self.assertGreater(base_pnl["execution_cost_pips"], 0)
+            trigger = json.loads((self.root / "triggers" / "llm_inventory_request.json").read_text())
+            self.assertEqual(trigger["event_kind"], "INVENTORY_CLOSED")
+            self.assertEqual(trigger["open_inventory_count"], 0)
+            self.assertFalse(trigger["individual_order_control_allowed"])
+
+            proposal_head = processor.paper_ledgers["proposals"].last_hash
+            restarted = runtime.IncrementalBot()
+            repeated = restarted.process_once()
+            self.assertEqual(repeated["natural_paper_proposals"], 1)
+            self.assertEqual(restarted.paper_ledgers["proposals"].last_hash, proposal_head)
+            self.assertEqual(repeated["external_orders"], 0)
 
     def test_reconnect_mid_bucket_skips_boundary_and_resumes_next_full_bucket(self):
         base = datetime(2026, 8, 28, 1, 0, tzinfo=timezone.utc)
@@ -535,11 +659,41 @@ class LaunchdRuntimeTest(unittest.TestCase):
     def test_llm_worker_is_triggered_once_and_fake_dependency_is_bounded(self):
         trigger_dir = self.root / "triggers"
         trigger_dir.mkdir(parents=True)
+        created_at = datetime.now(timezone.utc)
+        inventory_summary = {
+            "positions": [{
+                "position_id": "position-1",
+                "instrument": "EUR_USD",
+                "direction": 1,
+                "opened_at_utc": utc_text(created_at - timedelta(minutes=1)),
+                "max_age_at_utc": utc_text(created_at + timedelta(minutes=29)),
+                "unrealized_pips": -0.8,
+            }],
+            "open_inventory_count": 1,
+            "realized_pnl_jpy": 0.0,
+            "hard_max_open_positions": 2,
+            "current_policy": {
+                "action": "ADD",
+                "max_open_positions": 2,
+                "source": "BOT_DEFAULT_BEFORE_FIRST_LLM_RECEIPT",
+                "valid_until": None,
+            },
+        }
         trigger = {
-            "trigger_id": "fixture-1", "runtime_hash": runtime.SHARED_RUNTIME_HASH,
-            "inventory_snapshot_hash": "a" * 64, "open_inventory_count": 1,
-            "created_at_utc": "2026-08-28T01:00:00Z",
-            "evidence_eligible": False, "profit_evidence": False, "external_orders": 0,
+            "schema_version": 2,
+            "trigger_id": "fixture-1",
+            "runtime_hash": runtime.SHARED_RUNTIME_HASH,
+            "inventory_snapshot_hash": canonical_hash(inventory_summary),
+            "open_inventory_count": 1,
+            "created_at_utc": utc_text(created_at),
+            "event_kind": "INVENTORY_OPENED",
+            "inventory_summary": inventory_summary,
+            "allowed_actions": list(runtime.ALLOWED_ACTIONS),
+            "hard_guard_mutation_allowed": False,
+            "individual_order_control_allowed": False,
+            "research_status": "RESEARCH_NOT_ADMITTED",
+            "profit_proven": False,
+            "external_orders": 0,
         }
         atomic_json(trigger_dir / "llm_inventory_request.json", trigger)
         calls = []
@@ -547,7 +701,7 @@ class LaunchdRuntimeTest(unittest.TestCase):
         def fake(prompt):
             calls.append(prompt)
             return {
-                "action": "FREEZE", "currency_cap": 0, "mode": "SHADOW_ONLY",
+                "action": "FREEZE", "max_open_positions": 0, "mode": "SHADOW_ONLY",
                 "valid_until": utc_text(datetime.now(timezone.utc) + timedelta(hours=1)),
                 "confidence": 0.9, "reason": "Fixture dependency check.",
             }
@@ -559,6 +713,10 @@ class LaunchdRuntimeTest(unittest.TestCase):
         self.assertEqual(one["llm_calls"], 1)
         self.assertEqual(two["llm_calls"], 1)
         self.assertEqual(two["external_orders"], 0)
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+        self.assertEqual(processor.llm_policy["action"], "FREEZE")
+        self.assertEqual(processor.llm_policy["max_open_positions"], 0)
 
     def test_runtime_source_has_no_broker_or_write_http_surface(self):
         source = Path(runtime.__file__).read_text()
