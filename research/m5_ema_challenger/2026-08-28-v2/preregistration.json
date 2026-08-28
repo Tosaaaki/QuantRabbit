@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "candidate_id": "M5_EMA_EXHAUSTION_INTERACTION_V2",
+  "status": "PREREGISTERED_OPENED_DEVELOPMENT_ONLY",
+  "created_date": "2026-08-28",
+  "authority": {
+    "network": false,
+    "credentials": false,
+    "live_runtime": false,
+    "broker_adapter": false,
+    "external_orders": false,
+    "launchd": false,
+    "commit": false,
+    "push": false
+  },
+  "evidence_boundary": {
+    "historical_corpus_previously_inspected": true,
+    "development_only": true,
+    "holdout": false,
+    "admission": false,
+    "untouched_evidence": "artifact-sealed future OANDA LIVE zero-order shadow only",
+    "version_rule": "V2 results may inform V3 only; V2 bytes and scores are never rewritten"
+  },
+  "inputs": {
+    "coverage_utc": [
+      "2026-03-11T00:00:00Z",
+      "2026-07-15T10:55:00Z"
+    ],
+    "split": {
+      "calibration_fraction": 0.35,
+      "tuning_fraction": 0.35,
+      "opened_development_fraction": 0.30,
+      "method": "per_pair_chronological_floor",
+      "label_crossing": "forbidden; positions are liquidated at the owning split boundary"
+    },
+    "files": {
+      "EUR_USD": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+        "rows": 26051
+      },
+      "USD_JPY": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648",
+        "rows": 26046
+      },
+      "AUD_USD": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+        "rows": 26047
+      }
+    }
+  },
+  "chronology": {
+    "market_data": "completed M5 BID/ASK bars only",
+    "provider_timestamp": "OANDA candle time is the candle-open timestamp",
+    "decision": "after completed bar t at row[t].time + 5 minutes",
+    "entry": "next bar t+1 open, exactly the decision boundary in this bar replay; LONG at ASK and SHORT at BID",
+    "exit": "fill_index + H - 1 close at row[exit].time + 5 minutes; LONG at BID and SHORT at ASK",
+    "gap_policy": "any non-5-minute step from decision through exit is DATA_GAP_UNSCORABLE",
+    "terminal_liquidation": true,
+    "same_pair_config_inventory": "at most one position; a signal whose next open overlaps an existing position is skipped"
+  },
+  "features": {
+    "mid": "OHLC midpoint of BID and ASK",
+    "return": "r_t=log(C_t/C_t-1)",
+    "ema_fast_bars": 3,
+    "ema_slow_bars": 12,
+    "path_window_returns": 12,
+    "break_reference_bars": 12,
+    "path_efficiency_epsilon": 1e-15,
+    "calibration_quantile_low": 0.33,
+    "calibration_quantile_high": 0.67,
+    "ema_direction": "d_t=sign(EMA3_t-EMA12_t); equality emits no source signal",
+    "path_efficiency": "PE_t=abs(sum(r_t..r_t-11))/(sum(abs(r_t..r_t-11))+1e-15)",
+    "realized_energy": "RV_t=sqrt(sum(r_t..r_t-11 squared))",
+    "thresholds": "pair x UTC-session PE Q33/Q67 and RV Q33/Q67 from calibration only",
+    "minimum_calibration_rows_per_pair_session": 500,
+    "session_clock": "decision availability timestamp (candle-open time + 5 minutes)",
+    "sessions_utc": {
+      "ASIA": "[00:00,07:00)",
+      "LONDON": "[07:00,13:00)",
+      "OVERLAP": "[13:00,17:00)",
+      "NY_LATE": "[17:00,21:00)",
+      "ROLLOVER": "[21:00,24:00)"
+    },
+    "decision_sessions": [
+      "ASIA",
+      "LONDON",
+      "OVERLAP"
+    ]
+  },
+  "break_state": {
+    "reference": "U_t=max(midHigh[t-13..t-2]); L_t=min(midLow[t-13..t-2])",
+    "acceptance_up": "C[t-1]>U_t and C[t]>U_t",
+    "acceptance_down": "C[t-1]<L_t and C[t]<L_t",
+    "rejection_up_to_short": "midHigh[t-1]>U_t and C[t-1]<=U_t and C[t]<C[t-1]",
+    "rejection_down_to_long": "midLow[t-1]<L_t and C[t-1]>=L_t and C[t]>C[t-1]",
+    "ambiguity": "multiple directions, missing values, or a non-contiguous 14-bar context is UNKNOWN and emits no break-gated signal"
+  },
+  "configs": {
+    "C0": {
+      "gate": "all eligible source states",
+      "side": "d_t",
+      "max_age_bars": 24
+    },
+    "C1": {
+      "gate": "all eligible source states",
+      "side": "-d_t",
+      "max_age_bars": 24
+    },
+    "C2": {
+      "gate": "PE>=pair-session calibration Q67",
+      "side": "-d_t",
+      "max_age_bars": 24
+    },
+    "C3": {
+      "gate": "PE>=pair-session calibration Q67",
+      "side": "-d_t",
+      "max_age_bars": 48
+    },
+    "C4": {
+      "gate": "ASIA and PE>=Q67 and RV Q33<=RV<Q67",
+      "side": "-d_t",
+      "max_age_bars": 48
+    },
+    "C5": {
+      "gate": "LONDON and PE>=Q67 and RV Q33<=RV<Q67",
+      "side": "-d_t",
+      "max_age_bars": 48
+    },
+    "C6": {
+      "gate": "break rejection direction=-d_t and PE>=Q67 and RV Q33<=RV<Q67",
+      "side": "rejection direction",
+      "max_age_bars": 48
+    },
+    "C7": {
+      "gate": "break acceptance direction=d_t and PE>=Q67 and RV>=Q67",
+      "side": "acceptance direction",
+      "max_age_bars": 48
+    }
+  },
+  "execution_arms": {
+    "RAW_SIGNAL": "mid open to mid close; no spread, fee, or slippage",
+    "EXECUTABLE_BASE": "observed BID/ASK plus 0.3 pip slippage per side",
+    "ADVERSE_STRESS": "same signal and path with observed BID/ASK plus 0.9 pip slippage per side",
+    "lineage": "identical signal_id, side, entry index, and exit index in all three arms",
+    "cost_gate": false,
+    "selection_uses_cost": false
+  },
+  "costs": {
+    "base_slippage_pips_per_side": 0.3,
+    "adverse_slippage_pips_per_side": 0.9,
+    "spread": "observed BID/ASK",
+    "raw": "mid prices with zero spread, fee, and slippage",
+    "fees_pips_per_side": 0
+  },
+  "portfolio": {
+    "initial_equity_jpy": 200000,
+    "units": 1000,
+    "max_positions_per_pair_config": 1,
+    "jpy_conversion": "JPY-quoted PnL direct; USD-quoted PnL uses latest completed USD_JPY midpoint at or before each mark",
+    "margin_model": "none; fixed-unit accounting may cross zero and is diagnostic rather than executable-capital evidence",
+    "leverage_fitting": false,
+    "price_stop_loss": false,
+    "take_profit": false,
+    "martingale": false,
+    "averaging": false
+  },
+  "selection": {
+    "data": "tuning RAW_SIGNAL only",
+    "family_size": 8,
+    "family_alpha": 0.05,
+    "lcb": "UTC-decision-day mean minus z_(1-0.05/8) times the standard error of UTC-day means",
+    "density": {
+      "executed_trades_gte": 120,
+      "utc_decision_day_clusters_gte": 20,
+      "per_pair_trades_gte": 30,
+      "pairs_with_at_least_30_trades_gte": 2
+    },
+    "ranking": [
+      "maximum RAW family-adjusted LCB",
+      "maximum RAW pooled expectancy",
+      "maximum RAW UTC-day median",
+      "maximum N_eff UTC-day clusters",
+      "config_id lexical"
+    ],
+    "all_nonpositive_lcb": "retain best diagnostic config as REJECTED_NO_GROSS_EDGE; never replace it using BASE or ADVERSE",
+    "monthly_2x_used_for_selection": false
+  },
+  "gross_edge_gate": {
+    "required_periods": [
+      "tuning",
+      "opened_development"
+    ],
+    "each_period": {
+      "raw_family_adjusted_lcb_pips_gt": 0,
+      "raw_expectancy_pips_gt": 0,
+      "raw_utc_day_cluster_median_pips_gt": 0,
+      "raw_pairs_with_positive_expectancy_gte": 2,
+      "density_gate_required": true
+    },
+    "base_executable_candidate_opened_development": {
+      "requires_gross_edge_gate": true,
+      "base_expectancy_pips_gt": 0,
+      "base_family_adjusted_lcb_pips_gt": 0
+    },
+    "stress_robust_candidate_opened_development": {
+      "requires_base_executable_candidate": true,
+      "adverse_expectancy_pips_gt": 0,
+      "adverse_family_adjusted_lcb_pips_gt": 0
+    },
+    "classification_order": [
+      "REJECTED_NO_GROSS_EDGE",
+      "GROSS_ONLY_COST_BOUND",
+      "BASE_EXECUTABLE_CANDIDATE",
+      "STRESS_ROBUST_CANDIDATE"
+    ],
+    "shadow_challenger_eligible": "gross edge gate only; never admission"
+  },
+  "development_labels": {
+    "GROSS_EDGE_FOUND_DEVELOPMENT_ONLY": "tuning and opened development both pass RAW gross and density gates",
+    "GROSS_ONLY_COST_BOUND": "gross gate passes but opened-development BASE LCB is not positive",
+    "BASE_EXECUTABLE_CANDIDATE": "gross gate plus opened-development BASE expectancy and LCB are positive",
+    "STRESS_ROBUST_CANDIDATE": "base candidate plus opened-development ADVERSE expectancy and LCB are positive",
+    "REJECTED_NO_GROSS_EDGE": "gross gate fails"
+  },
+  "future_evidence_gate": {
+    "baseline_replacement": false,
+    "shadow_addition_requires": [
+      "RAW gross gate pass",
+      "artifact and hashes fixed",
+      "new challenger arm while old baseline remains"
+    ],
+    "first_shadow_checkpoint_days": 30,
+    "continuity_shadow_days": 90,
+    "full_months": 3,
+    "final_target": "normal and adverse both >=2.0 equity multiple per full comparable month; not a tuning objective"
+  },
+  "v1_immutable_hashes": {
+    "INVALIDATED_DRAFT_PRESEAL.json": "8c0e27bc5029ef7b82fe6bd618fe4b65468e9b9f3da65e696c215c5df2fe8bd2",
+    "README.md": "e674d21f8a470272ec6597bcf65cd4c4850d4adc08a5dda081b0945fa11deeca",
+    "evidence_packet.json": "a625ca61f9fcc47b08c63c830da8ba100d200ffd572bbc8b7580ffc7ee847587",
+    "preregistration.json": "99422639b5faf3b0db2d77e99e47a102a93e217fb3db52f8e6471cf8b7d36518",
+    "replay_m5_ema.py": "8fd8a4be77b92ba076a72256e51ff8317203ca482730ec17323d3513880e766b",
+    "result.json": "1dff6f1dde4731cbb65d1699c0c1e7996dc48add6ced9b5123d06c03747a624c",
+    "test_replay_m5_ema.py": "290db87a1d557b6e2f68381fd29239f8c07935c9ded96ad7c496137215dd5d5f"
+  }
+}

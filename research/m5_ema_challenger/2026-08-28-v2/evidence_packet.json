@@ -1,0 +1,820 @@
+{
+  "admission": false,
+  "authority": {
+    "broker_adapter": false,
+    "commit": false,
+    "credentials": false,
+    "external_orders": false,
+    "launchd": false,
+    "live_runtime": false,
+    "network": false,
+    "push": false
+  },
+  "calibration_thresholds_sha256": "57104e2ea96e7c9006b2d928e5d88a8955fe881766c82302453d82d134ff59b6",
+  "candidate_id": "M5_EMA_EXHAUSTION_INTERACTION_V2",
+  "development_classification": "REJECTED_NO_GROSS_EDGE",
+  "exact_config": {
+    "gate": "all eligible source states",
+    "max_age_bars": 24,
+    "side": "d_t"
+  },
+  "external_orders": 0,
+  "gross_edge_gates": {
+    "both_periods_pass": false,
+    "opened_development": {
+      "executed_trades_gte_threshold": true,
+      "pairs_meeting_per_pair_trade_floor_gte_threshold": true,
+      "positive_pairs_gte_threshold": false,
+      "raw_expectancy_gt_threshold": false,
+      "raw_family_adjusted_lcb_gt_threshold": false,
+      "raw_utc_day_median_gt_threshold": false,
+      "utc_decision_day_clusters_gte_threshold": true
+    },
+    "opened_development_pass": false,
+    "tuning": {
+      "executed_trades_gte_threshold": true,
+      "pairs_meeting_per_pair_trade_floor_gte_threshold": true,
+      "positive_pairs_gte_threshold": false,
+      "raw_expectancy_gt_threshold": false,
+      "raw_family_adjusted_lcb_gt_threshold": false,
+      "raw_utc_day_median_gt_threshold": false,
+      "utc_decision_day_clusters_gte_threshold": true
+    },
+    "tuning_pass": false
+  },
+  "holdout": false,
+  "inputs": {
+    "AUD_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26047,
+      "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd"
+    },
+    "EUR_USD": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26051,
+      "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89"
+    },
+    "USD_JPY": {
+      "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+      "rows": 26046,
+      "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648"
+    }
+  },
+  "opened_development_only": true,
+  "prereg_sha256": "8eb24e286ad6ae58e2ce74e94bd2371aa4511763c923ec726e69c7c4859a8348",
+  "profit_unproven": true,
+  "readme_sha256": "e52c8ab0beaf350113455b5d34ca225d6a7a5bf030162bc4790b7508afb827eb",
+  "result_sha256": "be74dd65583904c4a2274602b60ffbfc1afa2dcae4d8cf6448778aeff54a51a3",
+  "schema_version": 1,
+  "script_sha256": "5b5fc52fdff2fc93f554526cfcec318bb6705ab37cf38c99edb5562289740881",
+  "selected_config": "C0",
+  "selected_opened_development": {
+    "adverse": {
+      "break_even_roundtrip_cost_pips": -0.7868027210884903,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -5.827835051546275,
+          "median_pips": -5.799999999999559,
+          "positive_rate": 0.31958762886597936,
+          "trades": 97
+        },
+        "NONE": {
+          "expectancy_pips": -4.022410865874328,
+          "median_pips": -3.399999999999113,
+          "positive_rate": 0.32767402376910015,
+          "trades": 589
+        },
+        "REJECTION": {
+          "expectancy_pips": -1.1346938775511282,
+          "median_pips": -2.7999999999998897,
+          "positive_rate": 0.3877551020408163,
+          "trades": 49
+        }
+      },
+      "collision_skips": 15909,
+      "cost_coverage_ratio": -0.23977941786220103,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.48027210884353744,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.7850060874250022,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -4.068163265306086,
+      "family_adjusted_lcb_pips": -5.091227362254586,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 157001.21748500044,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "gated_signals": 16644,
+      "gated_signals_per_utc_decision_day": 594.4285714285714,
+      "gross_expectancy_pips": -0.7868027210884903,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "65ef67a822330ff4c676985c1d607a84f4947676f2ac5c95387026a5b5d3bb04",
+      "mae_mean_pips": -9.119931972789235,
+      "max_drawdown": -0.21879883342499873,
+      "mfe_mean_pips": 7.94537414965992,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.018752878587675714,
+      "monthly_multiples": {
+        "2026-06": 0.8674512502000017,
+        "2026-07": 0.9049570073753531
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-06": 0.8674512502000017,
+        "2026-07": 0.9175548372250003
+      },
+      "n_eff_utc_day_clusters": 28,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -4.188571428571371,
+          "median_pips": -3.9000000000004347,
+          "positive_rate": 0.3020408163265306,
+          "trades": 245
+        },
+        "EUR_USD": {
+          "expectancy_pips": -4.537959183673443,
+          "median_pips": -3.5000000000000346,
+          "positive_rate": 0.3510204081632653,
+          "trades": 245
+        },
+        "USD_JPY": {
+          "expectancy_pips": -3.477959183673442,
+          "median_pips": -3.2999999999986356,
+          "positive_rate": 0.33877551020408164,
+          "trades": 245
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.03571428571428571,
+      "realized_cost_drag_pips": 3.2813605442175957,
+      "return_on_initial_equity": -0.21499391257499778,
+      "scenario": "adverse",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": -3.258950617283906,
+          "median_pips": -3.2000000000002897,
+          "positive_rate": 0.3425925925925926,
+          "trades": 324
+        },
+        "LONDON": {
+          "expectancy_pips": -5.0449799196786556,
+          "median_pips": -3.9000000000004347,
+          "positive_rate": 0.3172690763052209,
+          "trades": 249
+        },
+        "OVERLAP": {
+          "expectancy_pips": -4.185185185185197,
+          "median_pips": -3.7999999999988914,
+          "positive_rate": 0.3271604938271605,
+          "trades": 162
+        }
+      },
+      "source_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "source_signals": 16644,
+      "source_signals_per_utc_decision_day": 594.4285714285714,
+      "terminal_liquidation_pips": -10.499999999998415,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -32.894594594594466,
+      "trades": 735,
+      "turnover_units": 1470000,
+      "utc_day_cluster_mean_pips": -4.021190476190441,
+      "utc_day_cluster_median_pips": -3.8244444444444943,
+      "utc_day_cluster_standard_error_pips": 0.42840795162843986
+    },
+    "base": {
+      "break_even_roundtrip_cost_pips": -0.7868027210884903,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -4.627835051546276,
+          "median_pips": -4.599999999999559,
+          "positive_rate": 0.31958762886597936,
+          "trades": 97
+        },
+        "NONE": {
+          "expectancy_pips": -2.822410865874327,
+          "median_pips": -2.1999999999991133,
+          "positive_rate": 0.3921901528013582,
+          "trades": 589
+        },
+        "REJECTION": {
+          "expectancy_pips": 0.06530612244887198,
+          "median_pips": -1.59999999999989,
+          "positive_rate": 0.4897959183673469,
+          "trades": 49
+        }
+      },
+      "collision_skips": 15909,
+      "cost_coverage_ratio": -0.3780232710158622,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.48027210884353744,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.8471630988250021,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -2.868163265306085,
+      "family_adjusted_lcb_pips": -3.891227362254586,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 169432.61976500042,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "gated_signals": 16644,
+      "gated_signals_per_utc_decision_day": 594.4285714285714,
+      "gross_expectancy_pips": -0.7868027210884903,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "65ef67a822330ff4c676985c1d607a84f4947676f2ac5c95387026a5b5d3bb04",
+      "mae_mean_pips": -9.119931972789235,
+      "max_drawdown": -0.16103802305544668,
+      "mfe_mean_pips": 7.94537414965992,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.015362035476633784,
+      "monthly_multiples": {
+        "2026-06": 0.9051807886000017,
+        "2026-07": 0.9359048595532693
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-06": 0.9051807886000017,
+        "2026-07": 0.9419823102250003
+      },
+      "n_eff_utc_day_clusters": 28,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -2.9885714285713703,
+          "median_pips": -2.700000000000435,
+          "positive_rate": 0.35918367346938773,
+          "trades": 245
+        },
+        "EUR_USD": {
+          "expectancy_pips": -3.3379591836734432,
+          "median_pips": -2.300000000000035,
+          "positive_rate": 0.4122448979591837,
+          "trades": 245
+        },
+        "USD_JPY": {
+          "expectancy_pips": -2.2779591836734423,
+          "median_pips": -2.099999999998636,
+          "positive_rate": 0.39591836734693875,
+          "trades": 245
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.14285714285714285,
+      "realized_cost_drag_pips": 2.0813605442175946,
+      "return_on_initial_equity": -0.15283690117499793,
+      "scenario": "base",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": -2.0589506172839056,
+          "median_pips": -2.00000000000029,
+          "positive_rate": 0.39814814814814814,
+          "trades": 324
+        },
+        "LONDON": {
+          "expectancy_pips": -3.844979919678656,
+          "median_pips": -2.700000000000435,
+          "positive_rate": 0.3654618473895582,
+          "trades": 249
+        },
+        "OVERLAP": {
+          "expectancy_pips": -2.985185185185197,
+          "median_pips": -2.5999999999988916,
+          "positive_rate": 0.4074074074074074,
+          "trades": 162
+        }
+      },
+      "source_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "source_signals": 16644,
+      "source_signals_per_utc_decision_day": 594.4285714285714,
+      "terminal_liquidation_pips": -6.899999999998417,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -31.69459459459447,
+      "trades": 735,
+      "turnover_units": 1470000,
+      "utc_day_cluster_mean_pips": -2.8211904761904405,
+      "utc_day_cluster_median_pips": -2.624444444444494,
+      "utc_day_cluster_standard_error_pips": 0.42840795162843986
+    },
+    "raw": {
+      "break_even_roundtrip_cost_pips": -0.7868027210884903,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -2.5438144329897914,
+          "median_pips": -2.449999999998287,
+          "positive_rate": 0.3917525773195876,
+          "trades": 97
+        },
+        "NONE": {
+          "expectancy_pips": -0.7372665534805061,
+          "median_pips": -0.14999999999987246,
+          "positive_rate": 0.4923599320882852,
+          "trades": 589
+        },
+        "REJECTION": {
+          "expectancy_pips": 2.0959183673466844,
+          "median_pips": 0.5499999999991623,
+          "positive_rate": 0.5102040816326531,
+          "trades": 49
+        }
+      },
+      "collision_skips": 15909,
+      "cost_coverage_ratio": null,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.48027210884353744,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.9544881487874977,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -0.7868027210884903,
+      "family_adjusted_lcb_pips": -1.8113906991599253,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 190897.62975749953,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "gated_signals": 16644,
+      "gated_signals_per_utc_decision_day": 594.4285714285714,
+      "gross_expectancy_pips": -0.7868027210884903,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "65ef67a822330ff4c676985c1d607a84f4947676f2ac5c95387026a5b5d3bb04",
+      "mae_mean_pips": -9.119931972789235,
+      "max_drawdown": -0.06269417372151564,
+      "mfe_mean_pips": 7.94537414965992,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.006816098196875231,
+      "monthly_multiples": {
+        "2026-06": 0.9701867717999979,
+        "2026-07": 0.9838189681937484
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-06": 0.970186771799998,
+        "2026-07": 0.9843013769874998
+      },
+      "n_eff_utc_day_clusters": 28,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -1.0830612244897722,
+          "median_pips": -0.8999999999992347,
+          "positive_rate": 0.44081632653061226,
+          "trades": 245
+        },
+        "EUR_USD": {
+          "expectancy_pips": -1.145306122449042,
+          "median_pips": -0.049999999998107114,
+          "positive_rate": 0.49387755102040815,
+          "trades": 245
+        },
+        "USD_JPY": {
+          "expectancy_pips": -0.13204081632665646,
+          "median_pips": 0.14999999999645297,
+          "positive_rate": 0.5061224489795918,
+          "trades": 245
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.32142857142857145,
+      "realized_cost_drag_pips": 0.0,
+      "return_on_initial_equity": -0.04551185121250234,
+      "scenario": "raw",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": 0.020833333333337676,
+          "median_pips": 0.02500000000016378,
+          "positive_rate": 0.5,
+          "trades": 324
+        },
+        "LONDON": {
+          "expectancy_pips": -1.7757028112450564,
+          "median_pips": -0.7999999999996898,
+          "positive_rate": 0.4578313253012048,
+          "trades": 249
+        },
+        "OVERLAP": {
+          "expectancy_pips": -0.8820987654322388,
+          "median_pips": -0.474999999999115,
+          "positive_rate": 0.47530864197530864,
+          "trades": 162
+        }
+      },
+      "source_signal_set_sha256": "45f48d81576f94266d72a33610fddbdf05ed33522055ae38e5c07ef07e55a07a",
+      "source_signals": 16644,
+      "source_signals_per_utc_decision_day": 594.4285714285714,
+      "terminal_liquidation_pips": -0.6499999999955541,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -29.543243243243303,
+      "trades": 735,
+      "turnover_units": 1470000,
+      "utc_day_cluster_mean_pips": -0.7399272486773001,
+      "utc_day_cluster_median_pips": -0.5798148148147324,
+      "utc_day_cluster_standard_error_pips": 0.4289791016031242
+    }
+  },
+  "selected_tuning": {
+    "adverse": {
+      "break_even_roundtrip_cost_pips": -0.6194248826291431,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -4.545569620253177,
+          "median_pips": -2.900000000000545,
+          "positive_rate": 0.379746835443038,
+          "trades": 79
+        },
+        "NONE": {
+          "expectancy_pips": -3.9386648122391743,
+          "median_pips": -4.799999999999669,
+          "positive_rate": 0.30737134909596664,
+          "trades": 719
+        },
+        "REJECTION": {
+          "expectancy_pips": -3.3222222222221114,
+          "median_pips": -2.5500000000004723,
+          "positive_rate": 0.3888888888888889,
+          "trades": 54
+        }
+      },
+      "collision_skips": 18429,
+      "cost_coverage_ratio": -0.18565423108720475,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.45305164319248825,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.7647122650000023,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -3.955868544600894,
+      "family_adjusted_lcb_pips": -5.9635306563394845,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 152942.45300000047,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "gated_signals": 19281,
+      "gated_signals_per_utc_decision_day": 584.2727272727273,
+      "gross_expectancy_pips": -0.6194248826291431,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24.0,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "156c95040fe1ac13e9d5e7ecfe7e59465728d5020cbb8d27353558159ecf2654",
+      "mae_mean_pips": -10.146772300469591,
+      "max_drawdown": -0.2416044277856232,
+      "mfe_mean_pips": 8.976995305164452,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.056455268928280955,
+      "monthly_multiples": {
+        "2026-04": 0.9617841863250007,
+        "2026-05": 0.8366910080158846,
+        "2026-06": 0.9502881682674746
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-04": 0.9617841863250008,
+        "2026-05": 0.8429319940250019,
+        "2026-06": 0.9599960846499999
+      },
+      "n_eff_utc_day_clusters": 33,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -3.509859154929513,
+          "median_pips": -4.799999999999669,
+          "positive_rate": 0.33098591549295775,
+          "trades": 284
+        },
+        "EUR_USD": {
+          "expectancy_pips": -4.496830985915499,
+          "median_pips": -4.549999999999142,
+          "positive_rate": 0.30633802816901406,
+          "trades": 284
+        },
+        "USD_JPY": {
+          "expectancy_pips": -3.8609154929576697,
+          "median_pips": -4.150000000001273,
+          "positive_rate": 0.3204225352112676,
+          "trades": 284
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.09090909090909091,
+      "realized_cost_drag_pips": 3.336443661971751,
+      "return_on_initial_equity": -0.23528773499999767,
+      "scenario": "adverse",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": -5.142708333333295,
+          "median_pips": -4.849999999998931,
+          "positive_rate": 0.2864583333333333,
+          "trades": 384
+        },
+        "LONDON": {
+          "expectancy_pips": -2.7913978494622635,
+          "median_pips": -4.699999999999014,
+          "positive_rate": 0.32974910394265233,
+          "trades": 279
+        },
+        "OVERLAP": {
+          "expectancy_pips": -3.2634920634920874,
+          "median_pips": -3.4000000000016,
+          "positive_rate": 0.37037037037037035,
+          "trades": 189
+        }
+      },
+      "source_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "source_signals": 19281,
+      "source_signals_per_utc_decision_day": 584.2727272727273,
+      "terminal_liquidation_pips": -27.00000000000113,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -37.1604651162792,
+      "trades": 852,
+      "turnover_units": 1704000,
+      "utc_day_cluster_mean_pips": -3.0792368125701053,
+      "utc_day_cluster_median_pips": -4.499999999999635,
+      "utc_day_cluster_standard_error_pips": 1.154777404028374
+    },
+    "base": {
+      "break_even_roundtrip_cost_pips": -0.6194248826291431,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -3.345569620253177,
+          "median_pips": -1.700000000000545,
+          "positive_rate": 0.3924050632911392,
+          "trades": 79
+        },
+        "NONE": {
+          "expectancy_pips": -2.738664812239174,
+          "median_pips": -3.5999999999996697,
+          "positive_rate": 0.3435326842837274,
+          "trades": 719
+        },
+        "REJECTION": {
+          "expectancy_pips": -2.122222222222111,
+          "median_pips": -1.3500000000004726,
+          "positive_rate": 0.48148148148148145,
+          "trades": 54
+        }
+      },
+      "collision_skips": 18429,
+      "cost_coverage_ratio": -0.28993270155201195,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.45305164319248825,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.8358197992000023,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -2.7558685446008937,
+      "family_adjusted_lcb_pips": -4.763530656339485,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 167163.95984000046,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "gated_signals": 19281,
+      "gated_signals_per_utc_decision_day": 584.2727272727273,
+      "gross_expectancy_pips": -0.6194248826291431,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24.0,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "156c95040fe1ac13e9d5e7ecfe7e59465728d5020cbb8d27353558159ecf2654",
+      "mae_mean_pips": -10.146772300469591,
+      "max_drawdown": -0.1724639561729343,
+      "mfe_mean_pips": 8.976995305164452,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.039432644800232675,
+      "monthly_multiples": {
+        "2026-04": 0.9733418549250008,
+        "2026-05": 0.8871328135956271,
+        "2026-06": 0.9679626776853735
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-04": 0.9733418549250008,
+        "2026-05": 0.8901416434250018,
+        "2026-06": 0.9723363008499999
+      },
+      "n_eff_utc_day_clusters": 33,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -2.3098591549295127,
+          "median_pips": -3.5999999999996697,
+          "positive_rate": 0.36971830985915494,
+          "trades": 284
+        },
+        "EUR_USD": {
+          "expectancy_pips": -3.2968309859154985,
+          "median_pips": -3.349999999999142,
+          "positive_rate": 0.3415492957746479,
+          "trades": 284
+        },
+        "USD_JPY": {
+          "expectancy_pips": -2.6609154929576695,
+          "median_pips": -2.9500000000012734,
+          "positive_rate": 0.3591549295774648,
+          "trades": 284
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.12121212121212122,
+      "realized_cost_drag_pips": 2.1364436619717506,
+      "return_on_initial_equity": -0.16418020079999773,
+      "scenario": "base",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": -3.942708333333295,
+          "median_pips": -3.6499999999989314,
+          "positive_rate": 0.328125,
+          "trades": 384
+        },
+        "LONDON": {
+          "expectancy_pips": -1.5913978494622636,
+          "median_pips": -3.4999999999990146,
+          "positive_rate": 0.35842293906810035,
+          "trades": 279
+        },
+        "OVERLAP": {
+          "expectancy_pips": -2.0634920634920877,
+          "median_pips": -2.2000000000016002,
+          "positive_rate": 0.4126984126984127,
+          "trades": 189
+        }
+      },
+      "source_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "source_signals": 19281,
+      "source_signals_per_utc_decision_day": 584.2727272727273,
+      "terminal_liquidation_pips": -23.40000000000113,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -35.9604651162792,
+      "trades": 852,
+      "turnover_units": 1704000,
+      "utc_day_cluster_mean_pips": -1.8792368125701056,
+      "utc_day_cluster_median_pips": -3.2999999999996352,
+      "utc_day_cluster_standard_error_pips": 1.154777404028374
+    },
+    "raw": {
+      "break_even_roundtrip_cost_pips": -0.6194248826291431,
+      "break_state_results": {
+        "ACCEPTANCE": {
+          "expectancy_pips": -1.185443037974908,
+          "median_pips": 0.44999999999850715,
+          "positive_rate": 0.5063291139240507,
+          "trades": 79
+        },
+        "NONE": {
+          "expectancy_pips": -0.6014603616133822,
+          "median_pips": -1.3000000000018552,
+          "positive_rate": 0.44089012517385257,
+          "trades": 719
+        },
+        "REJECTION": {
+          "expectancy_pips": -0.030555555555377464,
+          "median_pips": 0.8249999999986102,
+          "positive_rate": 0.5370370370370371,
+          "trades": 54
+        }
+      },
+      "collision_skips": 18429,
+      "cost_coverage_ratio": null,
+      "data_gap_unscorable": 0,
+      "direction_accuracy": 0.45305164319248825,
+      "drawdown_basis": "completed_bar_portfolio_mtm_including_open_inventory",
+      "equity_multiple": 0.9612314011749974,
+      "equity_ruin": false,
+      "equity_ruin_time": null,
+      "expectancy_pips": -0.6194248826291431,
+      "family_adjusted_lcb_pips": -2.6241091501580684,
+      "family_alpha": 0.05,
+      "family_critical_z": 2.4977054744123737,
+      "family_size": 8,
+      "final_equity_jpy": 192246.2802349995,
+      "gap_signal_ids_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "gated_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "gated_signals": 19281,
+      "gated_signals_per_utc_decision_day": 584.2727272727273,
+      "gross_expectancy_pips": -0.6194248826291431,
+      "inventory_age_max_bars": 24,
+      "inventory_age_q50_bars": 24.0,
+      "inventory_age_q90_bars": 24.0,
+      "inventory_age_q99_bars": 24.0,
+      "lineage_sha256": "156c95040fe1ac13e9d5e7ecfe7e59465728d5020cbb8d27353558159ecf2654",
+      "mae_mean_pips": -10.146772300469591,
+      "max_drawdown": -0.050582787655884975,
+      "mfe_mean_pips": 8.976995305164452,
+      "monthly_2x_count": 0,
+      "monthly_multiple_std": 0.009641926942307623,
+      "monthly_multiples": {
+        "2026-04": 0.9938934253249996,
+        "2026-05": 0.9733187433639273,
+        "2026-06": 0.9936491040534023
+      },
+      "monthly_realized_change_on_initial_equity": {
+        "2026-04": 0.9938934253249995,
+        "2026-05": 0.9734816744499984,
+        "2026-06": 0.9938563013999995
+      },
+      "n_eff_utc_day_clusters": 33,
+      "pair_results": {
+        "AUD_USD": {
+          "expectancy_pips": -0.3867957746478803,
+          "median_pips": -1.674999999999871,
+          "positive_rate": 0.4471830985915493,
+          "trades": 284
+        },
+        "EUR_USD": {
+          "expectancy_pips": -1.0894366197184495,
+          "median_pips": -1.1249999999995985,
+          "positive_rate": 0.4507042253521127,
+          "trades": 284
+        },
+        "USD_JPY": {
+          "expectancy_pips": -0.38204225352109955,
+          "median_pips": -0.6749999999982492,
+          "positive_rate": 0.4612676056338028,
+          "trades": 284
+        }
+      },
+      "pairs_meeting_per_pair_trade_floor": 3,
+      "pairs_with_at_least_30_trades": 3,
+      "pairs_with_positive_expectancy": 0,
+      "per_pair_trade_floor": 30,
+      "positive_utc_day_rate": 0.3333333333333333,
+      "realized_cost_drag_pips": 0.0,
+      "return_on_initial_equity": -0.03876859882500261,
+      "scenario": "raw",
+      "session_results": {
+        "ASIA": {
+          "expectancy_pips": -1.8294270833333823,
+          "median_pips": -1.3999999999981583,
+          "positive_rate": 0.4453125,
+          "trades": 384
+        },
+        "LONDON": {
+          "expectancy_pips": 0.5496415770608803,
+          "median_pips": -1.4500000000006175,
+          "positive_rate": 0.4444444444444444,
+          "trades": 279
+        },
+        "OVERLAP": {
+          "expectancy_pips": 0.1132275132275306,
+          "median_pips": -0.10000000000065512,
+          "positive_rate": 0.48148148148148145,
+          "trades": 189
+        }
+      },
+      "source_signal_set_sha256": "d76e813622b8321bd8a1d631ef7e0d3f13d46a80597f53ee731dc58e88c7af5e",
+      "source_signals": 19281,
+      "source_signals_per_utc_decision_day": 584.2727272727273,
+      "terminal_liquidation_pips": -17.09999999999776,
+      "terminal_liquidations": 3,
+      "terminal_open_inventory": 0,
+      "trade_cvar_5pct_pips": -33.743023255814066,
+      "trades": 852,
+      "turnover_units": 1704000,
+      "utc_day_cluster_mean_pips": 0.25464365881026224,
+      "utc_day_cluster_median_pips": -1.2055555555553497,
+      "utc_day_cluster_standard_error_pips": 1.152558953991805
+    }
+  },
+  "selection_basis": "tuning_RAW_SIGNAL_only_8_family_daily_cluster_Bonferroni",
+  "shadow_challenger_eligible": false,
+  "status": "UNADMITTED_OPENED_DEVELOPMENT_RESULT",
+  "test_sha256": "f04f5aeaffe676ccd1c7cffec1b32d6be83391bff8744d1951e2d1008729ca72",
+  "v1_immutable_hashes_verified": {
+    "INVALIDATED_DRAFT_PRESEAL.json": "8c0e27bc5029ef7b82fe6bd618fe4b65468e9b9f3da65e696c215c5df2fe8bd2",
+    "README.md": "e674d21f8a470272ec6597bcf65cd4c4850d4adc08a5dda081b0945fa11deeca",
+    "evidence_packet.json": "a625ca61f9fcc47b08c63c830da8ba100d200ffd572bbc8b7580ffc7ee847587",
+    "preregistration.json": "99422639b5faf3b0db2d77e99e47a102a93e217fb3db52f8e6471cf8b7d36518",
+    "replay_m5_ema.py": "8fd8a4be77b92ba076a72256e51ff8317203ca482730ec17323d3513880e766b",
+    "result.json": "1dff6f1dde4731cbb65d1699c0c1e7996dc48add6ced9b5123d06c03747a624c",
+    "test_replay_m5_ema.py": "290db87a1d557b6e2f68381fd29239f8c07935c9ded96ad7c496137215dd5d5f"
+  }
+}
