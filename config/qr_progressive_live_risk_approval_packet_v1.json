@@ -3,6 +3,15 @@
   "status": "NEEDS_USER_DECISION",
   "created_at_utc": "2026-08-28T12:10:00Z",
   "software_critical_path_commit": "b4d92bec4b9a784da6a42483b89cd6efd1999ad2",
+  "initial_pairs": [
+    "EUR_USD",
+    "USD_JPY"
+  ],
+  "allowed_strategy_ids": [
+    "trend_continuation",
+    "range_rotation",
+    "breakout_failure"
+  ],
   "candidate_limits": {
     "max_loss_per_order_jpy": 500.0,
     "stop_drawdown_jpy": 5000.0,
@@ -70,5 +79,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "4e3ea7a4fd9b44e6ef6fd547554759f85456b92c494dddd3ab6cf9e1ebf2bbd0"
+  "packet_sha256": "2096a83baa96b848a9f7ddf3be5c27ea06aa8ec496cee871459f0e64f9738138"
 }
