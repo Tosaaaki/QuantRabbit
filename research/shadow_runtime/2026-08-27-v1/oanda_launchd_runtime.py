@@ -1012,9 +1012,9 @@ class IncrementalBot:
             "effective_at_utc": receipt["arrival_timestamp_utc"],
         }
 
-    def _refresh_llm_policy(self) -> None:
+    def _refresh_llm_policy(self, at: datetime | None = None) -> None:
         self.llm_receipts.refresh()
-        self._set_llm_policy_at(datetime.now(timezone.utc))
+        self._set_llm_policy_at(at or datetime.now(timezone.utc))
 
     def _paper_capacity_reason(self, arm: str, instrument: str) -> str | None:
         relevant_open = [
@@ -1325,11 +1325,18 @@ class IncrementalBot:
             "current_policy": copy.deepcopy(self.llm_policy),
         }
 
-    def _write_llm_trigger(self, event_kind: str, at: datetime) -> None:
+    def _write_llm_trigger(
+        self,
+        event_kind: str,
+        at: datetime,
+        *,
+        trigger_identity: dict[str, Any] | None = None,
+    ) -> bool:
         summary = self._llm_inventory_summary()
         snapshot_hash = canonical_hash(summary)
         trigger_id = canonical_hash(
-            {
+            trigger_identity
+            or {
                 "event_kind": event_kind,
                 "inventory_snapshot_hash": snapshot_hash,
                 "inventory_ledger_head": self.paper_ledgers["inventory"].last_hash,
@@ -1351,7 +1358,53 @@ class IncrementalBot:
             "profit_proven": False,
             "external_orders": 0,
         }
-        atomic_json(SERVICE_ROOT / "triggers" / "llm_inventory_request.json", trigger)
+        trigger_path = SERVICE_ROOT / "triggers" / "llm_inventory_request.json"
+        if trigger_path.exists() or trigger_path.is_symlink():
+            try:
+                existing = json.loads(secure_read(trigger_path).decode("utf-8", "strict"))
+            except Exception as exc:
+                raise IntegrityError("LLM_TRIGGER_READ_INVALID") from exc
+            if not isinstance(existing, dict) or not isinstance(existing.get("trigger_id"), str):
+                raise IntegrityError("LLM_TRIGGER_READ_INVALID")
+            if existing["trigger_id"] == trigger_id:
+                return False
+        atomic_json(trigger_path, trigger)
+        return True
+
+    def _write_expired_llm_policy_trigger(self, at: datetime) -> bool:
+        """Wake one new policy review without relaxing an expired receipt.
+
+        The expired execution state stays FREEZE/0.  The durable identity binds
+        the receipt, its declared expiry, and the inventory ledger head so the
+        two-second bot loop and a process restart cannot rewrite the same
+        trigger or repeatedly wake the model.
+        """
+        source = self.llm_policy.get("source")
+        valid_until = self.llm_policy.get("valid_until")
+        if (
+            self.llm_policy.get("action") != "FREEZE"
+            or self.llm_policy.get("max_open_positions") != 0
+            or not valid_sha256(source)
+            or not isinstance(valid_until, str)
+        ):
+            return False
+        try:
+            expiry = parse_utc(valid_until)
+        except Exception:
+            return False
+        if expiry > at:
+            return False
+        inventory_head = self.paper_ledgers["inventory"].last_hash
+        return self._write_llm_trigger(
+            "POLICY_EXPIRED",
+            at,
+            trigger_identity={
+                "event_kind": "POLICY_EXPIRED",
+                "receipt_record_hash": source,
+                "valid_until": valid_until,
+                "inventory_ledger_head": inventory_head,
+            },
+        )
 
     def _fill_pending_orders(self, event: dict[str, Any]) -> None:
         event_source = parse_utc(event["event_time_utc"])
@@ -1714,7 +1767,8 @@ class IncrementalBot:
                 self.buckets[instrument] = (bucket, [event])
         self.processed_rows = len(self.feed_raw.rows)
 
-    def process_once(self) -> dict[str, int]:
+    def process_once(self, *, policy_time: datetime | None = None) -> dict[str, int]:
+        policy_at = policy_time or datetime.now(timezone.utc)
         warmup_rows = len(self.historical_warmup.rows)
         self.historical_warmup.refresh()
         if len(self.historical_warmup.rows) != warmup_rows:
@@ -1722,7 +1776,8 @@ class IncrementalBot:
         self.feed_control.refresh()
         self.declared_provenance = _declared_feed_provenance(self.feed_control)
         self.feed_raw.refresh()
-        self._refresh_llm_policy()
+        self._refresh_llm_policy(policy_at)
+        self._write_expired_llm_policy_trigger(policy_at)
         self._consume_new_rows(replay=False)
         return _bot_counts(
             self.completed,

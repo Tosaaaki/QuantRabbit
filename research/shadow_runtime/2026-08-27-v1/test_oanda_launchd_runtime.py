@@ -134,6 +134,67 @@ class LaunchdRuntimeTest(unittest.TestCase):
 
         return Connection
 
+    def _append_llm_receipt(
+        self,
+        *,
+        record_id,
+        arrival,
+        action,
+        max_open_positions,
+        valid_until,
+        valid=True,
+    ):
+        ledger = HashLedger(self.root / "llm" / "ledgers" / "receipts.jsonl")
+        payload = {
+            "kind": "ACTUAL_LLM_INVENTORY_RECEIPT" if valid else "INVALID_LLM_RECEIPT",
+            "runtime_hash": runtime.SHARED_RUNTIME_HASH,
+            "arrival_timestamp_utc": utc_text(arrival),
+            "individual_order_control": False,
+            "hard_guard_mutation": False,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+            "output": {
+                "action": action,
+                "max_open_positions": max_open_positions,
+                "mode": "SHADOW_ONLY",
+                "valid_until": utc_text(valid_until),
+                "confidence": 0.9,
+                "reason": "Focused policy-liveness fixture.",
+            },
+        }
+        planned = []
+        row = ledger.plan(payload, record_id, planned)
+        ledger.append_rows(planned)
+        return row
+
+    @staticmethod
+    def _trend_bar(index, base, mid):
+        start = base + timedelta(minutes=5 * index)
+        end = start + timedelta(minutes=5)
+        spread = 0.00008
+        return {
+            "schema_version": 1,
+            "runtime_hash": runtime.SHARED_RUNTIME_HASH,
+            "instrument": "EUR_USD",
+            "timeframe": "M5",
+            "start_utc": utc_text(start),
+            "end_utc": utc_text(end),
+            "period_state": "SEALED",
+            "feature_source": "LIVE_ATTESTED_M5",
+            "arrival_watermark_utc": utc_text(end - timedelta(seconds=1)),
+            "bid_o": mid - spread / 2,
+            "bid_h": mid + spread / 2,
+            "bid_l": mid - spread,
+            "bid_c": mid - spread / 2,
+            "ask_o": mid + spread / 2,
+            "ask_h": mid + spread,
+            "ask_l": mid - spread / 2,
+            "ask_c": mid + spread / 2,
+            "segment_id": "segment-policy-liveness",
+            "feed_continuity_eligible": True,
+            "external_orders": 0,
+        }
+
     def test_plists_lint_and_have_only_oanda_labels(self):
         result = preinstall()
         self.assertEqual(result["plists"], 4)
@@ -1193,6 +1254,200 @@ class LaunchdRuntimeTest(unittest.TestCase):
             _, status = os.waitpid(child, 0)
         self.assertEqual(status, 0)
         self.assertEqual(len(concurrent.rows), 2)
+
+    def test_expired_llm_policy_writes_one_trigger_at_boundary_and_survives_restart(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        arrival = now - timedelta(hours=2)
+        expiry = now - timedelta(hours=1)
+        trigger_path = self.root / "triggers" / "llm_inventory_request.json"
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            receipt = self._append_llm_receipt(
+                record_id="fixture-expired-freeze",
+                arrival=arrival,
+                action="FREEZE",
+                max_open_positions=0,
+                valid_until=expiry,
+            )
+
+            before = processor.process_once(policy_time=expiry - timedelta(microseconds=1))
+            self.assertEqual(processor.llm_policy["action"], "FREEZE")
+            self.assertEqual(processor.llm_policy["max_open_positions"], 0)
+            self.assertFalse(trigger_path.exists())
+            self.assertEqual(before["external_order_attempts"], 0)
+            self.assertEqual(before["external_orders"], 0)
+
+            at_boundary = processor.process_once(policy_time=expiry)
+            trigger = json.loads(trigger_path.read_text(encoding="utf-8"))
+            expected_trigger_id = canonical_hash({
+                "event_kind": "POLICY_EXPIRED",
+                "receipt_record_hash": receipt["record_hash"],
+                "valid_until": utc_text(expiry),
+                "inventory_ledger_head": processor.paper_ledgers["inventory"].last_hash,
+            })
+            self.assertEqual(trigger["trigger_id"], expected_trigger_id)
+            self.assertEqual(trigger["event_kind"], "POLICY_EXPIRED")
+            self.assertEqual(trigger["open_inventory_count"], 0)
+            self.assertEqual(trigger["inventory_summary"]["current_policy"]["action"], "FREEZE")
+            self.assertEqual(
+                trigger["inventory_summary"]["current_policy"]["max_open_positions"],
+                0,
+            )
+            self.assertEqual(trigger["external_orders"], 0)
+            self.assertEqual(at_boundary["external_order_attempts"], 0)
+            self.assertEqual(at_boundary["external_orders"], 0)
+            frozen_trigger_bytes = trigger_path.read_bytes()
+
+            with patch.object(
+                runtime,
+                "atomic_json",
+                side_effect=AssertionError("duplicate expiry trigger rewrite"),
+            ):
+                processor.process_once(policy_time=expiry + timedelta(minutes=1))
+                restarted = runtime.IncrementalBot()
+                restarted.process_once(policy_time=expiry + timedelta(minutes=2))
+            self.assertEqual(trigger_path.read_bytes(), frozen_trigger_bytes)
+            self.assertEqual(restarted.llm_policy["action"], "FREEZE")
+            self.assertEqual(restarted.llm_policy["max_open_positions"], 0)
+            self.assertEqual(len(restarted.llm_receipts.rows), 1)
+
+    def test_fresh_add_receipt_reopens_only_a_later_bot_signal(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        old_arrival = now - timedelta(hours=2)
+        old_expiry = now - timedelta(hours=1)
+        base = now.replace(second=0) + timedelta(minutes=10)
+        mids = [
+            1.10000,
+            1.10008,
+            1.10018,
+            1.10032,
+            1.10051,
+            1.10076,
+            1.10108,
+            1.10147,
+        ]
+        bars = [self._trend_bar(index, base, mid) for index, mid in enumerate(mids)]
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            self._append_llm_receipt(
+                record_id="fixture-old-freeze",
+                arrival=old_arrival,
+                action="FREEZE",
+                max_open_positions=0,
+                valid_until=old_expiry,
+            )
+            processor.process_once(policy_time=old_expiry)
+            processor.histories["EUR_USD"] = bars[:6]
+
+            planned = []
+            first_row = processor.completed.plan(
+                bars[6],
+                f"m5::EUR_USD::{bars[6]['start_utc']}",
+                planned,
+            )
+            processor.completed.append_rows(planned)
+            first_decision_arrival = parse_utc(bars[6]["end_utc"]) + timedelta(seconds=1)
+            processor._emit_paper_signal(
+                first_row,
+                decision_arrival=first_decision_arrival,
+            )
+            first_signal_id = processor.paper_ledgers["proposals"].rows[-1]["payload"]["signal_id"]
+            first_actual = next(
+                row["payload"]
+                for row in processor.paper_ledgers["expected_orders"].rows
+                if row["payload"]["signal_id"] == first_signal_id
+                and row["payload"]["execution_arm"] == "ACTUAL_LLM_INVENTORY"
+            )
+            self.assertEqual(first_actual["status"], "BLOCKED")
+            self.assertEqual(first_actual["blocked_reason"], "LLM_MODE_FREEZE")
+
+            add_arrival = first_decision_arrival + timedelta(seconds=1)
+            self._append_llm_receipt(
+                record_id="fixture-fresh-add",
+                arrival=add_arrival,
+                action="ADD",
+                max_open_positions=1,
+                valid_until=add_arrival + timedelta(hours=1),
+            )
+            second_decision_arrival = parse_utc(bars[7]["end_utc"]) + timedelta(seconds=1)
+            processor._refresh_llm_policy(second_decision_arrival)
+            self.assertEqual(processor.llm_policy["action"], "ADD")
+            self.assertEqual(processor.llm_policy["max_open_positions"], 1)
+
+            planned = []
+            second_row = processor.completed.plan(
+                bars[7],
+                f"m5::EUR_USD::{bars[7]['start_utc']}",
+                planned,
+            )
+            processor.completed.append_rows(planned)
+            processor._emit_paper_signal(
+                second_row,
+                decision_arrival=second_decision_arrival,
+            )
+            second_signal_id = processor.paper_ledgers["proposals"].rows[-1]["payload"]["signal_id"]
+            second_actual = next(
+                row["payload"]
+                for row in processor.paper_ledgers["expected_orders"].rows
+                if row["payload"]["signal_id"] == second_signal_id
+                and row["payload"]["execution_arm"] == "ACTUAL_LLM_INVENTORY"
+            )
+            self.assertEqual(second_actual["status"], "PENDING")
+            self.assertIsNone(second_actual["blocked_reason"])
+            self.assertFalse(second_actual["external_submission_allowed"])
+
+            fill_source = parse_utc(bars[7]["end_utc"]) + timedelta(seconds=2)
+            fill_event = {
+                "event_id": "policy-liveness-fill",
+                "instrument": "EUR_USD",
+                "event_time_utc": utc_text(fill_source),
+                "arrival_time_utc": utc_text(fill_source + timedelta(milliseconds=20)),
+                "bid": 1.10156,
+                "ask": 1.10164,
+                "bid_liquidity": 1000000,
+                "ask_liquidity": 1000000,
+                "tradeable": True,
+            }
+            processor._fill_pending_orders(fill_event)
+            actual_fills = [
+                row["payload"]
+                for row in processor.paper_ledgers["virtual_fills"].rows
+                if row["payload"]["execution_arm"] == "ACTUAL_LLM_INVENTORY"
+            ]
+            self.assertEqual(len(actual_fills), 1)
+            self.assertEqual(actual_fills[0]["signal_id"], second_signal_id)
+            self.assertNotEqual(actual_fills[0]["signal_id"], first_signal_id)
+            self.assertFalse(actual_fills[0]["external_submission_allowed"])
+            self.assertEqual(actual_fills[0]["external_order_attempts"], 0)
+            self.assertEqual(actual_fills[0]["external_orders"], 0)
+            self.assertTrue(all(
+                row["payload"].get("external_orders") == 0
+                for ledger in processor.paper_ledgers.values()
+                for row in ledger.rows
+            ))
+
+    def test_invalid_latest_llm_receipt_stays_frozen_without_authority(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            self._append_llm_receipt(
+                record_id="fixture-invalid-receipt",
+                arrival=now - timedelta(minutes=1),
+                action="ADD",
+                max_open_positions=2,
+                valid_until=now + timedelta(hours=1),
+                valid=False,
+            )
+            counts = processor.process_once(policy_time=now)
+            self.assertEqual(processor.llm_policy["action"], "FREEZE")
+            self.assertEqual(processor.llm_policy["max_open_positions"], 0)
+            self.assertEqual(
+                processor._paper_capacity_reason("ACTUAL_LLM_INVENTORY", "EUR_USD"),
+                "LLM_MODE_FREEZE",
+            )
+            self.assertFalse((self.root / "triggers" / "llm_inventory_request.json").exists())
+            self.assertEqual(counts["external_order_attempts"], 0)
+            self.assertEqual(counts["external_orders"], 0)
 
     def test_llm_worker_is_triggered_once_and_fake_dependency_is_bounded(self):
         trigger_dir = self.root / "triggers"
