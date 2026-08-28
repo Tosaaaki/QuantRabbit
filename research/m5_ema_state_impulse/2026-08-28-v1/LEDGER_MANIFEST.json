@@ -1,0 +1,42 @@
+{
+  "schema": "QR_M5_EMA_STATE_IMPULSE_LEDGER_MANIFEST_V1",
+  "candidate_id": "M5_EMA_STATE_IMPULSE_INVENTORY_V1_HISTORICAL_REPLAY_V1",
+  "status": "INTERNAL_HISTORICAL_GATE_FAIL",
+  "result": {
+    "path": "result.json",
+    "bytes": 36309,
+    "file_sha256": "526c71b527c16005fc08d3eeaa6d6498a1419e04bb29be037993ca31dffdfcdd",
+    "embedded_result_sha256": "143844c771c1076c9ead6d449b3ca1c37861596f1b194b532593bd25aca83209"
+  },
+  "evidence_packet": {
+    "path": "evidence_packet.json",
+    "bytes": 758,
+    "file_sha256": "af54c004625bb41ac6a771d4594d451a7d571228774ac6cef57b9980a2e8e0f9",
+    "embedded_packet_sha256": "48364162847b4ec8c13ac0094c9a10775d2a7b0d4014f79d843e484bcdb9d13e"
+  },
+  "signals": {
+    "raw_path": "signals.jsonl",
+    "rows": 170260,
+    "raw_bytes": 159085372,
+    "raw_sha256": "2f77196964ab9ecbd7d13e5c76491ac55396fc717a8ae75317c50b9968ec6b98",
+    "archive_path": "signals.jsonl.gz",
+    "archive_bytes": 24529465,
+    "archive_sha256": "2178f5552950994331bea1b749c13b1458df3be93c7e95cf2e35464db79bdfbe"
+  },
+  "trades": {
+    "raw_path": "trades.jsonl",
+    "rows": 84858,
+    "raw_bytes": 83869634,
+    "raw_sha256": "30d91ce872f01896103a7035f2416994dd8277647ce74c011bdaa985daf885fd",
+    "archive_path": "trades.jsonl.gz",
+    "archive_bytes": 7934007,
+    "archive_sha256": "4cb4f8618a31a7a16b6f4815cb4b6c2199b6e19fdef2efccff2684c1b5b4a40d"
+  },
+  "post_boundary_rows_decoded": 0,
+  "profit_proven": false,
+  "strategy_admitted": false,
+  "network_attempts": 0,
+  "credential_reads": 0,
+  "external_order_attempts": 0,
+  "external_orders": 0
+}

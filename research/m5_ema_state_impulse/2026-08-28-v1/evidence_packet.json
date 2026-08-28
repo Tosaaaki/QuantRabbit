@@ -1,0 +1,16 @@
+{
+  "candidate_id": "M5_EMA_STATE_IMPULSE_INVENTORY_V1_HISTORICAL_REPLAY_V1",
+  "external_orders": 0,
+  "historical_gate_passed": false,
+  "packet_sha256": "48364162847b4ec8c13ac0094c9a10775d2a7b0d4014f79d843e484bcdb9d13e",
+  "post_boundary_rows_decoded": 0,
+  "preregistration_file_sha256": "0311d644dcd33cfb642181ab0d4965f74923ee031122a3b856ec187403d3bb35",
+  "profit_proven": false,
+  "result_sha256": "143844c771c1076c9ead6d449b3ca1c37861596f1b194b532593bd25aca83209",
+  "runner_sha256": "26564f5e254fdd2a41a135cf50c506f9b045ab397806223ccda0a45d626e5a10",
+  "schema": "QR_M5_EMA_STATE_IMPULSE_EVIDENCE_PACKET_V1",
+  "signals_ledger_rows": 170260,
+  "status": "INTERNAL_HISTORICAL_GATE_FAIL",
+  "strategy_admitted": false,
+  "trades_ledger_rows": 84858
+}
