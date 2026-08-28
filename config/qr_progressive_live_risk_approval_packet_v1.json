@@ -1,0 +1,74 @@
+{
+  "contract": "QR_PROGRESSIVE_LIVE_RISK_APPROVAL_PACKET_V1",
+  "status": "NEEDS_USER_DECISION",
+  "created_at_utc": "2026-08-28T12:10:00Z",
+  "software_critical_path_commit": "b4d92bec4b9a784da6a42483b89cd6efd1999ad2",
+  "candidate_limits": {
+    "max_loss_per_order_jpy": 500.0,
+    "stop_drawdown_jpy": 5000.0,
+    "minimum_margin_buffer_jpy": 50000.0,
+    "max_post_entry_current_mcp": 0.85,
+    "max_post_entry_stress_mcp": 0.9,
+    "max_currency_factor_nav_multiple": 3.0,
+    "max_bot_positions": 2,
+    "mode_hysteresis_mcp": 0.03,
+    "stress_pips": 25.0,
+    "max_account_snapshot_age_seconds": 20.0
+  },
+  "progressive_live_policy": {
+    "resident_shadow_required": true,
+    "fixed_sample_wait_required_for_micro_live": false,
+    "scorecard_monitoring_and_demotion_required": true,
+    "allowed_live_mode": "THROTTLED_LIVE",
+    "full_live_auto_promotion_allowed": false,
+    "live_units_policy": "BROKER_MINIMUM_ONLY_WHEN_SAFE_CAPACITY_IS_AT_LEAST_MINIMUM",
+    "gate_failure_without_bot_inventory": "SHADOW_ONLY",
+    "gate_failure_with_bot_inventory": "FREEZE_NEW_THEN_DRAINING",
+    "external_mutation_gateway": "LiveOrderGateway",
+    "ambiguous_result_policy": "NO_RESEND_READBACK_ONLY",
+    "manual_tagless_positions_policy": "NO_TOUCH",
+    "existing_tp_sl_policy": "NO_TOUCH"
+  },
+  "campaign_profit_lock": {
+    "baseline": "IMMUTABLE_CYCLE_START_NAV",
+    "freeze_and_drain_return": 0.1,
+    "retained_floor_return": 0.05,
+    "drain_fraction_above_7_5_percent": 0.5,
+    "drain_fraction_at_or_below_7_5_percent": 0.75,
+    "drain_fraction_at_or_below_6_percent": 1.0,
+    "force_flat_at_or_below_5_percent": true,
+    "next_cycle_requires_flat_cooldown_and_fresh_gates": true,
+    "daily_cycle_quota": null,
+    "hard_risk_limits_override": true
+  },
+  "evidence": {
+    "historical_start_mcp": 0.9099,
+    "historical_closeout_mcp": 1.0005,
+    "historical_margin_headroom_points": 9.06,
+    "last_increment_margin_relief_jpy": 28739.0,
+    "last_increment_estimated_close_cost_jpy": 37.61,
+    "inventory_aware_posthoc_max_mcp": 0.862,
+    "inventory_aware_posthoc_max_drawdown_pct": 1.842,
+    "warning": "Historical thresholds are hypothesis-generating and do not guarantee a retained floor or future profit."
+  },
+  "current_external_state_at_2026_08_28T12_07_02Z": {
+    "margin_closeout_percent": 0.9543,
+    "stress_margin_closeout_percent": 0.9921173417,
+    "margin_available_jpy": 12946.1099,
+    "nav_jpy": 283095.771,
+    "manual_tagless_position_count": 3,
+    "bot_owned_position_count": 0,
+    "attached_tp_count": 2,
+    "mode": "SHADOW_ONLY",
+    "orders_sent": 0
+  },
+  "acceptance": {
+    "accepted_by_user": false,
+    "acceptance_source": null,
+    "acceptance_id": null,
+    "accepted_at_utc": null
+  },
+  "live_permission": false,
+  "broker_mutation_allowed": false,
+  "packet_sha256": "4e3ea7a4fd9b44e6ef6fd547554759f85456b92c494dddd3ab6cf9e1ebf2bbd0"
+}
