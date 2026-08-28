@@ -115,6 +115,11 @@ def run_owner_cycle(
         state_root=preflight_state_root,
         now_utc=now_utc,
     )
+    # Network reads happen inside preflight.  In production, advance the
+    # promotion clock after those reads so a quote/signal created during the
+    # cycle is not misclassified as future relative to the cycle-start clock.
+    if now_utc is None:
+        now = datetime.now(timezone.utc)
     if preflight.get("promotion_ready") is not True:
         result = _no_send_result(preflight)
         _atomic_json(owner_state_root / "state.json", result)
