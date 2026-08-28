@@ -1,8 +1,8 @@
 {
   "contract": "QR_PROGRESSIVE_LIVE_RISK_APPROVAL_PACKET_V1",
   "status": "NEEDS_USER_DECISION",
-  "created_at_utc": "2026-08-28T12:10:00Z",
-  "software_critical_path_commit": "06ec2c6f8ff6e330c707d31de78641392c5633d2",
+  "created_at_utc": "2026-08-28T13:50:30Z",
+  "software_critical_path_commit": "5e5d12a1387a289cfc453d33f8e4de09313e889b",
   "initial_pairs": [
     "EUR_USD",
     "USD_JPY"
@@ -38,6 +38,32 @@
     "manual_tagless_positions_policy": "NO_TOUCH",
     "existing_tp_sl_policy": "NO_TOUCH"
   },
+  "supervision_contract": {
+    "receipt_contract": "QR_FAST_BOT_SUPERVISION_RECEIPT_V1",
+    "receipt_sealer": "tools/seal_progressive_live_supervision_receipt.py",
+    "exact_preflight_event_binding_required": true,
+    "allowed_llm_fields": [
+      "decision",
+      "regime",
+      "allowed_strategy_ids",
+      "risk_budget_cap_jpy",
+      "max_positions_cap",
+      "expiry",
+      "review_reason"
+    ],
+    "forbidden_llm_fields": [
+      "pair",
+      "side",
+      "units",
+      "order_type",
+      "entry",
+      "take_profit",
+      "stop_loss",
+      "price"
+    ],
+    "ai_order_authority": "NONE",
+    "user_risk_contract_is_upper_bound": true
+  },
   "campaign_profit_lock": {
     "baseline": "IMMUTABLE_CYCLE_START_NAV",
     "freeze_and_drain_return": 0.1,
@@ -60,11 +86,21 @@
     "inventory_aware_posthoc_max_drawdown_pct": 1.842,
     "warning": "Historical thresholds are hypothesis-generating and do not guarantee a retained floor or future profit."
   },
-  "current_external_state_at_2026_08_28T12_07_02Z": {
-    "margin_closeout_percent": 0.9543,
-    "stress_margin_closeout_percent": 0.9921173417,
-    "margin_available_jpy": 12946.1099,
-    "nav_jpy": 283095.771,
+  "software_evidence": {
+    "supervision_event_binding_commit": "5e5d12a1387a289cfc453d33f8e4de09313e889b",
+    "focused_tests": "27 passed, 10 subtests passed",
+    "full_regression": "5185 passed, 1 skipped, 1235 subtests passed",
+    "single_gateway": "LiveOrderGateway",
+    "live_sync": "REFUSED_DIRTY_PROTECTED_LIVE",
+    "live_propagation_count": 0,
+    "external_order_attempts": 0,
+    "external_orders": 0
+  },
+  "current_external_state_at_2026_08_28T13_50_30Z": {
+    "margin_closeout_percent": 0.95011,
+    "stress_margin_closeout_percent": 0.9876013602773768,
+    "margin_available_jpy": 14191.2839,
+    "nav_jpy": 284291.2577,
     "manual_tagless_position_count": 3,
     "bot_owned_position_count": 0,
     "attached_tp_count": 2,
@@ -79,5 +115,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "ac9303ec2f82ce00ab2e8f9d637df61364f20c9b9ac68fb8f4cc33415d7420a9"
+  "packet_sha256": "dd3d1285dc6eab81a2debfa86f49c18a972ea083494f560109bb143f05340bbb"
 }
