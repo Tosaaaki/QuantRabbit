@@ -2,7 +2,7 @@
   "contract": "QR_PROGRESSIVE_LIVE_RISK_APPROVAL_PACKET_V1",
   "status": "NEEDS_USER_DECISION",
   "created_at_utc": "2026-08-28T12:10:00Z",
-  "software_critical_path_commit": "b4d92bec4b9a784da6a42483b89cd6efd1999ad2",
+  "software_critical_path_commit": "06ec2c6f8ff6e330c707d31de78641392c5633d2",
   "initial_pairs": [
     "EUR_USD",
     "USD_JPY"
@@ -79,5 +79,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "2096a83baa96b848a9f7ddf3be5c27ea06aa8ec496cee871459f0e64f9738138"
+  "packet_sha256": "ac9303ec2f82ce00ab2e8f9d637df61364f20c9b9ac68fb8f4cc33415d7420a9"
 }
