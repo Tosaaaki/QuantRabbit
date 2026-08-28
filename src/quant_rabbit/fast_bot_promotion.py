@@ -405,6 +405,24 @@ def _validate_forward_admission(
         or str(signal.get("pair") or "") not in (value.get("allowed_pairs") or [])
     ):
         return None
+    progressive = value.get("admission_mode") == "PROGRESSIVE_MICRO_LIVE"
+    if progressive:
+        return value if (
+            value.get("progressive_live_user_authorized") is True
+            and value.get("authorization_source") == "EXPLICIT_USER_DECISION"
+            and bool(str(value.get("authorization_id") or "").strip())
+            and value.get("resident_shadow_required") is True
+            and value.get("resident_shadow_status") == "RUNNING"
+            and value.get("resident_shadow_execution_authority") == "NONE"
+            and value.get("resident_shadow_broker_mutation_count") == 0
+            and value.get("resident_shadow_external_order_attempts") == 0
+            and value.get("resident_shadow_external_orders") == 0
+            and value.get("scorecard_monitoring_active") is True
+            and value.get("scorecard_can_force_demotion") is True
+            and value.get("fixed_sample_wait_required_for_micro_live") is False
+            and value.get("micro_live_only") is True
+            and value.get("independent_readback_verified") is True
+        ) else None
     try:
         return value if (
             _positive_int(value.get("resolved_fills")) >= MINIMUM_RESOLVED_FORWARD_FILLS
@@ -658,6 +676,62 @@ def seal_supervision_receipt(value: Mapping[str, Any]) -> dict[str, Any]:
 def seal_sizing_receipt(value: Mapping[str, Any]) -> dict[str, Any]:
     body = {key: item for key, item in value.items() if key != "sizing_receipt_sha256"}
     return {**body, "sizing_receipt_sha256": _canonical_sha(body)}
+
+
+def build_sizing_receipt(
+    *,
+    mode_receipt: Mapping[str, Any],
+    signal_sha256: str,
+    forward_admission_sha256: str,
+    risk_contract_sha256: str,
+    software_version_sha256: str,
+    account_snapshot_sha256: str,
+    quote_snapshot_sha256: str,
+    campaign_drawdown_jpy: float,
+    account_snapshot_age_seconds: float,
+    quote_age_seconds: float,
+    calculated_at_utc: datetime,
+    spread_gate_passed: bool,
+) -> dict[str, Any]:
+    """Bind account-wide mode sizing to the promotion contract.
+
+    This adapter never mutates the broker.  Manual/tagless exposure is part of
+    the upstream account-wide calculation and its mutation count is fixed at
+    zero here.
+    """
+
+    return seal_sizing_receipt(
+        {
+            "contract": SIZING_RECEIPT_CONTRACT,
+            "signal_sha256": signal_sha256,
+            "forward_admission_sha256": forward_admission_sha256,
+            "risk_contract_sha256": risk_contract_sha256,
+            "software_version_sha256": software_version_sha256,
+            "mode": mode_receipt.get("mode"),
+            "mutation_allowed": mode_receipt.get("mutation_allowed") is True,
+            "calculated_units": mode_receipt.get("calculated_units"),
+            "safe_unit_capacity": mode_receipt.get("safe_unit_capacity"),
+            "broker_minimum_units": mode_receipt.get("broker_minimum_units"),
+            "planned_loss_jpy": mode_receipt.get("planned_loss_jpy"),
+            "post_entry_current_mcp": mode_receipt.get("post_entry_current_mcp"),
+            "post_entry_stress_mcp": mode_receipt.get("post_entry_stress_mcp"),
+            "post_entry_margin_available_jpy": mode_receipt.get(
+                "post_entry_margin_available_jpy"
+            ),
+            "post_entry_max_currency_factor_nav_multiple": mode_receipt.get(
+                "post_entry_max_currency_factor_nav_multiple"
+            ),
+            "campaign_drawdown_jpy": campaign_drawdown_jpy,
+            "account_snapshot_age_seconds": account_snapshot_age_seconds,
+            "quote_age_seconds": quote_age_seconds,
+            "account_snapshot_sha256": account_snapshot_sha256,
+            "quote_snapshot_sha256": quote_snapshot_sha256,
+            "calculated_at_utc": _aware_utc(calculated_at_utc).isoformat(),
+            "account_scope_includes_manual_and_tagless_positions": True,
+            "manual_tagless_mutation_count": 0,
+            "spread_gate_passed": spread_gate_passed,
+        }
+    )
 
 
 def _sealed(value: Mapping[str, Any], *, seal_key: str, contract: str) -> bool:

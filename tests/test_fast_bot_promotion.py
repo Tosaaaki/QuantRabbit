@@ -15,6 +15,7 @@ from quant_rabbit.fast_bot_promotion import (
     SUPERVISION_RECEIPT_CONTRACT,
     _canonical_sha,
     build_fast_bot_promotion,
+    build_sizing_receipt,
     dispatch_promotion_once,
     seal_forward_admission,
     seal_risk_contract,
@@ -233,6 +234,90 @@ class FastBotPromotionTest(unittest.TestCase):
         wrong_version = self.build(software_version_sha256="c" * 64)
         self.assertEqual(wrong_version["status"], "BLOCKED")
         self.assertIsNone(wrong_version["intents_payload"])
+
+    def test_progressive_micro_live_does_not_require_fixed_sample_wait(self) -> None:
+        progressive = seal_forward_admission(
+            {
+                "contract": FORWARD_ADMISSION_CONTRACT,
+                "status": "ADMITTED",
+                "promotion_allowed": True,
+                "live_permission": True,
+                "external_mutation_gateway": EXTERNAL_MUTATION_GATEWAY,
+                "software_version_sha256": self.software_sha,
+                "allowed_strategy_ids": [self.signal["strategy_id"]],
+                "allowed_pairs": [self.signal["pair"]],
+                "admission_mode": "PROGRESSIVE_MICRO_LIVE",
+                "progressive_live_user_authorized": True,
+                "authorization_source": "EXPLICIT_USER_DECISION",
+                "authorization_id": "progressive-live-policy-20260828",
+                "resident_shadow_required": True,
+                "resident_shadow_status": "RUNNING",
+                "resident_shadow_execution_authority": "NONE",
+                "resident_shadow_broker_mutation_count": 0,
+                "resident_shadow_external_order_attempts": 0,
+                "resident_shadow_external_orders": 0,
+                "scorecard_monitoring_active": True,
+                "scorecard_can_force_demotion": True,
+                "fixed_sample_wait_required_for_micro_live": False,
+                "micro_live_only": True,
+                "independent_readback_verified": True,
+                "resolved_fills": 0,
+                "active_days": 0,
+            }
+        )
+        risk = dict(self.risk)
+        risk["forward_admission_sha256"] = progressive["admission_sha256"]
+        risk = seal_risk_contract(risk)
+        sizing = dict(self.sizing)
+        sizing["forward_admission_sha256"] = progressive["admission_sha256"]
+        sizing["risk_contract_sha256"] = risk["risk_contract_sha256"]
+        sizing = seal_sizing_receipt(sizing)
+        result = self.build(
+            forward_admission=progressive,
+            risk_contract=risk,
+            sizing_receipt=sizing,
+        )
+        self.assertEqual(result["status"], "ADMITTED")
+        self.assertTrue(result["live_permission"])
+
+        stopped = dict(progressive)
+        stopped["resident_shadow_status"] = "STOPPED"
+        stopped = seal_forward_admission(stopped)
+        blocked = self.build(forward_admission=stopped)
+        self.assertIn(
+            "FORWARD_ADMISSION_INVALID_OR_UNPROVEN",
+            blocked["blocking_reasons"],
+        )
+
+    def test_account_wide_mode_receipt_binds_directly_to_promotion(self) -> None:
+        sizing = build_sizing_receipt(
+            mode_receipt={
+                "mode": "THROTTLED_LIVE",
+                "mutation_allowed": True,
+                "calculated_units": 1,
+                "safe_unit_capacity": 250,
+                "broker_minimum_units": 1,
+                "planned_loss_jpy": 2.0,
+                "post_entry_current_mcp": 0.80,
+                "post_entry_stress_mcp": 0.86,
+                "post_entry_margin_available_jpy": 75_000.0,
+                "post_entry_max_currency_factor_nav_multiple": 2.5,
+            },
+            signal_sha256=self.signal["signal_sha256"],
+            forward_admission_sha256=self.forward["admission_sha256"],
+            risk_contract_sha256=self.risk["risk_contract_sha256"],
+            software_version_sha256=self.software_sha,
+            account_snapshot_sha256="c" * 64,
+            quote_snapshot_sha256="d" * 64,
+            campaign_drawdown_jpy=100.0,
+            account_snapshot_age_seconds=1.0,
+            quote_age_seconds=1.0,
+            calculated_at_utc=self.now,
+            spread_gate_passed=True,
+        )
+        result = self.build(sizing_receipt=sizing)
+        self.assertEqual(result["status"], "ADMITTED")
+        self.assertEqual(result["intents_payload"]["results"][0]["intent"]["units"], 1)
 
     def test_stale_signal_and_stale_supervision_fail_closed(self) -> None:
         stale_signal = copy.deepcopy(self.signal)
