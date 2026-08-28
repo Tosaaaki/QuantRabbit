@@ -4,6 +4,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -108,6 +109,43 @@ class ProgressiveLivePreflightTests(unittest.TestCase):
             path.write_text("not-json\n")
             with self.assertRaisesRegex(preflight.PreflightBlocked, "CORRUPT"):
                 preflight.append_event_once(path, {"event_id": "mode-2"})
+
+    def test_release_initializes_one_immutable_profit_lock_cycle_from_fresh_nav(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "inventory.json"
+            now = datetime(2026, 8, 28, 12, 30, tzinfo=timezone.utc)
+
+            missing = preflight._inventory_readback(
+                path,
+                campaign_id="live-fb-cycle-1",
+                now=now,
+                nav_jpy=285_000.0,
+                initialize_if_missing=False,
+            )
+            self.assertFalse(missing["exists"])
+            self.assertFalse(path.exists())
+
+            initialized = preflight._inventory_readback(
+                path,
+                campaign_id="live-fb-cycle-1",
+                now=now,
+                nav_jpy=285_000.0,
+                initialize_if_missing=True,
+            )
+            self.assertTrue(initialized["exists"])
+            self.assertTrue(initialized["initialized_from_fresh_nav"])
+            self.assertTrue(initialized["profit_lock_configured"])
+            self.assertEqual(initialized["cycle_start_nav_jpy"], 285_000.0)
+
+            repeated = preflight._inventory_readback(
+                path,
+                campaign_id="live-fb-cycle-1",
+                now=now,
+                nav_jpy=300_000.0,
+                initialize_if_missing=True,
+            )
+            self.assertFalse(repeated["initialized_from_fresh_nav"])
+            self.assertEqual(repeated["cycle_start_nav_jpy"], 285_000.0)
 
     def test_unsealed_release_never_grants_live_permission(self) -> None:
         with self.assertRaisesRegex(preflight.PreflightBlocked, "INVALID_OR_DRIFTED"):

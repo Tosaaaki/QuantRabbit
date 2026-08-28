@@ -246,10 +246,25 @@ def _inventory_readback(
     campaign_id: str | None,
     now: datetime,
     nav_jpy: float,
+    initialize_if_missing: bool,
 ) -> dict[str, Any]:
-    if path is None or campaign_id is None or not path.is_file():
+    if path is None or campaign_id is None:
         return {
             "exists": False,
+            "initialized_from_fresh_nav": False,
+            "profit_lock_configured": False,
+            "inventory_state": "RUNNING",
+            "cooldown_elapsed": False,
+            "campaign_drawdown_jpy": 0.0,
+            "cycle_start_nav_jpy": None,
+            "cycle_peak_nav_jpy": None,
+        }
+    existed = path.is_file()
+    if not existed and not initialize_if_missing:
+        return {
+            "exists": False,
+            "initialized_from_fresh_nav": False,
+            "profit_lock_configured": False,
             "inventory_state": "RUNNING",
             "cooldown_elapsed": False,
             "campaign_drawdown_jpy": 0.0,
@@ -257,9 +272,17 @@ def _inventory_readback(
             "cycle_peak_nav_jpy": None,
         }
     controller = InventoryController.open(path, campaign_id=campaign_id, now_utc=now)
+    initialized = False
+    if controller.cycle_start_nav_jpy is None:
+        if not initialize_if_missing:
+            raise PreflightBlocked("INVENTORY_PROFIT_LOCK_BASELINE_MISSING")
+        controller.configure_profit_lock(cycle_start_nav_jpy=nav_jpy, now_utc=now)
+        initialized = True
     peak = float(controller.cycle_peak_nav_jpy or controller.cycle_start_nav_jpy or nav_jpy)
     return {
         "exists": True,
+        "initialized_from_fresh_nav": initialized,
+        "profit_lock_configured": controller.cycle_start_nav_jpy is not None,
         "inventory_state": controller.state.value,
         "cooldown_elapsed": controller.cooldown_elapsed(now),
         "campaign_drawdown_jpy": max(0.0, peak - nav_jpy),
@@ -413,6 +436,7 @@ def run_preflight(
         campaign_id=campaign_id,
         now=now,
         nav_jpy=nav,
+        initialize_if_missing=release_sha is not None and not system_positions,
     )
     previous_state = read_json(state_root / "state.json") if (state_root / "state.json").is_file() else {}
     previous_mode_raw = str(previous_state.get("mode") or RuntimeMode.SHADOW_ONLY.value)
