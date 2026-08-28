@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
+from quant_rabbit.inventory_controller import (
+    LotIdentity,
+    broker_order_identity,
+    broker_position_identity,
+)
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import is_operator_managed_manual_owner, operator_manual_tp_modify_blocked
 from quant_rabbit.predictive_scout import predictive_scout_broker_raw_claimed
@@ -51,6 +58,8 @@ class PositionExecutionClient(Protocol):
         *,
         provenance: str,
     ) -> dict[str, Any]: ...
+
+    def cancel_order(self, order_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -248,6 +257,245 @@ class PositionProtectionGateway:
             actions=actionable,
             blocked=blocked_count,
         )
+
+    def run_inventory_drain(
+        self,
+        *,
+        actions: tuple[Mapping[str, Any], ...],
+        snapshot: BrokerSnapshot,
+        reservation_path: Path,
+        send: bool = False,
+    ) -> PositionExecutionSummary:
+        """Execute exact-tagged bot reductions/cancels with no entry authority.
+
+        Every attempted action is durably reserved before the broker call.  A
+        later cycle may act on the same lot only after broker readback proves
+        that its remaining units changed, so an ambiguous response is never
+        resent against unchanged broker truth.
+        """
+
+        generated_at_utc = self.clock().astimezone(timezone.utc)
+        positions = {str(item.trade_id): item for item in snapshot.positions}
+        orders = {str(item.order_id): item for item in snapshot.orders}
+        planned = [
+            self._plan_inventory_drain_action(
+                dict(action),
+                positions=positions,
+                orders=orders,
+                snapshot=snapshot,
+                generated_at_utc=generated_at_utc,
+            )
+            for action in actions
+        ]
+        snapshot_evidence: dict[str, Any] | None = None
+        snapshot_evidence_error: str | None = None
+        if send and any(action["request"] is not None for action in planned):
+            try:
+                snapshot_evidence = persist_position_execution_snapshot_evidence(
+                    snapshot=snapshot,
+                    receipt_path=self.output_path,
+                )
+            except Exception as exc:  # noqa: BLE001
+                snapshot_evidence_error = type(exc).__name__
+        if snapshot_evidence_error is not None:
+            for action in planned:
+                if action["request"] is not None:
+                    action["issues"].append(
+                        {
+                            "severity": "BLOCK",
+                            "code": "BROKER_SNAPSHOT_EVIDENCE_PERSIST_FAILED",
+                            "message": snapshot_evidence_error,
+                        }
+                    )
+        if send and not self.live_enabled:
+            for action in planned:
+                if action["request"] is not None:
+                    action["issues"].append(
+                        {
+                            "severity": "BLOCK",
+                            "code": "LIVE_DISABLED",
+                            "message": "inventory drain write requires explicit live enablement",
+                        }
+                    )
+
+        for action in planned:
+            request = action["request"]
+            if not send or request is None or _has_block(action):
+                continue
+            reserve = _reserve_inventory_drain_action(
+                reservation_path,
+                action_id=str(action["action_id"]),
+                lot_id=str(action.get("lot_id") or ""),
+                order_id=str(action.get("order_id") or ""),
+                remaining_units_before=action.get("remaining_units_before"),
+                request=request,
+                reserved_at_utc=generated_at_utc,
+            )
+            if reserve != "RESERVED":
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": reserve,
+                        "message": "inventory mutation was already attempted against unchanged broker truth",
+                    }
+                )
+                continue
+            boundary_now = self.clock().astimezone(timezone.utc)
+            issue = _inventory_snapshot_freshness_issue(snapshot, boundary_now)
+            if issue is not None:
+                action["issues"].append(issue)
+                _finish_inventory_drain_action(
+                    reservation_path,
+                    action_id=str(action["action_id"]),
+                    outcome="BOUNDARY_BLOCKED",
+                    finished_at_utc=boundary_now,
+                )
+                continue
+            action["broker_post_attempted"] = True
+            try:
+                if request["type"] == "CLOSE_BOT_LOT":
+                    action["response"] = _close_trade_with_supported_provenance(
+                        self.client,
+                        str(request["trade_id"]),
+                        str(request["units"]),
+                        provenance="inventory_drain_gateway",
+                    )
+                elif request["type"] == "CANCEL_BOT_PENDING_ENTRY":
+                    action["response"] = self.client.cancel_order(str(request["order_id"]))
+                else:
+                    raise RuntimeError("unsupported inventory drain request")
+                action["sent"] = True
+                outcome = "BROKER_ACKNOWLEDGED"
+            except Exception as exc:  # noqa: BLE001
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "INVENTORY_DRAIN_RESULT_UNKNOWN_NO_RESEND",
+                        "message": type(exc).__name__,
+                    }
+                )
+                action["response"] = {"error_type": type(exc).__name__}
+                outcome = "UNKNOWN_NO_RESEND"
+            _finish_inventory_drain_action(
+                reservation_path,
+                action_id=str(action["action_id"]),
+                outcome=outcome,
+                finished_at_utc=self.clock().astimezone(timezone.utc),
+            )
+
+        actionable = sum(1 for action in planned if action["request"] is not None)
+        blocked_count = sum(1 for action in planned if _has_block(action))
+        sent_count = sum(1 for action in planned if action.get("sent"))
+        status = _status(
+            actionable=actionable,
+            blocked=blocked_count,
+            sent=sent_count,
+            send=send,
+        )
+        result = {
+            "generated_at_utc": generated_at_utc.isoformat(),
+            "status": status,
+            "send_requested": send,
+            "sent": sent_count > 0,
+            "inventory_drain_only": True,
+            "manual_tagless_policy": "NO_TOUCH",
+            "existing_tp_sl_policy": "NO_TOUCH",
+            POSITION_EXECUTION_SNAPSHOT_EVIDENCE_FIELD: snapshot_evidence,
+            "actions": planned,
+        }
+        self._write_result(result)
+        self._write_report(result)
+        return PositionExecutionSummary(
+            status=status,
+            output_path=self.output_path,
+            report_path=self.report_path,
+            sent=sent_count > 0,
+            actions=actionable,
+            blocked=blocked_count,
+        )
+
+    def _plan_inventory_drain_action(
+        self,
+        raw: dict[str, Any],
+        *,
+        positions: Mapping[str, BrokerPosition],
+        orders: Mapping[str, Any],
+        snapshot: BrokerSnapshot,
+        generated_at_utc: datetime,
+    ) -> dict[str, Any]:
+        action_type = str(raw.get("action") or "")
+        action: dict[str, Any] = {
+            **raw,
+            "management_action": action_type,
+            "trade_id": str(raw.get("trade_id") or ""),
+            "pair": str(raw.get("pair") or ""),
+            "owner": Owner.TRADER.value,
+            "request": None,
+            "issues": [],
+            "sent": False,
+            "broker_post_attempted": False,
+            "response": None,
+        }
+        if not str(raw.get("action_id") or ""):
+            action["issues"].append(_inventory_issue("INVENTORY_ACTION_ID_MISSING"))
+            return action
+        try:
+            expected = LotIdentity(
+                campaign_id=str(raw.get("campaign_id") or ""),
+                strategy_id=str(raw.get("strategy_id") or ""),
+                lot_id=str(raw.get("lot_id") or ""),
+            )
+        except ValueError:
+            action["issues"].append(_inventory_issue("INVENTORY_IDENTITY_INVALID"))
+            return action
+        freshness = _inventory_snapshot_freshness_issue(snapshot, generated_at_utc)
+        if freshness is not None:
+            action["issues"].append(freshness)
+            return action
+        if action_type == "REDUCE_BOT_LOT":
+            trade_id = str(raw.get("trade_id") or "")
+            position = positions.get(trade_id)
+            action["trade_id"] = trade_id
+            if position is None or broker_position_identity(position) != expected:
+                action["issues"].append(_inventory_issue("BOT_POSITION_IDENTITY_MISMATCH"))
+                return action
+            try:
+                units = int(raw.get("units") or 0)
+            except (TypeError, ValueError):
+                units = 0
+            if units <= 0 or units > int(position.units):
+                action["issues"].append(_inventory_issue("BOT_REDUCTION_UNITS_INVALID"))
+                return action
+            action["pair"] = position.pair
+            action["remaining_units_before"] = int(position.units)
+            action["request"] = {
+                "type": "CLOSE_BOT_LOT",
+                "trade_id": trade_id,
+                "units": str(units),
+            }
+            return action
+        if action_type == "CANCEL_PENDING_ENTRY":
+            order_id = str(raw.get("order_id") or "")
+            order = orders.get(order_id)
+            action["order_id"] = order_id
+            action["trade_id"] = ""
+            if (
+                order is None
+                or order.trade_id
+                or str(order.order_type or "").upper()
+                not in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "STOP-ENTRY"}
+                or broker_order_identity(order) != expected
+            ):
+                action["issues"].append(_inventory_issue("BOT_PENDING_ORDER_IDENTITY_MISMATCH"))
+                return action
+            action["pair"] = str(order.pair or "")
+            action["request"] = {
+                "type": "CANCEL_BOT_PENDING_ENTRY",
+                "order_id": order_id,
+            }
+            return action
+        action["issues"].append(_inventory_issue("INVENTORY_ACTION_UNSUPPORTED"))
+        return action
 
     def _plan_action(
         self,
@@ -571,6 +819,127 @@ def _aware_utc_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return None
     return parsed.astimezone(timezone.utc)
+
+
+def _inventory_issue(code: str) -> dict[str, str]:
+    return {
+        "severity": "BLOCK",
+        "code": code,
+        "message": code.replace("_", " ").lower(),
+    }
+
+
+def _inventory_snapshot_freshness_issue(
+    snapshot: BrokerSnapshot,
+    now_utc: datetime,
+) -> dict[str, str] | None:
+    fetched = _aware_utc_datetime(snapshot.fetched_at_utc)
+    if fetched is None:
+        return _inventory_issue("BROKER_SNAPSHOT_TIME_INVALID")
+    age = (now_utc.astimezone(timezone.utc) - fetched).total_seconds()
+    if (
+        age < -POSITION_EXECUTION_SNAPSHOT_MAX_FUTURE_SKEW_SECONDS
+        or age > POSITION_EXECUTION_SNAPSHOT_MAX_AGE_SECONDS
+    ):
+        return _inventory_issue("BROKER_SNAPSHOT_STALE")
+    return None
+
+
+def _inventory_reservation_payload(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {"contract": "QR_BOT_INVENTORY_DRAIN_DISPATCH_V1", "actions": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("inventory drain reservation ledger is corrupt") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("contract") != "QR_BOT_INVENTORY_DRAIN_DISPATCH_V1"
+        or not isinstance(payload.get("actions"), list)
+    ):
+        raise RuntimeError("inventory drain reservation ledger contract is invalid")
+    return payload
+
+
+def _write_inventory_reservation_payload(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp.write_text(
+        json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+
+
+def _reserve_inventory_drain_action(
+    path: Path,
+    *,
+    action_id: str,
+    lot_id: str,
+    order_id: str,
+    remaining_units_before: object,
+    request: Mapping[str, Any],
+    reserved_at_utc: datetime,
+) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = _inventory_reservation_payload(path)
+        rows = payload["actions"]
+        if any(str(row.get("action_id") or "") == action_id for row in rows):
+            return "DUPLICATE_INVENTORY_ACTION_BLOCKED"
+        if order_id and any(str(row.get("order_id") or "") == order_id for row in rows):
+            return "PENDING_CANCEL_ALREADY_ATTEMPTED_NO_RESEND"
+        if lot_id and any(
+            str(row.get("lot_id") or "") == lot_id
+            and row.get("remaining_units_before") == remaining_units_before
+            and row.get("broker_post_attempted") is True
+            for row in rows
+        ):
+            return "UNCHANGED_BROKER_TRUTH_AFTER_ATTEMPT_NO_RESEND"
+        rows.append(
+            {
+                "action_id": action_id,
+                "lot_id": lot_id or None,
+                "order_id": order_id or None,
+                "remaining_units_before": remaining_units_before,
+                "request_sha256": hashlib.sha256(
+                    json.dumps(
+                        dict(request),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "reserved_at_utc": reserved_at_utc.isoformat(),
+                "broker_post_attempted": True,
+                "outcome": "RESERVED_BEFORE_POST",
+            }
+        )
+        _write_inventory_reservation_payload(path, payload)
+    return "RESERVED"
+
+
+def _finish_inventory_drain_action(
+    path: Path,
+    *,
+    action_id: str,
+    outcome: str,
+    finished_at_utc: datetime,
+) -> None:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        payload = _inventory_reservation_payload(path)
+        matches = [
+            row for row in payload["actions"] if str(row.get("action_id") or "") == action_id
+        ]
+        if len(matches) != 1:
+            raise RuntimeError("inventory drain reservation disappeared or duplicated")
+        matches[0]["outcome"] = str(outcome)
+        matches[0]["finished_at_utc"] = finished_at_utc.isoformat()
+        _write_inventory_reservation_payload(path, payload)
 
 
 def _broker_position_identity_issue(

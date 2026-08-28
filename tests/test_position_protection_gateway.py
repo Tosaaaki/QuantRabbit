@@ -13,7 +13,8 @@ from unittest.mock import patch
 from quant_rabbit.broker.position_execution import (
     PositionProtectionGateway as _PositionProtectionGateway,
 )
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.inventory_controller import LotIdentity
+from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.position_execution_evidence import (
     POSITION_EXECUTION_SNAPSHOT_EVIDENCE_DIRNAME,
@@ -46,6 +47,136 @@ class PositionProtectionGateway(_PositionProtectionGateway):
 
 
 class PositionProtectionGatewayTest(unittest.TestCase):
+    def test_inventory_drain_reduces_exact_bot_tag_once_and_never_retries_same_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            identity = LotIdentity(
+                campaign_id="live-fb-cycle",
+                strategy_id="live-range_rotation",
+                lot_id="live-signal-1",
+            )
+            extension = {
+                "id": identity.broker_client_id(),
+                "tag": Owner.TRADER.value,
+                "comment": "qr-vnext owner=fast_bot",
+            }
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=TEST_SNAPSHOT_AT,
+                positions=(
+                    BrokerPosition(
+                        trade_id="bot-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=10,
+                        entry_price=1.1,
+                        unrealized_pl_jpy=-20,
+                        owner=Owner.TRADER,
+                        raw={"tradeClientExtensions": extension},
+                    ),
+                    BrokerPosition(
+                        trade_id="manual-1",
+                        pair="USD_JPY",
+                        side=Side.SHORT,
+                        units=20_000,
+                        entry_price=150,
+                        owner=Owner.UNKNOWN,
+                        raw={},
+                    ),
+                ),
+            )
+            action = {
+                "action_id": "drain-1",
+                "action": "REDUCE_BOT_LOT",
+                **identity.to_metadata(),
+                "trade_id": "bot-1",
+                "units": 4,
+                "remaining_units_before": 10,
+            }
+            client = FakePositionClient()
+            gateway = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            )
+            first = gateway.run_inventory_drain(
+                actions=(action,),
+                snapshot=snapshot,
+                reservation_path=root / "reservations.json",
+                send=True,
+            )
+            second = gateway.run_inventory_drain(
+                actions=({**action, "action_id": "drain-2"},),
+                snapshot=snapshot,
+                reservation_path=root / "reservations.json",
+                send=True,
+            )
+            self.assertTrue(first.sent)
+            self.assertFalse(second.sent)
+            self.assertEqual(client.closed, [("bot-1", "4")])
+            payload = json.loads((root / "exec.json").read_text())
+            self.assertEqual(
+                payload["actions"][0]["issues"][0]["code"],
+                "UNCHANGED_BROKER_TRUTH_AFTER_ATTEMPT_NO_RESEND",
+            )
+
+    def test_inventory_drain_cancels_exact_bot_pending_but_blocks_tagless(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            identity = LotIdentity(
+                campaign_id="live-fb-cycle",
+                strategy_id="live-breakout_failure",
+                lot_id="live-signal-2",
+            )
+            extension = {
+                "id": identity.broker_client_id(),
+                "tag": Owner.TRADER.value,
+                "comment": "qr-vnext owner=fast_bot",
+            }
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=TEST_SNAPSHOT_AT,
+                orders=(
+                    BrokerOrder(
+                        order_id="bot-order",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        owner=Owner.TRADER,
+                        raw={"clientExtensions": extension},
+                    ),
+                    BrokerOrder(
+                        order_id="manual-order",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        owner=Owner.UNKNOWN,
+                        raw={},
+                    ),
+                ),
+            )
+            base = {
+                "action": "CANCEL_PENDING_ENTRY",
+                **identity.to_metadata(),
+            }
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run_inventory_drain(
+                actions=(
+                    {**base, "action_id": "cancel-1", "order_id": "bot-order"},
+                    {**base, "action_id": "cancel-2", "order_id": "manual-order"},
+                ),
+                snapshot=snapshot,
+                reservation_path=root / "reservations.json",
+                send=True,
+            )
+            self.assertTrue(summary.sent)
+            self.assertEqual(client.cancelled, ["bot-order"])
+            payload = json.loads((root / "exec.json").read_text())
+            manual = next(item for item in payload["actions"] if item["order_id"] == "manual-order")
+            self.assertEqual(manual["issues"][0]["code"], "BOT_PENDING_ORDER_IDENTITY_MISMATCH")
+
     def test_fixture_clock_remains_consistent_after_discovery_delay(self) -> None:
         delayed_fixture_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
         with (
@@ -1200,6 +1331,7 @@ class FakePositionClient:
     def __init__(self) -> None:
         self.dependent_orders: list[tuple[str, dict[str, Any]]] = []
         self.closed: list[tuple[str, str]] = []
+        self.cancelled: list[str] = []
 
     def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
         self.dependent_orders.append((trade_id, order_request))
@@ -1212,6 +1344,10 @@ class FakePositionClient:
     def close_trade_with_provenance(self, trade_id: str, units: str = "ALL", *, provenance: str) -> dict[str, Any]:
         self.closed.append((trade_id, units))
         return {"relatedTransactionIDs": ["20"], "provenance": provenance}
+
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        self.cancelled.append(order_id)
+        return {"relatedTransactionIDs": ["30"]}
 
 
 class ProvenancePositionClient(FakePositionClient):

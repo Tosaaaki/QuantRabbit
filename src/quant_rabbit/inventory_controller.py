@@ -9,10 +9,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from quant_rabbit.instruments import instrument_pip_factor
-from quant_rabbit.models import BrokerPosition, Owner, Side
+from quant_rabbit.models import BrokerOrder, BrokerPosition, Owner, Side
 
 
 INVENTORY_CONTRACT = "QR_FAST_BOT_INVENTORY_V1"
@@ -106,6 +106,7 @@ class InventoryLot:
     estimated_close_loss_and_cost_jpy: float = 0.0
     currency_factor: str = ""
     reduction_started: bool = False
+    broker_trade_id: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -138,6 +139,7 @@ class InventoryLot:
             ),
             currency_factor=str(value.get("currency_factor") or ""),
             reduction_started=bool(value.get("reduction_started") or False),
+            broker_trade_id=str(value.get("broker_trade_id") or "") or None,
         )
 
 
@@ -334,6 +336,45 @@ class InventoryController:
         )
         self._persist()
 
+    def restart_cycle(self, *, cycle_start_nav_jpy: float, now_utc: datetime) -> None:
+        """Restart the same sealed live campaign only after durable FLAT cooldown.
+
+        The broker-visible campaign namespace remains fixed by the accepted
+        release receipt.  Zero-unit lot history is retained in events, while
+        the active-lot map is cleared so a later cycle can use the same
+        strategy/pair without violating the no-re-add rule inside one cycle.
+        """
+
+        if self.state is not InventoryState.STOPPED:
+            raise RuntimeError("cycle restart requires STOPPED")
+        if not self.cooldown_elapsed(now_utc):
+            raise RuntimeError("durable post-stop cooldown is still active")
+        if self.pending_entry_ids or any(lot.remaining_units > 0 for lot in self.lots.values()):
+            raise RuntimeError("cycle restart requires broker-flat bot inventory")
+        self.state = InventoryState.RUNNING
+        self.cooldown_until_utc = None
+        self.stop_reason = None
+        self.pending_entry_ids = []
+        self.lots = {}
+        self.applied_receipt_ids = []
+        self.applied_event_dedupe_keys = []
+        self.supervision_regime = None
+        self.allowed_strategy_ids = []
+        self.supervision_risk_budget_cap_jpy = 0.0
+        self.supervision_max_positions_cap = 0
+        self.supervision_expires_at_utc = None
+        self.cycle_start_nav_jpy = None
+        self.cycle_peak_nav_jpy = None
+        self.profit_lock_triggered = False
+        self.profit_floor_breached = False
+        self.profit_lock_reduction_fraction = 0.5
+        self._record("CYCLE_RESTARTED_AFTER_COOLDOWN", now_utc)
+        self._persist()
+        self.configure_profit_lock(
+            cycle_start_nav_jpy=cycle_start_nav_jpy,
+            now_utc=now_utc,
+        )
+
     def evaluate_profit_lock(
         self,
         *,
@@ -421,6 +462,169 @@ class InventoryController:
         self.pending_entry_ids.append(normalized)
         self._record("PENDING_ENTRY_REGISTERED", now_utc, order_id=normalized)
         self._persist()
+
+    def register_unresolved_entry(self, lot_id: str, *, now_utc: datetime) -> None:
+        """Durably block re-entry after an ambiguous broker outcome."""
+
+        LotIdentity(
+            campaign_id=self.campaign_id,
+            strategy_id="unresolved",
+            lot_id=str(lot_id or ""),
+        )
+        marker = f"unresolved:{lot_id}"
+        if marker not in self.pending_entry_ids:
+            self.pending_entry_ids.append(marker)
+            self._record("UNRESOLVED_ENTRY_REGISTERED", now_utc, lot_id=lot_id)
+        if self.state is InventoryState.RUNNING:
+            self.state = InventoryState.FREEZE_NEW
+            self.stop_reason = "AMBIGUOUS_ENTRY_RESULT_NO_RESEND"
+            self._record("FREEZE_NEW", now_utc, reason=self.stop_reason)
+        if self.state is InventoryState.FREEZE_NEW:
+            self.state = InventoryState.DRAINING
+            self._record("DRAINING", now_utc, reason=self.stop_reason)
+        self._persist()
+
+    def reconcile_broker_truth(
+        self,
+        *,
+        positions: Sequence[BrokerPosition],
+        orders: Sequence[BrokerOrder],
+        now_utc: datetime,
+    ) -> dict[str, Any]:
+        """Reconcile only exact fast-bot broker tags into durable inventory.
+
+        Manual/tagless positions and their TP/SL orders are never imported and
+        therefore cannot become drain targets.  A broker reduction is accepted
+        as truth even after an ambiguous POST; an increase after reduction is
+        retained but immediately forces DRAINING instead of hiding exposure.
+        """
+
+        owned_positions: dict[str, tuple[LotIdentity, BrokerPosition]] = {}
+        for position in positions:
+            identity = broker_position_identity(position)
+            if identity is None or identity.campaign_id != self.campaign_id:
+                continue
+            if identity.lot_id in owned_positions:
+                raise RuntimeError("duplicate bot-owned broker lot identity")
+            owned_positions[identity.lot_id] = (identity, position)
+
+        entry_order_types = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "STOP-ENTRY"}
+        owned_orders: dict[str, tuple[LotIdentity, BrokerOrder]] = {}
+        for order in orders:
+            identity = broker_order_identity(order)
+            if (
+                identity is None
+                or identity.campaign_id != self.campaign_id
+                or str(order.order_type or "").upper() not in entry_order_types
+                or order.trade_id
+            ):
+                continue
+            if order.order_id in owned_orders:
+                raise RuntimeError("duplicate bot-owned broker order id")
+            owned_orders[order.order_id] = (identity, order)
+
+        changed = False
+        reductions: list[dict[str, Any]] = []
+        for lot_id, (identity, position) in owned_positions.items():
+            units = _positive_int(position.units, "broker_position_units")
+            lot = self.lots.get(lot_id)
+            if lot is None:
+                opened = _format_utc(now_utc)
+                lot = InventoryLot(
+                    identity=identity,
+                    pair=str(position.pair).upper(),
+                    side=position.side.value,
+                    original_units=units,
+                    remaining_units=units,
+                    entry_price=_positive_float(position.entry_price, "entry_price"),
+                    opened_at_utc=opened,
+                    last_mark_at_utc=opened,
+                    last_progress_at_utc=opened,
+                    broker_trade_id=str(position.trade_id),
+                )
+                self.lots[lot_id] = lot
+                self._record(
+                    "BROKER_LOT_RECONCILED",
+                    now_utc,
+                    lot_id=lot_id,
+                    trade_id=position.trade_id,
+                    units=units,
+                )
+                changed = True
+            else:
+                if lot.pair != str(position.pair).upper() or lot.side != position.side.value:
+                    raise RuntimeError("broker lot identity changed pair or side")
+                prior = lot.remaining_units
+                if units != prior or lot.broker_trade_id != str(position.trade_id):
+                    if units < prior:
+                        lot.reduction_started = True
+                        reductions.append(
+                            {"lot_id": lot_id, "units": prior - units, "remaining_units": units}
+                        )
+                    elif units > prior and lot.reduction_started:
+                        self.stop_reason = "BROKER_READD_AFTER_REDUCTION_DETECTED"
+                        if self.state in {InventoryState.RUNNING, InventoryState.FREEZE_NEW}:
+                            self.state = InventoryState.DRAINING
+                        self._record(
+                            "BROKER_READD_AFTER_REDUCTION_DETECTED",
+                            now_utc,
+                            lot_id=lot_id,
+                            prior_units=prior,
+                            broker_units=units,
+                        )
+                    lot.original_units = max(lot.original_units, units)
+                    lot.remaining_units = units
+                    lot.broker_trade_id = str(position.trade_id)
+                    changed = True
+
+        for lot_id, lot in self.lots.items():
+            if lot.remaining_units <= 0 or lot_id in owned_positions:
+                continue
+            prior = lot.remaining_units
+            lot.remaining_units = 0
+            if self.state in {InventoryState.FREEZE_NEW, InventoryState.DRAINING}:
+                lot.reduction_started = True
+            reductions.append({"lot_id": lot_id, "units": prior, "remaining_units": 0})
+            changed = True
+
+        broker_pending_ids = sorted(owned_orders)
+        unresolved = [
+            item
+            for item in self.pending_entry_ids
+            if item.startswith("unresolved:")
+            and item.split(":", 1)[1] not in owned_positions
+            and all(identity.lot_id != item.split(":", 1)[1] for identity, _ in owned_orders.values())
+        ]
+        next_pending = sorted(set(broker_pending_ids + unresolved))
+        if next_pending != sorted(self.pending_entry_ids):
+            self.pending_entry_ids = next_pending
+            changed = True
+
+        if changed:
+            self._record(
+                "BROKER_TRUTH_RECONCILED",
+                now_utc,
+                bot_position_count=len(owned_positions),
+                bot_pending_entry_count=len(owned_orders),
+                reductions=reductions,
+            )
+            if self.state in {InventoryState.FREEZE_NEW, InventoryState.DRAINING}:
+                self._advance_flat_if_empty(now_utc)
+            if self.state is InventoryState.STOPPED and (
+                self.pending_entry_ids or any(lot.remaining_units > 0 for lot in self.lots.values())
+            ):
+                self.state = InventoryState.DRAINING
+                self.stop_reason = "BOT_INVENTORY_APPEARED_AFTER_STOP"
+                self._record("DRAINING", now_utc, reason=self.stop_reason)
+            self._persist()
+        return {
+            "bot_position_count": len(owned_positions),
+            "bot_pending_entry_count": len(owned_orders),
+            "manual_tagless_position_count": len(positions) - len(owned_positions),
+            "reductions": reductions,
+            "state": self.state.value,
+            "revision": self.revision,
+        }
 
     def register_fill(
         self,
@@ -643,6 +847,7 @@ class InventoryController:
                 reason="DRAINING_CANCEL_SYSTEM_PENDING",
             )
             for order_id in self.pending_entry_ids
+            if not order_id.startswith("unresolved:")
         ]
         hard_terminal = _aware_utc(now_utc) >= _aware_utc(terminal_deadline_utc)
         for lot in sorted(
@@ -826,6 +1031,36 @@ def broker_position_identity(position: BrokerPosition) -> LotIdentity | None:
         return None
     raw = position.raw if isinstance(position.raw, Mapping) else {}
     for key in ("tradeClientExtensions", "clientExtensions"):
+        extension = raw.get(key)
+        if not isinstance(extension, Mapping):
+            continue
+        comment = str(extension.get("comment") or "")
+        tokens = {
+            name: value
+            for token in comment.split()
+            if "=" in token
+            for name, value in [token.split("=", 1)]
+        }
+        try:
+            identity = LotIdentity.from_broker_client_id(extension.get("id"))
+        except ValueError:
+            identity = None
+        if identity is not None and tokens.get("owner") == OWNER_TAG:
+            return identity
+        try:
+            return LotIdentity.from_metadata(tokens)
+        except ValueError:
+            continue
+    return None
+
+
+def broker_order_identity(order: BrokerOrder) -> LotIdentity | None:
+    """Return bot ownership only for an exact trader-tagged broker order."""
+
+    if order.owner is not Owner.TRADER:
+        return None
+    raw = order.raw if isinstance(order.raw, Mapping) else {}
+    for key in ("clientExtensions", "tradeClientExtensions"):
         extension = raw.get(key)
         if not isinstance(extension, Mapping):
             continue

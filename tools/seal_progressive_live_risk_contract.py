@@ -37,6 +37,8 @@ LIVE_SOURCE_PATHS = (
     Path("src/quant_rabbit/inventory_controller.py"),
     Path("src/quant_rabbit/trade_readiness.py"),
     Path("src/quant_rabbit/broker/execution.py"),
+    Path("src/quant_rabbit/broker/oanda.py"),
+    Path("src/quant_rabbit/broker/position_execution.py"),
     Path("tools/run_progressive_live_preflight.py"),
     Path("tools/run_progressive_live_owner_cycle.py"),
     Path("config/fast_bot_progressive_strategy_profile_v1.json"),

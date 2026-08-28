@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,9 +11,10 @@ from quant_rabbit.inventory_controller import (
     InventoryController,
     InventoryState,
     LotIdentity,
+    broker_order_identity,
     broker_position_identity,
 )
-from quant_rabbit.models import BrokerPosition, OrderIntent, OrderType, Owner, Side
+from quant_rabbit.models import BrokerOrder, BrokerPosition, OrderIntent, OrderType, Owner, Side
 
 
 NOW = datetime(2026, 8, 28, 10, 0, tzinfo=timezone.utc)
@@ -27,6 +29,83 @@ def _identity(lot_id: str, *, strategy_id: str = "range_rotation") -> LotIdentit
 
 
 class InventoryControllerTest(unittest.TestCase):
+    def test_exact_broker_truth_reconciles_bot_only_and_same_campaign_restarts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = InventoryController.open(
+                Path(temp_dir) / "inventory.json",
+                campaign_id="campaign-20260828",
+                now_utc=NOW,
+            )
+            controller.configure_profit_lock(cycle_start_nav_jpy=100_000, now_utc=NOW)
+            identity = _identity("lot-live")
+            extension = {
+                "id": identity.broker_client_id(),
+                "tag": Owner.TRADER.value,
+                "comment": "qr-vnext owner=fast_bot",
+            }
+            tagged = BrokerPosition(
+                trade_id="bot-1",
+                pair="EUR_USD",
+                side=Side.LONG,
+                units=10,
+                entry_price=1.1,
+                owner=Owner.TRADER,
+                raw={"tradeClientExtensions": extension},
+            )
+            manual = BrokerPosition(
+                trade_id="manual-1",
+                pair="USD_JPY",
+                side=Side.SHORT,
+                units=20_000,
+                entry_price=150.0,
+                owner=Owner.UNKNOWN,
+                raw={},
+            )
+            pending = BrokerOrder(
+                order_id="order-1",
+                pair="EUR_USD",
+                order_type="LIMIT",
+                owner=Owner.TRADER,
+                raw={"clientExtensions": extension},
+            )
+            self.assertEqual(broker_order_identity(pending), identity)
+            first = controller.reconcile_broker_truth(
+                positions=(tagged, manual),
+                orders=(pending,),
+                now_utc=NOW + timedelta(seconds=1),
+            )
+            self.assertEqual(first["bot_position_count"], 1)
+            self.assertEqual(first["manual_tagless_position_count"], 1)
+            self.assertEqual(controller.lots["lot-live"].broker_trade_id, "bot-1")
+            controller.freeze_new(reason="risk", now_utc=NOW + timedelta(seconds=2))
+            controller.begin_draining(now_utc=NOW + timedelta(seconds=2))
+            reduced = replace(tagged, units=4)
+            second = controller.reconcile_broker_truth(
+                positions=(reduced, manual),
+                orders=(),
+                now_utc=NOW + timedelta(seconds=3),
+            )
+            self.assertEqual(second["reductions"][0]["units"], 6)
+            self.assertEqual(controller.lots["lot-live"].remaining_units, 4)
+            controller.reconcile_broker_truth(
+                positions=(manual,),
+                orders=(),
+                now_utc=NOW + timedelta(seconds=4),
+            )
+            self.assertEqual(controller.state, InventoryState.FLAT)
+            controller.stop(
+                now_utc=NOW + timedelta(seconds=4),
+                cooldown=timedelta(minutes=30),
+            )
+            controller.restart_cycle(
+                cycle_start_nav_jpy=105_000,
+                now_utc=NOW + timedelta(minutes=31),
+            )
+            self.assertEqual(controller.state, InventoryState.RUNNING)
+            self.assertEqual(controller.cycle_count, 2)
+            self.assertEqual(controller.cycle_start_nav_jpy, 105_000)
+            self.assertEqual(controller.lots, {})
+
     def test_gateway_binds_all_ownership_ids_and_tagless_manual_is_no_touch(self) -> None:
         identity = _identity("lot-001")
         intent = OrderIntent(

@@ -208,6 +208,8 @@ def build_fast_bot_promotion(
         except (TypeError, ValueError):
             blockers.append("DURABLE_SUPERVISION_TIME_INVALID")
     active_lots = [lot for lot in inventory.lots.values() if lot.remaining_units > 0]
+    if inventory.pending_entry_ids:
+        blockers.append("BOT_PENDING_OR_UNRESOLVED_ENTRY_PRESENT")
     try:
         position_cap = min(
             _nonnegative_int(supervision_receipt.get("max_positions_cap")),
