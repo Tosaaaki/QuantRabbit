@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.quantrabbit.oanda-live.llm-inventory</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/tossaki/.pyenv/versions/3.10.14/bin/python3</string>
+    <string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/oanda_launchd_runtime.py</string>
+    <string>llm</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1</string>
+  <key>WatchPaths</key><array><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/triggers/llm_inventory_request.json</string></array>
+  <key>ProcessType</key><string>Background</string><key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/llm.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/llm.err.log</string>
+</dict></plist>

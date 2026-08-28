@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.quantrabbit.oanda-live.bot-shadow</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/tossaki/.pyenv/versions/3.10.14/bin/python3</string>
+    <string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/oanda_launchd_runtime.py</string>
+    <string>bot</string><string>--seconds</string><string>86400</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1</string>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer><key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/bot.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/tossaki/App/QuantRabbit-worktrees/zero-authority-shadow-20260827/research/shadow_runtime/2026-08-27-v1/runs/oanda_live_launchd_v1/logs/bot.err.log</string>
+</dict></plist>

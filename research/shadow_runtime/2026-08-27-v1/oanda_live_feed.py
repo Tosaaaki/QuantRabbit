@@ -143,6 +143,8 @@ class OandaLiveRecorder:
             "run_state": "READY",
             "feed_connected": False,
             "connection_established": False,
+            "segment_id": None,
+            "fresh_symbols": [],
             "feed_blocked": False,
             "block_reason": None,
             "last_arrival_utc": None,
@@ -153,6 +155,7 @@ class OandaLiveRecorder:
                 "credential_reads": 0,
                 "credential_values_persisted": 0,
                 "connections": 0,
+                "segments": 0,
                 "heartbeats": 0,
                 "market_events_received": 0,
                 "market_events_accepted": 0,
@@ -205,7 +208,18 @@ class OandaLiveRecorder:
 
     def connect_started(self) -> None:
         state = copy.deepcopy(self.state)
-        state.update(run_state="CONNECTING", feed_connected=False)
+        state["counters"].setdefault("segments", 0)
+        state["counters"]["segments"] += 1
+        state.update(
+            run_state="CONNECTING",
+            feed_connected=False,
+            feed_blocked=False,
+            block_reason=None,
+            segment_id=f"segment-{state['counters']['segments']:08d}",
+            fresh_symbols=[],
+            last_arrival_utc=None,
+            last_source_time={},
+        )
         state["counters"]["network_attempts"] += 1
         self._persist(state)
 
@@ -326,6 +340,9 @@ class OandaLiveRecorder:
                 return None
             state["seen_event_ids"][event["event_id"]] = event_digest
             state["last_source_time"][instrument] = utc_text(source)
+            fresh_symbols = set(state.get("fresh_symbols", []))
+            fresh_symbols.add(instrument)
+            state["fresh_symbols"] = sorted(fresh_symbols)
             state["counters"]["market_events_received"] += 1
             state["counters"]["market_events_accepted"] += 1
             raw_row = self._append("raw_bbo", event, f"event::{event['event_id']}")
@@ -364,6 +381,9 @@ class OandaLiveRecorder:
             "run_state": self.state["run_state"],
             "feed_connected": self.state["feed_connected"],
             "connection_established": self.state["connection_established"],
+            "segment_id": self.state.get("segment_id"),
+            "fresh_symbol_count": len(self.state.get("fresh_symbols", [])),
+            "segment_warmed": set(self.state.get("fresh_symbols", [])) == set(SYMBOLS),
             "feed_blocked": self.state["feed_blocked"],
             "block_reason": self.state["block_reason"],
             "heartbeat_current": self.state["counters"]["heartbeats"] >= 1,
@@ -383,11 +403,12 @@ class OandaLiveRecorder:
         max_seconds: float,
         on_stream_event: Callable[[dict[str, Any]], None] | None = None,
         stop_when: Callable[[], bool] | None = None,
+        runtime_hash: str | None = None,
     ) -> dict[str, Any]:
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGTERM, self.request_stop)
         deadline = time.monotonic() + max_seconds
-        strategy_hash = canonical_hash({"contract": self.contract_hash, "provider": PROVIDER})
+        strategy_hash = runtime_hash or canonical_hash({"contract": self.contract_hash, "provider": PROVIDER})
         with RuntimeLock(self.runtime_root, strategy_hash) as lock:
             self.connect_started()
             connection = http.client.HTTPSConnection(
