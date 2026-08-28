@@ -168,6 +168,15 @@ class InventoryController:
     supervision_risk_budget_cap_jpy: float = 0.0
     supervision_max_positions_cap: int = 0
     supervision_expires_at_utc: str | None = None
+    cycle_start_nav_jpy: float | None = None
+    cycle_peak_nav_jpy: float | None = None
+    cycle_count: int = 0
+    cycle_retained_return: float | None = None
+    cycle_giveback_jpy: float = 0.0
+    cycle_execution_cost_jpy: float = 0.0
+    profit_lock_triggered: bool = False
+    profit_floor_breached: bool = False
+    profit_lock_reduction_fraction: float = 0.5
     _persisted_revision: int = field(default=0, repr=False)
 
     @classmethod
@@ -190,6 +199,11 @@ class InventoryController:
                     state_path=state_path,
                     campaign_id=campaign_id,
                     revision=controller.revision,
+                    events=list(controller.events),
+                    cycle_count=controller.cycle_count,
+                    cycle_retained_return=controller.cycle_retained_return,
+                    cycle_giveback_jpy=controller.cycle_giveback_jpy,
+                    cycle_execution_cost_jpy=controller.cycle_execution_cost_jpy,
                     _persisted_revision=controller.revision,
                 )
                 controller._record("CAMPAIGN_STARTED", now_utc)
@@ -244,6 +258,32 @@ class InventoryController:
                 if payload.get("supervision_expires_at_utc")
                 else None
             ),
+            cycle_start_nav_jpy=(
+                _positive_float(payload.get("cycle_start_nav_jpy"), "cycle_start_nav_jpy")
+                if payload.get("cycle_start_nav_jpy") is not None
+                else None
+            ),
+            cycle_peak_nav_jpy=(
+                _positive_float(payload.get("cycle_peak_nav_jpy"), "cycle_peak_nav_jpy")
+                if payload.get("cycle_peak_nav_jpy") is not None
+                else None
+            ),
+            cycle_count=_nonnegative_int(payload.get("cycle_count", 0), "cycle_count"),
+            cycle_retained_return=(
+                _finite_float(payload.get("cycle_retained_return"))
+                if payload.get("cycle_retained_return") is not None
+                else None
+            ),
+            cycle_giveback_jpy=max(0.0, _finite_float(payload.get("cycle_giveback_jpy", 0.0))),
+            cycle_execution_cost_jpy=max(
+                0.0, _finite_float(payload.get("cycle_execution_cost_jpy", 0.0))
+            ),
+            profit_lock_triggered=payload.get("profit_lock_triggered") is True,
+            profit_floor_breached=payload.get("profit_floor_breached") is True,
+            profit_lock_reduction_fraction=min(
+                1.0,
+                max(0.5, _finite_float(payload.get("profit_lock_reduction_fraction", 0.5))),
+            ),
             _persisted_revision=_nonnegative_int(payload.get("revision"), "revision"),
         )
         if any(lot.identity.campaign_id != controller.campaign_id for lot in lots.values()):
@@ -260,6 +300,117 @@ class InventoryController:
     def cooldown_elapsed(self, now_utc: datetime) -> bool:
         now = _aware_utc(now_utc)
         return self.cooldown_until_utc is None or now >= _parse_utc(self.cooldown_until_utc)
+
+    def configure_profit_lock(self, *, cycle_start_nav_jpy: float, now_utc: datetime) -> None:
+        """Bind one campaign cycle to its immutable NAV baseline.
+
+        The +5% floor is relative to this baseline, never relative to peak NAV.
+        Rebinding an active cycle is forbidden.
+        """
+
+        nav = _positive_float(cycle_start_nav_jpy, "cycle_start_nav_jpy")
+        if self.state is not InventoryState.RUNNING:
+            raise RuntimeError("profit-lock cycle can start only while RUNNING")
+        if self.cycle_start_nav_jpy is not None:
+            if not math.isclose(self.cycle_start_nav_jpy, nav, rel_tol=0.0, abs_tol=1e-6):
+                raise RuntimeError("cycle_start_NAV is immutable for the active campaign")
+            return
+        self.cycle_start_nav_jpy = nav
+        self.cycle_peak_nav_jpy = nav
+        self.cycle_count += 1
+        self.cycle_retained_return = None
+        self.cycle_giveback_jpy = 0.0
+        self.cycle_execution_cost_jpy = 0.0
+        self.profit_lock_triggered = False
+        self.profit_floor_breached = False
+        self.profit_lock_reduction_fraction = 0.5
+        self._record(
+            "PROFIT_LOCK_CYCLE_STARTED",
+            now_utc,
+            cycle_count=self.cycle_count,
+            cycle_start_nav_jpy=nav,
+            target_nav_jpy=round(nav * 1.10, 6),
+            retained_floor_nav_jpy=round(nav * 1.05, 6),
+        )
+        self._persist()
+
+    def evaluate_profit_lock(
+        self,
+        *,
+        current_nav_jpy: float,
+        now_utc: datetime,
+        hard_limit_reason: str | None = None,
+    ) -> str:
+        """Advance the deterministic +10% freeze / +5% retained-floor policy."""
+
+        if self.cycle_start_nav_jpy is None:
+            raise RuntimeError("cycle_start_NAV is not configured")
+        nav = _positive_float(current_nav_jpy, "current_nav_jpy")
+        start = self.cycle_start_nav_jpy
+        peak = max(float(self.cycle_peak_nav_jpy or start), nav)
+        self.cycle_peak_nav_jpy = peak
+        self.cycle_giveback_jpy = round(max(0.0, peak - nav), 6)
+        self.cycle_retained_return = round((nav / start) - 1.0, 8)
+        target = round(start * 1.10, 6)
+        retained_floor = round(start * 1.05, 6)
+        action = "NO_CHANGE"
+        if hard_limit_reason and self.state is InventoryState.RUNNING:
+            self.state = InventoryState.FREEZE_NEW
+            self.stop_reason = f"HARD_LIMIT:{str(hard_limit_reason).strip()}"
+            self._record("FREEZE_NEW", now_utc, reason=self.stop_reason)
+            self.state = (
+                InventoryState.DRAINING
+                if self.pending_entry_ids or any(lot.remaining_units > 0 for lot in self.lots.values())
+                else InventoryState.FLAT
+            )
+            self._record(self.state.value, now_utc, reason=self.stop_reason)
+            action = f"HARD_LIMIT_{self.state.value}"
+        if self.state is InventoryState.RUNNING and nav >= target:
+            self.state = InventoryState.FREEZE_NEW
+            self.stop_reason = "CYCLE_START_NAV_PLUS_10_PERCENT"
+            self.profit_lock_triggered = True
+            self._record(
+                "PROFIT_LOCK_TARGET_REACHED",
+                now_utc,
+                cycle_count=self.cycle_count,
+                cycle_start_nav_jpy=start,
+                current_nav_jpy=nav,
+                retained_floor_nav_jpy=round(retained_floor, 6),
+            )
+            self.state = (
+                InventoryState.DRAINING
+                if self.pending_entry_ids or any(lot.remaining_units > 0 for lot in self.lots.values())
+                else InventoryState.FLAT
+            )
+            self._record(self.state.value, now_utc, reason=self.stop_reason)
+            action = self.state.value
+        if self.state is InventoryState.DRAINING and self.profit_lock_triggered:
+            retained = self.cycle_retained_return
+            if nav <= retained_floor:
+                self.profit_floor_breached = True
+                self.profit_lock_reduction_fraction = 1.0
+                action = "FORCE_FLAT_AT_CYCLE_START_PLUS_5_PERCENT"
+            elif retained <= 0.06:
+                self.profit_lock_reduction_fraction = 1.0
+                action = "DRAIN_100_PERCENT_NEAR_RETAINED_FLOOR"
+            elif retained <= 0.075:
+                self.profit_lock_reduction_fraction = 0.75
+                action = "DRAIN_75_PERCENT_APPROACHING_RETAINED_FLOOR"
+            else:
+                self.profit_lock_reduction_fraction = 0.5
+                action = "DRAIN_50_PERCENT_AFTER_TARGET"
+            self._record(
+                "PROFIT_LOCK_DRAIN_EVALUATED",
+                now_utc,
+                cycle_count=self.cycle_count,
+                current_nav_jpy=nav,
+                retained_return=round(retained, 8),
+                giveback_jpy=self.cycle_giveback_jpy,
+                reduction_fraction=self.profit_lock_reduction_fraction,
+                action=action,
+            )
+        self._persist()
+        return action
 
     def register_pending_entry(self, order_id: str, *, now_utc: datetime) -> None:
         if not self.can_enter(now_utc):
@@ -498,10 +649,18 @@ class InventoryController:
             (item for item in self.lots.values() if item.remaining_units > 0),
             key=_unwind_priority,
         ):
-            units = lot.remaining_units if hard_terminal else max(1, math.ceil(lot.remaining_units / 2))
+            force_profit_floor = self.profit_floor_breached
+            fraction = self.profit_lock_reduction_fraction if self.profit_lock_triggered else 0.5
+            units = (
+                lot.remaining_units
+                if hard_terminal or force_profit_floor
+                else max(1, math.ceil(lot.remaining_units * fraction))
+            )
             reason = (
                 "HARD_TERMINAL_ALL_REMAINING"
                 if hard_terminal
+                else "PROFIT_FLOOR_FORCE_FLAT_ALL_REMAINING"
+                if force_profit_floor
                 else "PARTIAL_SCALE_OUT_ALL_OWNED_LOTS"
             )
             actions.append(
@@ -528,6 +687,7 @@ class InventoryController:
         *,
         units: int,
         realized_after_cost_jpy: float,
+        execution_cost_jpy: float = 0.0,
         now_utc: datetime,
     ) -> None:
         if self.state is not InventoryState.DRAINING:
@@ -543,7 +703,17 @@ class InventoryController:
             + _finite_float(realized_after_cost_jpy),
             6,
         )
-        self._record("LOT_REDUCED", now_utc, lot_id=lot_id, units=units)
+        cost = max(0.0, _finite_float(execution_cost_jpy))
+        self.cycle_execution_cost_jpy = round(self.cycle_execution_cost_jpy + cost, 6)
+        self._record(
+            "LOT_REDUCED",
+            now_utc,
+            lot_id=lot_id,
+            units=units,
+            realized_after_cost_jpy=_finite_float(realized_after_cost_jpy),
+            execution_cost_jpy=cost,
+            cycle_cost_jpy=self.cycle_execution_cost_jpy,
+        )
         self._advance_flat_if_empty(now_utc)
         self._persist()
 
@@ -562,7 +732,14 @@ class InventoryController:
             lot.remaining_units > 0 for lot in self.lots.values()
         ):
             self.state = InventoryState.FLAT
-            self._record("FLAT", now_utc)
+            self._record(
+                "FLAT",
+                now_utc,
+                cycle_count=self.cycle_count,
+                cycle_retained_return=self.cycle_retained_return,
+                cycle_giveback_jpy=self.cycle_giveback_jpy,
+                cycle_execution_cost_jpy=self.cycle_execution_cost_jpy,
+            )
 
     def _lot(self, lot_id: str) -> InventoryLot:
         try:
@@ -603,6 +780,15 @@ class InventoryController:
             "supervision_risk_budget_cap_jpy": self.supervision_risk_budget_cap_jpy,
             "supervision_max_positions_cap": self.supervision_max_positions_cap,
             "supervision_expires_at_utc": self.supervision_expires_at_utc,
+            "cycle_start_nav_jpy": self.cycle_start_nav_jpy,
+            "cycle_peak_nav_jpy": self.cycle_peak_nav_jpy,
+            "cycle_count": self.cycle_count,
+            "cycle_retained_return": self.cycle_retained_return,
+            "cycle_giveback_jpy": self.cycle_giveback_jpy,
+            "cycle_execution_cost_jpy": self.cycle_execution_cost_jpy,
+            "profit_lock_triggered": self.profit_lock_triggered,
+            "profit_floor_breached": self.profit_floor_breached,
+            "profit_lock_reduction_fraction": self.profit_lock_reduction_fraction,
         }
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self.state_path.with_name(f".{self.state_path.name}.lock")

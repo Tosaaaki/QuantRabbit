@@ -217,6 +217,138 @@ class InventoryControllerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "changed concurrently"):
                 stale.register_pending_entry("pending-2", now_utc=NOW)
 
+    def test_campaign_profit_lock_uses_start_nav_floor_and_forces_owned_flat(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "inventory.json"
+            controller = InventoryController.open(
+                state_path,
+                campaign_id="campaign-20260828",
+                now_utc=NOW,
+            )
+            controller.configure_profit_lock(
+                cycle_start_nav_jpy=100_000,
+                now_utc=NOW,
+            )
+            controller.register_fill(
+                identity=_identity("lot-profit-lock"),
+                pair="EUR_USD",
+                side=Side.LONG,
+                units=10,
+                entry_price=1.1,
+                now_utc=NOW,
+            )
+            self.assertEqual(
+                controller.evaluate_profit_lock(
+                    current_nav_jpy=110_000,
+                    now_utc=NOW + timedelta(minutes=1),
+                ),
+                "DRAIN_50_PERCENT_AFTER_TARGET",
+            )
+            self.assertEqual(controller.state, InventoryState.DRAINING)
+            self.assertTrue(controller.profit_lock_triggered)
+            self.assertEqual(
+                controller.evaluate_profit_lock(
+                    current_nav_jpy=107_400,
+                    now_utc=NOW + timedelta(minutes=2),
+                ),
+                "DRAIN_75_PERCENT_APPROACHING_RETAINED_FLOOR",
+            )
+            action = next(
+                item
+                for item in controller.unwind_actions(
+                    now_utc=NOW + timedelta(minutes=2),
+                    terminal_deadline_utc=NOW + timedelta(hours=1),
+                )
+                if item.action == "REDUCE_BOT_LOT"
+            )
+            self.assertEqual(action.units, 8)
+            controller.record_unwind_fill(
+                "lot-profit-lock",
+                units=8,
+                realized_after_cost_jpy=7_600,
+                execution_cost_jpy=25,
+                now_utc=NOW + timedelta(minutes=2),
+            )
+            self.assertEqual(
+                controller.evaluate_profit_lock(
+                    current_nav_jpy=105_000,
+                    now_utc=NOW + timedelta(minutes=3),
+                ),
+                "FORCE_FLAT_AT_CYCLE_START_PLUS_5_PERCENT",
+            )
+            force = controller.unwind_actions(
+                now_utc=NOW + timedelta(minutes=3),
+                terminal_deadline_utc=NOW + timedelta(hours=1),
+            )
+            self.assertEqual(len(force), 1)
+            self.assertEqual(force[0].units, 2)
+            self.assertEqual(force[0].reason, "PROFIT_FLOOR_FORCE_FLAT_ALL_REMAINING")
+            controller.record_unwind_fill(
+                "lot-profit-lock",
+                units=2,
+                realized_after_cost_jpy=-100,
+                execution_cost_jpy=10,
+                now_utc=NOW + timedelta(minutes=3),
+            )
+            self.assertEqual(controller.state, InventoryState.FLAT)
+            self.assertEqual(controller.cycle_start_nav_jpy, 100_000)
+            self.assertEqual(controller.cycle_retained_return, 0.05)
+            self.assertEqual(controller.cycle_giveback_jpy, 5_000)
+            self.assertEqual(controller.cycle_execution_cost_jpy, 35)
+            self.assertEqual(controller.cycle_count, 1)
+            reloaded = InventoryController.open(
+                state_path,
+                campaign_id="campaign-20260828",
+                now_utc=NOW + timedelta(minutes=4),
+            )
+            self.assertEqual(reloaded.cycle_retained_return, 0.05)
+            self.assertTrue(reloaded.profit_floor_breached)
+            reloaded.stop(
+                now_utc=NOW + timedelta(minutes=4),
+                cooldown=timedelta(minutes=5),
+            )
+            next_cycle = InventoryController.open(
+                state_path,
+                campaign_id="campaign-next",
+                now_utc=NOW + timedelta(minutes=10),
+            )
+            next_cycle.configure_profit_lock(
+                cycle_start_nav_jpy=105_000,
+                now_utc=NOW + timedelta(minutes=10),
+            )
+            self.assertEqual(next_cycle.cycle_count, 2)
+            self.assertEqual(next_cycle.cycle_start_nav_jpy, 105_000)
+
+    def test_hard_limit_overrides_profit_lock_and_enters_draining(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller = InventoryController.open(
+                Path(temp_dir) / "inventory.json",
+                campaign_id="campaign-hard-limit",
+                now_utc=NOW,
+            )
+            controller.configure_profit_lock(cycle_start_nav_jpy=100_000, now_utc=NOW)
+            controller.register_fill(
+                identity=LotIdentity(
+                    campaign_id="campaign-hard-limit",
+                    strategy_id="range_rotation",
+                    lot_id="lot-hard-limit",
+                ),
+                pair="USD_JPY",
+                side=Side.SHORT,
+                units=10,
+                entry_price=147.0,
+                now_utc=NOW,
+            )
+            action = controller.evaluate_profit_lock(
+                current_nav_jpy=101_000,
+                hard_limit_reason="STRESS_MCP",
+                now_utc=NOW + timedelta(seconds=1),
+            )
+            self.assertEqual(action, "HARD_LIMIT_DRAINING")
+            self.assertEqual(controller.state, InventoryState.DRAINING)
+            self.assertFalse(controller.profit_lock_triggered)
+            self.assertEqual(controller.stop_reason, "HARD_LIMIT:STRESS_MCP")
+
     def test_event_receipt_is_bound_deduped_and_expiry_or_timeout_freezes_new(self) -> None:
         event = {"event_id": "event-1", "dedupe_key": "EUR_USD|REGIME_FLIP"}
         receipt = {

@@ -31,6 +31,20 @@ class InventoryPaperCycleTest(unittest.TestCase):
         self.assertEqual(result["remaining_bot_owned_units"], 0)
         self.assertEqual(result["final_inventory_state"], "STOPPED")
         self.assertEqual(len(set(result["canonical_order_client_ids"])), 2)
+        self.assertEqual(result["profit_target_result"], "DRAIN_50_PERCENT_AFTER_TARGET")
+        self.assertEqual(
+            result["profit_ladder_result"],
+            "DRAIN_75_PERCENT_APPROACHING_RETAINED_FLOOR",
+        )
+        self.assertEqual(
+            result["profit_floor_result"],
+            "FORCE_FLAT_AT_CYCLE_START_PLUS_5_PERCENT",
+        )
+        self.assertEqual(result["cycle_count"], 1)
+        self.assertEqual(result["cycle_start_nav_jpy"], 100_000.0)
+        self.assertEqual(result["cycle_retained_return"], 0.05)
+        self.assertEqual(result["cycle_giveback_jpy"], 5_000.0)
+        self.assertEqual(result["cycle_execution_cost_jpy"], 4.0)
 
 
 if __name__ == "__main__":

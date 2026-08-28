@@ -290,9 +290,12 @@ class TradeReadinessTest(unittest.TestCase):
             software_ready=True,
             signal=signal,
         )
-        self.assertEqual(admitted["calculated_units"], 250)
+        self.assertEqual(admitted["safe_unit_capacity"], 250)
+        self.assertEqual(admitted["calculated_units"], 1)
         self.assertEqual(admitted["mode"], "THROTTLED_LIVE")
         self.assertTrue(admitted["mutation_allowed"])
+        self.assertEqual(admitted["planned_loss_jpy"], 2.0)
+        self.assertEqual(admitted["post_entry_margin_available_jpy"], 199_999.0)
 
         stopped = size_signal_for_runtime_mode(
             previous_mode=RuntimeMode.THROTTLED_LIVE,
@@ -338,7 +341,8 @@ class TradeReadinessTest(unittest.TestCase):
                 factor_delta_jpy_per_unit={"USD": 100.0},
             ),
         )
-        self.assertEqual(result["calculated_units"], 5_500)
+        self.assertEqual(result["safe_unit_capacity"], 5_500)
+        self.assertEqual(result["calculated_units"], 1)
         self.assertEqual(result["mode"], "THROTTLED_LIVE")
 
     def test_non_finite_runtime_inputs_fail_closed(self) -> None:

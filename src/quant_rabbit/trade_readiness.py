@@ -194,7 +194,7 @@ def size_signal_for_runtime_mode(
         else:
             capacity = math.floor((factor_budget + current) / abs(delta))
         factor_capacities.append(max(0, capacity))
-    units = min(
+    safe_unit_capacity = min(
         [
             requested,
             buffer_capacity,
@@ -204,6 +204,10 @@ def size_signal_for_runtime_mode(
             *factor_capacities,
         ]
     )
+    # Progressive live is deliberately a micro-lot lane.  The larger safe
+    # capacity is retained in the receipt for audit, but is never treated as
+    # permission to scale the live order automatically.
+    units = minimum if safe_unit_capacity >= minimum else 0
     post_current_mcp = current_mcp + units * signal.closeout_margin_jpy_per_unit / nav_jpy
     post_stress_mcp = (
         stress_baseline_mcp
@@ -211,11 +215,17 @@ def size_signal_for_runtime_mode(
     )
     post_factor_exposure = {
         currency: float(factor_exposure_jpy.get(currency, 0.0))
-        + units * float(delta_per_unit)
-        for currency, delta_per_unit in signal.factor_delta_jpy_per_unit.items()
+        + units * float(signal.factor_delta_jpy_per_unit.get(currency, 0.0))
+        for currency in set(factor_exposure_jpy) | set(signal.factor_delta_jpy_per_unit)
     }
+    planned_loss_jpy = units * signal.loss_jpy_per_unit
+    post_margin_available_jpy = margin_available_jpy - units * signal.margin_jpy_per_unit
+    post_max_factor_nav_multiple = max(
+        (abs(value) / nav_jpy for value in post_factor_exposure.values()),
+        default=0.0,
+    )
 
-    if units < minimum:
+    if safe_unit_capacity < minimum:
         mode = RuntimeMode.FREEZE_NEW if has_bot_inventory else RuntimeMode.SHADOW_ONLY
         return _mode_receipt(
             mode,
@@ -224,6 +234,10 @@ def size_signal_for_runtime_mode(
             "CALCULATED_LOT_BELOW_BROKER_MINIMUM",
             post_current_mcp=post_current_mcp,
             post_stress_mcp=post_stress_mcp,
+            safe_unit_capacity=safe_unit_capacity,
+            planned_loss_jpy=planned_loss_jpy,
+            post_margin_available_jpy=post_margin_available_jpy,
+            post_max_currency_factor_nav_multiple=post_max_factor_nav_multiple,
         )
     if (
         post_current_mcp > float(limits.max_post_entry_current_mcp or 0.0)
@@ -238,6 +252,10 @@ def size_signal_for_runtime_mode(
             "POST_ENTRY_MARGIN_OR_FACTOR_GATE_FAILED",
             post_current_mcp=post_current_mcp,
             post_stress_mcp=post_stress_mcp,
+            safe_unit_capacity=safe_unit_capacity,
+            planned_loss_jpy=planned_loss_jpy,
+            post_margin_available_jpy=post_margin_available_jpy,
+            post_max_currency_factor_nav_multiple=post_max_factor_nav_multiple,
         )
 
     retained_live = previous_mode in {RuntimeMode.THROTTLED_LIVE, RuntimeMode.FULL_LIVE}
@@ -246,8 +264,6 @@ def size_signal_for_runtime_mode(
     promote_stress = float(limits.max_post_entry_stress_mcp or 0.0) - hysteresis
     if post_current_mcp > promote_current or post_stress_mcp > promote_stress:
         mode = RuntimeMode.SHADOW_ONLY
-    elif units == requested:
-        mode = RuntimeMode.FULL_LIVE
     else:
         mode = RuntimeMode.THROTTLED_LIVE
     if mode is RuntimeMode.SHADOW_ONLY:
@@ -259,6 +275,10 @@ def size_signal_for_runtime_mode(
         "PRE_FIXED_MODE_THRESHOLDS",
         post_current_mcp=post_current_mcp,
         post_stress_mcp=post_stress_mcp,
+        safe_unit_capacity=safe_unit_capacity,
+        planned_loss_jpy=planned_loss_jpy,
+        post_margin_available_jpy=post_margin_available_jpy,
+        post_max_currency_factor_nav_multiple=post_max_factor_nav_multiple,
     )
 
 
@@ -270,6 +290,10 @@ def _mode_receipt(
     *,
     post_current_mcp: float | None = None,
     post_stress_mcp: float | None = None,
+    safe_unit_capacity: int | None = None,
+    planned_loss_jpy: float | None = None,
+    post_margin_available_jpy: float | None = None,
+    post_max_currency_factor_nav_multiple: float | None = None,
 ) -> dict[str, Any]:
     return {
         "mode": mode.value,
@@ -279,6 +303,12 @@ def _mode_receipt(
         "broker_minimum_units": signal.broker_minimum_units,
         "post_entry_current_mcp": post_current_mcp,
         "post_entry_stress_mcp": post_stress_mcp,
+        "safe_unit_capacity": safe_unit_capacity,
+        "planned_loss_jpy": planned_loss_jpy,
+        "post_entry_margin_available_jpy": post_margin_available_jpy,
+        "post_entry_max_currency_factor_nav_multiple": (
+            post_max_currency_factor_nav_multiple
+        ),
         "mutation_allowed": mode in {RuntimeMode.FULL_LIVE, RuntimeMode.THROTTLED_LIVE}
         and units >= signal.broker_minimum_units,
     }

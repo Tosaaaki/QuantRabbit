@@ -113,6 +113,10 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             campaign_id=str(signals[0]["campaign_id"]),
             now_utc=now_utc,
         )
+        controller.configure_profit_lock(
+            cycle_start_nav_jpy=100_000.0,
+            now_utc=now_utc,
+        )
         allow_result = controller.apply_supervision_receipt(
             event=allow_event,
             receipt=allow_receipt,
@@ -189,10 +193,18 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             "generated_at_utc": (now_utc + timedelta(seconds=4)).isoformat(),
             "expires_at_utc": (now_utc + timedelta(minutes=5)).isoformat(),
         }
+        profit_target_result = controller.evaluate_profit_lock(
+            current_nav_jpy=110_000.0,
+            now_utc=now_utc + timedelta(seconds=4),
+        )
         unwind_result = controller.apply_supervision_receipt(
             event=unwind_event,
             receipt=unwind_receipt,
             now_utc=now_utc + timedelta(seconds=4),
+        )
+        profit_ladder_result = controller.evaluate_profit_lock(
+            current_nav_jpy=107_400.0,
+            now_utc=now_utc + timedelta(seconds=5),
         )
         first_actions = controller.unwind_actions(
             now_utc=now_utc + timedelta(seconds=5),
@@ -204,10 +216,15 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
                     str(action.lot_id),
                     units=int(action.units or 0),
                     realized_after_cost_jpy=0.0,
+                    execution_cost_jpy=1.0,
                     now_utc=now_utc + timedelta(seconds=6),
                 )
+        profit_floor_result = controller.evaluate_profit_lock(
+            current_nav_jpy=105_000.0,
+            now_utc=now_utc + timedelta(seconds=7),
+        )
         terminal_actions = controller.unwind_actions(
-            now_utc=now_utc + timedelta(minutes=1),
+            now_utc=now_utc + timedelta(seconds=7),
             terminal_deadline_utc=now_utc + timedelta(minutes=1),
         )
         for action in terminal_actions:
@@ -216,6 +233,7 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
                     str(action.lot_id),
                     units=int(action.units or 0),
                     realized_after_cost_jpy=0.0,
+                    execution_cost_jpy=1.0,
                     now_utc=now_utc + timedelta(minutes=1),
                 )
         controller.stop(
@@ -244,6 +262,14 @@ def run_paper_cycle(*, quotes: Mapping[str, Quote], now_utc: datetime) -> dict[s
             ),
             "supervision_max_positions_cap": controller.supervision_max_positions_cap,
             "unwind_receipt_result": unwind_result,
+            "profit_target_result": profit_target_result,
+            "profit_ladder_result": profit_ladder_result,
+            "profit_floor_result": profit_floor_result,
+            "cycle_count": controller.cycle_count,
+            "cycle_start_nav_jpy": controller.cycle_start_nav_jpy,
+            "cycle_retained_return": controller.cycle_retained_return,
+            "cycle_giveback_jpy": controller.cycle_giveback_jpy,
+            "cycle_execution_cost_jpy": controller.cycle_execution_cost_jpy,
             "canonical_order_request_count": len(staged_orders),
             "canonical_order_client_ids": [
                 order["clientExtensions"]["id"] for order in staged_orders
