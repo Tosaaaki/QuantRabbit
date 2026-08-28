@@ -394,10 +394,16 @@ def build_fast_bot_shadow(
             **identity,
             "regime_contract_sha256": regime_contract.get("contract_sha256"),
         }
+        signal_id = _canonical_sha(identity)[:24]
+        campaign_id = f"paper-fb-{str(regime_contract.get('contract_sha256') or '')[:20]}"
         signal_body = {
             "contract": SIGNAL_CONTRACT,
             "schema_version": 3,
-            "signal_id": _canonical_sha(identity)[:24],
+            "signal_id": signal_id,
+            "campaign_id": campaign_id,
+            "strategy_id": method.lower(),
+            "lot_id": f"lot-{signal_id}",
+            "owner_tag": "fast_bot",
             **evidence_binding,
             "generated_at_utc": now.isoformat(),
             "quote_timestamp_utc": quote_at.isoformat(),

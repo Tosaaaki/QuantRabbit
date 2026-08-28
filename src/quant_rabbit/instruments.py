@@ -55,11 +55,16 @@ DEFAULT_CONTEXT_ASSETS_ARG = ",".join(DEFAULT_CONTEXT_ASSETS)
 OANDA_SPREAD_CALIBRATION_V1_PATH: Final[Path] = (
     Path(__file__).resolve().parents[2] / "config" / "oanda_spread_calibration_v1.json"
 )
+OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_PATH: Final[Path] = (
+    Path(__file__).resolve().parents[2]
+    / "config"
+    / "oanda_spread_calibration_source_v1.json.gz"
+)
 OANDA_SPREAD_CALIBRATION_V1_BYTES_SHA256: Final[str] = (
-    "f8158be138ee641f43dbf299da94b9d6704a88e099440ec163391d16ebe1984f"
+    "c4052e34973517bdc0cac7d0f3eae9d906b5663597a6899559beb45cc3df0d47"
 )
 OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256: Final[str] = (
-    "9a42bc509ca6c6dfe868c5504a80a516c9f9bfe861925c329b368676e3d10d51"
+    "596c952777eb7c40b3acaafdf725b04dc6876d9f3f3c22714ac398458fa0c41d"
 )
 
 _CALIBRATION_SCHEMA = "QR_OANDA_SPREAD_CALIBRATION_V1"
@@ -508,9 +513,23 @@ def load_oanda_spread_calibration_v1(
     )
 
 
+def _verify_pinned_source_evidence() -> None:
+    try:
+        raw = OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_PATH.read_bytes()
+    except OSError as exc:
+        raise SpreadCalibrationError(
+            "spread calibration source evidence is unavailable"
+        ) from exc
+    if not raw or len(raw) > 1024 * 1024:
+        raise SpreadCalibrationError("spread calibration source evidence size is invalid")
+    if hashlib.sha256(raw).hexdigest() != OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256:
+        raise SpreadCalibrationError("spread calibration source evidence SHA-256 mismatch")
+
+
 # Broker-spec spread anomaly baselines used by RiskEngine's current-spread cap.
 # The runtime table has no static fallback: missing, modified, or semantically
 # invalid tracked bytes raise during import before any trading service can start.
+_verify_pinned_source_evidence()
 OANDA_SPREAD_CALIBRATION_V1 = load_oanda_spread_calibration_v1(
     OANDA_SPREAD_CALIBRATION_V1_PATH,
     expected_bytes_sha256=OANDA_SPREAD_CALIBRATION_V1_BYTES_SHA256,

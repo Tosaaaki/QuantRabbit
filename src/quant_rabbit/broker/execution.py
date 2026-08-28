@@ -12864,6 +12864,9 @@ def _client_extensions(intent: OrderIntent) -> dict[str, str]:
 
 
 def _client_order_id(intent: OrderIntent) -> str:
+    fast_bot_identity = _fast_bot_lot_identity(intent)
+    if fast_bot_identity is not None:
+        return fast_bot_identity.broker_client_id()
     lane_id = _gateway_lane_id(intent)
     seed = "|".join(
         (
@@ -12911,11 +12914,29 @@ def _comment(intent: OrderIntent) -> str:
         else ""
     )
     lane_part = f" lane={lane_id}" if lane_id else ""
+    fast_bot_identity = _fast_bot_lot_identity(intent)
+    owner_part = " owner=fast_bot" if fast_bot_identity is not None else ""
     # SCOUT concurrency is reconstructed from the broker's truncated comment.
     # Put the bounded campaign role before potentially long lane text so the
     # one-active-SCOUT guard cannot lose its identity at the 128-byte boundary.
-    text = f"qr-vnext{role_part}{vehicle_part}{parent_part}{lane_part} desk={desk}".strip()
+    text = f"qr-vnext{role_part}{vehicle_part}{parent_part}{lane_part}{owner_part} desk={desk}".strip()
     return text[:128]
+
+
+def _fast_bot_lot_identity(intent: OrderIntent):
+    metadata = intent.metadata or {}
+    keys = {"campaign_id", "strategy_id", "lot_id", "owner_tag"}
+    present = keys.intersection(metadata)
+    if not present:
+        return None
+    if present != keys:
+        raise ValueError("fast-bot orders require campaign_id/strategy_id/lot_id/owner_tag")
+    from quant_rabbit.inventory_controller import LotIdentity
+
+    try:
+        return LotIdentity.from_metadata(metadata)
+    except ValueError as exc:
+        raise ValueError(f"fast-bot ownership identity is invalid: {exc}") from exc
 
 
 def _gateway_lane_id(intent: OrderIntent) -> str:

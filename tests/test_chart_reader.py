@@ -10,8 +10,7 @@ from quant_rabbit.analysis.candles import (
     Candle,
 )
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES, build_pair_chart
-from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
-from quant_rabbit.risk import RiskPolicy
+from quant_rabbit.instruments import OANDA_SPREAD_CALIBRATION_V1
 from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
 
 
@@ -80,7 +79,9 @@ def _mba_entry(
 
 
 def _above_eur_usd_execution_cap_widening() -> float:
-    cap_pips = NORMAL_SPREAD_PIPS["EUR_USD"] * RiskPolicy().max_spread_multiple
+    # Technical-candle quarantine uses the pinned cohort's observed maximum,
+    # which is intentionally distinct from the current-quote execution cap.
+    cap_pips = OANDA_SPREAD_CALIBRATION_V1.pairs["EUR_USD"].max_pips
     return (cap_pips + 1.0 - 0.6) / 10000.0
 
 

@@ -2401,6 +2401,17 @@ class FastBotTest(unittest.TestCase):
         }
         self.assertEqual(len(identities), 4)
         self.assertEqual(len({signal["signal_id"] for signal in shadow["signals"]}), 4)
+        self.assertTrue(
+            all(signal["campaign_id"].startswith("paper-fb-") for signal in shadow["signals"])
+        )
+        self.assertTrue(
+            all(signal["lot_id"] == f"lot-{signal['signal_id']}" for signal in shadow["signals"])
+        )
+        self.assertTrue(all(signal["owner_tag"] == "fast_bot" for signal in shadow["signals"]))
+        self.assertEqual(
+            {signal["strategy_id"] for signal in shadow["signals"]},
+            {"trend_continuation", "range_rotation", "breakout_failure"},
+        )
         self.assertEqual(shadow["candidate_projection"], "ALL_GO_ROWS_NO_PAIR_OR_SIDE_NETTING")
         self.assertEqual(shadow["candidate_count_by_horizon_lane"], {HORIZON_LANE: 4})
         self.assertTrue(all(signal["schema_version"] == 3 for signal in shadow["signals"]))

@@ -15,6 +15,7 @@ from quant_rabbit.instruments import (
     OANDA_SPREAD_CALIBRATION_V1,
     OANDA_SPREAD_CALIBRATION_V1_BYTES_SHA256,
     OANDA_SPREAD_CALIBRATION_V1_PATH,
+    OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_PATH,
     OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256,
     SpreadCalibrationError,
     load_oanda_spread_calibration_v1,
@@ -25,36 +26,36 @@ from quant_rabbit.risk import DEFAULT_SPECS, RiskEngine, RiskPolicy
 
 
 EXPECTED_SPREAD_CALIBRATION = {
-    "EUR_USD": (216, 1.6, 1.7, 1.8, 1.9, 0.7),
-    "GBP_USD": (216, 1.9, 2.1, 2.6, 2.8, 0.9),
-    "AUD_USD": (216, 1.4, 1.5, 1.6, 1.8, 0.6),
+    "EUR_USD": (216, 1.6, 1.7, 2.2, 3.1, 0.7),
+    "GBP_USD": (216, 1.8, 2.0, 3.9, 5.1, 0.8),
+    "AUD_USD": (216, 1.4, 1.5, 2.0, 2.7, 0.6),
     "NZD_USD": (216, 1.5, 1.6, 1.8, 2.1, 0.7),
-    "USD_JPY": (216, 1.6, 1.8, 1.9, 2.5, 0.8),
-    "USD_CAD": (216, 1.8, 1.9, 2.3, 3.3, 0.8),
-    "USD_CHF": (216, 1.5, 1.7, 2.0, 2.5, 0.7),
-    "EUR_GBP": (216, 1.4, 1.5, 2.1, 2.6, 0.6),
-    "EUR_JPY": (216, 2.8, 3.1, 5.0, 5.7, 1.3),
-    "EUR_AUD": (216, 3.6, 4.0, 6.6, 7.4, 1.6),
-    "EUR_CAD": (216, 2.8, 3.1, 4.8, 6.6, 1.3),
-    "EUR_CHF": (216, 1.6, 1.7, 2.6, 3.1, 0.7),
-    "EUR_NZD": (216, 6.4, 7.2, 11.1, 12.3, 2.9),
-    "GBP_JPY": (216, 3.4, 3.7, 7.2, 7.8, 1.5),
-    "GBP_AUD": (216, 5.1, 5.7, 8.2, 9.2, 2.3),
-    "GBP_CAD": (216, 3.4, 4.0, 6.5, 9.8, 1.6),
-    "GBP_CHF": (216, 2.4, 2.6, 4.1, 6.8, 1.1),
-    "GBP_NZD": (216, 8.4, 9.5, 13.4, 14.6, 3.8),
-    "AUD_JPY": (216, 2.3, 2.5, 4.4, 4.8, 1.0),
-    "AUD_CAD": (216, 2.3, 3.0, 3.6, 5.7, 1.2),
-    "AUD_CHF": (216, 1.5, 1.8, 2.5, 3.8, 0.8),
-    "AUD_NZD": (216, 2.7, 2.9, 5.1, 7.5, 1.2),
-    "CAD_JPY": (216, 2.0, 2.6, 3.1, 4.9, 1.1),
-    "CAD_CHF": (216, 1.4, 1.8, 2.9, 7.8, 0.8),
-    "CHF_JPY": (216, 3.9, 4.3, 6.8, 10.7, 1.8),
-    "NZD_JPY": (216, 2.6, 3.2, 5.5, 7.9, 1.3),
-    "NZD_CAD": (216, 2.5, 3.3, 4.7, 6.4, 1.4),
-    "NZD_CHF": (216, 1.5, 1.9, 3.1, 4.8, 0.8),
+    "USD_JPY": (216, 1.6, 1.8, 2.3, 4.3, 0.8),
+    "USD_CAD": (216, 1.8, 2.0, 2.2, 2.6, 0.8),
+    "USD_CHF": (216, 1.5, 1.7, 2.9, 3.2, 0.7),
+    "EUR_GBP": (216, 1.4, 1.5, 2.6, 3.4, 0.6),
+    "EUR_JPY": (216, 2.7, 3.1, 4.6, 7.6, 1.3),
+    "EUR_AUD": (216, 3.5, 4.1, 5.7, 7.1, 1.7),
+    "EUR_CAD": (216, 2.8, 3.2, 4.4, 5.2, 1.3),
+    "EUR_CHF": (216, 1.6, 1.8, 2.9, 4.7, 0.8),
+    "EUR_NZD": (216, 6.3, 7.1, 11.1, 13.2, 2.9),
+    "GBP_JPY": (216, 3.0, 3.8, 8.6, 11.2, 1.6),
+    "GBP_AUD": (216, 5.1, 5.7, 11.1, 15.4, 2.3),
+    "GBP_CAD": (216, 3.4, 4.8, 7.1, 8.5, 2.0),
+    "GBP_CHF": (216, 2.4, 2.8, 6.8, 8.5, 1.2),
+    "GBP_NZD": (216, 8.1, 9.3, 14.6, 17.8, 3.8),
+    "AUD_JPY": (216, 2.3, 2.6, 3.5, 7.1, 1.1),
+    "AUD_CAD": (216, 2.4, 3.1, 3.9, 4.0, 1.3),
+    "AUD_CHF": (216, 1.5, 1.9, 3.6, 5.4, 0.8),
+    "AUD_NZD": (216, 2.6, 2.9, 4.9, 8.8, 1.2),
+    "CAD_JPY": (216, 2.0, 2.5, 3.4, 5.3, 1.0),
+    "CAD_CHF": (216, 1.4, 1.8, 3.0, 4.7, 0.8),
+    "CHF_JPY": (216, 3.8, 4.3, 14.0, 16.4, 1.8),
+    "NZD_JPY": (216, 2.6, 3.0, 5.6, 7.1, 1.2),
+    "NZD_CAD": (216, 2.6, 3.4, 3.9, 5.4, 1.4),
+    "NZD_CHF": (216, 1.5, 2.0, 3.7, 5.2, 0.8),
 }
-CALIBRATION_EVALUATION_TIME = datetime(2026, 7, 14, tzinfo=timezone.utc)
+CALIBRATION_EVALUATION_TIME = datetime(2026, 8, 28, tzinfo=timezone.utc)
 
 
 def _fresh_calibration_payload() -> dict[str, object]:
@@ -104,6 +105,12 @@ class InstrumentUniverseTest(unittest.TestCase):
             OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256,
         )
         self.assertEqual(
+            hashlib.sha256(
+                OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_PATH.read_bytes()
+            ).hexdigest(),
+            OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256,
+        )
+        self.assertEqual(
             NORMAL_SPREAD_PIPS_SOURCE_EVIDENCE_SHA256,
             OANDA_SPREAD_CALIBRATION_V1_SOURCE_EVIDENCE_SHA256,
         )
@@ -114,7 +121,7 @@ class InstrumentUniverseTest(unittest.TestCase):
         self.assertEqual(OANDA_SPREAD_CALIBRATION_V1.max_age_days_after_window, 31)
         self.assertEqual(
             OANDA_SPREAD_CALIBRATION_V1.valid_until_utc,
-            datetime(2026, 8, 13, 15, tzinfo=timezone.utc),
+            datetime(2026, 9, 27, 15, tzinfo=timezone.utc),
         )
         self.assertEqual(len(OANDA_SPREAD_CALIBRATION_V1.business_days_utc), 6)
         for pair, expected in EXPECTED_SPREAD_CALIBRATION.items():
@@ -171,12 +178,12 @@ class InstrumentUniverseTest(unittest.TestCase):
         for label, evaluated_at, expected_message in (
             (
                 "before_window_end",
-                datetime(2026, 7, 13, 14, 59, 59, tzinfo=timezone.utc),
+                datetime(2026, 8, 27, 14, 59, 59, tzinfo=timezone.utc),
                 "not yet valid",
             ),
             (
                 "after_expiry",
-                datetime(2026, 8, 13, 15, 0, 1, tzinfo=timezone.utc),
+                datetime(2026, 9, 27, 15, 0, 1, tzinfo=timezone.utc),
                 "expired",
             ),
         ):
