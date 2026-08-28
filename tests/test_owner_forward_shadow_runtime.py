@@ -79,6 +79,23 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
                 scorecard.write_text(json.dumps({"filled_signals": 0}))
                 return {"stdout_tail": json.dumps({"status": "NO_DUE_SIGNALS"}), "stderr_tail": "", "returncode": 0, "wall_seconds": 0.0}
+            if "run_fast_bot_corrective_challenger.py" in " ".join(argv):
+                scorecard = Path(argv[argv.index("--scorecard") + 1])
+                scorecard.parent.mkdir(parents=True, exist_ok=True)
+                scorecard.write_text(json.dumps({"external_order_attempts": 0, "external_orders": 0}))
+                return {
+                    "stdout_tail": json.dumps(
+                        {
+                            "status": "NO_DUE_SIGNALS",
+                            "execution_authority": "NONE",
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    ),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             raise AssertionError(argv)
 
         with tempfile.TemporaryDirectory() as temp:
@@ -94,12 +111,14 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         joined = "\n".join(" ".join(row) for row in calls).lower()
         self.assertIn("broker-snapshot", joined)
         self.assertIn("resolve-fast-bot-shadow-outcomes.py", joined)
+        self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertNotIn("--send", joined)
         self.assertNotIn("--confirm-live", joined)
         self.assertNotIn("position-execution", joined)
         self.assertEqual(state["event_count"], 1)
         self.assertEqual(state["proposal_count"], 0)
         self.assertEqual(state["virtual_fill_count"], 0)
+        self.assertEqual(state["last_corrective_challenger_result"]["external_orders"], 0)
 
     def test_status_hard_codes_zero_external_orders(self) -> None:
         manifest = {

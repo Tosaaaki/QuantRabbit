@@ -34,15 +34,18 @@ STOP = False
 
 SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
+    Path("tools/run_fast_bot_corrective_challenger.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
     Path("src/quant_rabbit/cli.py"),
     Path("src/quant_rabbit/guardian_observation.py"),
     Path("src/quant_rabbit/fast_bot.py"),
+    Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
     Path("src/quant_rabbit/broker/oanda.py"),
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
+    Path("config/fast_bot_corrective_challenger_v1.json"),
 )
 
 
@@ -303,6 +306,10 @@ def _base_status(
         "shadow_ledger_path": str(root / "ledgers" / "fast_bot_shadow_ledger.jsonl"),
         "outcome_ledger_path": str(root / "ledgers" / "fast_bot_outcome_ledger.jsonl"),
         "scorecard_path": str(root / "scorecard" / "fast_bot_scorecard.json"),
+        "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
+        "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
+        "baseline_control_observation_only": True,
+        "worst_lane_new_entry_policy": "CORRECTIVE_ARMS_VETO_EUR_USD_RANGE_ROTATION_LONG",
         "counters": dict(counters),
     }
 
@@ -325,6 +332,8 @@ def run_cycle(
         "shadow_ledger": root / "ledgers" / "fast_bot_shadow_ledger.jsonl",
         "outcome_ledger": root / "ledgers" / "fast_bot_outcome_ledger.jsonl",
         "scorecard": root / "scorecard" / "fast_bot_scorecard.json",
+        "challenger_ledger": root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
+        "challenger_scorecard": root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json",
         "report": root / "reports" / "fast_bot_shadow_report.md",
     }
     for path in paths.values():
@@ -358,6 +367,21 @@ def run_cycle(
             env=env,
         )
     )
+    challenger_result = _json_stdout(
+        command_runner(
+            [
+                py,
+                str(REPO_ROOT / "tools/run_fast_bot_corrective_challenger.py"),
+                "--shadow-ledger", str(paths["shadow_ledger"]),
+                "--outcome-ledger", str(paths["outcome_ledger"]),
+                "--challenger-ledger", str(paths["challenger_ledger"]),
+                "--scorecard", str(paths["challenger_scorecard"]),
+                "--config", str(REPO_ROOT / "config/fast_bot_corrective_challenger_v1.json"),
+                "--max-due", "12",
+            ],
+            env=env,
+        )
+    )
     snapshot = read_object(paths["snapshot"])
     fast_packet = read_object(paths["charts"])
     scorecard = read_object(paths["scorecard"])
@@ -370,6 +394,7 @@ def run_cycle(
     state["last_cycle_refreshed_market_packet"] = refreshed
     state["last_shadow_result"] = bot_result
     state["last_outcome_result"] = outcome_result
+    state["last_corrective_challenger_result"] = challenger_result
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
 
@@ -387,6 +412,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
     for ledger in (
         root / "ledgers" / "fast_bot_shadow_ledger.jsonl",
         root / "ledgers" / "fast_bot_outcome_ledger.jsonl",
+        root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
     ):
         ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         ledger.touch(exist_ok=True, mode=0o600)
@@ -469,6 +495,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_cycle_refreshed_market_packet=state.get("last_cycle_refreshed_market_packet"),
                 last_shadow_result=state.get("last_shadow_result"),
                 last_outcome_result=state.get("last_outcome_result"),
+                last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 counters={
                     "event_count": int(state.get("event_count", 0)),
                     "proposal_count": int(state.get("proposal_count", 0)),

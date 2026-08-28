@@ -1,0 +1,76 @@
+{
+  "arms": [
+    {
+      "arm_id": "BASELINE",
+      "geometry": "EMITTED",
+      "veto": "NONE",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "VOL_SHOCK_VETO",
+      "geometry": "EMITTED",
+      "veto": "VOL_SHOCK",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "ATR_NORMALIZED_GEOMETRY",
+      "geometry": "ATR_RR1_BOUNDED",
+      "veto": "NONE",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "COMBINED",
+      "geometry": "ATR_RR1_BOUNDED",
+      "veto": "VOL_SHOCK_OR_WORST_LANE",
+      "weight": "VOL_THROTTLE"
+    },
+    {
+      "arm_id": "EURUSD_RANGE_ROTATION_EXCLUDE",
+      "geometry": "EMITTED",
+      "veto": "EURUSD_RANGE_ROTATION",
+      "weight": "FULL"
+    }
+  ],
+  "authority": {
+    "automatic_parameter_change_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "live_permission": false,
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V1",
+  "geometry": {
+    "atr_stop_multiplier": 0.75,
+    "reward_risk_minimum": 1.0,
+    "stop_cap_pips": 3.2,
+    "stop_floor_pips": 2.4
+  },
+  "lookahead_policy": "ENTRY_TIME_FEATURES_ONLY",
+  "schema_version": 1,
+  "shock": {
+    "absolute_m5_atr_pips": 5.0,
+    "causal_atr_ratio": 1.25,
+    "minimum_prior_observations": 3,
+    "prior_window_seconds": 1800,
+    "same_timestamp_is_prior": false,
+    "time_bucket_seconds": 900
+  },
+  "volatility_lot_throttle": [
+    {
+      "minimum_m5_atr_pips": 5.0,
+      "unit_weight": 0.25
+    },
+    {
+      "minimum_m5_atr_pips": 4.0,
+      "unit_weight": 0.5
+    }
+  ],
+  "worst_lane": {
+    "method": "RANGE_ROTATION",
+    "pair": "EUR_USD",
+    "side": "LONG"
+  }
+}
