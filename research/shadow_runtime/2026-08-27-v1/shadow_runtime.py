@@ -132,22 +132,61 @@ class NonSequencedFixtureAdapter(JsonlFixtureAdapter):
 
 class HashLedger:
     def __init__(self,path):
-        self.path=Path(path); self.rows=[]; self.last_hash="0"*64
+        self.path=Path(path); self.rows=[]; self.by_id={}; self.last_hash="0"*64; self.byte_size=0
         if self.path.exists() or self.path.is_symlink(): self.verify()
     def verify(self):
-        previous="0"*64; seen=set()
-        for index,line in enumerate(secure_read(self.path).decode("utf-8","strict").splitlines(),1):
+        data=secure_read(self.path); previous="0"*64; seen=set(); rows=[]; by_id={}
+        for index,line in enumerate(data.decode("utf-8","strict").splitlines(),1):
             row=json.loads(line); unsigned={k:v for k,v in row.items() if k!="record_hash"}
             if row.get("sequence_no")!=index or row.get("previous_hash")!=previous or canonical_hash(unsigned)!=row.get("record_hash"):
                 raise IntegrityError("ledger chain mismatch")
             if row.get("record_id") in seen: raise IntegrityError("duplicate record id")
-            seen.add(row["record_id"]); previous=row["record_hash"]; self.rows.append(row)
-        self.last_hash=previous
+            seen.add(row["record_id"]); previous=row["record_hash"]; rows.append(row); by_id[row["record_id"]]=row
+        self.rows=rows; self.by_id=by_id; self.last_hash=previous; self.byte_size=len(data)
+    def refresh(self):
+        if not self.path.exists() and not self.path.is_symlink(): return 0
+        valid_target(self.path,False); before=os.lstat(self.path)
+        fd=os.open(self.path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+        try:
+            fcntl.flock(fd,fcntl.LOCK_SH); current=os.fstat(fd)
+            if (before.st_dev,before.st_ino)!=(current.st_dev,current.st_ino) or current.st_nlink!=1:
+                raise IntegrityError("swap/hardlink")
+            if current.st_size<self.byte_size: raise IntegrityError("ledger truncated")
+            if current.st_size==self.byte_size: return 0
+            os.lseek(fd,self.byte_size,os.SEEK_SET); chunks=[]
+            while True:
+                chunk=os.read(fd,1048576)
+                if not chunk: break
+                chunks.append(chunk)
+            final=os.fstat(fd)
+            if (current.st_dev,current.st_ino,current.st_size)!=(final.st_dev,final.st_ino,final.st_size):
+                raise IntegrityError("changed during read")
+            data=b"".join(chunks)
+        finally:
+            fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
+        if not data.endswith(b"\n"): raise IntegrityError("partial ledger tail")
+        previous=self.last_hash; new=[]
+        for line in data.decode("utf-8","strict").splitlines():
+            row=json.loads(line); unsigned={k:v for k,v in row.items() if k!="record_hash"}
+            expected=len(self.rows)+len(new)+1
+            if row.get("sequence_no")!=expected or row.get("previous_hash")!=previous or canonical_hash(unsigned)!=row.get("record_hash"):
+                raise IntegrityError("ledger tail mismatch")
+            if row.get("record_id") in self.by_id or any(x["record_id"]==row.get("record_id") for x in new):
+                raise IntegrityError("duplicate record id")
+            previous=row["record_hash"]; new.append(row)
+        self.rows.extend(new)
+        for row in new: self.by_id[row["record_id"]]=row
+        self.last_hash=previous; self.byte_size=final.st_size
+        return len(new)
     def plan(self,payload,record_id=None,planned=None):
         planned=[] if planned is None else planned
         payload=copy.deepcopy(payload)
         record_id=record_id or canonical_hash({"ledger":self.path.name,"payload":payload})
-        for row in self.rows+planned:
+        existing=self.by_id.get(record_id)
+        if existing is not None:
+            if existing["payload"]!=payload: raise IntegrityError("record id conflict")
+            return existing
+        for row in planned:
             if row["record_id"]==record_id:
                 if row["payload"]!=payload: raise IntegrityError("record id conflict")
                 return row
@@ -156,10 +195,10 @@ class HashLedger:
              "record_id":record_id,"payload":payload}
         row["record_hash"]=canonical_hash(row); planned.append(row); return row
     def append_rows(self,rows):
-        known={r["record_id"]:r for r in self.rows}; pending=[]
+        pending=[]
         for row in rows:
-            if row["record_id"] in known:
-                if known[row["record_id"]]!=row: raise IntegrityError("idempotency conflict")
+            if row["record_id"] in self.by_id:
+                if self.by_id[row["record_id"]]!=row: raise IntegrityError("idempotency conflict")
                 continue
             expected=len(self.rows)+len(pending)+1
             previous=pending[-1]["record_hash"] if pending else self.last_hash
@@ -168,8 +207,11 @@ class HashLedger:
                 raise IntegrityError("transaction boundary mismatch")
             pending.append(row)
         if pending:
-            secure_append(self.path,b"".join(canonical_bytes(r)+b"\n" for r in pending))
-            self.rows.extend(pending); self.last_hash=pending[-1]["record_hash"]
+            data=b"".join(canonical_bytes(r)+b"\n" for r in pending)
+            secure_append(self.path,data)
+            self.rows.extend(pending)
+            for row in pending: self.by_id[row["record_id"]]=row
+            self.last_hash=pending[-1]["record_hash"]; self.byte_size+=len(data)
 
 
 class RuntimeLock:

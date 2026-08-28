@@ -80,6 +80,35 @@ class LaunchdRuntimeTest(unittest.TestCase):
         self.assertEqual(first["natural_r5_proposals"], 0)
         self.assertEqual(first["external_orders"], 0)
 
+    def test_incremental_bot_tails_new_rows_and_matches_full_replay(self):
+        self._raw()
+        raw_path = self.root / "feed" / "ledgers" / "raw_bbo.jsonl"
+        with patch.object(runtime, "SERVICE_ROOT", self.root):
+            processor = runtime.IncrementalBot()
+            initial = processor.process_once()
+            writer = HashLedger(raw_path)
+            planned = []
+            for index, symbol in enumerate(("EUR_USD", "USD_JPY"), 4):
+                stamp = datetime(2026, 8, 28, 1, 10, 1, tzinfo=timezone.utc)
+                payload = {
+                    "event_id": f"event-{index}", "instrument": symbol,
+                    "event_time_utc": utc_text(stamp),
+                    "arrival_time_utc": utc_text(stamp + timedelta(milliseconds=10)),
+                    "bid": 1.1 + index / 1000, "ask": 1.2 + index / 1000,
+                }
+                writer.plan(payload, f"event-{index}", planned)
+            writer.append_rows(planned)
+            updated = processor.process_once()
+            repeated = processor.process_once()
+            expected = runtime._completed_bars(writer)
+            actual = [row["payload"] for row in processor.completed.rows]
+        self.assertEqual(initial["completed_m5"], 2)
+        self.assertEqual(updated["completed_m5"], 4)
+        self.assertEqual(repeated, updated)
+        order = lambda bar: (bar["instrument"], bar["start_utc"])
+        self.assertEqual(sorted(actual, key=order), sorted(expected, key=order))
+        self.assertEqual(processor.processed_rows, len(writer.rows))
+
     def test_hash_ledger_reader_waits_for_locked_append(self):
         path = self.root / "concurrent.jsonl"
         ledger = HashLedger(path)

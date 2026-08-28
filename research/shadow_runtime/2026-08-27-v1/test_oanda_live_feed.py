@@ -71,6 +71,7 @@ class OandaLiveFeedTest(unittest.TestCase):
         self.assertEqual(restarted.status()["counters"]["market_events_accepted"], 1)
         self.assertEqual(restarted.status()["counters"]["duplicate_events"], 1)
         self.assertEqual(len(restarted.ledgers["raw_bbo"].rows), 1)
+        self.assertEqual(restarted.state["seen_event_ids"], {})
 
     def test_source_time_regression_fails_closed(self):
         self.recorder.ingest_line(price("EUR_USD", "2026-08-28T00:00:02Z", "1.1600", "1.1602"), self.now + timedelta(seconds=1))

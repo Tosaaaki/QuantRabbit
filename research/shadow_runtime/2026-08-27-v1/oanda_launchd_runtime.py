@@ -16,6 +16,7 @@ from typing import Any, Callable
 from oanda_live_feed import OandaLiveRecorder, load_approved_live_credentials
 from shadow_runtime import (
     HashLedger,
+    IntegrityError,
     RuntimeLock,
     atomic_json,
     canonical_bytes,
@@ -97,6 +98,36 @@ def run_feed(max_seconds: float) -> int:
     return 2 if status["feed_blocked"] else 0
 
 
+def _bar_from_events(instrument: str, bucket: int, events: list[dict[str, Any]]) -> dict[str, Any]:
+    events = sorted(events, key=lambda x: (x["event_time_utc"], x["arrival_time_utc"], x["event_id"]))
+    return {
+        "schema_version": 1,
+        "runtime_hash": SHARED_RUNTIME_HASH,
+        "instrument": instrument,
+        "timeframe": "M5",
+        "start_utc": utc_text(datetime.fromtimestamp(bucket, timezone.utc)),
+        "end_utc": utc_text(datetime.fromtimestamp(bucket + 300, timezone.utc)),
+        "period_state": "SEALED",
+        "event_count": len(events),
+        "first_source_time_utc": events[0]["event_time_utc"],
+        "last_source_time_utc": events[-1]["event_time_utc"],
+        "first_arrival_time_utc": events[0]["arrival_time_utc"],
+        "arrival_watermark_utc": max(x["arrival_time_utc"] for x in events),
+        "bid_o": events[0]["bid"],
+        "bid_h": max(x["bid"] for x in events),
+        "bid_l": min(x["bid"] for x in events),
+        "bid_c": events[-1]["bid"],
+        "ask_o": events[0]["ask"],
+        "ask_h": max(x["ask"] for x in events),
+        "ask_l": min(x["ask"] for x in events),
+        "ask_c": events[-1]["ask"],
+        "raw_record_set_hash": canonical_hash([x["raw_record_hash"] for x in events]),
+        "strategy_status": "RESEARCH_NOT_ADMITTED",
+        "natural_r5_proposal": False,
+        "external_orders": 0,
+    }
+
+
 def _completed_bars(raw: HashLedger) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, int], list[dict[str, Any]]] = {}
     max_bucket: dict[str, int] = {}
@@ -111,34 +142,66 @@ def _completed_bars(raw: HashLedger) -> list[dict[str, Any]]:
     for (instrument, bucket), events in sorted(grouped.items()):
         if bucket >= max_bucket[instrument]:
             continue
-        events.sort(key=lambda x: (x["event_time_utc"], x["arrival_time_utc"], x["event_id"]))
-        bars.append({
-            "schema_version": 1,
-            "runtime_hash": SHARED_RUNTIME_HASH,
-            "instrument": instrument,
-            "timeframe": "M5",
-            "start_utc": utc_text(datetime.fromtimestamp(bucket, timezone.utc)),
-            "end_utc": utc_text(datetime.fromtimestamp(bucket + 300, timezone.utc)),
-            "period_state": "SEALED",
-            "event_count": len(events),
-            "first_source_time_utc": events[0]["event_time_utc"],
-            "last_source_time_utc": events[-1]["event_time_utc"],
-            "first_arrival_time_utc": events[0]["arrival_time_utc"],
-            "arrival_watermark_utc": max(x["arrival_time_utc"] for x in events),
-            "bid_o": events[0]["bid"],
-            "bid_h": max(x["bid"] for x in events),
-            "bid_l": min(x["bid"] for x in events),
-            "bid_c": events[-1]["bid"],
-            "ask_o": events[0]["ask"],
-            "ask_h": max(x["ask"] for x in events),
-            "ask_l": min(x["ask"] for x in events),
-            "ask_c": events[-1]["ask"],
-            "raw_record_set_hash": canonical_hash([x["raw_record_hash"] for x in events]),
-            "strategy_status": "RESEARCH_NOT_ADMITTED",
-            "natural_r5_proposal": False,
-            "external_orders": 0,
-        })
+        bars.append(_bar_from_events(instrument, bucket, events))
     return bars
+
+
+class IncrementalBot:
+    def __init__(self) -> None:
+        self.feed_raw = HashLedger(SERVICE_ROOT / "feed" / "ledgers" / "raw_bbo.jsonl")
+        root = SERVICE_ROOT / "bot"
+        real_dir(root)
+        real_dir(root / "ledgers")
+        self.completed = HashLedger(root / "ledgers" / "completed_m5.jsonl")
+        self.control = HashLedger(root / "ledgers" / "control.jsonl")
+        self.buckets: dict[str, tuple[int, list[dict[str, Any]]]] = {}
+        self.processed_rows = 0
+        self._consume_new_rows()
+
+    def _seal(self, instrument: str, bucket: int, events: list[dict[str, Any]]) -> None:
+        bar = _bar_from_events(instrument, bucket, events)
+        planned: list[dict[str, Any]] = []
+        record_id = f"m5::{bar['instrument']}::{bar['start_utc']}"
+        row = self.completed.plan(bar, record_id, planned)
+        self.completed.append_rows(planned)
+        control_planned: list[dict[str, Any]] = []
+        self.control.plan({
+            "event": "R5_NATURAL_PROPOSAL_NOT_EMITTED",
+            "bar_record_hash": row["record_hash"],
+            "candidate_scope": "ACCOUNTING_ONLY_NOT_CAUSAL_SIGNAL_ADMISSION",
+            "external_orders": 0,
+        }, f"no-proposal::{row['record_hash']}", control_planned)
+        self.control.append_rows(control_planned)
+
+    def _consume_new_rows(self) -> None:
+        for row in self.feed_raw.rows[self.processed_rows:]:
+            event = {**row["payload"], "raw_record_hash": row["record_hash"]}
+            instrument = event["instrument"]
+            bucket = int(parse_utc(event["event_time_utc"]).timestamp()) // 300 * 300
+            current = self.buckets.get(instrument)
+            if current is None:
+                self.buckets[instrument] = (bucket, [event])
+            elif bucket == current[0]:
+                current[1].append(event)
+            elif bucket > current[0]:
+                self._seal(instrument, current[0], current[1])
+                self.buckets[instrument] = (bucket, [event])
+            else:
+                raise IntegrityError("BOT_SOURCE_BUCKET_REGRESSION")
+        self.processed_rows = len(self.feed_raw.rows)
+
+    def process_once(self) -> dict[str, int]:
+        self.feed_raw.refresh()
+        self._consume_new_rows()
+        return {
+            "market_events": len(self.feed_raw.rows),
+            "completed_m5": len(self.completed.rows),
+            "natural_r5_proposals": 0,
+            "virtual_fills": 0,
+            "llm_calls": 0,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+        }
 
 
 def bot_process_once() -> dict[str, int]:
@@ -180,11 +243,12 @@ def run_bot(max_seconds: float) -> int:
     root = SERVICE_ROOT / "bot"
     deadline = time.monotonic() + max_seconds
     with RuntimeLock(root, SERVICE_ATTESTATION_HASH) as lock:
+        processor = IncrementalBot()
         while not STOP and time.monotonic() < deadline:
-            counters = bot_process_once()
+            counters = processor.process_once()
             lock.heartbeat(service_status(counters))
             time.sleep(2.0)
-        counters = bot_process_once()
+        counters = processor.process_once()
         lock.heartbeat(service_status(counters, "STOPPED_GRACEFULLY"))
     return 0
 

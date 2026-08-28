@@ -219,6 +219,7 @@ class OandaLiveRecorder:
             fresh_symbols=[],
             last_arrival_utc=None,
             last_source_time={},
+            seen_event_ids={},
         )
         state["counters"]["network_attempts"] += 1
         self._persist(state)
@@ -332,20 +333,24 @@ class OandaLiveRecorder:
             event_digest = canonical_hash(
                 {key: value for key, value in event.items() if key != "arrival_time_utc"}
             )
-            if event["event_id"] in state["seen_event_ids"]:
-                if state["seen_event_ids"][event["event_id"]] != event_digest:
+            raw_record_id = f"event::{event['event_id']}"
+            existing = self.ledgers["raw_bbo"].by_id.get(raw_record_id)
+            if existing is not None:
+                existing_digest = canonical_hash(
+                    {key: value for key, value in existing["payload"].items() if key != "arrival_time_utc"}
+                )
+                if existing_digest != event_digest:
                     raise FeedQualityError("CONFLICTING_DUPLICATE")
                 state["counters"]["duplicate_events"] += 1
                 self._persist(state)
                 return None
-            state["seen_event_ids"][event["event_id"]] = event_digest
             state["last_source_time"][instrument] = utc_text(source)
             fresh_symbols = set(state.get("fresh_symbols", []))
             fresh_symbols.add(instrument)
             state["fresh_symbols"] = sorted(fresh_symbols)
             state["counters"]["market_events_received"] += 1
             state["counters"]["market_events_accepted"] += 1
-            raw_row = self._append("raw_bbo", event, f"event::{event['event_id']}")
+            raw_row = self._append("raw_bbo", event, raw_record_id)
             self._append(
                 "feed_quality",
                 {"accepted": True, "event_id": event["event_id"], "raw_record_hash": raw_row["record_hash"]},
