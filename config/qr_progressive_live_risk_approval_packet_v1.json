@@ -1,8 +1,8 @@
 {
   "contract": "QR_PROGRESSIVE_LIVE_RISK_APPROVAL_PACKET_V1",
   "status": "NEEDS_USER_DECISION",
-  "created_at_utc": "2026-08-28T13:50:30Z",
-  "software_critical_path_commit": "60f70695402b9923d79db50ca08a41661006fdcd",
+  "created_at_utc": "2026-08-28T14:18:36Z",
+  "software_critical_path_commit": "8dbb6e56749cd9995e78503424340ad8fcf7068d",
   "initial_pairs": [
     "EUR_USD",
     "USD_JPY"
@@ -88,26 +88,31 @@
   },
   "software_evidence": {
     "supervision_event_binding_commit": "60f70695402b9923d79db50ca08a41661006fdcd",
-    "focused_tests": "28 passed, 10 subtests passed",
-    "full_regression": "5186 passed, 1 skipped, 1235 subtests passed",
+    "external_state_classification_commit": "8dbb6e56749cd9995e78503424340ad8fcf7068d",
+    "focused_tests": "43 passed, 10 subtests passed",
+    "full_regression": "5188 passed, 1 skipped, 1235 subtests passed",
     "single_gateway": "LiveOrderGateway",
     "live_sync": "REFUSED_DIRTY_PROTECTED_LIVE",
     "live_propagation_count": 0,
     "external_order_attempts": 0,
     "external_orders": 0
   },
-  "current_external_state_at_2026_08_28T14_01_24Z": {
-    "margin_closeout_percent": 0.05104,
-    "stress_margin_closeout_percent": 0.051184465729387826,
-    "margin_available_jpy": 276335.8716,
-    "nav_jpy": 291183.3962,
-    "manual_tagless_position_count": 2,
+  "current_external_state_at_2026_08_28T14_18_36Z": {
+    "margin_closeout_percent": 0.95254,
+    "stress_margin_closeout_percent": 0.9901741877795944,
+    "margin_available_jpy": 13484.9606,
+    "nav_jpy": 283948.9469,
+    "manual_tagless_position_count": 3,
     "bot_owned_position_count": 0,
-    "attached_tp_count": 1,
+    "attached_tp_count": 2,
     "mode": "SHADOW_ONLY",
     "orders_sent": 0,
     "current_gate_blockers": [
-      "FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED"
+      "CURRENCY_FACTOR_CONCENTRATION_ABOVE_BUDGET",
+      "FORWARD_PROOF_OR_RISK_CONTRACT_UNSEALED",
+      "MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT",
+      "MINIMUM_MARGIN_BUFFER_NOT_MET",
+      "STRESS_MARGIN_CLOSEOUT_PERCENT_ABOVE_RISK_CONTRACT"
     ]
   },
   "acceptance": {
@@ -118,5 +123,5 @@
   },
   "live_permission": false,
   "broker_mutation_allowed": false,
-  "packet_sha256": "7919c4c83e268c4c8a1b648efc44fc7710efad98dedcae443217e40d489eee69"
+  "packet_sha256": "0cd2b9af05ffc559829c11b0763582f8e4e5ecc916cea1cf3faf63eecce06bc9"
 }
