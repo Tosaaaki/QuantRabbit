@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "candidate_id": "MTF_FX_CAUSAL_GEOMETRY_V3",
+  "status": "PREREGISTERED_OPENED_DEVELOPMENT_ONLY",
+  "created_date": "2026-08-28",
+  "authority": {
+    "network": false,
+    "credentials": false,
+    "live_runtime": false,
+    "broker_adapter": false,
+    "external_orders": false,
+    "launchd": false,
+    "commit": false,
+    "push": false
+  },
+  "evidence_boundary": {
+    "historical_corpus_previously_inspected": true,
+    "development_only": true,
+    "holdout": false,
+    "admission": false,
+    "shadow_eligibility": false,
+    "untouched_evidence": "a later independently frozen corpus or a new content-addressed OANDA LIVE zero-order shadow arm",
+    "anti_selection": "USD_JPY-only and session-only variants observed in prior diagnostics are not members of this family; they may be preregistered only as N+1"
+  },
+  "inputs": {
+    "coverage_utc": [
+      "2026-03-11T00:00:00Z",
+      "2026-07-15T10:55:00Z"
+    ],
+    "split": {
+      "calibration_fraction": 0.35,
+      "tuning_fraction": 0.35,
+      "opened_development_fraction": 0.30,
+      "method": "per_pair_chronological_floor",
+      "boundary_contract": "all open lots liquidate on the last completed M5 inside their owning split; no feature, decision, fill, mark, or exit may cross the split"
+    },
+    "files": {
+      "EUR_USD": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/EUR_USD/EUR_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "19a8265e54706364ccc6a75708e9cf320e5242aace9b865735c068a47c034a89",
+        "rows": 26051
+      },
+      "USD_JPY": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/USD_JPY/USD_JPY_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "04c800bccf230f6d211e355a00580f12b102e9724c1f8c4e2555c013d8976648",
+        "rows": 26046
+      },
+      "AUD_USD": {
+        "path": "/Users/tossaki/App/QuantRabbit/logs/replay/oanda_history/20260715T115624Z/AUD_USD/AUD_USD_M5_BA_20260311T000000Z_20260715T110000Z.jsonl.gz",
+        "sha256": "e4d373d31a2d34b07ec2d9186b28d009f3ac1cd70964a2031b1829f5358be8dd",
+        "rows": 26047
+      }
+    }
+  },
+  "chronology": {
+    "provider_timestamp": "OANDA candle time is the candle-open timestamp",
+    "aggregation": "only exact contiguous completed M5 bars are aggregated into UTC-aligned M15, H1, and H4 bars",
+    "decision": "M15 bar close after all three constituent M5 bars complete",
+    "entry": "first source M5 open whose timestamp is strictly greater than decision_time; LONG uses ASK and SHORT uses BID",
+    "exit": "fixed finite max-age close, split-boundary liquidation when earlier, LONG at BID and SHORT at ASK",
+    "same_bar_fill": false,
+    "gap_policy": "a missing five-minute step from decision through exit makes the trade DATA_GAP_UNSCORABLE",
+    "terminal_mtm": true,
+    "max_positions_per_pair_config": 1
+  },
+  "features": {
+    "prices": "BID/ASK midpoint for prediction features; executable sides only after signal creation",
+    "h4_trend": "sign(EMA3(H4 close)-EMA12(H4 close))",
+    "h1_trend": "sign(EMA3(H1 close)-EMA12(H1 close))",
+    "m15_fast_ema_bars": 4,
+    "break_reference_m15_bars": 8,
+    "h1_compression": "latest completed H1 true range divided by H1 close is at or below pair calibration Q35",
+    "h4_extension": "absolute H4 close-minus-EMA12 divided by H4 ATR6 is at or above pair calibration Q65",
+    "h1_deceleration": "absolute latest H1 log return is below the immediately prior absolute H1 log return",
+    "pullback_reclaim": "H4 and H1 aligned side; previous M15 close is beyond EMA4 against that side and current completed M15 close reclaims EMA4",
+    "break_acceptance": "two completed M15 closes hold beyond the prior eight-bar high/low in the aligned H4/H1 side",
+    "sweep_reclaim": "completed M15 high/low pierces the prior eight-bar rail then closes back inside in the proposed side",
+    "usd_star": "four-M15-bar USD-oriented return mean across EUR_USD, AUD_USD, USD_JPY; non-JPY USD quote pairs are sign-inverted",
+    "usd_residual": "pair USD-oriented four-M15 return minus the three-pair USD-star mean",
+    "graph_recoupling": "absolute residual at or above pair calibration Q65, H1 direction agrees with USD-star direction, and M15 sweep-reclaim agrees with the implied pair side",
+    "threshold_source": "calibration prefix only",
+    "calibration_quantile_low": 0.35,
+    "calibration_quantile_high": 0.65,
+    "minimum_calibration_observations_per_pair": 300,
+    "priority_when_same_side": [
+      "graph_recoupling",
+      "extension_deceleration",
+      "break_acceptance",
+      "pullback_reclaim"
+    ],
+    "opposite_side_collision": "AMBIGUOUS and no signal"
+  },
+  "configs": {
+    "C0": {"family": "H4_H1_ALIGN_PULLBACK_RECLAIM", "max_age_hours": 4},
+    "C1": {"family": "H4_H1_ALIGN_PULLBACK_RECLAIM", "max_age_hours": 8},
+    "C2": {"family": "H4_H1_ALIGN_H1_COMPRESSION_BREAK_ACCEPTANCE", "max_age_hours": 4},
+    "C3": {"family": "H4_H1_ALIGN_H1_COMPRESSION_BREAK_ACCEPTANCE", "max_age_hours": 8},
+    "C4": {"family": "H4_DIRECTION_M15_OPPOSITE_RAIL_SWEEP_RECLAIM", "max_age_hours": 4},
+    "C5": {"family": "H4_DIRECTION_M15_OPPOSITE_RAIL_SWEEP_RECLAIM", "max_age_hours": 8},
+    "C6": {"family": "H4_EXTENSION_H1_DECELERATION_M15_SWEEP_RECLAIM", "max_age_hours": 8},
+    "C7": {"family": "USD_STAR_RESIDUAL_H1_RECOUPLING_M15_SWEEP_RECLAIM", "max_age_hours": 8}
+  },
+  "diagnostic_reference": {
+    "source": "prior fixed 10-cell opened-data diagnostic, not evidence and not a config-selection override",
+    "finding": "the only cell with positive tuning and development BASE point estimates was H4-direction plus M15 break rejection/reversal at eight hours",
+    "tuning": {"trades": 635, "raw_expectancy_pips": 2.926, "base_expectancy_pips": 0.560},
+    "opened_development": {"trades": 279, "raw_expectancy_pips": 3.910, "base_expectancy_pips": 1.695, "direction_accuracy": 0.5305},
+    "disconfirmation": "tuning five-day block-bootstrap LCB was -12.399 pips/day; C4/C5 must therefore be selected or rejected by this V3 family contract, not presumed profitable"
+  },
+  "execution_arms": {
+    "RAW_SIGNAL": "mid open to mid close, zero spread/slippage/fee",
+    "EXECUTABLE_BASE": "observed BID/ASK plus 0.3 pip slippage per side",
+    "ADVERSE_STRESS": "same signal and path plus 0.9 pip slippage per side",
+    "same_trade_id": true,
+    "cost_gate": false,
+    "selection_uses_cost": false
+  },
+  "costs": {
+    "base_slippage_pips_per_side": 0.3,
+    "adverse_slippage_pips_per_side": 0.9,
+    "fees_pips_per_side": 0.0,
+    "financing": "not modeled; this is an explicit limitation for positions crossing rollover"
+  },
+  "portfolio": {
+    "initial_equity_jpy": 200000,
+    "units": 1000,
+    "jpy_conversion": "JPY-quoted PnL direct; USD-quoted PnL uses the latest completed USD_JPY midpoint at or before the mark",
+    "take_profit": false,
+    "price_stop_loss": false,
+    "martingale": false,
+    "averaging": false,
+    "leverage_fitting": false
+  },
+  "selection": {
+    "data": "tuning RAW_SIGNAL only",
+    "family_size": 8,
+    "family_alpha": 0.05,
+    "cluster": "UTC decision date x four-hour bucket x shared USD currency node",
+    "lcb": "cluster mean minus z_(1-0.05/8) times standard error across cluster means",
+    "density": {
+      "executed_trades_gte": 60,
+      "currency_time_clusters_gte": 20,
+      "per_pair_trades_gte": 15,
+      "pairs_meeting_floor_gte": 2
+    },
+    "stability": {
+      "pairs_with_positive_expectancy_gte": 2,
+      "sessions_with_positive_expectancy_gte": 2
+    },
+    "ranking": [
+      "maximum RAW family-adjusted LCB",
+      "maximum RAW pooled expectancy",
+      "maximum RAW pair minimum expectancy",
+      "maximum RAW session minimum expectancy",
+      "maximum N_eff currency-time clusters",
+      "config_id lexical"
+    ],
+    "all_nonpositive_lcb": "retain the best diagnostic configuration as rejected; do not reselect using BASE or ADVERSE"
+  },
+  "gross_edge_gate": {
+    "required_periods": ["tuning", "opened_development"],
+    "each_period": {
+      "raw_family_adjusted_lcb_pips_gt": 0.0,
+      "raw_expectancy_pips_gt": 0.0,
+      "pair_and_session_stability_required": true,
+      "density_required": true
+    },
+    "base_opened_development": {"expectancy_pips_gt": 0.0, "family_adjusted_lcb_pips_gt": 0.0},
+    "adverse_opened_development": {"expectancy_pips_gt": 0.0, "family_adjusted_lcb_pips_gt": 0.0}
+  },
+  "future_evidence": {
+    "shadow_challenger_eligible_now": false,
+    "independent_data_required": true,
+    "baseline_replacement": false,
+    "full_month_target": "normal and adverse each at least 2.0 equity multiple; never a tuning objective"
+  },
+  "v2_immutable_hashes": {
+    "preregistration.json": "8eb24e286ad6ae58e2ce74e94bd2371aa4511763c923ec726e69c7c4859a8348",
+    "replay_m5_interaction.py": "5b5fc52fdff2fc93f554526cfcec318bb6705ab37cf38c99edb5562289740881",
+    "test_replay_m5_interaction.py": "f04f5aeaffe676ccd1c7cffec1b32d6be83391bff8744d1951e2d1008729ca72",
+    "result.json": "be74dd65583904c4a2274602b60ffbfc1afa2dcae4d8cf6448778aeff54a51a3",
+    "evidence_packet.json": "542e7ed6e785f78d7323dca1839223e7b4c2da8d63208dec345f8fad75f391d4",
+    "README.md": "e52c8ab0beaf350113455b5d34ca225d6a7a5bf030162bc4790b7508afb827eb"
+  }
+}
