@@ -8,7 +8,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from oanda_launchd_runtime import LABELS, PACKAGE_ROOT, SERVICE_ROOT, SHARED_RUNTIME_HASH
+from oanda_launchd_runtime import (
+    LABELS,
+    PACKAGE_ROOT,
+    RUNTIME_SOURCE_HASHES,
+    SERVICE_ATTESTATION_HASH,
+    SERVICE_ROOT,
+    SHARED_RUNTIME_HASH,
+    runtime_source_hashes,
+)
 from shadow_runtime import real_dir, secure_read, valid_target
 
 PLIST_ROOT = PACKAGE_ROOT / "oanda_launchagents"
@@ -21,6 +29,8 @@ def plist_paths() -> list[Path]:
 
 
 def preinstall() -> dict[str, int | str]:
+    if runtime_source_hashes() != RUNTIME_SOURCE_HASHES:
+        raise RuntimeError("RUNTIME_SOURCE_DRIFT")
     labels = set()
     for path in plist_paths():
         subprocess.run(["plutil", "-lint", str(path)], check=True, capture_output=True, text=True)
@@ -44,7 +54,12 @@ def preinstall() -> dict[str, int | str]:
             raise RuntimeError("PLIST_ENVIRONMENT_FORBIDDEN")
     if labels != set(LABELS.values()):
         raise RuntimeError("PLIST_SET_INCOMPLETE")
-    return {"plists": len(labels), "lint_failures": 0, "runtime_hash": SHARED_RUNTIME_HASH}
+    return {
+        "plists": len(labels),
+        "lint_failures": 0,
+        "candidate_runtime_hash": SHARED_RUNTIME_HASH,
+        "service_attestation_hash": SERVICE_ATTESTATION_HASH,
+    }
 
 
 def install() -> dict[str, int | str]:

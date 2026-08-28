@@ -35,6 +35,27 @@ SHARED_RUNTIME_HASH = canonical_hash({
     "oanda_contract_sha256": sha256_file(PACKAGE_ROOT / "oanda_live_runtime_contract.json"),
     "topology": "OANDA_LIVE_GET_ONLY_ZERO_ORDER_V1",
 })
+RUNTIME_SOURCE_PATHS = (
+    PACKAGE_ROOT / "oanda_launchd_runtime.py",
+    PACKAGE_ROOT / "oanda_live_feed.py",
+    PACKAGE_ROOT / "shadow_runtime.py",
+    PACKAGE_ROOT / "oanda_live_runtime_contract.json",
+    PACKAGE_ROOT / "oanda_launchagents" / "com.quantrabbit.oanda-live.feed-recorder.plist",
+    PACKAGE_ROOT / "oanda_launchagents" / "com.quantrabbit.oanda-live.bot-shadow.plist",
+    PACKAGE_ROOT / "oanda_launchagents" / "com.quantrabbit.oanda-live.llm-inventory.plist",
+    PACKAGE_ROOT / "oanda_launchagents" / "com.quantrabbit.oanda-live.watchdog.plist",
+)
+
+
+def runtime_source_hashes() -> dict[str, str]:
+    return {str(path.relative_to(PACKAGE_ROOT)): sha256_file(path) for path in RUNTIME_SOURCE_PATHS}
+
+
+RUNTIME_SOURCE_HASHES = runtime_source_hashes()
+SERVICE_ATTESTATION_HASH = canonical_hash({
+    "candidate_runtime_hash": SHARED_RUNTIME_HASH,
+    "runtime_source_sha256": RUNTIME_SOURCE_HASHES,
+})
 LABELS = {
     "feed": "com.quantrabbit.oanda-live.feed-recorder",
     "bot": "com.quantrabbit.oanda-live.bot-shadow",
@@ -71,7 +92,7 @@ def run_feed(max_seconds: float) -> int:
         account_id,
         token,
         max_seconds,
-        runtime_hash=SHARED_RUNTIME_HASH,
+        runtime_hash=SERVICE_ATTESTATION_HASH,
     )
     return 2 if status["feed_blocked"] else 0
 
@@ -158,7 +179,7 @@ def run_bot(max_seconds: float) -> int:
     signal.signal(signal.SIGTERM, request_stop)
     root = SERVICE_ROOT / "bot"
     deadline = time.monotonic() + max_seconds
-    with RuntimeLock(root, SHARED_RUNTIME_HASH) as lock:
+    with RuntimeLock(root, SERVICE_ATTESTATION_HASH) as lock:
         while not STOP and time.monotonic() < deadline:
             counters = bot_process_once()
             lock.heartbeat(service_status(counters))
@@ -236,6 +257,7 @@ def process_llm_trigger(runner: Callable[[str], dict[str, Any]] = actual_model) 
     payload = {
         "kind": "ACTUAL_LLM_INVENTORY_RECEIPT",
         "runtime_hash": SHARED_RUNTIME_HASH,
+        "service_attestation_hash": SERVICE_ATTESTATION_HASH,
         "model": LLM_MODEL,
         "reasoning": LLM_REASONING,
         "prompt_full": prompt,
@@ -259,7 +281,7 @@ def process_llm_trigger(runner: Callable[[str], dict[str, Any]] = actual_model) 
 
 def run_llm() -> int:
     root = SERVICE_ROOT / "llm"
-    with RuntimeLock(root, SHARED_RUNTIME_HASH) as lock:
+    with RuntimeLock(root, SERVICE_ATTESTATION_HASH) as lock:
         counters = process_llm_trigger()
         lock.heartbeat(service_status(counters, "IDLE_TRIGGER_DRIVEN"))
     return 0
@@ -270,7 +292,7 @@ def _verify_heartbeat(path: Path, max_age: float) -> dict[str, Any]:
     unsigned = {k: v for k, v in row.items() if k != "heartbeat_hash"}
     if canonical_hash(unsigned) != row.get("heartbeat_hash"):
         raise RuntimeError("CORRUPT_HEARTBEAT")
-    if row.get("strategy_hash") != SHARED_RUNTIME_HASH:
+    if row.get("strategy_hash") != SERVICE_ATTESTATION_HASH:
         raise RuntimeError("RUNTIME_HASH_MISMATCH")
     if (datetime.now(timezone.utc) - parse_utc(row["beat_at_utc"])).total_seconds() > max_age:
         raise RuntimeError("STALE_HEARTBEAT")
@@ -291,7 +313,7 @@ def run_watchdog() -> int:
         "external_order_attempts": 0,
         "external_orders": 0,
     }
-    with RuntimeLock(root, SHARED_RUNTIME_HASH) as lock:
+    with RuntimeLock(root, SERVICE_ATTESTATION_HASH) as lock:
         lock.heartbeat(service_status(counters, "HEALTHY"))
     return 0
 

@@ -67,6 +67,7 @@ def secure_read(path):
     valid_target(path,False); before=os.lstat(path)
     fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
     try:
+        fcntl.flock(fd,fcntl.LOCK_SH)
         after=os.fstat(fd)
         if (before.st_dev,before.st_ino)!=(after.st_dev,after.st_ino) or after.st_nlink!=1:
             raise IntegrityError("swap/hardlink")
@@ -79,18 +80,23 @@ def secure_read(path):
         if (after.st_dev,after.st_ino,after.st_size)!=(final.st_dev,final.st_ino,final.st_size):
             raise IntegrityError("changed during read")
         return b"".join(chunks)
-    finally: os.close(fd)
+    finally:
+        fcntl.flock(fd,fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def secure_append(path,data):
     valid_target(path)
     fd=os.open(path,os.O_WRONLY|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600)
     try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
         if os.fstat(fd).st_nlink != 1: raise IntegrityError("hardlink append")
         view=memoryview(data)
         while view: view=view[os.write(fd,view):]
         os.fsync(fd)
-    finally: os.close(fd)
+    finally:
+        fcntl.flock(fd,fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def atomic_json(path,payload):

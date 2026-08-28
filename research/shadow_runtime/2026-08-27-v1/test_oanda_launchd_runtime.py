@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import fcntl
 import json
+import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +13,7 @@ from unittest.mock import patch
 
 import oanda_launchd_runtime as runtime
 from oanda_launchd_manage import preinstall
-from shadow_runtime import HashLedger, atomic_json, canonical_hash, utc_text
+from shadow_runtime import HashLedger, atomic_json, canonical_bytes, canonical_hash, utc_text
 
 
 class LaunchdRuntimeTest(unittest.TestCase):
@@ -43,6 +46,29 @@ class LaunchdRuntimeTest(unittest.TestCase):
         result = preinstall()
         self.assertEqual(result["plists"], 4)
         self.assertEqual(result["lint_failures"], 0)
+        self.assertEqual(result["candidate_runtime_hash"], runtime.SHARED_RUNTIME_HASH)
+        self.assertEqual(result["service_attestation_hash"], runtime.SERVICE_ATTESTATION_HASH)
+
+    def test_service_attestation_binds_every_executable_source(self):
+        expected = {
+            "oanda_launchd_runtime.py",
+            "oanda_live_feed.py",
+            "shadow_runtime.py",
+            "oanda_live_runtime_contract.json",
+            "oanda_launchagents/com.quantrabbit.oanda-live.feed-recorder.plist",
+            "oanda_launchagents/com.quantrabbit.oanda-live.bot-shadow.plist",
+            "oanda_launchagents/com.quantrabbit.oanda-live.llm-inventory.plist",
+            "oanda_launchagents/com.quantrabbit.oanda-live.watchdog.plist",
+        }
+        self.assertEqual(set(runtime.RUNTIME_SOURCE_HASHES), expected)
+        self.assertEqual(runtime.runtime_source_hashes(), runtime.RUNTIME_SOURCE_HASHES)
+        self.assertEqual(
+            runtime.SERVICE_ATTESTATION_HASH,
+            canonical_hash({
+                "candidate_runtime_hash": runtime.SHARED_RUNTIME_HASH,
+                "runtime_source_sha256": runtime.RUNTIME_SOURCE_HASHES,
+            }),
+        )
 
     def test_bot_replay_is_idempotent_and_hash_bound(self):
         self._raw()
@@ -53,6 +79,45 @@ class LaunchdRuntimeTest(unittest.TestCase):
         self.assertEqual(first["completed_m5"], 2)
         self.assertEqual(first["natural_r5_proposals"], 0)
         self.assertEqual(first["external_orders"], 0)
+
+    def test_hash_ledger_reader_waits_for_locked_append(self):
+        path = self.root / "concurrent.jsonl"
+        ledger = HashLedger(path)
+        first = []
+        ledger.plan({"value": 1}, "row-1", first)
+        ledger.append_rows(first)
+        second = []
+        ledger.plan({"value": 2}, "row-2", second)
+        encoded = canonical_bytes(second[0]) + b"\n"
+        midpoint = len(encoded) // 2
+        ready_read, ready_write = os.pipe()
+        child = os.fork()
+        if child == 0:
+            try:
+                os.close(ready_read)
+                descriptor = os.open(path, os.O_WRONLY | os.O_APPEND)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                    os.write(descriptor, encoded[:midpoint])
+                    os.write(ready_write, b"1")
+                    time.sleep(0.1)
+                    os.write(descriptor, encoded[midpoint:])
+                    os.fsync(descriptor)
+                finally:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    os.close(descriptor)
+            finally:
+                os.close(ready_write)
+                os._exit(0)
+        os.close(ready_write)
+        try:
+            self.assertEqual(os.read(ready_read, 1), b"1")
+            concurrent = HashLedger(path)
+        finally:
+            os.close(ready_read)
+            _, status = os.waitpid(child, 0)
+        self.assertEqual(status, 0)
+        self.assertEqual(len(concurrent.rows), 2)
 
     def test_llm_worker_is_triggered_once_and_fake_dependency_is_bounded(self):
         trigger_dir = self.root / "triggers"
