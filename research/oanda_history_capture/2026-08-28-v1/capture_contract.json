@@ -1,0 +1,23 @@
+{
+  "external_orders": 0,
+  "fallback_providers": [],
+  "forward_pnl_included": false,
+  "granularity": "M5",
+  "http_method_allowlist": [
+    "GET"
+  ],
+  "live_market_data_read": true,
+  "live_order_authority": false,
+  "lookback_days": 730,
+  "max_candles_per_get": 5000,
+  "price_component": "BA",
+  "provider": "OANDA_V20_LIVE_CANDLES",
+  "request_spacing_seconds": 0.6,
+  "rest_host": "https://api-fxtrade.oanda.com",
+  "schema": "QR_OANDA_LIVE_HISTORICAL_M5_BA_CAPTURE_V1",
+  "symbols": [
+    "EUR_USD",
+    "USD_JPY",
+    "AUD_USD"
+  ]
+}
