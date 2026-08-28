@@ -453,6 +453,24 @@ def run_owner_cycle(
         mode_event=event,
         now_utc=now,
     )
+    if apply_status in {"APPLIED_FREEZE_NEW", "APPLIED_UNWIND"}:
+        client = client or OandaExecutionClient(env_file=env_file)
+        inventory_result, _ = _manage_owned_inventory(
+            controller=inventory,
+            client=client,
+            pairs=tuple(packet["initial_pairs"]),
+            preflight=preflight,
+            owner_state_root=owner_state_root,
+            now_utc=now,
+        )
+        result = inventory_result or {
+            **_no_send_result(preflight),
+            "status": "SUPERVISION_ENTRY_FREEZE_APPLIED",
+            "inventory_state": inventory.state.value,
+            "supervision_apply_status": apply_status,
+        }
+        _atomic_json(owner_state_root / "state.json", result)
+        return result
     if apply_status not in {"APPLIED_ALLOW", "DUPLICATE_IGNORED"}:
         raise RuntimeError(f"SUPERVISION_NOT_APPLIED:{apply_status}")
     promotion = build_fast_bot_promotion(
