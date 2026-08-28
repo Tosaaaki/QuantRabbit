@@ -1,0 +1,28 @@
+{
+  "broker_mutation_allowed": false,
+  "candidate_id": "M5_GENERIC_EMA_POST_ENTRY_LGAR_V4",
+  "canonical_dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+  "credential_reads": 0,
+  "external_order_attempts": 0,
+  "external_orders": 0,
+  "files": {
+    "INVALIDATED_RUN_RECEIPT.json": "fa8f6732f8246b7d174d01b719838884edabaa2e3f58c967786e24bffd8e8cd3",
+    "PREREGISTRATION.json": "6072d6d61dccbb6ab8d9c976ab5ca6ca6db34e8874cfe872eb458ba523f18b5a",
+    "PREREGISTRATION.md": "7709f37417e1d7c8feb86944798d0e78182cd40723f947398ddcfabfefb04b99",
+    "replay_lgar.py": "94d4beec43a8ef178edef4c2078031b6b6c80896aaebb885c563d08d0a5c1048",
+    "result.json": "60814b57ca5906edd149de7707491022bb4e26132e4bd37591b82b34d2a515ff",
+    "test_replay_lgar.py": "f98ec03a0457d8feb1bfc91b9f3e8b09342fb466d2db822e4af44fe84311139f"
+  },
+  "holdout_labels_computed": 0,
+  "holdout_price_or_volume_rows_decoded": 0,
+  "holdout_status": "UNTOUCHED_LOCKED",
+  "live_order_authority": false,
+  "network_attempts": 0,
+  "opened_development_labels_computed": 0,
+  "opened_development_price_or_volume_rows_decoded": 0,
+  "opened_development_status": "INVALIDATED_DIAGNOSTIC_NOT_EVIDENCE",
+  "packet_sha256": "52e52ced9cd732b9b88237c02b26d5fb281ec92002b5a1fcc7ac25274f5ad1e8",
+  "result_sha256": "006a82a053b06c11895a7f7a39d704be2ef0f2b0e78596485c59e25def36ba90",
+  "schema": "QR_OANDA_POST_ENTRY_LGAR_EVIDENCE_PACKET_V1",
+  "status": "REJECTED_TUNING_GROSS_EDGE_NOT_FAMILY_CORRECTED"
+}

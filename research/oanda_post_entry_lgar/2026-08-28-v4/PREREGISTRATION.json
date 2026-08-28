@@ -1,0 +1,214 @@
+{
+  "schema": "QR_OANDA_POST_ENTRY_LGAR_PREREGISTRATION_V1",
+  "candidate_id": "M5_GENERIC_EMA_POST_ENTRY_LGAR_V4",
+  "strategy_status": "PREREGISTERED_RESEARCH_ONLY",
+  "live_order_authority": false,
+  "broker_mutation_allowed": false,
+  "network_allowed": false,
+  "credential_access_allowed": false,
+  "inputs": {
+    "provider": "OANDA_V20_LIVE_CANDLES_IMMUTABLE_CAPTURE",
+    "dataset_root": "research/oanda_history_capture/2026-08-28-v1/runs/oanda-live-m5-ba-730d-20260828T040500Z-40b27f46ae63",
+    "canonical_dataset_sha256": "721904751fc1d590a64c7cefd0a533e7df314f043b10783c116d2a82793f14fb",
+    "manifest_sha256": "3408963dce76f6c2da5be7f766a48b4e1a91b3fbd03d7082f5369f8e1f2a4a00",
+    "gap_report_sha256": "95e7f222a0579a7339db0c35e8299af9ca2c139425161638176e1eea6dbc32e7",
+    "symbols": [
+      "EUR_USD",
+      "USD_JPY",
+      "AUD_USD"
+    ],
+    "granularity": "M5",
+    "price_component": "BA",
+    "final_tuning_only_prefix_contract": {
+      "AUD_USD": {
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 27186414,
+        "prefix_sha256": "79d959900555cc3b52ac1f759437bf4998f03c383e31629598355bc9250cd894",
+        "prefix_rows": 74568
+      },
+      "EUR_USD": {
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 27205812,
+        "prefix_sha256": "0d1e76cad0ed725b05da593df241fba87549710d8ac15eb7478460fc808ad7f5",
+        "prefix_rows": 74582
+      },
+      "USD_JPY": {
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "exclusive_byte_offset": 27222596,
+        "prefix_sha256": "bb102f9ff123fa45c2b248a851fbe073e3c33e0f1ff4d446b97bd157a748e4e2",
+        "prefix_rows": 74562
+      }
+    },
+    "holdout_prefix_contract": {
+      "AUD_USD": {
+        "path": "data/AUD_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 47449460,
+        "prefix_sha256": "901ef1a0b90d9734c4e484101e53d1efc5f55df539685a3b277baed580f18558",
+        "prefix_rows": 130144
+      },
+      "EUR_USD": {
+        "path": "data/EUR_USD_M5_BA.jsonl",
+        "exclusive_byte_offset": 47476730,
+        "prefix_sha256": "a22afcfced2749f5c1278ef53b9bf374dd340d41124327f4bbff9c26a8544b4d",
+        "prefix_rows": 130164
+      },
+      "USD_JPY": {
+        "path": "data/USD_JPY_M5_BA.jsonl",
+        "exclusive_byte_offset": 47502040,
+        "prefix_sha256": "eb2650e9b7c2cb601bfb44792af6e5cc7a1b05e170c9eae0a0fb66bb31331e30",
+        "prefix_rows": 130130
+      }
+    }
+  },
+  "splits": {
+    "calibration": {
+      "from_utc": "2024-08-28T04:05:00.000000Z",
+      "to_utc": "2024-11-28T04:05:00.000000Z",
+      "use": "feature thresholds and RAW closing-MFE Q40 only"
+    },
+    "tuning": {
+      "from_utc": "2024-11-28T04:05:00.000000Z",
+      "to_utc": "2025-08-28T04:05:00.000000Z",
+      "use": "RAW-only eight-policy selection"
+    },
+    "opened_development": {
+      "from_utc": "2025-08-28T04:05:00.000000Z",
+      "to_utc": "2026-05-28T04:05:00.000000Z",
+      "use": "INVALIDATED_DIAGNOSTIC_NOT_EVIDENCE; final remediation run must not decode this interval"
+    },
+    "untouched_holdout": {
+      "from_utc": "2026-05-28T04:05:00.000000Z",
+      "to_utc": "2026-08-28T04:05:00.000000Z",
+      "use": "LOCKED_NOT_READ",
+      "price_or_volume_decode_allowed": false,
+      "label_computation_allowed": false
+    }
+  },
+  "source_signal": {
+    "decision_data": "completed M5 BID/ASK bar only",
+    "mid": "arithmetic midpoint of BID and ASK OHLC",
+    "ema_fast_bars": 3,
+    "ema_slow_bars": 12,
+    "direction": "LONG when EMA3>EMA12, SHORT when EMA3<EMA12, equality emits no proposal",
+    "density": "one RAW proposal on every completed contiguous M5 bar after warm-up; no session, spread, fee, slippage, expectancy, or cost gate",
+    "entry": "first exact source M5 open with timestamp strictly greater than the completed-bar decision timestamp",
+    "same_pair_opposite_overlap": false
+  },
+  "calibration": {
+    "path_efficiency_window_returns": 12,
+    "path_efficiency_q": 0.67,
+    "spread_slot": "pair x UTC minute-of-day",
+    "spread_quality_q": 0.75,
+    "prior_rail_bars": 12,
+    "closing_mfe_horizon_bars": 24,
+    "closing_mfe_q": 0.40,
+    "threshold_scope": "pair and side for MFE; pair for path efficiency; pair x UTC minute-of-day for spread",
+    "usd_breadth": "mean USD-node one-bar direction across available exact-time symbols; at least two symbols required"
+  },
+  "policies": {
+    "P0": {
+      "name": "TIME_EXIT_12",
+      "time_exit_bars": 12
+    },
+    "P1": {
+      "name": "TIME_EXIT_24",
+      "time_exit_bars": 24
+    },
+    "P2": {
+      "name": "TIME_EXIT_48",
+      "time_exit_bars": 48
+    },
+    "P3": {
+      "name": "CALIBRATION_RAW_CLOSE_MFE_Q40_TP_MAX24",
+      "tp": "pair-side calibration RAW closing-MFE Q40",
+      "max_age_bars": 24
+    },
+    "P4": {
+      "name": "CALIBRATION_RAW_CLOSE_MFE_Q40_TP_MAX48",
+      "tp": "same frozen pair-side Q40 as P3",
+      "max_age_bars": 48
+    },
+    "P5": {
+      "name": "FX_LGAR",
+      "trapped": "path-efficiency-high and at least two of momentum, prior-rail, USD-breadth oppose the lot; unwind at next strictly-later exact open",
+      "neutral": "at age 24, any non-HARVEST lot unwinds at next strictly-later exact open",
+      "harvest": "positive RAW close mark, calibration-slot spread good, non-TRAPPED, and aligned momentum or rail with non-opposing USD breadth",
+      "max_age_bars": 48
+    },
+    "P6": {
+      "name": "FX_LGAR_PLUS_50PCT_CLOSE_MFE_GIVEBACK",
+      "base": "P5",
+      "profit_lock": "after frozen Q40 TP is reached by RAW close mark, unwind after RAW close mark gives back at least 50% of peak closing MFE",
+      "max_age_bars": 48
+    },
+    "P7": {
+      "name": "FX_LGAR_PROFIT_LOCK_PLUS_USD_NODE_BASKET",
+      "base": "P6",
+      "basket": "when a same-signed USD-node group contains STALE or TRAPPED inventory and its exact-time aggregate RAW marked PnL in JPY is non-negative, unwind the group at each pair's next strictly-later exact open",
+      "max_age_bars": 48
+    }
+  },
+  "execution_arms": {
+    "RAW_SIGNAL": "mid open to identical policy exit; no spread, fee, or slippage",
+    "EXECUTABLE_BASE": "same signal and policy action timestamps; observed BID/ASK plus 0.3 pip slippage per side",
+    "ADVERSE_STRESS": "same signal and policy action timestamps; observed BID/ASK plus 0.9 pip slippage per side",
+    "fees_pips_per_side": 0.0,
+    "cost_gate": false,
+    "policy_decisions_use": "RAW completed-data state only"
+  },
+  "portfolio": {
+    "initial_equity_jpy": 200000,
+    "units_per_lot": 1000,
+    "pair_lot_cap": 4,
+    "absolute_net_usd_node_lot_cap": 4,
+    "same_sign_usd_node_lot_cap": 4,
+    "gross_lot_cap": 8,
+    "gross_leverage_cap": 20,
+    "shared_hard_execution_equity_ledger": "EXECUTABLE_BASE marked equity; applies identically to all arms after RAW proposal logging",
+    "adverse_stress_margin_rule": "record first marked margin-closeout or ruin outcome without rejecting entries or changing shared policy lineage",
+    "same_pair_opposite_hedging": false,
+    "martingale": false,
+    "price_stop_loss": false,
+    "max_age_bars": 48,
+    "terminal_liquidation": true,
+    "financing_model": "zero over the maximum four-hour vehicle; limitation disclosed"
+  },
+  "gap_policy": {
+    "expected_step_seconds": 300,
+    "synthesis": false,
+    "feature_across_gap": false,
+    "fill_across_gap": false,
+    "label_across_gap": false,
+    "open_inventory_at_gap": "last observed executable close is recorded as DATA_GAP_TERMINAL_MTM and separately counted"
+  },
+  "selection": {
+    "family_size": 8,
+    "data": "tuning RAW_SIGNAL only",
+    "alpha": 0.05,
+    "correction": "Bonferroni",
+    "cluster": "UTC decision day across all symbols",
+    "cluster_bootstrap_resamples": 2000,
+    "winner": "highest tuning RAW mean pips per trade; evidence admission additionally requires corrected LCB>0",
+    "density_floor": {
+      "executed_trades": 240,
+      "utc_decision_days": 40,
+      "pairs_with_30_trades": 2
+    },
+    "stability_floor": {
+      "positive_pairs": 2,
+      "positive_month_fraction": 0.50
+    }
+  },
+  "admission": {
+    "tuning_raw_mean_pips_gt": 0.0,
+    "tuning_raw_corrected_lcb_gt": 0.0,
+    "development_raw_mean_pips_gt": 0.0,
+    "development_base_mean_pips_gt": 0.0,
+    "development_adverse_mean_pips_gt": 0.0,
+    "development_positive_pairs_gte": 2,
+    "development_positive_month_fraction_gte": 0.50,
+    "terminal_open_inventory_mtm_jpy_eq": 0.0,
+    "leverage_fitting": false,
+    "holdout_required_for_final_admission": true
+  }
+}

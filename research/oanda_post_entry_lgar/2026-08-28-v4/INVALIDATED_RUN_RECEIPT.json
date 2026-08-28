@@ -1,0 +1,19 @@
+{
+  "schema": "QR_OANDA_POST_ENTRY_LGAR_INVALIDATED_RUN_V1",
+  "candidate_id": "M5_GENERIC_EMA_POST_ENTRY_LGAR_V4",
+  "invalidated_result_sha256": "c149d7769d1b988d6658feeb0ba73ad8a1cdef855408bd976e6544b3befc4376",
+  "invalidated_packet_sha256": "771ae19cc598b84c0b7ae0bcf263cfe88008bb7629be6bd3b74b8c65a3fc1e6d",
+  "invalidated": true,
+  "reasons": [
+    "Decision-time source handling inspected future T+5 feed availability instead of causally resolving the pending intent at T+5.",
+    "Drawdown and calendar stability used realized exits rather than per-event open-inventory MTM, and the common BASE margin guard was not enforced.",
+    "Paired improvement intersected executed signal IDs, omitting policy-specific capacity and inventory effects instead of comparing the complete shared-source portfolio path."
+  ],
+  "profit_evidence": false,
+  "holdout_price_or_volume_rows_decoded": 0,
+  "holdout_labels_computed": 0,
+  "network_attempts": 0,
+  "credential_reads": 0,
+  "external_order_attempts": 0,
+  "external_orders": 0
+}
