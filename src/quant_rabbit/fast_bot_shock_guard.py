@@ -26,6 +26,7 @@ SHADOW_CONTRACT = "QR_FAST_BOT_SHOCK_GUARDED_SHADOW_V1"
 DECISION_CONTRACT = "QR_FAST_BOT_SHOCK_GUARD_DECISION_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_SHOCK_GUARD_SCORECARD_V1"
 PROTECTIVE_STOP_CONTRACT = "QR_FAST_BOT_PROTECTIVE_STOP_V1"
+STRUCTURE_EXIT_CONTRACT = "QR_FAST_BOT_STRUCTURE_EXIT_V1"
 
 NORMAL = "NORMAL"
 SHOCK_FREEZE = "SHOCK_FREEZE"
@@ -78,9 +79,13 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
     if (
         int(detection.get("window_minutes") or 0) != 15
         or float(detection.get("minimum_impulse_pips") or 0.0) != 18.0
-        or float(detection.get("minimum_atr_multiple") or 0.0) != 2.0
+        or str(detection.get("atr_role") or "")
+        != "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY"
+        or float(detection.get("minimum_atr_multiple") or 0.0) != 0.0
+        or int(detection.get("minimum_raw_confirmation_count") or 0) != 2
         or int(resolution.get("freeze_minutes") or 0) != 5
         or float(resolution.get("adverse_atr_fraction") or 0.0) != 0.25
+        or float(resolution.get("minimum_adverse_reversal_pips") or 0.0) != 2.0
     ):
         raise ValueError("shock guard preregistered central cell drift")
     return value, canonical_sha(value)
@@ -213,12 +218,39 @@ def _complete_candles(view: Mapping[str, Any] | None) -> list[dict[str, Any]]:
                 "high": float(item["h"]),
                 "low": float(item["l"]),
                 "close": float(item["c"]),
+                "spread_pips": _optional_spread_pips(item),
             }
         except (KeyError, TypeError, ValueError):
             continue
         if all(math.isfinite(row[name]) for name in ("open", "high", "low", "close")):
             rows.append(row)
     return sorted(rows, key=lambda item: item["at"])
+
+
+def _optional_spread_pips(item: Mapping[str, Any]) -> float | None:
+    """Read an already-observed spread without inventing unavailable truth."""
+
+    candidates: list[Any] = [item.get("spread_pips")]
+    bid = item.get("bid")
+    ask = item.get("ask")
+    if isinstance(bid, Mapping) and isinstance(ask, Mapping):
+        try:
+            candidates.append((float(ask.get("c")) - float(bid.get("c"))) * 10_000.0)
+        except (TypeError, ValueError):
+            pass
+    if item.get("bid_close") is not None and item.get("ask_close") is not None:
+        try:
+            candidates.append((float(item["ask_close"]) - float(item["bid_close"])) * 10_000.0)
+        except (TypeError, ValueError):
+            pass
+    for candidate in candidates:
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value >= 0.0:
+            return value
+    return None
 
 
 def _view_atr(view: Mapping[str, Any] | None) -> float | None:
@@ -250,7 +282,11 @@ def observe_market(
     views = _views(pair_charts, pair)
     rows = _complete_candles(views.get("M1"))
     window = int(config["detection"]["window_minutes"])
-    if len(rows) < window + 1:
+    velocity_window = int(config["detection"]["short_velocity_window_minutes"])
+    swing_lookback = int(config["detection"]["swing_lookback_minutes"])
+    spread_lookback = int(config["detection"]["spread_lookback_minutes"])
+    history_required = window + max(velocity_window * 2, swing_lookback, spread_lookback) + 1
+    if len(rows) < history_required:
         return {"valid": False, "reason": "M1_HISTORY_INSUFFICIENT", "pair": pair}
     latest = rows[-1]
     age = (now - (latest["at"] + timedelta(minutes=1))).total_seconds()
@@ -264,14 +300,56 @@ def observe_market(
     if any(gap != 60.0 for gap in gaps):
         return {"valid": False, "reason": "M1_GAP", "pair": pair}
     atr = _view_atr(views.get(str(config["detection"]["atr_timeframe"]).upper()))
-    if atr is None:
-        return {"valid": False, "reason": "ATR_UNAVAILABLE", "pair": pair}
     factor = float(instrument_pip_factor(pair))
     impulse = (recent[-1]["close"] - recent[0]["close"]) * factor
     direction = "UP" if impulse > 0.0 else "DOWN" if impulse < 0.0 else "FLAT"
     magnitude = abs(impulse)
+    sign = 1.0 if direction == "UP" else -1.0 if direction == "DOWN" else 0.0
+    short_move = (rows[-1]["close"] - rows[-1 - velocity_window]["close"]) * factor * sign
+    prior_move = (
+        rows[-1 - velocity_window]["close"] - rows[-1 - velocity_window * 2]["close"]
+    ) * factor * sign
+    velocity = short_move / velocity_window
+    prior_velocity = prior_move / velocity_window
+    acceleration = (velocity - prior_velocity) / velocity_window
+    pre_window = rows[-(window + swing_lookback + 1) : -(window + 1)]
     initial_high = max(row["high"] for row in recent)
     initial_low = min(row["low"] for row in recent)
+    prior_swing_high = max(row["high"] for row in pre_window)
+    prior_swing_low = min(row["low"] for row in pre_window)
+    swing_break = bool(
+        (direction == "UP" and recent[-1]["close"] > prior_swing_high)
+        or (direction == "DOWN" and recent[-1]["close"] < prior_swing_low)
+    )
+    spread_rows = [
+        float(row["spread_pips"])
+        for row in rows[-spread_lookback:]
+        if row.get("spread_pips") is not None
+    ]
+    current_spread = rows[-1].get("spread_pips")
+    prior_spreads = spread_rows[:-1] if current_spread is not None else spread_rows
+    median_spread = (
+        sorted(prior_spreads)[len(prior_spreads) // 2] if prior_spreads else None
+    )
+    spread_ratio = (
+        float(current_spread) / median_spread
+        if current_spread is not None and median_spread is not None and median_spread > 0.0
+        else None
+    )
+    spread_shock = bool(
+        current_spread is not None
+        and float(current_spread) >= float(config["detection"]["minimum_spread_pips"])
+        and spread_ratio is not None
+        and spread_ratio >= float(config["detection"]["minimum_spread_ratio"])
+    )
+    raw_confirmations = {
+        "velocity": velocity + 1e-9
+        >= float(config["detection"]["minimum_velocity_pips_per_minute"]),
+        "acceleration": acceleration + 1e-9
+        >= float(config["detection"]["minimum_acceleration_pips_per_minute2"]),
+        "spread_expansion": spread_shock,
+        "prior_swing_break": swing_break,
+    }
     alignment = {tf: _direction(views.get(tf)) for tf in ("M1", "M5", "M15", "H1")}
     short_reversal = direction in {"UP", "DOWN"} and any(
         alignment[tf] not in {direction, "NEUTRAL"} for tf in ("M1", "M5")
@@ -288,8 +366,21 @@ def observe_market(
         "impulse_direction": direction,
         "impulse_pips": round(impulse, 6),
         "impulse_magnitude_pips": round(magnitude, 6),
-        "atr_pips": round(atr, 6),
-        "atr_multiple": round(magnitude / atr, 6),
+        "velocity_pips_per_minute": round(velocity, 6),
+        "prior_velocity_pips_per_minute": round(prior_velocity, 6),
+        "acceleration_pips_per_minute2": round(acceleration, 6),
+        "current_spread_pips": round(float(current_spread), 6) if current_spread is not None else None,
+        "median_spread_pips": round(float(median_spread), 6) if median_spread is not None else None,
+        "spread_ratio": round(float(spread_ratio), 6) if spread_ratio is not None else None,
+        "spread_shock": spread_shock,
+        "prior_swing_high": prior_swing_high,
+        "prior_swing_low": prior_swing_low,
+        "prior_swing_break": swing_break,
+        "raw_confirmations": raw_confirmations,
+        "raw_confirmation_count": sum(raw_confirmations.values()),
+        "atr_role": config["detection"]["atr_role"],
+        "atr_pips": round(atr, 6) if atr is not None else None,
+        "atr_multiple": round(magnitude / atr, 6) if atr is not None else None,
         "initial_high": initial_high,
         "initial_low": initial_low,
         "latest_close": latest["close"],
@@ -314,8 +405,8 @@ def _shock_detected(observation: Mapping[str, Any], config: Mapping[str, Any]) -
         and observation.get("impulse_direction") in {"UP", "DOWN"}
         and float(observation["impulse_magnitude_pips"])
         >= float(config["detection"]["minimum_impulse_pips"])
-        and float(observation["atr_multiple"])
-        >= float(config["detection"]["minimum_atr_multiple"])
+        and int(observation.get("raw_confirmation_count") or 0)
+        >= int(config["detection"]["minimum_raw_confirmation_count"])
     )
 
 
@@ -371,9 +462,15 @@ def advance_state(
                 "config_sha256": config_sha256,
                 "window_minutes": config["detection"]["window_minutes"],
                 "minimum_impulse_pips": config["detection"]["minimum_impulse_pips"],
-                "minimum_atr_multiple": config["detection"]["minimum_atr_multiple"],
+                "minimum_raw_confirmation_count": config["detection"]["minimum_raw_confirmation_count"],
+                "minimum_velocity_pips_per_minute": config["detection"]["minimum_velocity_pips_per_minute"],
+                "minimum_acceleration_pips_per_minute2": config["detection"]["minimum_acceleration_pips_per_minute2"],
+                "minimum_spread_pips": config["detection"]["minimum_spread_pips"],
+                "minimum_spread_ratio": config["detection"]["minimum_spread_ratio"],
+                "atr_role": config["detection"]["atr_role"],
                 "freeze_minutes": config["resolution"]["freeze_minutes"],
-                "adverse_atr_fraction": config["resolution"]["adverse_atr_fraction"],
+                "minimum_adverse_reversal_pips": config["resolution"]["minimum_adverse_reversal_pips"],
+                "auxiliary_adverse_atr_fraction": config["resolution"]["adverse_atr_fraction"],
             },
             "evidence": dict(observation),
             "fail_closed_reason": None,
@@ -383,6 +480,17 @@ def advance_state(
             "external_orders": 0,
         }
         return seal(body)
+
+    if prior_state == NORMAL:
+        return seal(
+            {
+                **{key: value for key, value in prior.items() if key != "contract_sha256"},
+                "observed_at_utc": now.isoformat(),
+                "last_complete_m1_at_utc": latest,
+                "evidence": dict(observation),
+                "fail_closed_reason": None,
+            }
+        )
 
     if prior_state == SHOCK_FREEZE:
         if prior.get("fail_closed_reason"):
@@ -409,8 +517,9 @@ def advance_state(
             return seal({**{k: v for k, v in prior.items() if k != "contract_sha256"}, "last_complete_m1_at_utc": latest})
         direction = str(prior.get("shock_direction"))
         initial = prior.get("evidence") or {}
-        atr = float(initial.get("atr_pips") or 0.0)
-        adverse_threshold = atr * float(config["resolution"]["adverse_atr_fraction"])
+        atr_raw = initial.get("atr_pips")
+        atr = float(atr_raw) if atr_raw is not None else None
+        adverse_threshold = float(config["resolution"]["minimum_adverse_reversal_pips"])
         factor = float(instrument_pip_factor(pair))
         if direction == "UP":
             new_extreme = max(float(row["high"]) for row in post) > float(initial["initial_high"])
@@ -423,6 +532,9 @@ def advance_state(
             "new_shock_direction_extreme": new_extreme,
             "adverse_excursion_pips": round(adverse, 6),
             "adverse_threshold_pips": round(adverse_threshold, 6),
+            "adverse_atr_fraction_auxiliary": (
+                round(adverse / atr, 6) if atr is not None and atr > 0.0 else None
+            ),
             "short_term_reversal": observation.get("short_term_reversal"),
             "higher_timeframe_continuation": observation.get("higher_timeframe_continuation"),
             "timeframe_alignment": observation.get("timeframe_alignment"),
@@ -504,6 +616,7 @@ def protective_stop_candidates(
     recent_swing_price: float,
     observed_at_utc: datetime,
     config: Mapping[str, Any],
+    shock_displacement_pips: float | None = None,
 ) -> list[dict[str, Any]]:
     """Return the bounded, preregistered SL geometry comparison set."""
 
@@ -520,6 +633,26 @@ def protective_stop_candidates(
         else (float(recent_swing_price) - entry) * factor
     )
     swing_width = max(float(config["protective_stop"]["minimum_stop_pips"]), swing_distance + spread)
+    displacement = (
+        _finite_positive(shock_displacement_pips, "shock_displacement_pips")
+        if shock_displacement_pips is not None
+        else float(config["protective_stop"]["minimum_catastrophe_stop_pips"])
+    )
+    raw_catastrophe_width = max(
+        float(config["protective_stop"]["minimum_catastrophe_stop_pips"]),
+        swing_distance
+        + spread * float(config["protective_stop"]["catastrophe_spread_buffer_multiple"]),
+        displacement * float(config["protective_stop"]["catastrophe_impulse_multiple"]),
+    )
+    auxiliary_atr_upper = max(
+        float(config["protective_stop"]["minimum_catastrophe_stop_pips"]),
+        atr * float(config["protective_stop"]["maximum_auxiliary_atr_multiple"]),
+    )
+    catastrophe_width = min(
+        raw_catastrophe_width,
+        auxiliary_atr_upper,
+        float(config["protective_stop"]["maximum_catastrophe_stop_pips"]),
+    )
     widths = [
         ("FIXED_3_2", 3.2),
         ("ATR_1_0", atr),
@@ -527,6 +660,7 @@ def protective_stop_candidates(
         ("ATR_2_0", atr * 2.0),
         ("SWING_SPREAD_BUFFER", swing_width),
         ("CONSERVATIVE_ATR_SWING", max(atr * 1.5, swing_width)),
+        ("CONSERVATIVE_CATASTROPHE", catastrophe_width),
     ]
     rows: list[dict[str, Any]] = []
     for geometry, width in widths:
@@ -550,11 +684,48 @@ def protective_stop_candidates(
                     "gap_slippage_ledger_required": True,
                     "widen_during_shock_allowed": False,
                     "remove_after_entry_allowed": False,
+                    "server_side_catastrophic_stop": geometry == "CONSERVATIVE_CATASTROPHE",
+                    "normal_exit_policy": "RAW_STRUCTURE_SHOCK_TIME_EXIT_FIRST",
+                    "atr_role": "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
+                    "live_candidate_eligible": geometry == "CONSERVATIVE_CATASTROPHE",
                     "shadow_only": True,
                     "live_permission": False,
                 }
             )
         )
+    rows.append(
+        seal(
+            {
+                "contract": PROTECTIVE_STOP_CONTRACT,
+                "schema_version": 1,
+                "geometry_id": "NO_SL_SHADOW_ONLY",
+                "pair": pair,
+                "side": side,
+                "entry": entry,
+                "stop_loss": None,
+                "stop_loss_pips": None,
+                "observed_at_utc": _aware(observed_at_utc).isoformat(),
+                "maximum_age_seconds": int(config["protective_stop"]["maximum_age_seconds"]),
+                "attached_required": False,
+                "guaranteed": False,
+                "gap_slippage_ledger_required": True,
+                "widen_during_shock_allowed": False,
+                "remove_after_entry_allowed": False,
+                "server_side_catastrophic_stop": False,
+                "normal_exit_policy": "RAW_STRUCTURE_SHOCK_TIME_EXIT_FIRST",
+                "atr_role": "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
+                "live_candidate_eligible": False,
+                "shadow_comparison_controls": {
+                    "campaign_loss_cap_pips": config["structure_exit"]["campaign_loss_cap_pips"],
+                    "holding_time_cap_minutes": config["structure_exit"]["holding_time_cap_minutes"],
+                    "inventory_position_cap": config["structure_exit"]["inventory_position_cap"],
+                    "margin_usage_proxy_cap": config["structure_exit"]["margin_usage_proxy_cap"],
+                },
+                "shadow_only": True,
+                "live_permission": False,
+            }
+        )
+    )
     return rows
 
 
@@ -577,6 +748,13 @@ def validate_protective_stop(
     stop = signal.get("protective_stop")
     if not isinstance(stop, Mapping) or not sealed_valid(stop, PROTECTIVE_STOP_CONTRACT):
         return False, "PROTECTIVE_STOP_MISSING_OR_UNSEALED", None
+    if (
+        stop.get("server_side_catastrophic_stop") is not True
+        or stop.get("live_candidate_eligible") is not True
+        or stop.get("normal_exit_policy") != "RAW_STRUCTURE_SHOCK_TIME_EXIT_FIRST"
+        or stop.get("atr_role") != "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY"
+    ):
+        return False, "PROTECTIVE_STOP_NOT_CATASTROPHIC_LIVE_CANDIDATE", None
     try:
         now = _aware(now_utc)
         observed = _parse_utc(stop.get("observed_at_utc"))
@@ -600,6 +778,164 @@ def validate_protective_stop(
     if side not in {"LONG", "SHORT"} or actual <= 0.0 or abs(actual - width) > 0.01:
         return False, "PROTECTIVE_STOP_PRICE_INVALID", None
     return True, None, width
+
+
+def structure_exit_plan(
+    *,
+    pair: str,
+    side: str,
+    observed_at_utc: datetime,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Seal deterministic normal-exit thresholds ahead of the catastrophe SL."""
+
+    side = side.upper()
+    if side not in {"LONG", "SHORT"}:
+        raise ValueError("side must be LONG or SHORT")
+    policy = config["structure_exit"]
+    return seal(
+        {
+            "contract": STRUCTURE_EXIT_CONTRACT,
+            "schema_version": 1,
+            "pair": pair.upper(),
+            "side": side,
+            "observed_at_utc": _aware(observed_at_utc).isoformat(),
+            "maximum_age_seconds": int(config["protective_stop"]["maximum_age_seconds"]),
+            "evaluation_order": [
+                "FAILED_CONTINUATION",
+                "ADVERSE_SWING_BREAK",
+                "ADVERSE_VELOCITY",
+                "ADVERSE_ACCELERATION",
+                "SPREAD_EXPANSION",
+                "TIME_STOP",
+                "SERVER_SIDE_CATASTROPHE_STOP",
+            ],
+            "short_window_minutes": int(policy["short_window_minutes"]),
+            "velocity_reversal_pips_per_minute": float(
+                policy["velocity_reversal_pips_per_minute"]
+            ),
+            "acceleration_reversal_pips_per_minute2": float(
+                policy["acceleration_reversal_pips_per_minute2"]
+            ),
+            "spread_expansion_ratio": float(policy["spread_expansion_ratio"]),
+            "swing_lookback_minutes": int(policy["swing_lookback_minutes"]),
+            "time_stop_minutes": int(policy["time_stop_minutes"]),
+            "holding_time_cap_minutes": int(policy["holding_time_cap_minutes"]),
+            "campaign_loss_cap_pips": float(policy["campaign_loss_cap_pips"]),
+            "inventory_position_cap": int(policy["inventory_position_cap"]),
+            "margin_usage_proxy_cap": float(policy["margin_usage_proxy_cap"]),
+            "atr_role": "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
+            "server_side_catastrophic_stop_required": True,
+            "automatic_reentry_during_shock_allowed": False,
+            "manual_tagless_policy": "NO_TOUCH",
+            "shadow_only": True,
+            "live_permission": False,
+        }
+    )
+
+
+def validate_structure_exit_plan(
+    signal: Mapping[str, Any], *, now_utc: datetime
+) -> tuple[bool, str | None]:
+    plan = signal.get("structure_exit_plan")
+    if not isinstance(plan, Mapping) or not sealed_valid(plan, STRUCTURE_EXIT_CONTRACT):
+        return False, "STRUCTURE_EXIT_PLAN_MISSING_OR_UNSEALED"
+    try:
+        now = _aware(now_utc)
+        observed = _parse_utc(plan.get("observed_at_utc"))
+        maximum_age = int(plan.get("maximum_age_seconds"))
+    except (TypeError, ValueError):
+        return False, "STRUCTURE_EXIT_PLAN_TIME_INVALID"
+    if observed > now or (now - observed).total_seconds() > maximum_age:
+        return False, "STRUCTURE_EXIT_PLAN_STALE_OR_FUTURE"
+    if (
+        plan.get("pair") != signal.get("pair")
+        or plan.get("side") != signal.get("side")
+        or plan.get("server_side_catastrophic_stop_required") is not True
+        or plan.get("automatic_reentry_during_shock_allowed") is not False
+        or plan.get("manual_tagless_policy") != "NO_TOUCH"
+        or plan.get("atr_role") != "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY"
+    ):
+        return False, "STRUCTURE_EXIT_PLAN_BINDING_INVALID"
+    required = [
+        "FAILED_CONTINUATION",
+        "ADVERSE_SWING_BREAK",
+        "ADVERSE_VELOCITY",
+        "ADVERSE_ACCELERATION",
+        "SPREAD_EXPANSION",
+        "TIME_STOP",
+        "SERVER_SIDE_CATASTROPHE_STOP",
+    ]
+    if list(plan.get("evaluation_order") or []) != required:
+        return False, "STRUCTURE_EXIT_PLAN_REASONS_INVALID"
+    return True, None
+
+
+def evaluate_structure_exit(
+    *,
+    side: str,
+    closes: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    spreads_pips: Sequence[float],
+    held_minutes: int,
+    failed_continuation: bool,
+    pair: str,
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Evaluate only causal short-window evidence and return the first exit reason."""
+
+    if not sealed_valid(plan, STRUCTURE_EXIT_CONTRACT):
+        return {"exit": True, "reason": "STRUCTURE_EXIT_PLAN_INVALID", "fail_closed": True}
+    window = int(plan["short_window_minutes"])
+    swing = int(plan["swing_lookback_minutes"])
+    required = max(window * 2 + 1, swing + 1)
+    if min(len(closes), len(highs), len(lows)) < required:
+        return {"exit": True, "reason": "STRUCTURE_EVIDENCE_INSUFFICIENT", "fail_closed": True}
+    factor = float(instrument_pip_factor(pair))
+    direction = 1.0 if side.upper() == "LONG" else -1.0
+    velocity = (float(closes[-1]) - float(closes[-1 - window])) * factor * direction / window
+    prior_velocity = (
+        (float(closes[-1 - window]) - float(closes[-1 - window * 2]))
+        * factor
+        * direction
+        / window
+    )
+    acceleration = (velocity - prior_velocity) / window
+    adverse_swing_break = (
+        float(closes[-1]) < min(float(value) for value in lows[-swing - 1 : -1])
+        if direction > 0
+        else float(closes[-1]) > max(float(value) for value in highs[-swing - 1 : -1])
+    )
+    spread_ratio = None
+    if spreads_pips:
+        current = float(spreads_pips[-1])
+        prior = sorted(float(value) for value in spreads_pips[:-1] if float(value) >= 0.0)
+        median = prior[len(prior) // 2] if prior else None
+        spread_ratio = current / median if median and median > 0.0 else None
+    evidence = {
+        "side_relative_velocity_pips_per_minute": round(velocity, 6),
+        "side_relative_acceleration_pips_per_minute2": round(acceleration, 6),
+        "adverse_swing_break": adverse_swing_break,
+        "spread_ratio": round(spread_ratio, 6) if spread_ratio is not None else None,
+        "held_minutes": int(held_minutes),
+        "atr_used_for_exit_trigger": False,
+    }
+    if failed_continuation:
+        reason = "FAILED_CONTINUATION"
+    elif adverse_swing_break:
+        reason = "ADVERSE_SWING_BREAK"
+    elif velocity <= -float(plan["velocity_reversal_pips_per_minute"]):
+        reason = "ADVERSE_VELOCITY"
+    elif acceleration <= -float(plan["acceleration_reversal_pips_per_minute2"]):
+        reason = "ADVERSE_ACCELERATION"
+    elif spread_ratio is not None and spread_ratio >= float(plan["spread_expansion_ratio"]):
+        reason = "SPREAD_EXPANSION"
+    elif int(held_minutes) >= int(plan["time_stop_minutes"]):
+        reason = "TIME_STOP"
+    else:
+        reason = None
+    return {"exit": reason is not None, "reason": reason, "fail_closed": False, "evidence": evidence}
 
 
 def _receipt(state: Mapping[str, Any], *, now: datetime, config_sha256: str) -> dict[str, Any]:
@@ -712,13 +1048,24 @@ def guard_shadow(
             recent_swing_price=float(swing),
             observed_at_utc=now,
             config=config,
+            shock_displacement_pips=float(
+                (state.get("evidence") or {}).get("impulse_magnitude_pips")
+                or config["protective_stop"]["minimum_catastrophe_stop_pips"]
+            ),
         )
         selected = next(row for row in candidates if row["geometry_id"] == selected_geometry)
+        exit_plan = structure_exit_plan(
+            pair=pair,
+            side=side,
+            observed_at_utc=now,
+            config=config,
+        )
         signal.update(
             stop_loss=selected["stop_loss"],
             stop_loss_pips=selected["stop_loss_pips"],
             protective_stop=selected,
             protective_stop_candidates=candidates,
+            structure_exit_plan=exit_plan,
             shock_guard=local_receipt,
         )
         signal["reward_risk"] = round(float(signal["take_profit_pips"]) / float(signal["stop_loss_pips"]), 6)
@@ -729,6 +1076,10 @@ def guard_shadow(
         if not stop_ok:
             allowed = False
             reason = stop_reason
+        exit_plan_ok, exit_plan_reason = validate_structure_exit_plan(signal, now_utc=now)
+        if not exit_plan_ok:
+            allowed = False
+            reason = exit_plan_reason
         decision = seal(
             {
                 "contract": DECISION_CONTRACT,
@@ -759,6 +1110,9 @@ def guard_shadow(
                 },
                 "protective_stop_geometry": selected_geometry,
                 "protective_stop_pips": selected["stop_loss_pips"],
+                "normal_exit_policy": exit_plan["evaluation_order"],
+                "catastrophic_stop_server_side_required": True,
+                "automatic_reentry_during_shock_allowed": False,
                 "gap_slippage_ledger_required": True,
                 "execution_authority": "NONE",
                 "broker_mutation_allowed": False,

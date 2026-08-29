@@ -20,7 +20,10 @@ from quant_rabbit.fast_bot_shock_guard import (
     run_guard_cycle,
     seal,
     size_units_for_stop,
+    structure_exit_plan,
+    evaluate_structure_exit,
     validate_protective_stop,
+    validate_structure_exit_plan,
 )
 
 
@@ -33,15 +36,16 @@ def _config():
 
 
 def _chart(*, direction: str = "DOWN", pips: float = 18.0, gap: bool = False, stale: bool = False):
-    start = NOW - timedelta(minutes=15)
+    start = NOW - timedelta(minutes=35)
     sign = 1.0 if direction == "UP" else -1.0
     rows = []
-    for index in range(16):
-        offset = index + (1 if gap and index == 8 else 0)
+    for index in range(36):
+        offset = index + (1 if gap and index == 28 else 0)
         at = start + timedelta(minutes=offset)
         if stale:
             at -= timedelta(minutes=10)
-        price = 1.1000 + sign * (pips / 10_000.0) * index / 15.0
+        trend_index = max(0, index - 20)
+        price = 1.1000 + sign * (pips / 10_000.0) * trend_index / 15.0
         rows.append(
             {
                 "t": at.isoformat(),
@@ -49,6 +53,7 @@ def _chart(*, direction: str = "DOWN", pips: float = 18.0, gap: bool = False, st
                 "h": price + 0.00002,
                 "l": price - 0.00002,
                 "c": price,
+                "spread_pips": 0.8,
                 "complete": True,
             }
         )
@@ -117,6 +122,8 @@ def _direct_observation(direction: str, *, new_extreme: bool, adverse_pips: floa
         "latest_complete_m1_at_utc": post[-1]["at"],
         "impulse_direction": direction,
         "impulse_magnitude_pips": 20.0,
+        "raw_confirmation_count": 2,
+        "raw_confirmations": {"velocity": True, "prior_swing_break": True},
         "atr_pips": 8.0,
         "atr_multiple": 2.5,
         "initial_high": initial_high,
@@ -136,6 +143,51 @@ def test_mirror_symmetric_threshold_and_boundary():
     assert up["atr_multiple"] == down["atr_multiple"] == 2.0
     assert up["impulse_direction"] == "UP"
     assert down["impulse_direction"] == "DOWN"
+    assert up["raw_confirmation_count"] == down["raw_confirmation_count"] >= 2
+    assert up["prior_swing_break"] is down["prior_swing_break"] is True
+
+
+def test_raw_detector_does_not_use_atr_as_onset_gate():
+    config, config_sha = _config()
+    packet = _chart(direction="UP")
+    for view in packet["charts"][0]["views"]:
+        if view["granularity"] == "M5":
+            view["indicators"] = {}
+    observation = observe_market(
+        pair_charts=packet,
+        pair="EUR_USD",
+        now_utc=NOW + timedelta(minutes=1),
+        config=config,
+    )
+    assert observation["valid"] is True
+    assert observation["atr_pips"] is None
+    assert observation["atr_multiple"] is None
+    state = advance_state(
+        prior=_normal(),
+        observation=observation,
+        now_utc=NOW + timedelta(minutes=1),
+        config=config,
+        config_sha256=config_sha,
+    )
+    assert state["state"] == SHOCK_FREEZE
+    assert state["thresholds"]["atr_role"] == "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY"
+
+
+def test_spread_expansion_is_observed_symmetrically_without_becoming_side_specific():
+    config, _ = _config()
+    for direction in ("UP", "DOWN"):
+        packet = _chart(direction=direction)
+        latest = packet["charts"][0]["views"][0]["recent_candles"][-1]
+        latest["spread_pips"] = 1.6
+        observation = observe_market(
+            pair_charts=packet,
+            pair="EUR_USD",
+            now_utc=NOW + timedelta(minutes=1),
+            config=config,
+        )
+        assert observation["spread_shock"] is True
+        assert observation["spread_ratio"] == 2.0
+        assert observation["raw_confirmations"]["spread_expansion"] is True
 
 
 def test_stale_and_gap_fail_closed():
@@ -167,6 +219,92 @@ def test_protective_stop_geometry_symmetry_and_inverse_units():
     assert [row["stop_loss_pips"] for row in long] == [row["stop_loss_pips"] for row in short]
     assert long[0]["stop_loss"] < 1.1000 < short[0]["stop_loss"]
     assert size_units_for_stop(max_loss_jpy=500.0, stop_loss_pips=8.0, pip_value_jpy_per_unit=0.01) < size_units_for_stop(max_loss_jpy=500.0, stop_loss_pips=4.0, pip_value_jpy_per_unit=0.01)
+    catastrophe = next(row for row in long if row["geometry_id"] == "CONSERVATIVE_CATASTROPHE")
+    assert catastrophe["server_side_catastrophic_stop"] is True
+    assert catastrophe["live_candidate_eligible"] is True
+    assert catastrophe["stop_loss_pips"] >= 18.0
+    no_sl = next(row for row in long if row["geometry_id"] == "NO_SL_SHADOW_ONLY")
+    signal = {
+        "pair": "EUR_USD",
+        "side": "LONG",
+        "entry": 1.1,
+        "stop_loss": None,
+        "stop_loss_pips": None,
+        "protective_stop": no_sl,
+        "attached_stop_loss_required": False,
+    }
+    ok, reason, _ = validate_protective_stop(signal, now_utc=NOW)
+    assert ok is False
+    assert reason == "PROTECTIVE_STOP_NOT_CATASTROPHIC_LIVE_CANDIDATE"
+
+
+def test_structure_exit_plan_and_velocity_are_mirrored():
+    config, _ = _config()
+    for side, sign in (("LONG", 1.0), ("SHORT", -1.0)):
+        plan = structure_exit_plan(
+            pair="EUR_USD", side=side, observed_at_utc=NOW, config=config
+        )
+        signal = {"pair": "EUR_USD", "side": side, "structure_exit_plan": plan}
+        assert validate_structure_exit_plan(signal, now_utc=NOW) == (True, None)
+        base = [1.1000 + sign * step * 0.00002 for step in range(7)]
+        closes = base + [base[-1] - sign * 0.00020]
+        highs = [value + 0.00002 for value in closes]
+        lows = [value - 0.00002 for value in closes]
+        result = evaluate_structure_exit(
+            side=side,
+            closes=closes,
+            highs=highs,
+            lows=lows,
+            spreads_pips=[0.8] * len(closes),
+            held_minutes=8,
+            failed_continuation=False,
+            pair="EUR_USD",
+            plan=plan,
+        )
+        assert result["exit"] is True
+        assert result["reason"] in {
+            "ADVERSE_SWING_BREAK",
+            "ADVERSE_VELOCITY",
+            "ADVERSE_ACCELERATION",
+        }
+        assert result["evidence"]["atr_used_for_exit_trigger"] is False
+
+
+def test_structure_exit_fails_closed_on_runtime_restart_evidence_gap_and_time_stops():
+    config, _ = _config()
+    plan = structure_exit_plan(
+        pair="EUR_USD", side="LONG", observed_at_utc=NOW, config=config
+    )
+    insufficient = evaluate_structure_exit(
+        side="LONG",
+        closes=[1.1, 1.1001],
+        highs=[1.1001, 1.1002],
+        lows=[1.0999, 1.1],
+        spreads_pips=[0.8, 0.8],
+        held_minutes=2,
+        failed_continuation=False,
+        pair="EUR_USD",
+        plan=plan,
+    )
+    assert insufficient == {
+        "exit": True,
+        "reason": "STRUCTURE_EVIDENCE_INSUFFICIENT",
+        "fail_closed": True,
+    }
+    flat = [1.1] * 8
+    timed = evaluate_structure_exit(
+        side="LONG",
+        closes=flat,
+        highs=[1.1001] * 8,
+        lows=[1.0999] * 8,
+        spreads_pips=[0.8] * 8,
+        held_minutes=int(plan["time_stop_minutes"]),
+        failed_continuation=False,
+        pair="EUR_USD",
+        plan=plan,
+    )
+    assert timed["exit"] is True
+    assert timed["reason"] == "TIME_STOP"
 
 
 def test_guard_rejects_shock_and_emits_paper_only_drain_without_touching_manual():

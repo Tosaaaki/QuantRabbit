@@ -24,7 +24,12 @@ from quant_rabbit.fast_bot_promotion import (
     seal_sizing_receipt,
     seal_supervision_receipt,
 )
-from quant_rabbit.fast_bot_shock_guard import RECEIPT_CONTRACT, seal as seal_guard
+from quant_rabbit.fast_bot_shock_guard import (
+    RECEIPT_CONTRACT,
+    load_config as load_shock_config,
+    seal as seal_guard,
+    structure_exit_plan,
+)
 from quant_rabbit.inventory_controller import InventoryController
 from quant_rabbit.broker.execution import _intent_from_json, _progressive_promotion_live_send_issues
 
@@ -79,6 +84,33 @@ class FastBotPromotionTest(unittest.TestCase):
             now_utc=self.now,
         )
         self.signal = shadow["signals"][0]
+        shock_config, _ = load_shock_config(
+            Path(__file__).resolve().parents[1] / "config" / "fast_bot_shock_guard_v1.json"
+        )
+        catastrophe_width = 18.0
+        catastrophe_price = float(self.signal["entry"]) - catastrophe_width / 10_000.0
+        self.signal["stop_loss"] = catastrophe_price
+        self.signal["stop_loss_pips"] = catastrophe_width
+        self.signal["reward_risk"] = round(
+            float(self.signal["take_profit_pips"]) / catastrophe_width, 6
+        )
+        stop = dict(self.signal["protective_stop"])
+        stop.update(
+            geometry_id="CONSERVATIVE_CATASTROPHE",
+            stop_loss=catastrophe_price,
+            stop_loss_pips=catastrophe_width,
+            server_side_catastrophic_stop=True,
+            normal_exit_policy="RAW_STRUCTURE_SHOCK_TIME_EXIT_FIRST",
+            atr_role="AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
+            live_candidate_eligible=True,
+        )
+        self.signal["protective_stop"] = seal_guard(stop)
+        self.signal["structure_exit_plan"] = structure_exit_plan(
+            pair=self.signal["pair"],
+            side=self.signal["side"],
+            observed_at_utc=self.now,
+            config=shock_config,
+        )
         self.signal["shock_guard"] = seal_guard(
             {
                 "contract": RECEIPT_CONTRACT,
@@ -607,6 +639,48 @@ class FastBotPromotionTest(unittest.TestCase):
         )
         result = self.build(signal=wrong)
         self.assertIn("PROTECTIVE_STOP_PRICE_INVALID", result["blocking_reasons"])
+
+    def test_no_sl_shadow_arm_is_never_promotable_and_gateway_is_not_invoked(self) -> None:
+        no_sl = copy.deepcopy(self.signal)
+        stop = dict(no_sl["protective_stop"])
+        stop.update(
+            geometry_id="NO_SL_SHADOW_ONLY",
+            stop_loss=None,
+            stop_loss_pips=None,
+            attached_required=False,
+            server_side_catastrophic_stop=False,
+            live_candidate_eligible=False,
+            shadow_comparison_controls={
+                "campaign_loss_cap_pips": 50.0,
+                "holding_time_cap_minutes": 60,
+                "inventory_position_cap": 1,
+                "margin_usage_proxy_cap": 1.0,
+            },
+        )
+        no_sl["stop_loss"] = None
+        no_sl["stop_loss_pips"] = None
+        no_sl["attached_stop_loss_required"] = False
+        no_sl["protective_stop"] = seal_guard(stop)
+        no_sl["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in no_sl.items() if key != "signal_sha256"}
+        )
+        promotion = self.build(signal=no_sl)
+        self.assertIn(
+            "PROTECTIVE_STOP_NOT_CATASTROPHIC_LIVE_CANDIDATE",
+            promotion["blocking_reasons"],
+        )
+        gateway = RecordingGateway()
+        result = dispatch_promotion_once(
+            promotion=promotion,
+            gateway=gateway,
+            intents_path=self.root / "no_sl_intents.json",
+            dispatch_ledger_path=self.root / "no_sl_dispatch.json",
+            inventory_state_path=self.root / "inventory.json",
+            now_utc=self.now,
+            send=False,
+        )
+        self.assertEqual(result["status"], "BLOCKED_NOT_ADMITTED")
+        self.assertEqual(gateway.calls, [])
 
     def test_stop_width_and_units_risk_receipt_are_bound(self) -> None:
         sizing = dict(self.sizing)

@@ -15,6 +15,7 @@ from quant_rabbit.fast_bot import SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_shock_guard import (
     validate_protective_stop,
     validate_shock_guard_receipt,
+    validate_structure_exit_plan,
 )
 from quant_rabbit.inventory_controller import InventoryController, InventoryState, LotIdentity
 
@@ -110,6 +111,9 @@ def build_fast_bot_promotion(
     shock_valid, shock_blocker = validate_shock_guard_receipt(signal, now_utc=now)
     if not shock_valid:
         blockers.append(str(shock_blocker or "SHOCK_GUARD_INVALID"))
+    exit_plan_valid, exit_plan_blocker = validate_structure_exit_plan(signal, now_utc=now)
+    if not exit_plan_valid:
+        blockers.append(str(exit_plan_blocker or "STRUCTURE_EXIT_PLAN_INVALID"))
 
     signal_expires_at_utc: str | None = None
     try:

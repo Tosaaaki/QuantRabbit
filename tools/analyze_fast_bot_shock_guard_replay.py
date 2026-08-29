@@ -15,6 +15,7 @@ import json
 import math
 import sys
 from array import array
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -87,16 +88,59 @@ def _m5_atr(data: dict[str, np.ndarray]) -> np.ndarray:
     return mapped
 
 
-def _episodes(data: dict[str, np.ndarray], atr: np.ndarray, *, min_pips: float, min_atr: float) -> list[int]:
+def _episodes(data: dict[str, np.ndarray], config: dict[str, Any]) -> list[int]:
     t = data["t"]
     mid = (data["bc"] + data["ac"]) / 2.0
+    spread = (data["ac"] - data["bc"]) * 10_000.0
+    detection = config["detection"]
+    window = int(detection["window_minutes"])
+    velocity_window = int(detection["short_velocity_window_minutes"])
+    swing_lookback = int(detection["swing_lookback_minutes"])
+    spread_lookback = int(detection["spread_lookback_minutes"])
+    history = window + max(velocity_window * 2, swing_lookback, spread_lookback)
     result: list[int] = []
     lock_until = -1
-    for index in range(15, len(t) - 61):
-        if t[index] <= lock_until or t[index] - t[index - 15] != 900 or not math.isfinite(float(atr[index])):
+    for index in range(history, len(t) - 61):
+        if t[index] <= lock_until or np.any(np.diff(t[index - history : index + 61]) != 60):
             continue
-        impulse = abs((mid[index] - mid[index - 15]) * 10_000.0)
-        if impulse >= min_pips and impulse >= min_atr * atr[index]:
+        signed_impulse = (mid[index] - mid[index - window]) * 10_000.0
+        direction = 1.0 if signed_impulse > 0.0 else -1.0 if signed_impulse < 0.0 else 0.0
+        impulse = abs(signed_impulse)
+        short_velocity = (
+            (mid[index] - mid[index - velocity_window])
+            * 10_000.0
+            * direction
+            / velocity_window
+        )
+        prior_velocity = (
+            (mid[index - velocity_window] - mid[index - velocity_window * 2])
+            * 10_000.0
+            * direction
+            / velocity_window
+        )
+        acceleration = (short_velocity - prior_velocity) / velocity_window
+        prior = mid[index - window - swing_lookback : index - window]
+        swing_break = bool(
+            (direction > 0.0 and mid[index] > np.max(prior))
+            or (direction < 0.0 and mid[index] < np.min(prior))
+        )
+        median_spread = float(np.median(spread[index - spread_lookback : index]))
+        spread_ratio = spread[index] / median_spread if median_spread > 0.0 else 0.0
+        confirmations = sum(
+            (
+                short_velocity + 1e-9
+                >= float(detection["minimum_velocity_pips_per_minute"]),
+                acceleration + 1e-9
+                >= float(detection["minimum_acceleration_pips_per_minute2"]),
+                spread[index] >= float(detection["minimum_spread_pips"])
+                and spread_ratio >= float(detection["minimum_spread_ratio"]),
+                swing_break,
+            )
+        )
+        if (
+            impulse >= float(detection["minimum_impulse_pips"])
+            and confirmations >= int(detection["minimum_raw_confirmation_count"])
+        ):
             result.append(index)
             lock_until = int(t[index] + 3600)
     return result
@@ -126,6 +170,44 @@ def _metrics(values: list[float]) -> dict[str, Any]:
         "maximum_loss_streak": _max_loss_streak(values),
         "p05_trade_pips": round(float(np.quantile(values, 0.05)), 6) if values else None,
         "average_loss_pips": round(sum(losses) / len(losses), 6) if losses else None,
+    }
+
+
+def _architecture_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    values = [float(row["pnl"]) for row in rows]
+    scaled = [
+        float(row["pnl"]) * float(row["normalized_unit_fraction"]) for row in rows
+    ]
+    base = _metrics(values)
+    held = [int(row["held"]) for row in rows]
+    mae = [float(row["mae"]) for row in rows]
+    margin = [float(row["normalized_unit_fraction"]) * int(row["held"]) for row in rows]
+    scaled_mae = [
+        float(row["mae"]) * float(row["normalized_unit_fraction"]) for row in rows
+    ]
+    return {
+        **base,
+        "risk_scaled_net_pip_units": round(sum(scaled), 6),
+        "risk_scaled_profit_factor": _pf(scaled),
+        "risk_scaled_average_loss_pip_units": (
+            round(sum(value for value in scaled if value < 0.0) / sum(value < 0.0 for value in scaled), 6)
+            if any(value < 0.0 for value in scaled)
+            else None
+        ),
+        "risk_scaled_p05_pip_units": round(float(np.quantile(scaled, 0.05)), 6)
+        if scaled
+        else None,
+        "risk_scaled_maximum_adverse_pip_units": round(max(scaled_mae), 6)
+        if scaled_mae
+        else None,
+        "maximum_adverse_excursion_pips": round(max(mae), 6) if mae else None,
+        "p95_adverse_excursion_pips": round(float(np.quantile(mae, 0.95)), 6) if mae else None,
+        "average_inventory_residence_minutes": round(sum(held) / len(held), 6) if held else None,
+        "maximum_inventory_residence_minutes": max(held) if held else None,
+        "normalized_margin_unit_minutes": round(sum(margin) / len(margin), 6) if margin else None,
+        "exit_reason_counts": dict(sorted(Counter(str(row["reason"]) for row in rows).items())),
+        "gap_slippage_pips": round(sum(float(row["gap_slippage"]) for row in rows), 6),
+        "gap_exit_count": sum(str(row["reason"]).endswith("_GAP") for row in rows),
     }
 
 
@@ -171,7 +253,153 @@ def _sl_trade(
     return (entry - data["ac"][index + 60]) * 10_000.0, "HORIZON", 0.0, None
 
 
-def _widths(data: dict[str, np.ndarray], atr: float, index: int, direction: int) -> dict[str, float]:
+def _catastrophe_width(
+    data: dict[str, np.ndarray], atr: float, index: int, direction: int, config: dict[str, Any]
+) -> float:
+    policy = config["protective_stop"]
+    entry = data["ac"][index] if direction > 0 else data["bc"][index]
+    spread = (data["ac"][index] - data["bc"][index]) * 10_000.0
+    impulse = abs(
+        ((data["bc"][index] + data["ac"][index]) - (data["bc"][index - 15] + data["ac"][index - 15]))
+        * 5_000.0
+    )
+    if direction > 0:
+        swing = float(np.min(data["bl"][index - 9 : index + 1]))
+        swing_distance = (entry - swing) * 10_000.0
+    else:
+        swing = float(np.max(data["ah"][index - 9 : index + 1]))
+        swing_distance = (swing - entry) * 10_000.0
+    raw = max(
+        float(policy["minimum_catastrophe_stop_pips"]),
+        swing_distance + spread * float(policy["catastrophe_spread_buffer_multiple"]),
+        impulse * float(policy["catastrophe_impulse_multiple"]),
+    )
+    atr_upper = max(
+        float(policy["minimum_catastrophe_stop_pips"]),
+        atr * float(policy["maximum_auxiliary_atr_multiple"]),
+    )
+    return min(raw, atr_upper, float(policy["maximum_catastrophe_stop_pips"]))
+
+
+def _exit_architecture_trade(
+    data: dict[str, np.ndarray],
+    index: int,
+    direction: int,
+    *,
+    catastrophe_width: float | None,
+    config: dict[str, Any],
+    structure_enabled: bool,
+    disconnect_minutes: int = 0,
+    take_profit: float = 2.4,
+) -> dict[str, Any]:
+    policy = config["structure_exit"]
+    entry = float(data["ac"][index] if direction > 0 else data["bc"][index])
+    stop = (
+        entry - catastrophe_width / 10_000.0
+        if direction > 0 and catastrophe_width is not None
+        else entry + catastrophe_width / 10_000.0
+        if catastrophe_width is not None
+        else None
+    )
+    target = entry + take_profit / 10_000.0 if direction > 0 else entry - take_profit / 10_000.0
+    mid = (data["bc"] + data["ac"]) / 2.0
+    spread = (data["ac"] - data["bc"]) * 10_000.0
+    initial_high = float(np.max(mid[index - 15 : index + 1]))
+    initial_low = float(np.min(mid[index - 15 : index + 1]))
+    mae = 0.0
+    gap_slippage = 0.0
+
+    def close_pnl(cursor: int) -> float:
+        return (
+            (float(data["bc"][cursor]) - entry) * 10_000.0
+            if direction > 0
+            else (entry - float(data["ac"][cursor])) * 10_000.0
+        )
+
+    for cursor in range(index + 1, index + int(policy["holding_time_cap_minutes"]) + 1):
+        held = cursor - index
+        if direction > 0:
+            open_px, high_px, low_px = data["bo"][cursor], data["bh"][cursor], data["bl"][cursor]
+            adverse = (entry - float(low_px)) * 10_000.0
+            if stop is not None and open_px <= stop:
+                pnl = (float(open_px) - entry) * 10_000.0
+                gap_slippage = max(0.0, -float(catastrophe_width) - pnl)
+                return {"pnl": pnl, "reason": "CATASTROPHE_STOP_GAP", "held": held, "mae": max(mae, adverse), "gap_slippage": gap_slippage}
+            stop_hit = stop is not None and low_px <= stop
+            target_hit = high_px >= target
+        else:
+            open_px, high_px, low_px = data["ao"][cursor], data["ah"][cursor], data["al"][cursor]
+            adverse = (float(high_px) - entry) * 10_000.0
+            if stop is not None and open_px >= stop:
+                pnl = (entry - float(open_px)) * 10_000.0
+                gap_slippage = max(0.0, -float(catastrophe_width) - pnl)
+                return {"pnl": pnl, "reason": "CATASTROPHE_STOP_GAP", "held": held, "mae": max(mae, adverse), "gap_slippage": gap_slippage}
+            stop_hit = stop is not None and high_px >= stop
+            target_hit = low_px <= target
+        mae = max(mae, adverse)
+        if stop_hit:
+            return {"pnl": -float(catastrophe_width), "reason": "CATASTROPHE_STOP", "held": held, "mae": mae, "gap_slippage": 0.0}
+        if target_hit:
+            return {"pnl": take_profit, "reason": "TARGET", "held": held, "mae": mae, "gap_slippage": 0.0}
+
+        pnl = close_pnl(cursor)
+        if catastrophe_width is None and pnl <= -float(policy["campaign_loss_cap_pips"]):
+            return {"pnl": pnl, "reason": "CAMPAIGN_LOSS_CAP_SHADOW", "held": held, "mae": mae, "gap_slippage": 0.0}
+        if structure_enabled and held > disconnect_minutes:
+            reason = None
+            if held >= 5:
+                path = mid[index + 1 : cursor + 1]
+                new_extreme = (
+                    float(np.max(path)) > initial_high
+                    if direction > 0
+                    else float(np.min(path)) < initial_low
+                )
+                adverse5 = (
+                    (initial_high - float(np.min(path))) * 10_000.0
+                    if direction > 0
+                    else (float(np.max(path)) - initial_low) * 10_000.0
+                )
+                if not new_extreme and adverse5 >= float(config["resolution"]["minimum_adverse_reversal_pips"]):
+                    reason = "FAILED_CONTINUATION"
+            swing = int(policy["swing_lookback_minutes"])
+            if reason is None and held >= swing:
+                adverse_break = (
+                    float(mid[cursor]) < float(np.min(mid[cursor - swing : cursor]))
+                    if direction > 0
+                    else float(mid[cursor]) > float(np.max(mid[cursor - swing : cursor]))
+                )
+                if adverse_break:
+                    reason = "ADVERSE_SWING_BREAK"
+            window = int(policy["short_window_minutes"])
+            if reason is None and cursor - window * 2 >= index:
+                velocity = (mid[cursor] - mid[cursor - window]) * 10_000.0 * direction / window
+                prior_velocity = (
+                    (mid[cursor - window] - mid[cursor - window * 2])
+                    * 10_000.0
+                    * direction
+                    / window
+                )
+                acceleration = (velocity - prior_velocity) / window
+                if velocity <= -float(policy["velocity_reversal_pips_per_minute"]):
+                    reason = "ADVERSE_VELOCITY"
+                elif acceleration <= -float(policy["acceleration_reversal_pips_per_minute2"]):
+                    reason = "ADVERSE_ACCELERATION"
+            if reason is None:
+                prior_spread = spread[max(index, cursor - 20) : cursor]
+                median_spread = float(np.median(prior_spread)) if len(prior_spread) else 0.0
+                if median_spread > 0.0 and spread[cursor] / median_spread >= float(policy["spread_expansion_ratio"]):
+                    reason = "SPREAD_EXPANSION"
+            if reason is None and held >= int(policy["time_stop_minutes"]):
+                reason = "TIME_STOP"
+            if reason is not None:
+                return {"pnl": pnl, "reason": reason, "held": held, "mae": mae, "gap_slippage": 0.0}
+    cursor = index + int(policy["holding_time_cap_minutes"])
+    return {"pnl": close_pnl(cursor), "reason": "HOLDING_TIME_CAP", "held": cursor - index, "mae": mae, "gap_slippage": 0.0}
+
+
+def _widths(
+    data: dict[str, np.ndarray], atr: float, index: int, direction: int, config: dict[str, Any]
+) -> dict[str, float]:
     entry = data["ac"][index] if direction > 0 else data["bc"][index]
     spread = (data["ac"][index] - data["bc"][index]) * 10_000.0
     if direction > 0:
@@ -187,6 +415,9 @@ def _widths(data: dict[str, np.ndarray], atr: float, index: int, direction: int)
         "ATR_2_0": atr * 2.0,
         "SWING_SPREAD_BUFFER": swing_width,
         "CONSERVATIVE_ATR_SWING": max(atr * 1.5, swing_width),
+        "CONSERVATIVE_CATASTROPHE": _catastrophe_width(
+            data, atr, index, direction, config
+        ),
     }
 
 
@@ -194,12 +425,8 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
     config, config_sha = load_config(config_path)
     data = _load(paths)
     atr = _m5_atr(data)
-    episodes = _episodes(
-        data,
-        atr,
-        min_pips=float(config["detection"]["minimum_impulse_pips"]),
-        min_atr=float(config["detection"]["minimum_atr_multiple"]),
-    )
+    raw_episodes = _episodes(data, config)
+    episodes = [index for index in raw_episodes if math.isfinite(float(atr[index]))]
     mid = (data["bc"] + data["ac"]) / 2.0
     baseline: list[float] = []
     directions: list[int] = []
@@ -210,6 +437,16 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
     stops: dict[str, list[str]] = {}
     gap_slippage: dict[str, list[float]] = {}
     reentry_loss: dict[str, list[float]] = {}
+    architecture_rows: dict[str, list[dict[str, Any]]] = {
+        "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT": [],
+        "ATR_1_5_ONLY": [],
+        "FIXED_3_2_ONLY": [],
+        "NO_SL_STRUCTURE_EXIT_SHADOW_ONLY": [],
+    }
+    disconnect_stress: dict[str, list[dict[str, Any]]] = {
+        "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT": [],
+        "NO_SL_STRUCTURE_EXIT_SHADOW_ONLY": [],
+    }
     episode_rows: list[dict[str, Any]] = []
     for index in episodes:
         direction = 1 if mid[index] > mid[index - 15] else -1
@@ -221,7 +458,11 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             if direction > 0
             else np.min(mid[index + 1 : index + 6]) < mid[index]
         )
-        if not new_extreme and path5 <= -0.25 * atr[index]:
+        failed_now = bool(
+            not new_extreme
+            and path5 <= -float(config["resolution"]["minimum_adverse_reversal_pips"])
+        )
+        if failed_now:
             failed += 1
         adverse30 = -(np.min((mid[index + 1 : index + 31] - mid[index]) * 10_000.0 * direction))
         if adverse30 >= 0.5 * initial:
@@ -234,11 +475,12 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
                 "impulse_15m_pips": round((mid[index] - mid[index - 15]) * 10_000.0, 6),
                 "m5_atr_pips": round(float(atr[index]), 6),
                 "baseline_60m_pips": round(baseline[-1], 6),
-                "failed_continuation_5m": bool(not new_extreme and path5 <= -0.25 * atr[index]),
+                "failed_continuation_5m": failed_now,
                 "retraced_50pct_within_30m": bool(adverse30 >= 0.5 * initial),
             }
         )
-        for name, width in _widths(data, float(atr[index]), index, direction).items():
+        widths = _widths(data, float(atr[index]), index, direction, config)
+        for name, width in widths.items():
             realized, reason, slippage, stopped_at = _sl_trade(data, index, direction, width)
             raw_geometry.setdefault(name, []).append(realized)
             stops.setdefault(name, []).append(reason)
@@ -246,6 +488,46 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             if stopped_at is not None and stopped_at + 60 < len(data["t"]):
                 retry, _, _, _ = _sl_trade(data, stopped_at, direction, width)
                 reentry_loss.setdefault(name, []).append(min(0.0, retry))
+        architecture_specs = {
+            "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT": (
+                widths["CONSERVATIVE_CATASTROPHE"],
+                True,
+            ),
+            "ATR_1_5_ONLY": (widths["ATR_1_5"], False),
+            "FIXED_3_2_ONLY": (3.2, False),
+            "NO_SL_STRUCTURE_EXIT_SHADOW_ONLY": (None, True),
+        }
+        for name, (width, structure_enabled) in architecture_specs.items():
+            result = _exit_architecture_trade(
+                data,
+                index,
+                direction,
+                catastrophe_width=width,
+                config=config,
+                structure_enabled=structure_enabled,
+            )
+            risk_width = width or float(config["structure_exit"]["campaign_loss_cap_pips"])
+            result["normalized_unit_fraction"] = min(1.0, 3.2 / float(risk_width))
+            architecture_rows[name].append(result)
+        for name, width in (
+            (
+                "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT",
+                widths["CONSERVATIVE_CATASTROPHE"],
+            ),
+            ("NO_SL_STRUCTURE_EXIT_SHADOW_ONLY", None),
+        ):
+            stressed = _exit_architecture_trade(
+                data,
+                index,
+                direction,
+                catastrophe_width=width,
+                config=config,
+                structure_enabled=True,
+                disconnect_minutes=5,
+            )
+            risk_width = width or float(config["structure_exit"]["campaign_loss_cap_pips"])
+            stressed["normalized_unit_fraction"] = min(1.0, 3.2 / float(risk_width))
+            disconnect_stress[name].append(stressed)
     for name, values in raw_geometry.items():
         base = _metrics(values)
         stop_reasons = stops[name]
@@ -255,10 +537,27 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             gap_slippage_pips=round(sum(gap_slippage[name]), 6),
             post_stop_reentry_loss_pips=round(sum(reentry_loss.get(name, [])), 6),
             maximum_consecutive_stops=_max_loss_streak([-1.0 if reason.startswith("STOP") else 1.0 for reason in stop_reasons]),
-            median_stop_width_pips=round(float(np.median([_widths(data, float(atr[index]), index, directions[pos])[name] for pos, index in enumerate(episodes)])), 6) if episodes else None,
+            median_stop_width_pips=round(float(np.median([_widths(data, float(atr[index]), index, directions[pos], config)[name] for pos, index in enumerate(episodes)])), 6) if episodes else None,
         )
         geometries[name] = base
     baseline_metrics = _metrics(baseline)
+    architecture_metrics = {
+        name: {
+            **_architecture_metrics(rows),
+            "server_side_catastrophic_stop_required": name
+            != "NO_SL_STRUCTURE_EXIT_SHADOW_ONLY",
+            "live_candidate_eligible": name
+            == "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT",
+            "atr_used_for_onset_trigger": False,
+            "automatic_reentry_during_shock_allowed": False,
+            "comparison_controls": dict(config["structure_exit"]),
+        }
+        for name, rows in architecture_rows.items()
+    }
+    for name, rows in disconnect_stress.items():
+        architecture_metrics[name]["five_minute_runtime_disconnect_stress"] = (
+            _architecture_metrics(rows)
+        )
     half_drain = [value * 0.5 for value in baseline]
     # New-entry freeze has no trade P/L by definition.  It is a loss-avoidance
     # arm, not a profitable reversal strategy.
@@ -298,6 +597,9 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             "broker_http_methods_used": [],
         },
         "episodes": {
+            "raw_detected_count": len(raw_episodes),
+            "atr_auxiliary_unavailable_excluded_from_four_arm_comparison": len(raw_episodes)
+            - len(episodes),
             "count": len(episodes),
             "up": sum(direction > 0 for direction in directions),
             "down": sum(direction < 0 for direction in directions),
@@ -321,6 +623,11 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             },
         },
         "protective_stop_geometries": geometries,
+        "exit_architecture_arms": architecture_metrics,
+        "selected_operational_shadow_arm": "CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT",
+        "selected_arm_live_admission": False,
+        "no_sl_arm_live_promotion_allowed": False,
+        "atr_role": "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
         "selected_shadow_geometry_by_bounded_loss_tail_rule": best,
         "selection_rule": "MAXIMIZE_NET_PLUS_POST_STOP_REENTRY_PIPS_THEN_MINIMIZE_CONSECUTIVE_STOPS_THEN_P05_TAIL",
         "selection_is_live_admission": False,

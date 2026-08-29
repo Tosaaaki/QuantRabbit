@@ -12,9 +12,18 @@
   "contract": "QR_FAST_BOT_SHOCK_GUARD_CONFIG_V1",
   "detection": {
     "atr_timeframe": "M5",
-    "minimum_atr_multiple": 2.0,
+    "atr_role": "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY",
+    "minimum_atr_multiple": 0.0,
     "minimum_impulse_pips": 18.0,
-    "rationale": "Fixed preregistered central cell from the 2020-2026 symmetric EUR/USD M1 BA diagnostic; not optimized after the 2026-08-28 episode.",
+    "minimum_raw_confirmation_count": 2,
+    "minimum_spread_pips": 1.5,
+    "minimum_spread_ratio": 2.0,
+    "minimum_velocity_pips_per_minute": 1.2,
+    "minimum_acceleration_pips_per_minute2": 0.25,
+    "short_velocity_window_minutes": 3,
+    "spread_lookback_minutes": 20,
+    "swing_lookback_minutes": 20,
+    "rationale": "The fixed 18-pip 15-minute displacement remains preregistered, but first detection is raw and causal: displacement plus at least two confirmations from velocity, acceleration, spread expansion, and prior-swing break. ATR never gates onset and is retained only for normalization and bounded upper checks.",
     "window_minutes": 15
   },
   "integrity": {
@@ -35,24 +44,44 @@
       "ATR_1_5",
       "ATR_2_0",
       "SWING_SPREAD_BUFFER",
-      "CONSERVATIVE_ATR_SWING"
+      "CONSERVATIVE_ATR_SWING",
+      "CONSERVATIVE_CATASTROPHE",
+      "NO_SL_SHADOW_ONLY"
     ],
+    "catastrophe_impulse_multiple": 1.25,
+    "catastrophe_spread_buffer_multiple": 2.0,
     "fallback_spread_pips": 0.8,
     "gap_slippage_ledger_required": true,
     "guaranteed": false,
+    "maximum_auxiliary_atr_multiple": 8.0,
     "maximum_age_seconds": 120,
+    "maximum_catastrophe_stop_pips": 80.0,
+    "minimum_catastrophe_stop_pips": 18.0,
     "minimum_stop_pips": 0.5,
-    "rationale": "All bot-owned proposals require an attached protective stop. Width is compared on the same truth and coupled inversely to units; the 500 JPY figure is a shadow comparison cap only.",
-    "selected_shadow_geometry": "CONSERVATIVE_ATR_SWING",
+    "rationale": "All live-candidate bot proposals require a server-side catastrophe stop. Normal exits are structure/shock/time based; ATR-only and fixed 3.2 are comparison arms, and no-SL is shadow-only and live-ineligible. Width remains inversely coupled to units; 500 JPY is a shadow comparison cap only.",
+    "selected_shadow_geometry": "CONSERVATIVE_CATASTROPHE",
     "shadow_comparison_max_loss_jpy": 500.0,
     "widen_during_shock_allowed": false
+  },
+  "structure_exit": {
+    "acceleration_reversal_pips_per_minute2": 0.25,
+    "campaign_loss_cap_pips": 50.0,
+    "holding_time_cap_minutes": 60,
+    "inventory_position_cap": 1,
+    "margin_usage_proxy_cap": 1.0,
+    "short_window_minutes": 3,
+    "spread_expansion_ratio": 2.0,
+    "swing_lookback_minutes": 5,
+    "time_stop_minutes": 15,
+    "velocity_reversal_pips_per_minute": 0.5
   },
   "resolution": {
     "adverse_atr_fraction": 0.25,
     "cooldown_minutes": 15,
     "freeze_minutes": 5,
+    "minimum_adverse_reversal_pips": 2.0,
     "minimum_post_event_complete_m1_bars": 5,
-    "rationale": "Classification requires five completed post-event M1 bars; stale, gap, insufficient, or ambiguous evidence remains fail-closed."
+    "rationale": "Classification requires five completed post-event M1 bars. The decision threshold is the fixed raw 2-pip adverse reversal; the 0.25 ATR value is recorded only as an auxiliary normalized diagnostic. Stale, gap, insufficient, or ambiguous evidence remains fail-closed."
   },
   "schema_version": 1,
   "strategy_policy": {
