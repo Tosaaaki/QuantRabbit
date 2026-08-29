@@ -35,17 +35,20 @@ STOP = False
 SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
     Path("tools/run_fast_bot_corrective_challenger.py"),
+    Path("tools/run_fast_bot_shock_follow.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
     Path("src/quant_rabbit/cli.py"),
     Path("src/quant_rabbit/guardian_observation.py"),
     Path("src/quant_rabbit/fast_bot.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
+    Path("src/quant_rabbit/fast_bot_shock_follow.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
     Path("src/quant_rabbit/broker/oanda.py"),
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
+    Path("config/fast_bot_shock_follow_v1.json"),
 )
 
 
@@ -308,6 +311,9 @@ def _base_status(
         "scorecard_path": str(root / "scorecard" / "fast_bot_scorecard.json"),
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
+        "shock_follow_signal_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl"),
+        "shock_follow_outcome_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl"),
+        "shock_follow_scorecard_path": str(root / "scorecard" / "fast_bot_shock_follow_scorecard.json"),
         "baseline_control_observation_only": True,
         "worst_lane_new_entry_policy": "CORRECTIVE_ARMS_VETO_EUR_USD_RANGE_ROTATION_LONG",
         "counters": dict(counters),
@@ -334,6 +340,9 @@ def run_cycle(
         "scorecard": root / "scorecard" / "fast_bot_scorecard.json",
         "challenger_ledger": root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         "challenger_scorecard": root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json",
+        "shock_signal_ledger": root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
+        "shock_outcome_ledger": root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
+        "shock_scorecard": root / "scorecard" / "fast_bot_shock_follow_scorecard.json",
         "report": root / "reports" / "fast_bot_shadow_report.md",
     }
     for path in paths.values():
@@ -382,6 +391,23 @@ def run_cycle(
             env=env,
         )
     )
+    shock_follow_result = _json_stdout(
+        command_runner(
+            [
+                py,
+                str(REPO_ROOT / "tools/run_fast_bot_shock_follow.py"),
+                "--pair-charts", str(paths["charts"]),
+                "--broker-snapshot", str(paths["snapshot"]),
+                "--signal-ledger", str(paths["shock_signal_ledger"]),
+                "--outcome-ledger", str(paths["shock_outcome_ledger"]),
+                "--scorecard", str(paths["shock_scorecard"]),
+                "--corrective-ledger", str(paths["challenger_ledger"]),
+                "--config", str(REPO_ROOT / "config/fast_bot_shock_follow_v1.json"),
+                "--max-due", "12",
+            ],
+            env=env,
+        )
+    )
     snapshot = read_object(paths["snapshot"])
     fast_packet = read_object(paths["charts"])
     scorecard = read_object(paths["scorecard"])
@@ -395,6 +421,7 @@ def run_cycle(
     state["last_shadow_result"] = bot_result
     state["last_outcome_result"] = outcome_result
     state["last_corrective_challenger_result"] = challenger_result
+    state["last_shock_follow_result"] = shock_follow_result
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
 
@@ -413,6 +440,8 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_shadow_ledger.jsonl",
         root / "ledgers" / "fast_bot_outcome_ledger.jsonl",
         root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
+        root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
+        root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
     ):
         ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         ledger.touch(exist_ok=True, mode=0o600)
@@ -453,7 +482,13 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         "paper_campaign_namespace": f"paper-owner-{args.expected_commit[:12]}",
         "live_campaign_namespace": "DISTINCT_NOT_USED",
         "shadow_pairs": list(SHADOW_PAIRS),
-        "strategy_methods": ["TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE"],
+        "strategy_methods": [
+            "TREND_CONTINUATION",
+            "RANGE_ROTATION",
+            "BREAKOUT_FAILURE",
+            "SHOCK_BREAKOUT_FOLLOW",
+            "SHOCK_PULLBACK_CONTINUATION",
+        ],
     }
     manifest_body["manifest_sha256"] = canonical_sha(
         {key: value for key, value in manifest_body.items() if key != "sealed_at_utc"}
@@ -496,6 +531,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_shadow_result=state.get("last_shadow_result"),
                 last_outcome_result=state.get("last_outcome_result"),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
+                last_shock_follow_result=state.get("last_shock_follow_result"),
                 counters={
                     "event_count": int(state.get("event_count", 0)),
                     "proposal_count": int(state.get("proposal_count", 0)),

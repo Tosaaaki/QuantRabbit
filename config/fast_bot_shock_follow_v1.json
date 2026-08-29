@@ -1,0 +1,76 @@
+{
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "automatic_parameter_change_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "live_permission": false,
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_SHOCK_FOLLOW_CONFIG_V1",
+  "evidence": {
+    "historical_intervals_are_diagnostic_only": true,
+    "lookahead_policy": "COMPLETED_M1_M5_AVAILABLE_AT_OBSERVATION_ONLY",
+    "prospective_start_at_utc": "2026-08-29T00:18:04+00:00",
+    "retrospective_reinterpretation_allowed": false
+  },
+  "market": {
+    "closed_weekend_policy": "NEW_YORK_FRIDAY_17_TO_SUNDAY_17",
+    "max_m1_close_age_seconds": 120,
+    "max_m5_close_age_seconds": 600,
+    "max_packet_age_seconds": 90,
+    "max_quote_age_seconds": 20
+  },
+  "pairs": [
+    "EUR_USD",
+    "USD_JPY"
+  ],
+  "schema_version": 1,
+  "shock": {
+    "bucket_edges": [
+      1.8,
+      2.5,
+      3.5
+    ],
+    "directional_body_fraction_min": 0.6,
+    "m1_atr_expansion_min": 1.8,
+    "m1_impulse_body_atr_min": 1.1,
+    "m5_atr_expansion_min": 1.15,
+    "m5_directional_body_atr_min": 0.2,
+    "max_spread_to_m1_atr": 0.3,
+    "prior_atr_period": 14
+  },
+  "strategies": [
+    {
+      "confirmation_buffer_atr": 0.05,
+      "entry_ttl_seconds": 90,
+      "max_hold_seconds": 900,
+      "order_type": "STOP",
+      "stop_atr": 0.8,
+      "strategy_id": "SHOCK_BREAKOUT_FOLLOW",
+      "take_profit_atr": 1.2,
+      "vehicle": "STOP_AFTER_COMPLETED_M1_EXTREME_CONFIRMATION"
+    },
+    {
+      "confirmation_buffer_atr": 0.05,
+      "entry_ttl_seconds": 90,
+      "invalidation_atr": 0.15,
+      "max_hold_seconds": 900,
+      "order_type": "STOP",
+      "pullback_atr_max": 0.8,
+      "pullback_atr_min": 0.15,
+      "stop_atr": 0.8,
+      "strategy_id": "SHOCK_PULLBACK_CONTINUATION",
+      "take_profit_atr": 1.2,
+      "vehicle": "STOP_AFTER_BOUNDED_PULLBACK_REACCELERATION"
+    }
+  ],
+  "truth": {
+    "chunk_candle_limit": 4500,
+    "granularity": "S5",
+    "price_component": "BID_ASK"
+  }
+}
