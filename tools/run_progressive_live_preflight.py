@@ -580,6 +580,8 @@ def run_preflight(
                 quote_age_seconds=quote_age,
                 calculated_at_utc=now,
                 spread_gate_passed=quote_row.get("fresh") is True and quote_row.get("spread_ok") is True,
+                protective_stop_loss_pips=float(signal.get("stop_loss_pips") or 0.0),
+                loss_jpy_per_unit=float(sizing_input.loss_jpy_per_unit),
             )
             signal_receipts.append(
                 {

@@ -37,6 +37,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
     Path("tools/run_fast_bot_corrective_challenger.py"),
     Path("tools/run_fast_bot_shock_follow.py"),
+    Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_eurusd_outcome_learning.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
@@ -45,6 +46,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
+    Path("src/quant_rabbit/fast_bot_shock_guard.py"),
     Path("src/quant_rabbit/eurusd_outcome_learning.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
     Path("src/quant_rabbit/broker/oanda.py"),
@@ -52,6 +54,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
     Path("config/fast_bot_shock_follow_v1.json"),
+    Path("config/fast_bot_shock_guard_v1.json"),
     Path("config/eurusd_learned_policy_v1.json"),
 )
 
@@ -318,6 +321,9 @@ def _base_status(
         "shock_follow_signal_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl"),
         "shock_follow_outcome_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl"),
         "shock_follow_scorecard_path": str(root / "scorecard" / "fast_bot_shock_follow_scorecard.json"),
+        "shock_guard_state_path": str(root / "state" / "fast_bot_shock_guard_state.json"),
+        "shock_guard_decision_ledger_path": str(root / "ledgers" / "fast_bot_shock_guard_decision_ledger.jsonl"),
+        "shock_guard_scorecard_path": str(root / "scorecard" / "fast_bot_shock_guard_scorecard.json"),
         "eurusd_learned_policy_pointer_path": str(DEFAULT_EURUSD_POLICY_POINTER),
         "eurusd_learned_decision_ledger_path": str(root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl"),
         "eurusd_learned_outcome_ledger_path": str(root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl"),
@@ -351,6 +357,10 @@ def run_cycle(
         "shock_signal_ledger": root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         "shock_outcome_ledger": root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
         "shock_scorecard": root / "scorecard" / "fast_bot_shock_follow_scorecard.json",
+        "shock_guard_state": root / "state" / "fast_bot_shock_guard_state.json",
+        "shock_guard_decisions": root / "ledgers" / "fast_bot_shock_guard_decision_ledger.jsonl",
+        "shock_guard_scorecard": root / "scorecard" / "fast_bot_shock_guard_scorecard.json",
+        "guarded_shadow": root / "state" / "fast_bot_shock_guarded_shadow.json",
         "eurusd_decision_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
         "eurusd_outcome_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
         "eurusd_scorecard": root / "scorecard" / "eurusd_learned_policy_prospective_scorecard.json",
@@ -380,6 +390,33 @@ def run_cycle(
                 env=env,
             )
         )
+        shock_guard_result = _json_stdout(
+            command_runner(
+                [
+                    py,
+                    str(REPO_ROOT / "tools/run_fast_bot_shock_guard.py"),
+                    "--pair-charts", str(paths["charts"]),
+                    "--shadow", str(paths["shadow"]),
+                    "--config", str(REPO_ROOT / "config/fast_bot_shock_guard_v1.json"),
+                    "--state", str(paths["shock_guard_state"]),
+                    "--decision-ledger", str(paths["shock_guard_decisions"]),
+                    "--scorecard", str(paths["shock_guard_scorecard"]),
+                    "--output", str(paths["guarded_shadow"]),
+                ],
+                env=env,
+            )
+        )
+        # Progressive preflight consumes last_shadow_result.shadow_output.  The
+        # baseline control ledger remains unchanged, while only the separately
+        # sealed guarded candidate can reach later promotion gates.
+        bot_result = {
+            **bot_result,
+            "baseline_shadow_output": bot_result.get("shadow_output"),
+            "shadow_output": shock_guard_result.get("shadow_output"),
+            "shock_guard": shock_guard_result,
+        }
+    else:
+        shock_guard_result = state.get("last_shock_guard_result") or {}
 
     outcome_result = _json_stdout(
         command_runner(
@@ -463,6 +500,7 @@ def run_cycle(
     state["last_outcome_result"] = outcome_result
     state["last_corrective_challenger_result"] = challenger_result
     state["last_shock_follow_result"] = shock_follow_result
+    state["last_shock_guard_result"] = shock_guard_result
     state["last_eurusd_learning_result"] = eurusd_learning_result
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
@@ -484,6 +522,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
+        root / "ledgers" / "fast_bot_shock_guard_decision_ledger.jsonl",
         root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
         root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
     ):
@@ -576,6 +615,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_outcome_result=state.get("last_outcome_result"),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 last_shock_follow_result=state.get("last_shock_follow_result"),
+                last_shock_guard_result=state.get("last_shock_guard_result"),
                 last_eurusd_learning_result=state.get("last_eurusd_learning_result"),
                 counters={
                     "event_count": int(state.get("event_count", 0)),

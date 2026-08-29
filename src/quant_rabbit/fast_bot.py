@@ -34,6 +34,7 @@ from quant_rabbit.fast_bot_learning import (
 )
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.fast_bot_shock_guard import PROTECTIVE_STOP_CONTRACT, seal as seal_guard_contract
 from quant_rabbit.strategy.failed_break_evidence import (
     build_m5_failed_break_evidence,
     failed_break_direction,
@@ -426,6 +427,27 @@ def build_fast_bot_shadow(
             "entry_experiment_arms": entry_arms,
             "attached_take_profit_required": True,
             "attached_stop_loss_required": True,
+            "protective_stop": seal_guard_contract(
+                {
+                    "contract": PROTECTIVE_STOP_CONTRACT,
+                    "schema_version": 1,
+                    "geometry_id": "METHOD_SPREAD_M5_ATR_V1",
+                    "pair": pair,
+                    "side": side,
+                    "entry": _price(pair, entry),
+                    "stop_loss": _price(pair, sl),
+                    "stop_loss_pips": actual_sl_pips,
+                    "observed_at_utc": quote_at.isoformat(),
+                    "maximum_age_seconds": QUOTE_MAX_AGE_SECONDS,
+                    "attached_required": True,
+                    "guaranteed": False,
+                    "gap_slippage_ledger_required": True,
+                    "widen_during_shock_allowed": False,
+                    "remove_after_entry_allowed": False,
+                    "shadow_only": True,
+                    "live_permission": False,
+                }
+            ),
             "regime_score": row.get("score"),
             "shadow_only": True,
             "live_permission": False,

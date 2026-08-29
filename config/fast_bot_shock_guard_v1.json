@@ -1,0 +1,65 @@
+{
+  "authority": {
+    "automatic_reversal_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "live_permission": false,
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_SHOCK_GUARD_CONFIG_V1",
+  "detection": {
+    "atr_timeframe": "M5",
+    "minimum_atr_multiple": 2.0,
+    "minimum_impulse_pips": 18.0,
+    "rationale": "Fixed preregistered central cell from the 2020-2026 symmetric EUR/USD M1 BA diagnostic; not optimized after the 2026-08-28 episode.",
+    "window_minutes": 15
+  },
+  "integrity": {
+    "maximum_complete_bar_age_seconds": 120,
+    "require_contiguous_m1": true,
+    "restart_restore_policy": "SEALED_STATE_OR_SHOCK_FREEZE"
+  },
+  "inventory": {
+    "manual_tagless_policy": "NO_TOUCH",
+    "paper_shadow_drain_fraction": 0.5,
+    "paper_shadow_only": true
+  },
+  "lookahead_policy": "OBSERVATIONS_AVAILABLE_AT_DECISION_TIME_ONLY",
+  "protective_stop": {
+    "comparison_geometries": [
+      "FIXED_3_2",
+      "ATR_1_0",
+      "ATR_1_5",
+      "ATR_2_0",
+      "SWING_SPREAD_BUFFER",
+      "CONSERVATIVE_ATR_SWING"
+    ],
+    "fallback_spread_pips": 0.8,
+    "gap_slippage_ledger_required": true,
+    "guaranteed": false,
+    "maximum_age_seconds": 120,
+    "minimum_stop_pips": 0.5,
+    "rationale": "All bot-owned proposals require an attached protective stop. Width is compared on the same truth and coupled inversely to units; the 500 JPY figure is a shadow comparison cap only.",
+    "selected_shadow_geometry": "CONSERVATIVE_ATR_SWING",
+    "shadow_comparison_max_loss_jpy": 500.0,
+    "widen_during_shock_allowed": false
+  },
+  "resolution": {
+    "adverse_atr_fraction": 0.25,
+    "cooldown_minutes": 15,
+    "freeze_minutes": 5,
+    "minimum_post_event_complete_m1_bars": 5,
+    "rationale": "Classification requires five completed post-event M1 bars; stale, gap, insufficient, or ambiguous evidence remains fail-closed."
+  },
+  "schema_version": 1,
+  "strategy_policy": {
+    "continuation_confirmed": "ORIGINAL_DIRECTION_HTF_ALIGNED_EXISTING_TREND_SHADOW_ONLY",
+    "countertrend": "SEPARATE_SHADOW_LEDGER_NEVER_PROMOTE",
+    "failed_continuation": "REJECT_ALL_NEW_ENTRY",
+    "range_mean_reversion_during_cooldown": "REJECT",
+    "shock_freeze": "REJECT_ALL_NEW_ENTRY"
+  }
+}

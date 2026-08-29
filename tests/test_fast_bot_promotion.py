@@ -24,6 +24,7 @@ from quant_rabbit.fast_bot_promotion import (
     seal_sizing_receipt,
     seal_supervision_receipt,
 )
+from quant_rabbit.fast_bot_shock_guard import RECEIPT_CONTRACT, seal as seal_guard
 from quant_rabbit.inventory_controller import InventoryController
 from quant_rabbit.broker.execution import _intent_from_json, _progressive_promotion_live_send_issues
 
@@ -78,6 +79,31 @@ class FastBotPromotionTest(unittest.TestCase):
             now_utc=self.now,
         )
         self.signal = shadow["signals"][0]
+        self.signal["shock_guard"] = seal_guard(
+            {
+                "contract": RECEIPT_CONTRACT,
+                "schema_version": 1,
+                "event_id": None,
+                "state": "NORMAL",
+                "resolution": None,
+                "shock_direction": None,
+                "observed_at_utc": self.now.isoformat(),
+                "expires_at_utc": (self.now + timedelta(minutes=2)).isoformat(),
+                "config_sha256": "f" * 64,
+                "fail_closed_reason": None,
+                "short_term_reversal": False,
+                "higher_timeframe_continuation": False,
+                "timeframe_alignment": {},
+                "automatic_reversal_allowed": False,
+                "execution_authority": "NONE",
+                "broker_mutation_allowed": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+            }
+        )
+        self.signal["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in self.signal.items() if key != "signal_sha256"}
+        )
         self.software_sha = "a" * 64
         self.feature_sha = "b" * 64
         self.live_campaign_id = "live-fb-test-forward-v1"
@@ -170,6 +196,8 @@ class FastBotPromotionTest(unittest.TestCase):
             "calculated_units": 10,
             "broker_minimum_units": 1,
             "planned_loss_jpy": 20.0,
+            "protective_stop_loss_pips": self.signal["stop_loss_pips"],
+            "loss_jpy_per_unit": 2.0,
             "post_entry_current_mcp": 0.80,
             "post_entry_stress_mcp": 0.86,
             "post_entry_margin_available_jpy": 75_000.0,
@@ -321,6 +349,8 @@ class FastBotPromotionTest(unittest.TestCase):
             quote_age_seconds=1.0,
             calculated_at_utc=self.now,
             spread_gate_passed=True,
+            protective_stop_loss_pips=float(self.signal["stop_loss_pips"]),
+            loss_jpy_per_unit=2.0,
         )
         result = self.build(sizing_receipt=sizing)
         self.assertEqual(result["status"], "ADMITTED")
@@ -546,6 +576,71 @@ class FastBotPromotionTest(unittest.TestCase):
         result = self.build(sizing_receipt=seal_sizing_receipt(sizing))
         self.assertEqual(result["status"], "BLOCKED")
         self.assertIn("SIZING_RECEIPT_INVALID_OR_BLOCKED", result["blocking_reasons"])
+
+    def test_missing_stale_or_mispriced_protective_stop_blocks_before_gateway(self) -> None:
+        missing = copy.deepcopy(self.signal)
+        missing.pop("protective_stop")
+        missing["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in missing.items() if key != "signal_sha256"}
+        )
+        result = self.build(signal=missing)
+        self.assertIn("PROTECTIVE_STOP_MISSING_OR_UNSEALED", result["blocking_reasons"])
+        self.assertIsNone(result["intents_payload"])
+
+        stale = copy.deepcopy(self.signal)
+        stop = dict(stale["protective_stop"])
+        stop["observed_at_utc"] = (self.now - timedelta(minutes=5)).isoformat()
+        stale["protective_stop"] = seal_guard(stop)
+        stale["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in stale.items() if key != "signal_sha256"}
+        )
+        result = self.build(signal=stale)
+        self.assertIn("PROTECTIVE_STOP_STALE_OR_FUTURE", result["blocking_reasons"])
+
+        wrong = copy.deepcopy(self.signal)
+        stop = dict(wrong["protective_stop"])
+        stop["stop_loss"] = float(wrong["entry"]) + 0.001
+        wrong["stop_loss"] = stop["stop_loss"]
+        wrong["protective_stop"] = seal_guard(stop)
+        wrong["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in wrong.items() if key != "signal_sha256"}
+        )
+        result = self.build(signal=wrong)
+        self.assertIn("PROTECTIVE_STOP_PRICE_INVALID", result["blocking_reasons"])
+
+    def test_stop_width_and_units_risk_receipt_are_bound(self) -> None:
+        sizing = dict(self.sizing)
+        sizing["protective_stop_loss_pips"] = float(self.signal["stop_loss_pips"]) + 1.0
+        result = self.build(sizing_receipt=seal_sizing_receipt(sizing))
+        self.assertIn("SIZING_RECEIPT_INVALID_OR_BLOCKED", result["blocking_reasons"])
+
+        sizing = dict(self.sizing)
+        sizing["planned_loss_jpy"] = 19.0
+        result = self.build(sizing_receipt=seal_sizing_receipt(sizing))
+        self.assertIn("SIZING_RECEIPT_INVALID_OR_BLOCKED", result["blocking_reasons"])
+
+    def test_shock_freeze_blocks_before_gateway(self) -> None:
+        signal = copy.deepcopy(self.signal)
+        receipt = dict(signal["shock_guard"])
+        receipt["state"] = "SHOCK_FREEZE"
+        receipt["event_id"] = "qrs:test"
+        signal["shock_guard"] = seal_guard(receipt)
+        signal["signal_sha256"] = _canonical_sha(
+            {key: value for key, value in signal.items() if key != "signal_sha256"}
+        )
+        result = self.build(signal=signal)
+        self.assertIn("SHOCK_GUARD_SHOCK_FREEZE", result["blocking_reasons"])
+        gateway = RecordingGateway()
+        dispatch = dispatch_promotion_once(
+            promotion=result,
+            gateway=gateway,
+            intents_path=self.root / "guarded_intents.json",
+            dispatch_ledger_path=self.root / "guarded_dispatch.json",
+            inventory_state_path=self.root / "inventory.json",
+            now_utc=self.now,
+        )
+        self.assertEqual(dispatch["live_order_gateway_invocation_count"], 0)
+        self.assertEqual(gateway.calls, [])
 
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from quant_rabbit.fast_bot import SIGNAL_CONTRACT
+from quant_rabbit.fast_bot_shock_guard import (
+    validate_protective_stop,
+    validate_shock_guard_receipt,
+)
 from quant_rabbit.inventory_controller import InventoryController, InventoryState, LotIdentity
 
 
@@ -97,6 +101,16 @@ def build_fast_bot_promotion(
     if not _sha(software_sha) or not _sha(feature_sha):
         blockers.append("SOFTWARE_OR_FEATURE_BINDING_INVALID")
 
+    stop_valid, stop_blocker, protective_stop_pips = validate_protective_stop(
+        signal,
+        now_utc=now,
+    )
+    if not stop_valid:
+        blockers.append(str(stop_blocker or "PROTECTIVE_STOP_INVALID"))
+    shock_valid, shock_blocker = validate_shock_guard_receipt(signal, now_utc=now)
+    if not shock_valid:
+        blockers.append(str(shock_blocker or "SHOCK_GUARD_INVALID"))
+
     signal_expires_at_utc: str | None = None
     try:
         generated_at = _parse_utc(signal.get("generated_at_utc"))
@@ -178,6 +192,7 @@ def build_fast_bot_promotion(
             software_sha=software_sha,
             risk_contract=risk_contract,
             supervision_receipt=supervision_receipt,
+            protective_stop_loss_pips=protective_stop_pips,
             now=now,
         )
         if proof_body is not None and risk_body is not None and supervision_is_valid
@@ -525,7 +540,7 @@ def _supervision_valid(
 def _deterministic_sized_units(
     value: Mapping[str, Any], *, signal_sha: str, proof_sha: str, risk_sha: str,
     software_sha: str, risk_contract: Mapping[str, Any], supervision_receipt: Mapping[str, Any],
-    now: datetime
+    protective_stop_loss_pips: float | None, now: datetime
 ) -> int | None:
     if not _sealed(
         value,
@@ -548,6 +563,8 @@ def _deterministic_sized_units(
         quote_age = _finite(value.get("quote_age_seconds"))
         calculated_at = _parse_utc(value.get("calculated_at_utc"))
         manual_mutations = _nonnegative_int(value.get("manual_tagless_mutation_count"))
+        receipt_stop_pips = _finite(value.get("protective_stop_loss_pips"))
+        loss_per_unit = _finite(value.get("loss_jpy_per_unit"))
     except (TypeError, ValueError):
         return None
     bindings_ok = all(
@@ -570,7 +587,11 @@ def _deterministic_sized_units(
         and _sha(str(value.get("quote_snapshot_sha256") or ""))
         and calculated_at <= now
         and units >= minimum
+        and protective_stop_loss_pips is not None
+        and abs(receipt_stop_pips - protective_stop_loss_pips) <= 0.000001
+        and loss_per_unit > 0.0
         and planned_loss >= 0.0
+        and abs(planned_loss - units * loss_per_unit) <= 0.01
         and planned_loss <= _finite(risk_contract.get("max_loss_per_order_jpy"))
         and planned_loss <= _finite(supervision_receipt.get("risk_budget_cap_jpy"))
         and 0.0 <= campaign_drawdown < _finite(risk_contract.get("stop_drawdown_jpy"))
@@ -711,6 +732,8 @@ def build_sizing_receipt(
     quote_age_seconds: float,
     calculated_at_utc: datetime,
     spread_gate_passed: bool,
+    protective_stop_loss_pips: float,
+    loss_jpy_per_unit: float,
 ) -> dict[str, Any]:
     """Bind account-wide mode sizing to the promotion contract.
 
@@ -732,6 +755,8 @@ def build_sizing_receipt(
             "safe_unit_capacity": mode_receipt.get("safe_unit_capacity"),
             "broker_minimum_units": mode_receipt.get("broker_minimum_units"),
             "planned_loss_jpy": mode_receipt.get("planned_loss_jpy"),
+            "protective_stop_loss_pips": protective_stop_loss_pips,
+            "loss_jpy_per_unit": loss_jpy_per_unit,
             "post_entry_current_mcp": mode_receipt.get("post_entry_current_mcp"),
             "post_entry_stress_mcp": mode_receipt.get("post_entry_stress_mcp"),
             "post_entry_margin_available_jpy": mode_receipt.get(
