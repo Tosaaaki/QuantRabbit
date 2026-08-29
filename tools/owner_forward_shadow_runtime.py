@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABEL = "com.quantrabbit.owner-forward-shadow"
 DEFAULT_STATE_ROOT = Path.home() / ".codex" / "state" / "quantrabbit" / "owner-forward-shadow-v1"
+DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit" / "eurusd-outcome-learning-v1" / "current.json"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 SLOW_TIMEFRAMES = "M1,M5,M15,M30,H1,H4,D"
@@ -36,6 +37,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
     Path("tools/run_fast_bot_corrective_challenger.py"),
     Path("tools/run_fast_bot_shock_follow.py"),
+    Path("tools/run_eurusd_outcome_learning.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
     Path("src/quant_rabbit/cli.py"),
@@ -43,12 +45,14 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
+    Path("src/quant_rabbit/eurusd_outcome_learning.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
     Path("src/quant_rabbit/broker/oanda.py"),
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
     Path("config/fast_bot_shock_follow_v1.json"),
+    Path("config/eurusd_learned_policy_v1.json"),
 )
 
 
@@ -314,6 +318,10 @@ def _base_status(
         "shock_follow_signal_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl"),
         "shock_follow_outcome_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl"),
         "shock_follow_scorecard_path": str(root / "scorecard" / "fast_bot_shock_follow_scorecard.json"),
+        "eurusd_learned_policy_pointer_path": str(DEFAULT_EURUSD_POLICY_POINTER),
+        "eurusd_learned_decision_ledger_path": str(root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl"),
+        "eurusd_learned_outcome_ledger_path": str(root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl"),
+        "eurusd_learned_scorecard_path": str(root / "scorecard" / "eurusd_learned_policy_prospective_scorecard.json"),
         "baseline_control_observation_only": True,
         "worst_lane_new_entry_policy": "CORRECTIVE_ARMS_VETO_EUR_USD_RANGE_ROTATION_LONG",
         "counters": dict(counters),
@@ -343,6 +351,9 @@ def run_cycle(
         "shock_signal_ledger": root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         "shock_outcome_ledger": root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
         "shock_scorecard": root / "scorecard" / "fast_bot_shock_follow_scorecard.json",
+        "eurusd_decision_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
+        "eurusd_outcome_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
+        "eurusd_scorecard": root / "scorecard" / "eurusd_learned_policy_prospective_scorecard.json",
         "report": root / "reports" / "fast_bot_shadow_report.md",
     }
     for path in paths.values():
@@ -408,6 +419,36 @@ def run_cycle(
             env=env,
         )
     )
+    if DEFAULT_EURUSD_POLICY_POINTER.is_file():
+        eurusd_learning_result = _json_stdout(
+            command_runner(
+                [
+                    py,
+                    str(REPO_ROOT / "tools/run_eurusd_outcome_learning.py"),
+                    "observe",
+                    "--current-pointer", str(DEFAULT_EURUSD_POLICY_POINTER),
+                    "--config", str(REPO_ROOT / "config/eurusd_learned_policy_v1.json"),
+                    "--shock-signal-ledger", str(paths["shock_signal_ledger"]),
+                    "--shock-outcome-ledger", str(paths["shock_outcome_ledger"]),
+                    "--decision-ledger", str(paths["eurusd_decision_ledger"]),
+                    "--prospective-outcome-ledger", str(paths["eurusd_outcome_ledger"]),
+                    "--prospective-scorecard", str(paths["eurusd_scorecard"]),
+                ],
+                env=env,
+            )
+        )
+    else:
+        eurusd_learning_result = {
+            "status": "POLICY_POINTER_NOT_AVAILABLE_NO_TRADE",
+            "execution_authority": "NONE",
+            "broker_http_methods_allowed": ["GET"],
+            "broker_mutation": False,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+            "automatic_adoption_allowed": False,
+            "promotion_allowed": False,
+            "live_permission": False,
+        }
     snapshot = read_object(paths["snapshot"])
     fast_packet = read_object(paths["charts"])
     scorecard = read_object(paths["scorecard"])
@@ -422,6 +463,7 @@ def run_cycle(
     state["last_outcome_result"] = outcome_result
     state["last_corrective_challenger_result"] = challenger_result
     state["last_shock_follow_result"] = shock_follow_result
+    state["last_eurusd_learning_result"] = eurusd_learning_result
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
 
@@ -442,6 +484,8 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
+        root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
+        root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
     ):
         ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         ledger.touch(exist_ok=True, mode=0o600)
@@ -532,6 +576,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_outcome_result=state.get("last_outcome_result"),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 last_shock_follow_result=state.get("last_shock_follow_result"),
+                last_eurusd_learning_result=state.get("last_eurusd_learning_result"),
                 counters={
                     "event_count": int(state.get("event_count", 0)),
                     "proposal_count": int(state.get("proposal_count", 0)),

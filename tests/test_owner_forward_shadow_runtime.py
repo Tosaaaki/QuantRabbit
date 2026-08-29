@@ -113,6 +113,23 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                     "returncode": 0,
                     "wall_seconds": 0.0,
                 }
+            if "run_eurusd_outcome_learning.py" in " ".join(argv):
+                scorecard = Path(argv[argv.index("--prospective-scorecard") + 1])
+                scorecard.parent.mkdir(parents=True, exist_ok=True)
+                scorecard.write_text(json.dumps({"external_order_attempts": 0, "external_orders": 0}))
+                return {
+                    "stdout_tail": json.dumps(
+                        {
+                            "status": "MARKET_CLOSED_NO_OBSERVATION",
+                            "execution_authority": "NONE",
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    ),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             raise AssertionError(argv)
 
         with tempfile.TemporaryDirectory() as temp:
@@ -130,6 +147,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertIn("resolve-fast-bot-shadow-outcomes.py", joined)
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertIn("run_fast_bot_shock_follow.py", joined)
+        self.assertIn("run_eurusd_outcome_learning.py", joined)
         self.assertNotIn("--send", joined)
         self.assertNotIn("--confirm-live", joined)
         self.assertNotIn("position-execution", joined)
@@ -138,6 +156,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["virtual_fill_count"], 0)
         self.assertEqual(state["last_corrective_challenger_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
+        self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
 
     def test_status_hard_codes_zero_external_orders(self) -> None:
         manifest = {

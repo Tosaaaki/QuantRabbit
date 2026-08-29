@@ -1,0 +1,121 @@
+{
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "automatic_parameter_change_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "live_permission": false,
+    "promotion_allowed": false
+  },
+  "contract": "QR_EURUSD_LEARNED_POLICY_CONFIG_V1",
+  "evidence": {
+    "historical_rows_are_diagnostic_only": true,
+    "lookahead_policy": "SIGNAL_TIME_FEATURES_ONLY",
+    "post_activation_rows_are_prospective_only": true,
+    "pre_activation_rows_count_as_forward_evidence": false,
+    "retrospective_reinterpretation_allowed": false
+  },
+  "feature_contract": {
+    "allowed_decision_features": [
+      "pair",
+      "side",
+      "strategy",
+      "regime",
+      "atr_ratio",
+      "atr_bucket",
+      "impulse_direction",
+      "impulse_magnitude_atr",
+      "spread_to_atr",
+      "session",
+      "higher_timeframe_alignment"
+    ],
+    "diagnostic_only_labels": [
+      "filled",
+      "fill_at_utc",
+      "exit_reason",
+      "exit_at_utc",
+      "realized_pips",
+      "mfe_pips",
+      "mae_pips",
+      "time_to_stop_seconds"
+    ],
+    "missing_historical_feature_policy": "UNKNOWN_NOT_CAPTURED_FAILS_ROUTER"
+  },
+  "pair": "EUR_USD",
+  "retraining": {
+    "minimum_new_resolved_days": 2,
+    "minimum_new_resolved_samples": 30,
+    "no_change_status": "NO_CHANGE_INSUFFICIENT_EVIDENCE",
+    "qualified_candidate_status": "TEST_REQUIRED"
+  },
+  "router": {
+    "choices": [
+      "NO_TRADE",
+      "SHOCK_BREAKOUT_FOLLOW",
+      "SHOCK_PULLBACK_CONTINUATION",
+      "TREND_CONTINUATION"
+    ],
+    "negative_regimes": [
+      "REGIME_NEGATIVE"
+    ],
+    "range_rotation_long_forbidden_when": [
+      "SHOCK",
+      "REGIME_NEGATIVE"
+    ],
+    "selected_thresholds": {
+      "max_spread_to_atr": 0.3,
+      "shock_atr_ratio_min": 1.8,
+      "shock_impulse_atr_min": 1.1
+    },
+    "threshold_allowlist": {
+      "max_spread_to_atr": [
+        0.2,
+        0.25,
+        0.3
+      ],
+      "shock_atr_ratio_min": [
+        1.8,
+        2.0,
+        2.5
+      ],
+      "shock_impulse_atr_min": [
+        1.1,
+        1.25,
+        1.5
+      ]
+    }
+  },
+  "schema_version": 1,
+  "source": {
+    "corrective_row_contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_ROW_V1",
+    "outcome_contract": "QR_FAST_BOT_S5_BID_ASK_OUTCOME_V1",
+    "signal_contract": "QR_FAST_BOT_SHADOW_SIGNAL_V1",
+    "truth_source": "OANDA_S5_BID_ASK"
+  },
+  "training": {
+    "cutoff_at_utc": "2026-08-28T20:00:00+00:00",
+    "maximum_resolution_lag_seconds": 3600,
+    "minimum_initial_resolved_days": 1,
+    "minimum_initial_resolved_samples": 30,
+    "quarantine_profile_allowlist": [
+      {
+        "max_net_pips": 0.0,
+        "max_profit_factor": 0.8,
+        "min_filled": 3,
+        "min_resolved": 5,
+        "profile_id": "CONSERVATIVE_NEGATIVE_CELL_V1"
+      },
+      {
+        "max_net_pips": -10.0,
+        "max_profit_factor": 1.0,
+        "min_filled": 5,
+        "min_resolved": 10,
+        "profile_id": "STRICT_LARGE_LOSS_CELL_V1"
+      }
+    ],
+    "selected_quarantine_profile_id": "CONSERVATIVE_NEGATIVE_CELL_V1"
+  }
+}
