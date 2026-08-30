@@ -211,6 +211,36 @@ def _architecture_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _episode_group_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "episodes": 0,
+            "continuation_rate_60m": None,
+            "retraced_50pct_rate_30m": None,
+            "mean_onset_spread_pips": None,
+            "mean_mfe_60m_pips": None,
+            "mean_mae_60m_pips": None,
+        }
+    return {
+        "episodes": len(rows),
+        "continuation_rate_60m": round(
+            sum(float(row["baseline_60m_pips"]) > 0.0 for row in rows) / len(rows), 6
+        ),
+        "retraced_50pct_rate_30m": round(
+            sum(bool(row["retraced_50pct_within_30m"]) for row in rows) / len(rows), 6
+        ),
+        "mean_onset_spread_pips": round(
+            sum(float(row["onset_spread_pips"]) for row in rows) / len(rows), 6
+        ),
+        "mean_mfe_60m_pips": round(
+            sum(float(row["mfe_60m_pips"]) for row in rows) / len(rows), 6
+        ),
+        "mean_mae_60m_pips": round(
+            sum(float(row["mae_60m_pips"]) for row in rows) / len(rows), 6
+        ),
+    }
+
+
 def _baseline_trade(data: dict[str, np.ndarray], index: int, direction: int) -> float:
     horizon = index + 60
     if direction > 0:
@@ -432,6 +462,21 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
     directions: list[int] = []
     failed = 0
     whipsaw = 0
+    class_rows: dict[str, list[dict[str, Any]]] = {
+        "CONTINUATION": [],
+        "V_REVERSAL": [],
+        "WHIPSAW": [],
+    }
+    horizon_rows: dict[int, list[dict[str, Any]]] = {
+        horizon: [] for horizon in (5, 15, 30, 60)
+    }
+    volatility_rows: dict[str, list[dict[str, Any]]] = {
+        "LOW_PRIOR_60M_RANGE_LT_10P": [],
+        "MEDIUM_PRIOR_60M_RANGE_10_TO_LT_20P": [],
+        "HIGH_PRIOR_60M_RANGE_GE_20P": [],
+    }
+    trend_confirmed_half_size: list[float] = []
+    reversal_confirmed: list[float] = []
     geometries: dict[str, dict[str, Any]] = {}
     raw_geometry: dict[str, list[float]] = {}
     stops: dict[str, list[str]] = {}
@@ -453,6 +498,7 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
         directions.append(direction)
         initial = (mid[index] - mid[index - 15]) * 10_000.0 * direction
         path5 = (mid[index + 5] - mid[index]) * 10_000.0 * direction
+        directional_5m = (mid[index + 1 : index + 6] - mid[index]) * 10_000.0 * direction
         new_extreme = (
             np.max(mid[index + 1 : index + 6]) > mid[index]
             if direction > 0
@@ -464,21 +510,90 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
         )
         if failed_now:
             failed += 1
+            reversal_pnl = (
+                (data["bc"][index + 60] - data["ac"][index + 5]) * 10_000.0
+                if direction < 0
+                else (data["bc"][index + 5] - data["ac"][index + 60]) * 10_000.0
+            )
+            reversal_confirmed.append(float(reversal_pnl))
+        continued_now = bool(
+            new_extreme
+            and float(np.min(directional_5m))
+            > -float(config["resolution"]["minimum_adverse_reversal_pips"])
+        )
+        if continued_now:
+            continuation_pnl = (
+                (data["bc"][index + 60] - data["ac"][index + 5]) * 10_000.0
+                if direction > 0
+                else (data["bc"][index + 5] - data["ac"][index + 60]) * 10_000.0
+            )
+            trend_confirmed_half_size.append(float(continuation_pnl) * 0.5)
         adverse30 = -(np.min((mid[index + 1 : index + 31] - mid[index]) * 10_000.0 * direction))
         if adverse30 >= 0.5 * initial:
             whipsaw += 1
         baseline.append(_baseline_trade(data, index, direction))
-        episode_rows.append(
-            {
+        directional_30m = (mid[index + 1 : index + 31] - mid[index]) * 10_000.0 * direction
+        return_60m = float((mid[index + 60] - mid[index]) * 10_000.0 * direction)
+        retraced_30m = bool(float(np.min(directional_30m)) <= -0.5 * initial)
+        made_new_extreme_30m = bool(float(np.max(directional_30m)) > 0.0)
+        if retraced_30m and made_new_extreme_30m:
+            episode_class = "WHIPSAW"
+        elif retraced_30m and return_60m <= 0.0:
+            episode_class = "V_REVERSAL"
+        elif not retraced_30m and return_60m > 0.0:
+            episode_class = "CONTINUATION"
+        else:
+            episode_class = "WHIPSAW"
+        # Volatility band is frozen before the 15-minute onset window so the
+        # shock being classified cannot inflate its own causal baseline.
+        prior_slice = mid[max(0, index - 75) : index - 14]
+        prior_range = float((np.max(prior_slice) - np.min(prior_slice)) * 10_000.0)
+        volatility_band = (
+            "LOW_PRIOR_60M_RANGE_LT_10P"
+            if prior_range < 10.0
+            else "MEDIUM_PRIOR_60M_RANGE_10_TO_LT_20P"
+            if prior_range < 20.0
+            else "HIGH_PRIOR_60M_RANGE_GE_20P"
+        )
+        episode_row = {
                 "at_utc": datetime.fromtimestamp(int(data["t"][index]), tz=timezone.utc).isoformat(),
                 "direction": "UP" if direction > 0 else "DOWN",
                 "impulse_15m_pips": round((mid[index] - mid[index - 15]) * 10_000.0, 6),
                 "m5_atr_pips": round(float(atr[index]), 6),
+                "prior_60m_raw_range_pips": round(prior_range, 6),
+                "volatility_band": volatility_band,
                 "baseline_60m_pips": round(baseline[-1], 6),
                 "failed_continuation_5m": failed_now,
+                "continuation_confirmed_5m": continued_now,
                 "retraced_50pct_within_30m": bool(adverse30 >= 0.5 * initial),
+                "episode_class": episode_class,
+                "mfe_60m_pips": round(
+                    float(np.max((mid[index + 1 : index + 61] - mid[index]) * 10_000.0 * direction)),
+                    6,
+                ),
+                "mae_60m_pips": round(
+                    float(-np.min((mid[index + 1 : index + 61] - mid[index]) * 10_000.0 * direction)),
+                    6,
+                ),
+                "onset_spread_pips": round(
+                    float((data["ac"][index] - data["bc"][index]) * 10_000.0), 6
+                ),
             }
-        )
+        episode_rows.append(episode_row)
+        class_rows[episode_class].append(episode_row)
+        volatility_rows[volatility_band].append(episode_row)
+        for horizon in (5, 15, 30, 60):
+            directional = (
+                mid[index + 1 : index + horizon + 1] - mid[index]
+            ) * 10_000.0 * direction
+            horizon_rows[horizon].append(
+                {
+                    "continued": float(directional[-1]) > 0.0,
+                    "retraced_50pct": float(np.min(directional)) <= -0.5 * initial,
+                    "mfe": float(np.max(directional)),
+                    "mae": float(-np.min(directional)),
+                }
+            )
         widths = _widths(data, float(atr[index]), index, direction, config)
         for name, width in widths.items():
             realized, reason, slippage, stopped_at = _sl_trade(data, index, direction, width)
@@ -567,6 +682,31 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
         entry_rejection_rate_in_shock_band=1.0 if episodes else None,
         non_shock_entry_rejection_rate=0.0,
     )
+    horizon_metrics = {}
+    for horizon, rows in horizon_rows.items():
+        horizon_metrics[f"{horizon}m"] = {
+            "episodes": len(rows),
+            "continuation_rate": round(
+                sum(bool(row["continued"]) for row in rows) / len(rows), 6
+            )
+            if rows
+            else None,
+            "retrace_50pct_rate": round(
+                sum(bool(row["retraced_50pct"]) for row in rows) / len(rows), 6
+            )
+            if rows
+            else None,
+            "mean_mfe_pips": round(
+                sum(float(row["mfe"]) for row in rows) / len(rows), 6
+            )
+            if rows
+            else None,
+            "mean_mae_pips": round(
+                sum(float(row["mae"]) for row in rows) / len(rows), 6
+            )
+            if rows
+            else None,
+        }
     best = min(
         geometries,
         key=lambda name: (
@@ -605,6 +745,23 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
             "down": sum(direction < 0 for direction in directions),
             "failed_continuation_5m": failed,
             "whipsaw_30m_50pct": whipsaw,
+            "causal_classification": {
+                name: _episode_group_metrics(rows) for name, rows in class_rows.items()
+            },
+            "classification_definitions": {
+                "CONTINUATION": "No 50% retrace by 30m and side-relative 60m return is positive.",
+                "V_REVERSAL": "50% retrace by 30m, no new shock-direction extreme, and side-relative 60m return is non-positive.",
+                "WHIPSAW": "Both a new shock-direction extreme and 50% retrace occur by 30m, or the path is otherwise mixed/unresolved at 60m.",
+            },
+            "horizon_rates": horizon_metrics,
+            "by_causal_prior_60m_raw_range_band": {
+                name: _episode_group_metrics(rows)
+                for name, rows in volatility_rows.items()
+            },
+            "cross_pair_confirmation": {
+                "status": "UNAVAILABLE",
+                "reason": "The supplied historical truth contains EUR_USD only; no USD_JPY price proxy was fabricated.",
+            },
             "august_28_2026": [
                 row for row in episode_rows if row["at_utc"].startswith("2026-08-28")
             ],
@@ -620,6 +777,23 @@ def analyze(paths: list[Path], config_path: Path) -> dict[str, Any]:
                 **_metrics(half_drain),
                 "margin_release_proxy_fraction": 0.5,
                 "manual_tagless_policy": "NO_TOUCH",
+            },
+            "trend_aligned_continuation_after_5m_half_size": {
+                **_metrics(trend_confirmed_half_size),
+                "admission": "NEW_EXTREME_AND_ADVERSE_EXCURSION_BELOW_BOUND_AT_5M",
+                "confirmation_delay_minutes": 5,
+                "normalized_unit_fraction": 0.5,
+            },
+            "v_reversal_after_failed_continuation": {
+                **_metrics(reversal_confirmed),
+                "admission": "NO_NEW_EXTREME_AND_MINIMUM_ADVERSE_REVERSAL_AT_5M",
+                "confirmation_delay_minutes": 5,
+                "automatic_live_reversal_allowed": False,
+            },
+            "whipsaw_freeze": {
+                **_metrics(trend_confirmed_half_size + reversal_confirmed),
+                "ambiguous_five_minute_states_rejected": True,
+                "future_30m_classification_used_for_entry": False,
             },
         },
         "protective_stop_geometries": geometries,

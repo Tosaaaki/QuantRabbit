@@ -1080,6 +1080,20 @@ def guard_shadow(
         if not exit_plan_ok:
             allowed = False
             reason = exit_plan_reason
+        shock_direction = local_receipt.get("shock_direction")
+        signal_direction = "UP" if side == "LONG" else "DOWN"
+        side_relative_alignment = (
+            "NOT_APPLICABLE"
+            if shock_direction not in {"UP", "DOWN"}
+            else "ALIGNED"
+            if signal_direction == shock_direction
+            else "COUNTERTREND"
+        )
+        regime_transition_mismatch = bool(
+            shock_direction in {"UP", "DOWN"}
+            and side_relative_alignment == "COUNTERTREND"
+            and str(signal.get("method") or "") == "RANGE_ROTATION"
+        )
         decision = seal(
             {
                 "contract": DECISION_CONTRACT,
@@ -1090,7 +1104,12 @@ def guard_shadow(
                 "pair": pair,
                 "side": side,
                 "method": signal.get("method"),
+                "strategy_id": signal.get("strategy_id"),
                 "state": local_receipt.get("state"),
+                "shock_direction": shock_direction,
+                "signal_direction": signal_direction,
+                "side_relative_alignment": side_relative_alignment,
+                "regime_transition_mismatch": regime_transition_mismatch,
                 "entry_allowed": allowed,
                 "rejection_reason": reason,
                 "drain_intent": (
@@ -1114,6 +1133,14 @@ def guard_shadow(
                 "catastrophic_stop_server_side_required": True,
                 "automatic_reentry_during_shock_allowed": False,
                 "gap_slippage_ledger_required": True,
+                "deterministic_shock_guard_precedes_llm": True,
+                "llm_supervision_scope": [
+                    "REGIME",
+                    "ALLOWED_STRATEGY_IDS",
+                    "RISK_BUDGET_CAP",
+                    "EXPIRY",
+                ],
+                "llm_order_fields_allowed": False,
                 "execution_authority": "NONE",
                 "broker_mutation_allowed": False,
                 "external_order_attempts": 0,

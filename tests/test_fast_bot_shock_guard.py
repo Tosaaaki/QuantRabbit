@@ -212,6 +212,51 @@ def test_five_minute_classification_is_mirrored_and_before_five_stays_frozen():
         assert continued["state"] == CONTINUATION_CONFIRMED
 
 
+def test_shock_decision_records_side_relative_regime_transition_mismatch():
+    config, config_sha = _config()
+    for direction, side in (("DOWN", "LONG"), ("UP", "SHORT")):
+        state = advance_state(
+            prior=_normal(),
+            observation=_direct_observation(
+                direction, new_extreme=False, adverse_pips=0.0
+            ),
+            now_utc=NOW,
+            config=config,
+            config_sha256=config_sha,
+        )
+        shadow = {
+            "contract_sha256": "source",
+            "signals": [
+                {
+                    "signal_id": f"range-{direction.lower()}",
+                    "pair": "EUR_USD",
+                    "side": side,
+                    "method": "RANGE_ROTATION",
+                    "strategy_id": "range_rotation",
+                    "entry": 1.1,
+                    "take_profit_pips": 2.4,
+                    "m5_atr_pips": 4.0,
+                    "spread_pips": 0.8,
+                }
+            ],
+        }
+        guarded, decisions = guard_shadow(
+            shadow=shadow,
+            state=state,
+            pair_charts=_chart(direction=direction),
+            config=config,
+            config_sha256=config_sha,
+            now_utc=NOW,
+        )
+        assert guarded["signals"] == []
+        assert decisions[0]["entry_allowed"] is False
+        assert decisions[0]["side_relative_alignment"] == "COUNTERTREND"
+        assert decisions[0]["regime_transition_mismatch"] is True
+        assert decisions[0]["strategy_id"] == "range_rotation"
+        assert decisions[0]["deterministic_shock_guard_precedes_llm"] is True
+        assert decisions[0]["llm_order_fields_allowed"] is False
+
+
 def test_protective_stop_geometry_symmetry_and_inverse_units():
     config, _ = _config()
     long = protective_stop_candidates(pair="EUR_USD", side="LONG", entry=1.1000, atr_pips=4.0, spread_pips=0.8, recent_swing_price=1.0995, observed_at_utc=NOW, config=config)
