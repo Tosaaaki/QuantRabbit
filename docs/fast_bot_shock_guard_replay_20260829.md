@@ -44,6 +44,18 @@ Exit reasons for catastrophe SL + structure exit were: target 1,572; failed cont
 
 With a simulated five-minute runtime disconnect, the server-side catastrophe arm remained protected: net -5,829.370, PF 0.400491, raw P05 -12.7, risk-scaled P05 -1.489, maximum MAE 76.4. The no-SL shadow comparison reached net -5,812.6, PF 0.401479, maximum MAE 76.4, and five campaign-cap exits, but it has no server-side protection and is permanently live-ineligible.
 
+## Same-truth bounded structure-exit sensitivity
+
+The operational architecture was replayed on the identical 2,971-episode cohort with three preregistered-style bounded timing cells. `Early` used velocity/acceleration thresholds 0.35/0.20 pips per minute, a three-minute swing lookback, and a ten-minute time stop. `Central` used 0.50/0.25, five minutes, and fifteen minutes. `Late` used 0.75/0.35, seven minutes, and twenty minutes. No row changes shock detection, catastrophe protection, direction symmetry, or live authority.
+
+| Cell | Net / PF / hit | Risk-scaled net / PF / P05 | Loss streak | Margin unit-min / average hold |
+|---|---:|---:|---:|---:|
+| Early | -5,878.839 / 0.373795 / 49.51% | -690.492 / 0.375820 / -1.247 | 10 | 0.380 / 3.12m |
+| Central | -5,990.275 / 0.387107 / 53.55% | -701.206 / 0.390841 / -1.406 | 9 | 0.482 / 3.94m |
+| Late | -6,017.775 / 0.390431 / 54.49% | -707.013 / 0.393482 / -1.419 | 9 | 0.508 / 4.14m |
+
+No cell dominates. Early reduces risk-scaled loss, tail, and inventory residence but lowers PF and hit rate and raises the maximum loss streak. Late slightly raises PF and hit rate but worsens loss, tail, and inventory residence. The central cell therefore remains the fixed shadow setting rather than selecting a post-hoc winner. All three PF values remain below one, so none is live-admissible.
+
 ## Adoption decision
 
 - Keep `CONSERVATIVE_CATASTROPHE_PLUS_STRUCTURE_EXIT` as the only operational architecture eligible for future zero-authority shadow observation. Normal exit evaluates failed continuation, adverse swing break, raw velocity, raw acceleration, spread expansion, and time stop before relying on the server-side catastrophe stop.
@@ -53,3 +65,5 @@ With a simulated five-minute runtime disconnect, the server-side catastrophe arm
 ## Reproduction
 
 Run `tools/analyze_fast_bot_shock_guard_replay.py` with the seven existing `EUR_USD_M1_BA_2020...20260710` gzip files and the GET-only 2026-08-28 M1 BA file. The tool records input SHA-256, uses no broker client, writes no policy, and reports `external_order_attempts=0` and `external_orders=0`.
+
+Fresh verification starting from commit `4e59662bcf4a1eb1f0f25c91f33093977e348627` reproduced the prior replay exactly after excluding only `generated_at_utc` and the equivalent `/tmp` versus `/private/tmp` path spelling. Replay-focused regression passed 40 tests and 8 subtests; the added profitability frontier/gate suite passed 18 tests. Full regression passed 5,247 tests and 1,235 subtests with one skip and two pre-existing pytest collection warnings.
