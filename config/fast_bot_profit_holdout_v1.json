@@ -1,0 +1,71 @@
+{
+  "acceptance_thresholds": {
+    "maximum_daily_sample_share": 0.7,
+    "minimum_active_days": 10,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "minimum_profit_factor": 1.25,
+    "minimum_samples": 100
+  },
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "external_order_attempts": 0,
+    "external_orders": 0,
+    "live_permission": false,
+    "manual_tagless_policy": "NO_TOUCH",
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V1",
+  "holdout": {
+    "cohort_policy": "STRICTLY_AFTER_ELIGIBLE_AFTER_UTC",
+    "eligible_after_utc": "2026-08-31T16:18:00+00:00",
+    "frozen_at_utc": "2026-08-31T16:17:52+00:00",
+    "retroactive_signal_admission_allowed": false
+  },
+  "policy_id": "usdjpy-short-range-rotation-prospective-v1",
+  "schema_version": 1,
+  "selection": {
+    "allowed_lanes": [
+      {
+        "candidate_status": "UNPROVEN_PROSPECTIVE_CANDIDATE",
+        "horizon_lane": "M1_EXECUTION_15M_HOLD",
+        "method": "RANGE_ROTATION",
+        "pair": "USD_JPY",
+        "priority": 100,
+        "side": "SHORT"
+      }
+    ],
+    "equal_priority_policy": "REJECT_ALL_TIED_TOP_PRIORITY",
+    "maximum_concurrent_per_pair_horizon": 1,
+    "maximum_selected_per_cycle": 1,
+    "maximum_selection_delay_seconds": 45,
+    "opposite_side_policy": "REJECT_CYCLE_ON_SAME_PAIR_HORIZON_OPPOSITE_GO",
+    "post_outcome_reranking_allowed": false,
+    "reservation_seconds": 990,
+    "selection_policy": "ONE_PRECOMMITTED_NONOVERLAPPING_LANE_PER_CYCLE",
+    "unknown_lane_policy": "REJECT"
+  },
+  "training_evidence": {
+    "active_days": 1,
+    "candidate_lane_filled_signals": 11,
+    "candidate_lane_losses": 4,
+    "candidate_lane_mean_pips": 0.418182,
+    "candidate_lane_net_pips": 4.6,
+    "candidate_lane_profit_factor": 1.323944,
+    "candidate_lane_wins": 7,
+    "forward_evidence_passed": false,
+    "generated_at_utc": "2026-08-31T16:12:52.106243+00:00",
+    "overall_filled_signals": 48,
+    "overall_net_pips": -65.3,
+    "overall_profit_factor": 0.406364,
+    "profitability_claim": "UNPROVEN",
+    "selection_use": "HYPOTHESIS_ONLY_FUTURE_ROWS_REQUIRED",
+    "source_scorecard_contract_sha256": "ad806e0dd6442ffea14d7b8b53cd3ed5376722b57da7f7f17a1426559c93d021",
+    "source_scorecard_file_sha256": "9dc8dcac56c9ad2be08cd6b8eaa4702bc6bc63eab9629692c0c255a8eb27b9fb"
+  }
+}

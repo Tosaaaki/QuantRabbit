@@ -105,17 +105,19 @@ def assess_profitability_evidence(
     limits = _normalize_thresholds(thresholds or DEFAULT_THRESHOLDS)
     blockers: list[str] = []
     invalid = _evidence_invalid_reasons(evidence)
-    metrics: dict[str, float | int | bool | None] = {}
+    metrics: dict[str, float | int | str | bool | None] = {}
     if not invalid:
         try:
             metrics = {
                 "sample_count": _nonnegative_int(evidence.get("sample_count")),
                 "active_days": _nonnegative_int(evidence.get("active_days")),
-                "profit_factor": _finite(evidence.get("profit_factor")),
+                "profit_factor": _profit_factor(evidence.get("profit_factor")),
                 "net_pips": _finite(evidence.get("net_pips")),
                 "expectancy_pips": _finite(evidence.get("expectancy_pips")),
-                "pessimistic_expectancy_pips": _finite(
-                    evidence.get("pessimistic_expectancy_pips")
+                "pessimistic_expectancy_pips": (
+                    None
+                    if evidence.get("pessimistic_expectancy_pips") is None
+                    else _finite(evidence.get("pessimistic_expectancy_pips"))
                 ),
                 "positive_day_rate": _rate(evidence.get("positive_day_rate")),
                 "max_daily_sample_share": _rate(
@@ -130,15 +132,22 @@ def assess_profitability_evidence(
         status = "REJECT_INVALID_EVIDENCE"
         blockers = sorted(set(invalid))
     else:
+        sample_count = int(metrics["sample_count"] or 0)
         if not metrics["spread_included"]:
             blockers.append("SPREAD_NOT_INCLUDED")
-        if float(metrics["profit_factor"] or 0.0) <= 1.0:
+        profit_factor = _profit_factor_value(metrics["profit_factor"])
+        if sample_count == 0:
+            blockers.append("NO_RESOLVED_SAMPLES")
+        elif profit_factor <= 1.0:
             blockers.append("PROFIT_FACTOR_NOT_ABOVE_ONE")
-        if float(metrics["net_pips"] or 0.0) <= 0.0:
+        if sample_count > 0 and float(metrics["net_pips"] or 0.0) <= 0.0:
             blockers.append("NET_PIPS_NOT_POSITIVE")
-        if float(metrics["expectancy_pips"] or 0.0) <= 0.0:
+        if sample_count > 0 and float(metrics["expectancy_pips"] or 0.0) <= 0.0:
             blockers.append("EXPECTANCY_NOT_POSITIVE")
-        if float(metrics["pessimistic_expectancy_pips"] or 0.0) <= float(
+        pessimistic = metrics["pessimistic_expectancy_pips"]
+        if pessimistic is None:
+            blockers.append("PESSIMISTIC_EXPECTANCY_NOT_ESTIMABLE")
+        elif sample_count > 0 and float(pessimistic) <= float(
             limits["minimum_pessimistic_expectancy_pips"]
         ):
             blockers.append("PESSIMISTIC_EXPECTANCY_NOT_POSITIVE")
@@ -160,7 +169,7 @@ def assess_profitability_evidence(
                 blockers.append("INSUFFICIENT_SAMPLES")
             if int(metrics["active_days"] or 0) < int(limits["minimum_active_days"]):
                 blockers.append("INSUFFICIENT_ACTIVE_DAYS")
-            if float(metrics["profit_factor"] or 0.0) < float(
+            if profit_factor < float(
                 limits["minimum_profit_factor"]
             ):
                 blockers.append("PROFIT_FACTOR_BELOW_FORWARD_FLOOR")
@@ -282,6 +291,19 @@ def _finite(value: Any) -> float:
     if not math.isfinite(number):
         raise ValueError("number must be finite")
     return number
+
+
+def _profit_factor(value: Any) -> float | str:
+    if value == "INF":
+        return "INF"
+    number = _finite(value)
+    if number < 0.0:
+        raise ValueError("profit factor must be nonnegative")
+    return number
+
+
+def _profit_factor_value(value: Any) -> float:
+    return math.inf if value == "INF" else float(value)
 
 
 def _positive_float(value: Any) -> float:

@@ -82,6 +82,56 @@ def test_positive_but_concentrated_rank_only_evidence_collects_more_days() -> No
     }
 
 
+def test_positive_thin_evidence_with_unestimable_bound_collects_more_days() -> None:
+    result = assess_profitability_evidence(
+        _evidence(
+            sample_count=11,
+            active_days=1,
+            profit_factor=1.323944,
+            net_pl_pips=4.6,
+            expectancy_pips=0.418182,
+            pessimistic_expectancy_pips=None,
+            positive_day_rate=1.0,
+            max_daily_sample_share=1.0,
+        )
+    )
+
+    assert result["status"] == "COLLECT_MORE_INDEPENDENT_DAYS"
+    assert "PESSIMISTIC_EXPECTANCY_NOT_ESTIMABLE" in result["blockers"]
+    assert "INSUFFICIENT_SAMPLES" in result["blockers"]
+    assert "INSUFFICIENT_ACTIVE_DAYS" in result["blockers"]
+    assert result["primary_trading_candidate_allowed"] is False
+
+
+def test_zero_loss_profit_factor_infinity_remains_json_safe_and_shadow_only() -> None:
+    result = assess_profitability_evidence(_evidence(profit_factor="INF"))
+
+    assert result["status"] == "SHADOW_FORWARD_OBSERVATION_READY"
+    assert result["metrics"]["profit_factor"] == "INF"
+    assert result["promotion_allowed"] is False
+    assert result["live_permission"] is False
+
+
+def test_empty_forward_cohort_collects_without_manufacturing_negative_return() -> None:
+    result = assess_profitability_evidence(
+        _evidence(
+            sample_count=0,
+            active_days=0,
+            profit_factor=0.0,
+            net_pl_pips=0.0,
+            expectancy_pips=0.0,
+            pessimistic_expectancy_pips=None,
+            positive_day_rate=0.0,
+            max_daily_sample_share=1.0,
+        )
+    )
+
+    assert result["status"] == "COLLECT_MORE_INDEPENDENT_DAYS"
+    assert "NO_RESOLVED_SAMPLES" in result["blockers"]
+    assert "NET_PIPS_NOT_POSITIVE" not in result["blockers"]
+    assert result["primary_trading_candidate_allowed"] is False
+
+
 def test_negative_pessimistic_expectancy_is_rejected_even_when_pf_above_one() -> None:
     result = assess_profitability_evidence(
         _evidence(

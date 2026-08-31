@@ -105,11 +105,71 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(json.dumps({"fetched_at_utc": "2026-08-28T00:00:00+00:00", "quotes": {}}))
                 return {"stdout_tail": "{}", "stderr_tail": "", "returncode": 0, "wall_seconds": 0.1}
+            if "pair-charts" in argv:
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": "2026-08-28T00:00:00+00:00",
+                            "charts": [],
+                        }
+                    )
+                )
+                return {"stdout_tail": "{}", "stderr_tail": "", "returncode": 0, "wall_seconds": 0.1}
+            if "run-fast-bot-shadow.py" in " ".join(argv):
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps({"signals": []}))
+                return {
+                    "stdout_tail": json.dumps({"signal_count": 0, "shadow_output": str(output)}),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
+            if "run_fast_bot_shock_guard.py" in " ".join(argv):
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps({"signals": []}))
+                return {
+                    "stdout_tail": json.dumps(
+                        {
+                            "shadow_output": str(output),
+                            "execution_authority": "NONE",
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    ),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             if "resolve-fast-bot-shadow-outcomes.py" in " ".join(argv):
                 scorecard = Path(argv[argv.index("--scorecard") + 1])
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
                 scorecard.write_text(json.dumps({"filled_signals": 0}))
                 return {"stdout_tail": json.dumps({"status": "NO_DUE_SIGNALS"}), "stderr_tail": "", "returncode": 0, "wall_seconds": 0.0}
+            if "run_fast_bot_profit_holdout.py" in " ".join(argv):
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "status": "COLLECT_MORE_INDEPENDENT_DAYS",
+                            "execution_authority": "NONE",
+                            "broker_mutation_allowed": False,
+                            "live_permission": False,
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    )
+                )
+                return {
+                    "stdout_tail": output.read_text(),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             if "run_fast_bot_corrective_challenger.py" in " ".join(argv):
                 scorecard = Path(argv[argv.index("--scorecard") + 1])
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
@@ -191,7 +251,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             runtime._write_zero_authority_inputs(root)
-            with patch.object(runtime, "_pair_charts_refresh_due", return_value=False):
+            with patch.object(runtime, "_pair_charts_refresh_due", return_value=True):
                 state = runtime.run_cycle(
                     root=root,
                     env=runtime.child_environment(Path("/approved/.env.local")),
@@ -201,6 +261,8 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         joined = "\n".join(" ".join(row) for row in calls).lower()
         self.assertIn("broker-snapshot", joined)
         self.assertIn("resolve-fast-bot-shadow-outcomes.py", joined)
+        self.assertIn("run_fast_bot_profit_holdout.py select", joined)
+        self.assertIn("run_fast_bot_profit_holdout.py evaluate", joined)
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertIn("run_fast_bot_knowledge.py", joined)
         self.assertIn("run_fast_bot_shock_follow.py", joined)
@@ -212,6 +274,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["proposal_count"], 0)
         self.assertEqual(state["virtual_fill_count"], 0)
         self.assertEqual(state["last_corrective_challenger_result"]["external_orders"], 0)
+        self.assertEqual(state["last_profit_holdout_scorecard_result"]["external_orders"], 0)
         self.assertEqual(state["last_knowledge_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
         self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
@@ -237,6 +300,9 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(status["gateway_invocations"], 0)
         self.assertEqual(status["manual_tagless_positions_policy"], "NO_TOUCH")
         self.assertEqual(status["existing_tp_sl_policy"], "NO_TOUCH")
+        self.assertEqual(status["last_profit_holdout_selection_result"], {})
+        self.assertEqual(status["last_profit_holdout_outcome_result"], {})
+        self.assertEqual(status["last_profit_holdout_scorecard_result"], {})
 
 
 if __name__ == "__main__":
