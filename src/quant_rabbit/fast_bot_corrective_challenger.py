@@ -96,6 +96,18 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
     geometry = config.get("geometry") or {}
     if float(geometry.get("reward_risk_minimum") or 0.0) < 1.0:
         raise ValueError("ATR geometry must have reward/risk >= 1")
+    inventory = config.get("inventory") or {}
+    # 990 seconds is the immutable proposal lifecycle already emitted by the
+    # fast bot: 90 seconds to enter plus a 900-second maximum hold.  This is an
+    # observation-only challenger contract, not a newly tuned market number.
+    if (
+        tuple(str(value) for value in inventory.get("lane_fields", ()))
+        != ("pair", "side", "method", "horizon_lane")
+        or int(inventory.get("reservation_seconds") or 0) != 990
+        or inventory.get("reservation_source") != "ENTRY_TTL_90_PLUS_MAX_HOLD_900"
+        or inventory.get("selection_policy") != "FIRST_ELIGIBLE_SIGNAL_RESERVES_LANE"
+    ):
+        raise ValueError("corrective challenger lane reservation contract mismatch")
     return config, canonical_sha(config)
 
 

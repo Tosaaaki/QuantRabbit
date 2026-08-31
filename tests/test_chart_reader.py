@@ -9,7 +9,12 @@ from quant_rabbit.analysis.candles import (
     TECHNICAL_CANDLE_SPREAD_CONTAMINATED,
     Candle,
 )
-from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES, build_pair_chart
+from quant_rabbit.analysis.chart_reader import (
+    DEFAULT_TIMEFRAMES,
+    RECENT_CANDLES_PUBLISH,
+    SHOCK_GUARD_M1_CANDLES_PUBLISH,
+    build_pair_chart,
+)
 from quant_rabbit.instruments import OANDA_SPREAD_CALIBRATION_V1
 from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
 
@@ -135,6 +140,19 @@ class ChartReaderTest(unittest.TestCase):
         self.assertTrue(all(view.indicator_series["atr_pips"] for view in chart.views))
         self.assertTrue(
             all(view.indicator_series["ema_12_minus_50_pips"] for view in chart.views)
+        )
+        m1 = next(view for view in chart.views if view.granularity == "M1")
+        self.assertEqual(len(m1.recent_candles), RECENT_CANDLES_PUBLISH)
+        self.assertEqual(
+            len(m1.shock_guard_recent_candles),
+            SHOCK_GUARD_M1_CANDLES_PUBLISH,
+        )
+        self.assertTrue(
+            all(
+                not view.shock_guard_recent_candles
+                for view in chart.views
+                if view.granularity != "M1"
+            )
         )
         self.assertTrue(
             all(

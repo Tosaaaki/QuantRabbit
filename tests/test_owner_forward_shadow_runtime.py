@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,29 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
 
     def test_shadow_universe_is_initial_two_pairs(self) -> None:
         self.assertEqual(runtime.SHADOW_PAIRS, ("EUR_USD", "USD_JPY"))
+
+    def test_pair_chart_timeout_budget_covers_exact_get_scope(self) -> None:
+        self.assertEqual(runtime._pair_chart_timeout_seconds(), 450.0)
+        self.assertEqual(
+            runtime._pair_chart_timeout_seconds(
+                pairs=("EUR_USD",),
+                timeframes="M1,M5,M15,H1",
+            ),
+            150.0,
+        )
+
+    def test_subprocess_timeout_is_reported_as_bounded_pair_chart_failure(self) -> None:
+        argv = ["python", "-m", "quant_rabbit.cli", "pair-charts"]
+        with patch.object(
+            runtime.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(argv, 450.0),
+        ):
+            with self.assertRaisesRegex(
+                runtime.RuntimeBlocked,
+                r"COMMAND_TIMEOUT:quant_rabbit\.cli:pair-charts:budget_seconds=450",
+            ):
+                runtime.run_command(argv, env={}, timeout=450.0)
 
     def test_run_cycle_uses_only_read_and_shadow_commands(self) -> None:
         calls = []
@@ -176,6 +200,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertFalse(status["broker_mutation_allowed"])
         self.assertEqual(status["external_order_attempts"], 0)
         self.assertEqual(status["external_orders"], 0)
+        self.assertEqual(status["gateway_invocations"], 0)
         self.assertEqual(status["manual_tagless_positions_policy"], "NO_TOUCH")
         self.assertEqual(status["existing_tp_sl_policy"], "NO_TOUCH")
 

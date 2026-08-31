@@ -65,6 +65,13 @@ from quant_rabbit.instruments import NORMAL_SPREAD_PIPS
 # under a few hundred KB even with 7 timeframes × N pairs.
 RECENT_CANDLES_PUBLISH = 30
 
+# The deterministic shock detector needs the 15-minute impulse window plus
+# the largest 20-minute causal reference window and one boundary bar:
+# ``15 + 20 + 1 = 36`` complete M1 observations.  Keep this separate from the
+# legacy 30-bar indicator/pattern payload so existing forecast receipts retain
+# their exact bounded shape while the shock guard receives sufficient history.
+SHOCK_GUARD_M1_CANDLES_PUBLISH = 36
+
 # A 24-hour high/low span divided by a typical H1 range is a dimensionless
 # expansion ratio, not a standard deviation (sigma).  Compare the current
 # ratio with prior rolling 24-hour ratios for the same pair and call it an
@@ -133,6 +140,9 @@ class ChartView:
     # recent RECENT_CANDLES_PUBLISH bars to keep pair_charts.json size
     # bounded; downstream consumers should not expect a long history.
     recent_candles: tuple[Candle, ...] = field(default_factory=tuple)
+    # Dedicated causal M1 evidence for the raw shock guard.  Other timeframes
+    # publish an empty list; this field never changes indicator warm-up truth.
+    shock_guard_recent_candles: tuple[Candle, ...] = field(default_factory=tuple)
     # 2026-05-14: indicator time series for true divergence detectors.
     # Last RECENT_CANDLES_PUBLISH values of key oscillators aligned to
     # `recent_candles` so a downstream consumer can take the i-th
@@ -161,6 +171,14 @@ class ChartView:
                     "complete": c.complete,
                 }
                 for c in self.recent_candles
+            ],
+            "shock_guard_recent_candles": [
+                {
+                    "t": c.timestamp_utc.isoformat() if hasattr(c.timestamp_utc, "isoformat") else str(c.timestamp_utc),
+                    "o": c.open, "h": c.high, "l": c.low, "c": c.close, "v": c.volume,
+                    "complete": c.complete,
+                }
+                for c in self.shock_guard_recent_candles
             ],
             "indicator_series": {k: list(v) for k, v in self.indicator_series.items()},
             "candle_integrity": self.candle_integrity,
@@ -356,6 +374,11 @@ def build_pair_chart(
                 stat_filters=stat_filters,
                 smc=smc_reading,
                 recent_candles=tuple(candles[-RECENT_CANDLES_PUBLISH:]) if candles else tuple(),
+                shock_guard_recent_candles=(
+                    tuple(candles[-SHOCK_GUARD_M1_CANDLES_PUBLISH:])
+                    if candles and tf == "M1"
+                    else tuple()
+                ),
                 indicator_series=series_map,
                 candle_integrity=candle_integrity,
                 market_state=market_state,

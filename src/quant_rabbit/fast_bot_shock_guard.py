@@ -164,6 +164,8 @@ def _normal_state(*, pair: str, now: datetime) -> dict[str, Any]:
             "broker_mutation_allowed": False,
             "external_order_attempts": 0,
             "external_orders": 0,
+            "manual_tagless_policy": "NO_TOUCH",
+            "existing_tp_sl_policy": "NO_TOUCH",
         }
     )
 
@@ -208,7 +210,12 @@ def _views(pair_charts: Mapping[str, Any], pair: str) -> dict[str, Mapping[str, 
 
 def _complete_candles(view: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for item in (view or {}).get("recent_candles") or []:
+    source = (view or {}).get("shock_guard_recent_candles")
+    if not isinstance(source, list) or not source:
+        # Legacy packets remain readable but fail closed at the existing
+        # 36-observation requirement when they expose only the old 30 bars.
+        source = (view or {}).get("recent_candles") or []
+    for item in source:
         if not isinstance(item, Mapping) or item.get("complete") is not True:
             continue
         try:
@@ -1004,11 +1011,16 @@ def guard_shadow(
     config: Mapping[str, Any],
     config_sha256: str,
     now_utc: datetime,
+    states: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     now = _aware(now_utc)
-    receipt = _receipt(state, now=now, config_sha256=config_sha256)
-    views = _views(pair_charts, str(state.get("pair") or "EUR_USD"))
-    m1 = _complete_candles(views.get("M1"))
+    state_by_pair = {
+        str(key).upper(): value
+        for key, value in (states or {}).items()
+        if isinstance(value, Mapping)
+    }
+    primary_pair = str(state.get("pair") or "EUR_USD").upper()
+    state_by_pair.setdefault(primary_pair, state)
     spread_default = float(config["protective_stop"]["fallback_spread_pips"])
     selected_geometry = str(config["protective_stop"]["selected_shadow_geometry"])
     admitted: list[dict[str, Any]] = []
@@ -1018,21 +1030,16 @@ def guard_shadow(
             continue
         signal = dict(raw_signal)
         pair = str(signal.get("pair") or "").upper()
-        if pair != state.get("pair"):
-            # The initial guard is pair-scoped.  Other pairs retain the same
-            # mandatory protective-stop contract without inheriting EUR/USD state.
-            local_receipt = seal(
-                {
-                    **{key: value for key, value in receipt.items() if key != "contract_sha256"},
-                    "event_id": None,
-                    "state": NORMAL,
-                    "resolution": None,
-                    "shock_direction": None,
-                    "fail_closed_reason": None,
-                }
+        pair_state = state_by_pair.get(pair)
+        if pair_state is None:
+            pair_state = _integrity_freeze_state(
+                pair=pair,
+                now=now,
+                reason="PAIR_SHOCK_STATE_MISSING",
             )
-        else:
-            local_receipt = receipt
+        local_receipt = _receipt(pair_state, now=now, config_sha256=config_sha256)
+        views = _views(pair_charts, pair)
+        m1 = _complete_candles(views.get("M1"))
         side = str(signal.get("side") or "").upper()
         swing = (
             min(row["low"] for row in m1[-10:]) if side == "LONG" and m1
@@ -1049,7 +1056,7 @@ def guard_shadow(
             observed_at_utc=now,
             config=config,
             shock_displacement_pips=float(
-                (state.get("evidence") or {}).get("impulse_magnitude_pips")
+                (pair_state.get("evidence") or {}).get("impulse_magnitude_pips")
                 or config["protective_stop"]["minimum_catastrophe_stop_pips"]
             ),
         )
@@ -1063,6 +1070,7 @@ def guard_shadow(
         signal.update(
             stop_loss=selected["stop_loss"],
             stop_loss_pips=selected["stop_loss_pips"],
+            attached_stop_loss_required=True,
             protective_stop=selected,
             protective_stop_candidates=candidates,
             structure_exit_plan=exit_plan,
@@ -1119,7 +1127,7 @@ def guard_shadow(
                         "execution_scope": "PAPER_SHADOW_ONLY",
                         "manual_tagless_policy": "NO_TOUCH",
                     }
-                    if pair == state.get("pair") and local_receipt.get("state") in BLOCK_ALL_STATES
+                    if local_receipt.get("state") in BLOCK_ALL_STATES
                     else None
                 ),
                 "countertrend_candidate": {
@@ -1158,6 +1166,14 @@ def guard_shadow(
         "source_shadow_sha256": shadow.get("contract_sha256"),
         "shock_guard_state": state.get("state"),
         "shock_guard_event_id": state.get("event_id"),
+        "shock_guard_states": {
+            pair_key: {
+                "state": pair_state.get("state"),
+                "event_id": pair_state.get("event_id"),
+                "fail_closed_reason": pair_state.get("fail_closed_reason"),
+            }
+            for pair_key, pair_state in sorted(state_by_pair.items())
+        },
         "signals": admitted,
         "decision_count": len(decisions),
         "entry_rejection_count": sum(1 for row in decisions if not row["entry_allowed"]),
@@ -1172,6 +1188,36 @@ def guard_shadow(
         "external_orders": 0,
     }
     return seal(body), decisions
+
+
+def _pair_state_path(state_path: Path, *, pair: str, primary_pair: str) -> Path:
+    canonical = pair.upper()
+    if not canonical or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ_" for character in canonical):
+        raise ValueError("shock guard pair identity is invalid")
+    if canonical == primary_pair.upper():
+        return state_path
+    return state_path.with_name(
+        f"{state_path.stem}.{canonical.lower()}{state_path.suffix}"
+    )
+
+
+def _guard_pairs(
+    pair_charts: Mapping[str, Any],
+    shadow: Mapping[str, Any],
+    *,
+    primary_pair: str,
+) -> tuple[str, ...]:
+    pairs = {primary_pair.upper()}
+    for chart in pair_charts.get("charts") or []:
+        if isinstance(chart, Mapping) and chart.get("pair"):
+            pairs.add(str(chart["pair"]).upper())
+    for signal in shadow.get("signals") or []:
+        if isinstance(signal, Mapping) and signal.get("pair"):
+            pairs.add(str(signal["pair"]).upper())
+    ordered = [primary_pair.upper(), *sorted(pairs - {primary_pair.upper()})]
+    for candidate in ordered:
+        _pair_state_path(state_path=Path("state.json"), pair=candidate, primary_pair=primary_pair)
+    return tuple(ordered)
 
 
 def _append_once(path: Path, rows: Sequence[Mapping[str, Any]], *, id_key: str) -> int:
@@ -1213,16 +1259,39 @@ def run_guard_cycle(
     pair: str = "EUR_USD",
 ) -> dict[str, Any]:
     now = _aware(now_utc)
-    prior, restored = _load_state(state_path, pair=pair, now=now)
-    observation = observe_market(pair_charts=pair_charts, pair=pair, now_utc=now, config=config)
-    state = advance_state(
-        prior=prior,
-        observation=observation,
-        now_utc=now,
-        config=config,
-        config_sha256=config_sha256,
-    )
-    _atomic_json(state_path, state)
+    primary_pair = pair.upper()
+    states: dict[str, dict[str, Any]] = {}
+    restored_by_pair: dict[str, bool] = {}
+    state_paths: dict[str, str] = {}
+    for current_pair in _guard_pairs(
+        pair_charts,
+        shadow,
+        primary_pair=primary_pair,
+    ):
+        current_path = _pair_state_path(
+            state_path,
+            pair=current_pair,
+            primary_pair=primary_pair,
+        )
+        prior, restored = _load_state(current_path, pair=current_pair, now=now)
+        observation = observe_market(
+            pair_charts=pair_charts,
+            pair=current_pair,
+            now_utc=now,
+            config=config,
+        )
+        current_state = advance_state(
+            prior=prior,
+            observation=observation,
+            now_utc=now,
+            config=config,
+            config_sha256=config_sha256,
+        )
+        _atomic_json(current_path, current_state)
+        states[current_pair] = current_state
+        restored_by_pair[current_pair] = restored
+        state_paths[current_pair] = str(current_path)
+    state = states[primary_pair]
     guarded, decisions = guard_shadow(
         shadow=shadow,
         state=state,
@@ -1230,6 +1299,7 @@ def run_guard_cycle(
         config=config,
         config_sha256=config_sha256,
         now_utc=now,
+        states=states,
     )
     _atomic_json(output_path, guarded)
     appended = _append_once(decision_ledger_path, decisions, id_key="decision_id")
@@ -1251,13 +1321,26 @@ def run_guard_cycle(
             "entry_rejection_rate": round(rejected / total, 6) if total else 0.0,
             "current_state": state.get("state"),
             "current_event_id": state.get("event_id"),
-            "restart_restore_valid": restored,
+            "current_states": {
+                pair_key: {
+                    "state": pair_state.get("state"),
+                    "event_id": pair_state.get("event_id"),
+                    "fail_closed_reason": pair_state.get("fail_closed_reason"),
+                    "last_complete_m1_at_utc": pair_state.get("last_complete_m1_at_utc"),
+                }
+                for pair_key, pair_state in sorted(states.items())
+            },
+            "state_paths": state_paths,
+            "restart_restore_valid": all(restored_by_pair.values()),
+            "restart_restore_valid_by_pair": restored_by_pair,
             "selected_protective_stop_geometry": config["protective_stop"]["selected_shadow_geometry"],
             "automatic_reversal_allowed": False,
             "execution_authority": "NONE",
             "broker_mutation_allowed": False,
             "external_order_attempts": 0,
             "external_orders": 0,
+            "manual_tagless_policy": "NO_TOUCH",
+            "existing_tp_sl_policy": "NO_TOUCH",
         }
     )
     _atomic_json(scorecard_path, scorecard)
@@ -1270,6 +1353,16 @@ def run_guard_cycle(
         "decision_ledger_appended": appended,
         "shadow_output": str(output_path),
         "state_path": str(state_path),
+        "state_paths": state_paths,
+        "states": {
+            pair_key: {
+                "state": pair_state.get("state"),
+                "event_id": pair_state.get("event_id"),
+                "fail_closed_reason": pair_state.get("fail_closed_reason"),
+                "last_complete_m1_at_utc": pair_state.get("last_complete_m1_at_utc"),
+            }
+            for pair_key, pair_state in sorted(states.items())
+        },
         "decision_ledger_path": str(decision_ledger_path),
         "scorecard_path": str(scorecard_path),
         "execution_authority": "NONE",

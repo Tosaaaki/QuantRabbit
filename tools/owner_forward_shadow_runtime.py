@@ -31,6 +31,13 @@ DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 SLOW_TIMEFRAMES = "M1,M5,M15,M30,H1,H4,D"
+# One pair-chart subprocess performs one bounded OANDA GET per pair/timeframe.
+# The broker client may consume up to roughly 30 seconds on a slow request, so
+# the process budget scales with the exact request count plus fixed startup and
+# atomic-write overhead.  This replaces the unrelated generic 240-second cap;
+# it does not relax candle freshness or completeness.
+PAIR_CHART_GET_REQUEST_BUDGET_SECONDS = 30.0
+PAIR_CHART_PROCESS_OVERHEAD_SECONDS = 30.0
 STOP = False
 
 SOURCE_BUNDLE_PATHS = (
@@ -47,6 +54,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
     Path("src/quant_rabbit/fast_bot_shock_guard.py"),
+    Path("src/quant_rabbit/analysis/chart_reader.py"),
     Path("src/quant_rabbit/eurusd_outcome_learning.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
     Path("src/quant_rabbit/broker/oanda.py"),
@@ -178,14 +186,20 @@ def run_command(
     timeout: float = 240.0,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    completed = subprocess.run(
-        list(argv),
-        cwd=repo_root,
-        env=dict(env),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    try:
+        completed = subprocess.run(
+            list(argv),
+            cwd=repo_root,
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        label = _command_label(argv)
+        raise RuntimeBlocked(
+            f"COMMAND_TIMEOUT:{label}:budget_seconds={timeout:g}"
+        ) from exc
     result = {
         "argv": list(argv),
         "returncode": completed.returncode,
@@ -199,6 +213,31 @@ def run_command(
             f"{completed.stderr[-300:]}"
         )
     return result
+
+
+def _command_label(argv: Sequence[str]) -> str:
+    values = [str(value) for value in argv]
+    if "-m" in values:
+        module_index = values.index("-m") + 1
+        if module_index < len(values):
+            module = values[module_index]
+            command = values[module_index + 1] if module_index + 1 < len(values) else ""
+            return f"{module}:{command}" if command else module
+    if len(values) > 1:
+        return Path(values[1]).name
+    return Path(values[0]).name if values else "unknown"
+
+
+def _pair_chart_timeout_seconds(
+    *, pairs: Sequence[str] = SHADOW_PAIRS, timeframes: str = SLOW_TIMEFRAMES
+) -> float:
+    timeframe_count = len([value for value in timeframes.split(",") if value])
+    if not pairs or timeframe_count <= 0:
+        raise ValueError("pair-chart request scope must be non-empty")
+    return (
+        len(pairs) * timeframe_count * PAIR_CHART_GET_REQUEST_BUDGET_SECONDS
+        + PAIR_CHART_PROCESS_OVERHEAD_SECONDS
+    )
 
 
 def _json_stdout(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -308,6 +347,7 @@ def _base_status(
         "broker_mutation_allowed": False,
         "external_order_attempts": 0,
         "external_orders": 0,
+        "gateway_invocations": 0,
         "manual_tagless_positions_policy": "NO_TOUCH",
         "existing_tp_sl_policy": "NO_TOUCH",
         "live_permission": False,
@@ -375,10 +415,12 @@ def run_cycle(
     )
     refreshed = _pair_charts_refresh_due(paths["charts"])
     bot_result: dict[str, Any] = {}
+    pair_chart_result = state.get("last_pair_chart_result") or {}
     if refreshed:
-        command_runner(
+        pair_chart_result = command_runner(
             [py, "-m", "quant_rabbit.cli", "pair-charts", "--pairs", ",".join(SHADOW_PAIRS), "--timeframes", SLOW_TIMEFRAMES, "--count", "120", "--output", str(paths["charts"]), "--report", str(root / "reports" / "eurusd_usdjpy_pair_charts_report.md"), "--require-complete"],
             env=env,
+            timeout=_pair_chart_timeout_seconds(),
         )
         command_runner(
             [py, "-m", "quant_rabbit.cli", "broker-snapshot", "--pairs", ",".join(SHADOW_PAIRS), "--output", str(paths["snapshot"])],
@@ -501,6 +543,7 @@ def run_cycle(
     state["last_corrective_challenger_result"] = challenger_result
     state["last_shock_follow_result"] = shock_follow_result
     state["last_shock_guard_result"] = shock_guard_result
+    state["last_pair_chart_result"] = pair_chart_result
     state["last_eurusd_learning_result"] = eurusd_learning_result
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
@@ -616,6 +659,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 last_shock_follow_result=state.get("last_shock_follow_result"),
                 last_shock_guard_result=state.get("last_shock_guard_result"),
+                last_pair_chart_result=state.get("last_pair_chart_result"),
                 last_eurusd_learning_result=state.get("last_eurusd_learning_result"),
                 counters={
                     "event_count": int(state.get("event_count", 0)),

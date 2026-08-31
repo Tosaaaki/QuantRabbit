@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
     aggregate,
@@ -67,6 +69,18 @@ def _outcome(signal: dict) -> dict:
         "truth_chunk_sha256": ["c" * 64],
         "contract_sha256": "d" * 64,
     }
+
+
+def test_lane_reservation_contract_is_immutable(tmp_path: Path) -> None:
+    config = json.loads(CONFIG_PATH.read_text())
+    config["inventory"]["reservation_seconds"] = 989
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text(json.dumps(config))
+    with pytest.raises(
+        ValueError,
+        match="corrective challenger lane reservation contract mismatch",
+    ):
+        load_config(tampered)
 
 
 def test_causal_shock_uses_strictly_prior_unique_timestamps() -> None:

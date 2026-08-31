@@ -35,9 +35,18 @@ def _config():
     return load_config(ROOT / "config" / "fast_bot_shock_guard_v1.json")
 
 
-def _chart(*, direction: str = "DOWN", pips: float = 18.0, gap: bool = False, stale: bool = False):
+def _chart(
+    *,
+    pair: str = "EUR_USD",
+    direction: str = "DOWN",
+    pips: float = 18.0,
+    gap: bool = False,
+    stale: bool = False,
+):
     start = NOW - timedelta(minutes=35)
     sign = 1.0 if direction == "UP" else -1.0
+    factor = 100.0 if pair.endswith("JPY") else 10_000.0
+    base = 150.0 if pair.endswith("JPY") else 1.1000
     rows = []
     for index in range(36):
         offset = index + (1 if gap and index == 28 else 0)
@@ -45,13 +54,13 @@ def _chart(*, direction: str = "DOWN", pips: float = 18.0, gap: bool = False, st
         if stale:
             at -= timedelta(minutes=10)
         trend_index = max(0, index - 20)
-        price = 1.1000 + sign * (pips / 10_000.0) * trend_index / 15.0
+        price = base + sign * (pips / factor) * trend_index / 15.0
         rows.append(
             {
                 "t": at.isoformat(),
                 "o": price,
-                "h": price + 0.00002,
-                "l": price - 0.00002,
+                "h": price + 0.2 / factor,
+                "l": price - 0.2 / factor,
                 "c": price,
                 "spread_pips": 0.8,
                 "complete": True,
@@ -67,15 +76,15 @@ def _chart(*, direction: str = "DOWN", pips: float = 18.0, gap: bool = False, st
                 "market_state": {"direction": market_direction},
             }
         )
-    return {"generated_at_utc": NOW.isoformat(), "charts": [{"pair": "EUR_USD", "views": views}]}
+    return {"generated_at_utc": NOW.isoformat(), "charts": [{"pair": pair, "views": views}]}
 
 
-def _normal():
+def _normal(pair: str = "EUR_USD"):
     return seal(
         {
             "contract": "QR_FAST_BOT_SHOCK_GUARD_STATE_V1",
             "schema_version": 1,
-            "pair": "EUR_USD",
+            "pair": pair,
             "state": NORMAL,
             "event_id": None,
             "shock_direction": None,
@@ -96,18 +105,26 @@ def _normal():
     )
 
 
-def _direct_observation(direction: str, *, new_extreme: bool, adverse_pips: float):
+def _direct_observation(
+    direction: str,
+    *,
+    new_extreme: bool,
+    adverse_pips: float,
+    pair: str = "EUR_USD",
+):
     sign = 1.0 if direction == "UP" else -1.0
-    initial_high = 1.1020
-    initial_low = 1.0980
+    factor = 100.0 if pair.endswith("JPY") else 10_000.0
+    base = 150.0 if pair.endswith("JPY") else 1.1000
+    initial_high = base + 20.0 / factor
+    initial_low = base - 20.0 / factor
     post = []
     for index in range(1, 6):
         if direction == "UP":
-            high = initial_high + (0.0001 if new_extreme else -0.00001)
-            low = initial_high - adverse_pips / 10_000.0
+            high = initial_high + (1.0 / factor if new_extreme else -0.1 / factor)
+            low = initial_high - adverse_pips / factor
         else:
-            low = initial_low - (0.0001 if new_extreme else -0.00001)
-            high = initial_low + adverse_pips / 10_000.0
+            low = initial_low - (1.0 / factor if new_extreme else -0.1 / factor)
+            high = initial_low + adverse_pips / factor
         post.append(
             {
                 "at": (NOW + timedelta(minutes=index)).isoformat(),
@@ -118,7 +135,7 @@ def _direct_observation(direction: str, *, new_extreme: bool, adverse_pips: floa
         )
     return {
         "valid": True,
-        "pair": "EUR_USD",
+        "pair": pair,
         "latest_complete_m1_at_utc": post[-1]["at"],
         "impulse_direction": direction,
         "impulse_magnitude_pips": 20.0,
@@ -171,6 +188,37 @@ def test_raw_detector_does_not_use_atr_as_onset_gate():
     )
     assert state["state"] == SHOCK_FREEZE
     assert state["thresholds"]["atr_role"] == "AUXILIARY_NORMALIZATION_AND_UPPER_BOUND_ONLY"
+
+
+def test_dedicated_shock_history_supplies_36_bars_without_changing_legacy_30():
+    config, _ = _config()
+    packet = _chart(direction="DOWN")
+    m1 = packet["charts"][0]["views"][0]
+    full = list(m1["recent_candles"])
+    m1["recent_candles"] = full[-30:]
+    m1["shock_guard_recent_candles"] = full
+    observation = observe_market(
+        pair_charts=packet,
+        pair="EUR_USD",
+        now_utc=NOW + timedelta(minutes=1),
+        config=config,
+    )
+    assert len(m1["recent_candles"]) == 30
+    assert len(m1["shock_guard_recent_candles"]) == 36
+    assert observation["valid"] is True
+
+    del m1["shock_guard_recent_candles"]
+    legacy = observe_market(
+        pair_charts=packet,
+        pair="EUR_USD",
+        now_utc=NOW + timedelta(minutes=1),
+        config=config,
+    )
+    assert legacy == {
+        "valid": False,
+        "reason": "M1_HISTORY_INSUFFICIENT",
+        "pair": "EUR_USD",
+    }
 
 
 def test_spread_expansion_is_observed_symmetrically_without_becoming_side_specific():
@@ -382,6 +430,73 @@ def test_guard_rejects_shock_and_emits_paper_only_drain_without_touching_manual(
     assert decisions[0]["external_order_attempts"] == decisions[0]["external_orders"] == 0
 
 
+def test_pair_states_are_isolated_and_missing_pair_state_fails_closed():
+    config, config_sha = _config()
+    eur_state = advance_state(
+        prior=_normal("EUR_USD"),
+        observation=_direct_observation(
+            "DOWN",
+            new_extreme=False,
+            adverse_pips=0.0,
+            pair="EUR_USD",
+        ),
+        now_utc=NOW,
+        config=config,
+        config_sha256=config_sha,
+    )
+    usd_state = _normal("USD_JPY")
+    packet = _chart(pair="EUR_USD", direction="DOWN")
+    packet["charts"].extend(_chart(pair="USD_JPY", direction="UP")["charts"])
+    signals = [
+        {
+            "signal_id": "eur-frozen",
+            "pair": "EUR_USD",
+            "side": "SHORT",
+            "method": "TREND_CONTINUATION",
+            "entry": 1.1,
+            "take_profit_pips": 10.0,
+            "m5_atr_pips": 4.0,
+            "spread_pips": 0.8,
+        },
+        {
+            "signal_id": "usd-normal",
+            "pair": "USD_JPY",
+            "side": "LONG",
+            "method": "TREND_CONTINUATION",
+            "entry": 150.0,
+            "take_profit_pips": 10.0,
+            "m5_atr_pips": 4.0,
+            "spread_pips": 0.8,
+        },
+    ]
+    guarded, decisions = guard_shadow(
+        shadow={"contract_sha256": "source", "signals": signals},
+        state=eur_state,
+        states={"EUR_USD": eur_state, "USD_JPY": usd_state},
+        pair_charts=packet,
+        config=config,
+        config_sha256=config_sha,
+        now_utc=NOW,
+    )
+    by_pair = {row["pair"]: row for row in decisions}
+    assert by_pair["EUR_USD"]["entry_allowed"] is False
+    assert by_pair["EUR_USD"]["state"] == SHOCK_FREEZE
+    assert by_pair["USD_JPY"]["entry_allowed"] is True
+    assert by_pair["USD_JPY"]["state"] == NORMAL
+    assert [row["pair"] for row in guarded["signals"]] == ["USD_JPY"]
+
+    missing_guarded, missing_decisions = guard_shadow(
+        shadow={"contract_sha256": "source", "signals": [signals[1]]},
+        state=eur_state,
+        pair_charts=packet,
+        config=config,
+        config_sha256=config_sha,
+        now_utc=NOW,
+    )
+    assert missing_guarded["signals"] == []
+    assert missing_decisions[0]["rejection_reason"] == "SHOCK_GUARD_SHOCK_FREEZE"
+
+
 def test_restart_restore_duplicate_event_and_invalid_state(tmp_path: Path):
     config, config_sha = _config()
     chart = _chart(direction="DOWN")
@@ -397,3 +512,28 @@ def test_restart_restore_duplicate_event_and_invalid_state(tmp_path: Path):
     assert third["state"] == SHOCK_FREEZE
     restored = json.loads((tmp_path / "scorecard.json").read_text())
     assert restored["restart_restore_valid"] is False
+
+
+def test_run_cycle_persists_one_durable_state_per_pair(tmp_path: Path):
+    config, config_sha = _config()
+    packet = _chart(pair="EUR_USD", direction="DOWN")
+    packet["charts"].extend(_chart(pair="USD_JPY", direction="UP")["charts"])
+    result = run_guard_cycle(
+        pair_charts=packet,
+        shadow={"contract_sha256": canonical_sha({}), "signals": []},
+        config=config,
+        config_sha256=config_sha,
+        state_path=tmp_path / "state.json",
+        decision_ledger_path=tmp_path / "decisions.jsonl",
+        scorecard_path=tmp_path / "scorecard.json",
+        output_path=tmp_path / "guarded.json",
+        now_utc=NOW + timedelta(minutes=1),
+    )
+    assert set(result["states"]) == {"EUR_USD", "USD_JPY"}
+    assert Path(result["state_paths"]["EUR_USD"]).is_file()
+    assert Path(result["state_paths"]["USD_JPY"]).is_file()
+    scorecard = json.loads((tmp_path / "scorecard.json").read_text())
+    assert set(scorecard["current_states"]) == {"EUR_USD", "USD_JPY"}
+    assert scorecard["external_order_attempts"] == scorecard["external_orders"] == 0
+    assert scorecard["manual_tagless_policy"] == "NO_TOUCH"
+    assert scorecard["existing_tp_sl_policy"] == "NO_TOUCH"
