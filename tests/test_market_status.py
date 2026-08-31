@@ -6,7 +6,12 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.analysis.market_status import compute_market_status, write_report, write_snapshot
+from quant_rabbit.analysis.market_status import (
+    compute_market_status,
+    fx_market_open_seconds_between,
+    write_report,
+    write_snapshot,
+)
 
 
 class MarketStatusTest(unittest.TestCase):
@@ -74,6 +79,29 @@ class MarketStatusTest(unittest.TestCase):
             at_open.most_recent_open_utc,
             "2026-01-11T22:00:00+00:00",
         )
+
+    def test_open_seconds_exclude_summer_weekend_closure(self) -> None:
+        elapsed = fx_market_open_seconds_between(
+            datetime(2026, 8, 28, 21, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 31, 7, 46, 43, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(elapsed, 38_803.0)
+
+    def test_open_seconds_follow_winter_new_york_boundary(self) -> None:
+        elapsed = fx_market_open_seconds_between(
+            datetime(2026, 1, 9, 22, 0, tzinfo=timezone.utc),
+            datetime(2026, 1, 12, 8, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(elapsed, 36_000.0)
+
+    def test_open_seconds_reject_reversed_interval(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not precede"):
+            fx_market_open_seconds_between(
+                datetime(2026, 8, 31, 7, 46, tzinfo=timezone.utc),
+                datetime(2026, 8, 31, 7, 45, tzinfo=timezone.utc),
+            )
 
     def test_writes_snapshot_and_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

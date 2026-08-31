@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from quant_rabbit.analysis.market_status import fx_market_open_seconds_between
 from quant_rabbit.guardian_observation import (
     CURRENT_M1_CONTRACT,
     SLOW_RETENTION_CONTRACT,
@@ -1310,8 +1311,20 @@ def _view_candle_fresh(
     age = (now - closed).total_seconds()
     # A producer marking an in-progress candle complete is a hard clock defect.
     # Two completed bars of allowance covers one missed refresh without using
-    # an arbitrarily old M1 trigger in the 30-second executor.
-    return 0.0 <= age <= float(seconds * 2)
+    # an arbitrarily old M1 trigger in the 30-second executor. Scheduled FX
+    # weekend closure contributes no observable bars, so freshness advances on
+    # the canonical DST-aware market-open clock rather than raw wall time.
+    # Under the deterministic 24/5 calendar a single weekly closure is always
+    # shorter than three days, including a New York DST transition.  Anything
+    # older than the bar allowance plus that bound is certainly stale, and the
+    # early return keeps malformed ancient timestamps out of the day iterator.
+    if age < 0.0 or age > float(seconds * 2 + 3 * 24 * 60 * 60):
+        return False
+    try:
+        open_market_age = fx_market_open_seconds_between(closed, now)
+    except (OverflowError, TypeError, ValueError):
+        return False
+    return open_market_age <= float(seconds * 2)
 
 
 def _spread_pips(pair: str, quote: Mapping[str, Any]) -> float | None:

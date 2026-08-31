@@ -76,6 +76,68 @@ def compute_market_status(now_utc: datetime | None = None) -> MarketStatus:
     )
 
 
+def fx_market_open_seconds_between(
+    start_utc: datetime,
+    end_utc: datetime,
+) -> float:
+    """Return elapsed time inside the deterministic 24/5 FX week.
+
+    Wall-clock age is the wrong freshness clock across the scheduled weekend:
+    the latest Friday close remains the latest available evidence until bars
+    can complete after the Sunday 17:00 America/New_York reopen.  This helper
+    counts only intervals where the canonical weekly market calendar is open,
+    retaining its daylight-saving-aware boundary.
+    """
+
+    start = _as_utc(start_utc)
+    end = _as_utc(end_utc)
+    if end < start:
+        raise ValueError("end_utc must not precede start_utc")
+    if end == start:
+        return 0.0
+
+    start_local = start.astimezone(FX_MARKET_TIMEZONE)
+    end_local = end.astimezone(FX_MARKET_TIMEZONE)
+    day = start_local.date()
+    last_day = end_local.date()
+    elapsed = 0.0
+    while day <= last_day:
+        weekday = day.weekday()
+        midnight = datetime.combine(day, time.min, tzinfo=FX_MARKET_TIMEZONE)
+        next_midnight = datetime.combine(
+            day + timedelta(days=1),
+            time.min,
+            tzinfo=FX_MARKET_TIMEZONE,
+        )
+        if weekday == FX_OPEN_WEEKDAY:
+            open_start = datetime.combine(
+                day,
+                FX_WEEK_BOUNDARY_LOCAL_TIME,
+                tzinfo=FX_MARKET_TIMEZONE,
+            )
+            open_end = next_midnight
+        elif weekday in {0, 1, 2, 3}:
+            open_start = midnight
+            open_end = next_midnight
+        elif weekday == FX_CLOSE_WEEKDAY:
+            open_start = midnight
+            open_end = datetime.combine(
+                day,
+                FX_WEEK_BOUNDARY_LOCAL_TIME,
+                tzinfo=FX_MARKET_TIMEZONE,
+            )
+        else:
+            day += timedelta(days=1)
+            continue
+
+        overlap_start = max(start, open_start.astimezone(timezone.utc))
+        overlap_end = min(end, open_end.astimezone(timezone.utc))
+        if overlap_end > overlap_start:
+            elapsed += (overlap_end - overlap_start).total_seconds()
+        day += timedelta(days=1)
+    return elapsed
+
+
 def write_snapshot(status: MarketStatus, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(status.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n")

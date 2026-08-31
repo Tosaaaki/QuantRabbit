@@ -144,6 +144,34 @@ def _inputs(*, failed_break_short: bool = False) -> tuple[dict, dict, dict]:
     return fast, slow, snapshot
 
 
+def _retime_inputs(
+    fast: dict,
+    slow: dict,
+    snapshot: dict,
+    *,
+    now: datetime,
+    latest_closed_at_by_timeframe: dict[str, datetime] | None = None,
+) -> None:
+    latest_closed_at_by_timeframe = latest_closed_at_by_timeframe or {}
+    fast["generated_at_utc"] = now.isoformat()
+    slow["generated_at_utc"] = now.isoformat()
+    snapshot["fetched_at_utc"] = now.isoformat()
+    for quote in snapshot["quotes"].values():
+        quote["timestamp_utc"] = now.isoformat()
+    for packet in (fast, slow):
+        for chart in packet["charts"]:
+            for view in chart["views"]:
+                timeframe = view["granularity"]
+                step = timedelta(minutes=TF_MINUTES[timeframe])
+                latest_closed_at = latest_closed_at_by_timeframe.get(timeframe, now)
+                latest_started_at = latest_closed_at - step
+                candles = view["recent_candles"]
+                for index, candle in enumerate(candles):
+                    candle["t"] = (
+                        latest_started_at - step * (len(candles) - index - 1)
+                    ).isoformat()
+
+
 def _row(contract: dict, *, side: str, method: str) -> dict:
     return next(
         item
@@ -1987,6 +2015,100 @@ class FastBotTest(unittest.TestCase):
                 "anchor": ["D"],
             },
         )
+
+    def test_weekend_elapsed_time_does_not_make_latest_daily_anchor_stale(self) -> None:
+        monday = datetime(2026, 8, 31, 7, 46, 43, tzinfo=timezone.utc)
+        friday_daily_close = datetime(2026, 8, 28, 21, 0, tzinfo=timezone.utc)
+        fast, slow, snapshot = _inputs()
+        _retime_inputs(
+            fast,
+            slow,
+            snapshot,
+            now=monday,
+            latest_closed_at_by_timeframe={"D": friday_daily_close},
+        )
+
+        contract = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            now_utc=monday,
+        )
+
+        trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+        self.assertEqual(trend["state"], "GO")
+        self.assertNotIn(
+            "SLOW_CLOSED_CANDLE_STALE_OR_FUTURE:D",
+            trend["caution_reasons"],
+        )
+
+    def test_weekend_allowance_does_not_hide_open_market_h4_staleness(self) -> None:
+        monday = datetime(2026, 8, 31, 7, 46, 43, tzinfo=timezone.utc)
+        friday_close = datetime(2026, 8, 28, 21, 0, tzinfo=timezone.utc)
+        fast, slow, snapshot = _inputs()
+        _retime_inputs(
+            fast,
+            slow,
+            snapshot,
+            now=monday,
+            latest_closed_at_by_timeframe={
+                "H4": friday_close,
+                "D": friday_close,
+            },
+        )
+
+        contract = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            now_utc=monday,
+        )
+
+        trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+        self.assertEqual(trend["state"], "CAUTION")
+        self.assertIn(
+            "SLOW_CLOSED_CANDLE_STALE_OR_FUTURE:H4",
+            trend["caution_reasons"],
+        )
+
+    def test_daily_anchor_still_rejects_future_and_truly_stale_close(self) -> None:
+        cases = (
+            (
+                "future",
+                datetime(2026, 8, 31, 7, 46, 43, tzinfo=timezone.utc),
+                datetime(2026, 8, 31, 7, 46, 44, tzinfo=timezone.utc),
+            ),
+            (
+                "stale",
+                datetime(2026, 9, 2, 22, 0, tzinfo=timezone.utc),
+                datetime(2026, 8, 28, 21, 0, tzinfo=timezone.utc),
+            ),
+        )
+        for label, now, daily_close in cases:
+            with self.subTest(label=label):
+                fast, slow, snapshot = _inputs()
+                _retime_inputs(
+                    fast,
+                    slow,
+                    snapshot,
+                    now=now,
+                    latest_closed_at_by_timeframe={"D": daily_close},
+                )
+                contract = build_hierarchical_regime_contract(
+                    fast_pair_charts=fast,
+                    slow_pair_charts=slow,
+                    broker_snapshot=snapshot,
+                    guardian_events={"events": []},
+                    now_utc=now,
+                )
+                trend = _row(contract, side="LONG", method="TREND_CONTINUATION")
+                self.assertEqual(trend["state"], "CAUTION")
+                self.assertIn(
+                    "SLOW_CLOSED_CANDLE_STALE_OR_FUTURE:D",
+                    trend["caution_reasons"],
+                )
 
     def test_future_packet_snapshot_and_pair_quote_fail_closed(self) -> None:
         cases = (
