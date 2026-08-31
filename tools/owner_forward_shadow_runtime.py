@@ -43,6 +43,7 @@ STOP = False
 SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
     Path("tools/run_fast_bot_corrective_challenger.py"),
+    Path("tools/run_fast_bot_knowledge.py"),
     Path("tools/run_fast_bot_shock_follow.py"),
     Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_eurusd_outcome_learning.py"),
@@ -52,6 +53,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/guardian_observation.py"),
     Path("src/quant_rabbit/fast_bot.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
+    Path("src/quant_rabbit/fast_bot_knowledge.py"),
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
     Path("src/quant_rabbit/fast_bot_shock_guard.py"),
     Path("src/quant_rabbit/analysis/chart_reader.py"),
@@ -358,6 +360,9 @@ def _base_status(
         "scorecard_path": str(root / "scorecard" / "fast_bot_scorecard.json"),
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
+        "learning_episode_ledger_path": str(root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl"),
+        "knowledge_ledger_path": str(root / "ledgers" / "fast_bot_knowledge_ledger.jsonl"),
+        "learning_scorecard_path": str(root / "scorecard" / "fast_bot_learning_scorecard.json"),
         "shock_follow_signal_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl"),
         "shock_follow_outcome_ledger_path": str(root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl"),
         "shock_follow_scorecard_path": str(root / "scorecard" / "fast_bot_shock_follow_scorecard.json"),
@@ -394,6 +399,9 @@ def run_cycle(
         "scorecard": root / "scorecard" / "fast_bot_scorecard.json",
         "challenger_ledger": root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         "challenger_scorecard": root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json",
+        "learning_episode_ledger": root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl",
+        "knowledge_ledger": root / "ledgers" / "fast_bot_knowledge_ledger.jsonl",
+        "learning_scorecard": root / "scorecard" / "fast_bot_learning_scorecard.json",
         "shock_signal_ledger": root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         "shock_outcome_ledger": root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
         "shock_scorecard": root / "scorecard" / "fast_bot_shock_follow_scorecard.json",
@@ -481,6 +489,22 @@ def run_cycle(
             env=env,
         )
     )
+    knowledge_result = _json_stdout(
+        command_runner(
+            [
+                py,
+                str(REPO_ROOT / "tools/run_fast_bot_knowledge.py"),
+                "--shadow-ledger", str(paths["shadow_ledger"]),
+                "--outcome-ledger", str(paths["outcome_ledger"]),
+                "--challenger-ledger", str(paths["challenger_ledger"]),
+                "--config", str(REPO_ROOT / "config/fast_bot_corrective_challenger_v1.json"),
+                "--episode-ledger", str(paths["learning_episode_ledger"]),
+                "--knowledge-ledger", str(paths["knowledge_ledger"]),
+                "--scorecard", str(paths["learning_scorecard"]),
+            ],
+            env=env,
+        )
+    )
     shock_follow_result = _json_stdout(
         command_runner(
             [
@@ -541,6 +565,7 @@ def run_cycle(
     state["last_shadow_result"] = bot_result
     state["last_outcome_result"] = outcome_result
     state["last_corrective_challenger_result"] = challenger_result
+    state["last_knowledge_result"] = knowledge_result
     state["last_shock_follow_result"] = shock_follow_result
     state["last_shock_guard_result"] = shock_guard_result
     state["last_pair_chart_result"] = pair_chart_result
@@ -563,6 +588,8 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_shadow_ledger.jsonl",
         root / "ledgers" / "fast_bot_outcome_ledger.jsonl",
         root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
+        root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl",
+        root / "ledgers" / "fast_bot_knowledge_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
         root / "ledgers" / "fast_bot_shock_guard_decision_ledger.jsonl",
@@ -657,6 +684,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_shadow_result=state.get("last_shadow_result"),
                 last_outcome_result=state.get("last_outcome_result"),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
+                last_knowledge_result=state.get("last_knowledge_result"),
                 last_shock_follow_result=state.get("last_shock_follow_result"),
                 last_shock_guard_result=state.get("last_shock_guard_result"),
                 last_pair_chart_result=state.get("last_pair_chart_result"),

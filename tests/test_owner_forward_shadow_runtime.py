@@ -120,6 +120,31 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                     "returncode": 0,
                     "wall_seconds": 0.0,
                 }
+            if "run_fast_bot_knowledge.py" in " ".join(argv):
+                scorecard = Path(argv[argv.index("--scorecard") + 1])
+                scorecard.parent.mkdir(parents=True, exist_ok=True)
+                scorecard.write_text(
+                    json.dumps(
+                        {
+                            "assessment_status": "COLLECTING_FORWARD_EVIDENCE",
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    )
+                )
+                return {
+                    "stdout_tail": json.dumps(
+                        {
+                            "status": "COLLECTING_FORWARD_EVIDENCE",
+                            "execution_authority": "NONE",
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    ),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             if "run_fast_bot_shock_follow.py" in " ".join(argv):
                 scorecard = Path(argv[argv.index("--scorecard") + 1])
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +195,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertIn("broker-snapshot", joined)
         self.assertIn("resolve-fast-bot-shadow-outcomes.py", joined)
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
+        self.assertIn("run_fast_bot_knowledge.py", joined)
         self.assertIn("run_fast_bot_shock_follow.py", joined)
         self.assertIn("run_eurusd_outcome_learning.py", joined)
         self.assertNotIn("--send", joined)
@@ -179,6 +205,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["proposal_count"], 0)
         self.assertEqual(state["virtual_fill_count"], 0)
         self.assertEqual(state["last_corrective_challenger_result"]["external_orders"], 0)
+        self.assertEqual(state["last_knowledge_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
         self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
 

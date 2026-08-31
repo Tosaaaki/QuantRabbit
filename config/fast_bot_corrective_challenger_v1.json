@@ -66,6 +66,40 @@
     "reservation_source": "ENTRY_TTL_90_PLUS_MAX_HOLD_900",
     "selection_policy": "FIRST_ELIGIBLE_SIGNAL_RESERVES_LANE"
   },
+  "preregistration": {
+    "adverse_conditions": [
+      "LATER_SAME_LANE_SIGNAL_HAS_BETTER_REALIZED_PAYOFF_THAN_FIRST_SIGNAL",
+      "TARGET_ARM_MEAN_MAE_EXCEEDS_BASELINE",
+      "TARGET_ARM_MAX_CONSECUTIVE_LOSSES_EXCEEDS_BASELINE",
+      "TARGET_ARM_POST_COST_NET_PIPS_DOES_NOT_EXCEED_BASELINE"
+    ],
+    "automatic_adoption_allowed": false,
+    "change_scope": "RESIDENT_SHADOW_CHALLENGER_ONLY",
+    "contract": "QR_FAST_BOT_SHADOW_CHANGE_PREREGISTRATION_V1",
+    "effective_conditions": [
+      "SAME_PAIR_SIDE_METHOD_HORIZON_LANE_REPEATS_BEFORE_ENTRY_TTL_PLUS_MAX_HOLD",
+      "LATER_SIGNAL_ADDS_CORRELATED_LOSS_WITHOUT_INDEPENDENT_LANE_EVIDENCE"
+    ],
+    "hypothesis_id": "same-lane-cooldown-loss-compression",
+    "hypothesis_version": 1,
+    "once_only_activation_identity": "SOURCE_BUNDLE_SHA256_PLUS_CONFIG_SHA256",
+    "success_criteria": {
+      "maximum_loss_streak_delta_vs_baseline": 0,
+      "minimum_active_forward_days": 10,
+      "minimum_daily_delta_lower_pips_exclusive": 0.0,
+      "minimum_net_delta_pips_exclusive": 0.0,
+      "minimum_profit_factor": 1.25,
+      "minimum_resolved_forward_fills": 100
+    },
+    "stop_conditions": [
+      "SOURCE_OR_LEDGER_INTEGRITY_FAILURE",
+      "EXTERNAL_ORDER_ATTEMPTS_OR_ORDERS_NONZERO",
+      "TARGET_ARM_MAX_CONSECUTIVE_LOSSES_EXCEEDS_BASELINE",
+      "TARGET_ARM_MEAN_MAE_EXCEEDS_BASELINE_AFTER_MINIMUM_FILL_FLOOR",
+      "TARGET_ARM_POST_COST_NET_PIPS_NOT_ABOVE_BASELINE_AFTER_MINIMUM_FILL_FLOOR"
+    ],
+    "target_arm_id": "LANE_COOLDOWN"
+  },
   "schema_version": 1,
   "shock": {
     "absolute_m5_atr_pips": 5.0,

@@ -26,6 +26,7 @@ from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
 CONFIG_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V1"
 ROW_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_ROW_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_SCORECARD_V1"
+PREREGISTRATION_CONTRACT = "QR_FAST_BOT_SHADOW_CHANGE_PREREGISTRATION_V1"
 SCORING_POLICY = "QR_FAST_BOT_CORRECTIVE_SAME_S5_CONSERVATIVE_V1"
 ARM_ORDER = (
     "BASELINE",
@@ -108,6 +109,35 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
         or inventory.get("selection_policy") != "FIRST_ELIGIBLE_SIGNAL_RESERVES_LANE"
     ):
         raise ValueError("corrective challenger lane reservation contract mismatch")
+    preregistration = config.get("preregistration") or {}
+    success = preregistration.get("success_criteria") or {}
+    # These floors intentionally mirror the already-published fast-bot
+    # forward-admission contract. Changing them after observing this cohort
+    # would invalidate the preregistration; a later experiment needs a new
+    # hypothesis version and configuration identity.
+    if (
+        preregistration.get("contract") != PREREGISTRATION_CONTRACT
+        or preregistration.get("hypothesis_id")
+        != "same-lane-cooldown-loss-compression"
+        or preregistration.get("hypothesis_version") != 1
+        or preregistration.get("target_arm_id") != "LANE_COOLDOWN"
+        or preregistration.get("change_scope")
+        != "RESIDENT_SHADOW_CHALLENGER_ONLY"
+        or preregistration.get("automatic_adoption_allowed") is not False
+        or preregistration.get("once_only_activation_identity")
+        != "SOURCE_BUNDLE_SHA256_PLUS_CONFIG_SHA256"
+        or int(success.get("minimum_resolved_forward_fills") or 0) != 100
+        or int(success.get("minimum_active_forward_days") or 0) != 10
+        or float(success.get("minimum_profit_factor") or 0.0) != 1.25
+        or float(success.get("minimum_net_delta_pips_exclusive", -1.0)) != 0.0
+        or float(success.get("minimum_daily_delta_lower_pips_exclusive", -1.0))
+        != 0.0
+        or int(success.get("maximum_loss_streak_delta_vs_baseline", -1)) != 0
+        or not preregistration.get("effective_conditions")
+        or not preregistration.get("adverse_conditions")
+        or not preregistration.get("stop_conditions")
+    ):
+        raise ValueError("corrective challenger preregistration mismatch")
     return config, canonical_sha(config)
 
 
