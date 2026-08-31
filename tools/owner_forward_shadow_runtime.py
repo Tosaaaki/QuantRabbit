@@ -30,7 +30,11 @@ DEFAULT_STATE_ROOT = Path.home() / ".codex" / "state" / "quantrabbit" / "owner-f
 DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit" / "eurusd-outcome-learning-v1" / "current.json"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
-SLOW_TIMEFRAMES = "M1,M5,M15,M30,H1,H4,D"
+# Fetch the slowest views first and the latency-sensitive M1 view last.  The
+# pair-chart command processes each pair's requested timeframes in order, so
+# leading with M1 can make an otherwise contiguous candle stale before the
+# deterministic shock guard gets to evaluate it.
+SLOW_TIMEFRAMES = "D,H4,H1,M30,M15,M5,M1"
 # One pair-chart subprocess performs one bounded OANDA GET per pair/timeframe.
 # The broker client may consume up to roughly 30 seconds on a slow request, so
 # the process budget scales with the exact request count plus fixed startup and

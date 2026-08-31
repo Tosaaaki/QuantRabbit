@@ -65,6 +65,13 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
     def test_shadow_universe_is_initial_two_pairs(self) -> None:
         self.assertEqual(runtime.SHADOW_PAIRS, ("EUR_USD", "USD_JPY"))
 
+    def test_pair_chart_fetches_latency_sensitive_m1_last(self) -> None:
+        self.assertEqual(runtime.SLOW_TIMEFRAMES.split(",")[-1], "M1")
+        self.assertEqual(
+            set(runtime.SLOW_TIMEFRAMES.split(",")),
+            {"M1", "M5", "M15", "M30", "H1", "H4", "D"},
+        )
+
     def test_pair_chart_timeout_budget_covers_exact_get_scope(self) -> None:
         self.assertEqual(runtime._pair_chart_timeout_seconds(), 450.0)
         self.assertEqual(
