@@ -25,6 +25,12 @@
       "weight": "VOL_THROTTLE"
     },
     {
+      "arm_id": "LANE_COOLDOWN",
+      "geometry": "EMITTED",
+      "veto": "SAME_PAIR_SIDE_METHOD_HORIZON_RESERVED",
+      "weight": "FULL"
+    },
+    {
       "arm_id": "EURUSD_RANGE_ROTATION_EXCLUDE",
       "geometry": "EMITTED",
       "veto": "EURUSD_RANGE_ROTATION",
@@ -49,6 +55,17 @@
     "stop_floor_pips": 2.4
   },
   "lookahead_policy": "ENTRY_TIME_FEATURES_ONLY",
+  "inventory": {
+    "lane_fields": [
+      "pair",
+      "side",
+      "method",
+      "horizon_lane"
+    ],
+    "reservation_seconds": 990,
+    "reservation_source": "ENTRY_TTL_90_PLUS_MAX_HOLD_900",
+    "selection_policy": "FIRST_ELIGIBLE_SIGNAL_RESERVES_LANE"
+  },
   "schema_version": 1,
   "shock": {
     "absolute_m5_atr_pips": 5.0,

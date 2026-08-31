@@ -32,6 +32,7 @@ ARM_ORDER = (
     "VOL_SHOCK_VETO",
     "ATR_NORMALIZED_GEOMETRY",
     "COMBINED",
+    "LANE_COOLDOWN",
     "EURUSD_RANGE_ROTATION_EXCLUDE",
 )
 STOP_REASONS = {
@@ -178,6 +179,37 @@ def causal_features(
             ],
             "rapid_time_bucket_utc": _time_bucket(at, bucket_seconds) if is_shock else "NON_SHOCK",
         }
+    inventory = config.get("inventory") or {}
+    lane_fields = tuple(str(value) for value in inventory.get("lane_fields", ()))
+    reservation_seconds = int(inventory.get("reservation_seconds") or 0)
+    if not lane_fields or reservation_seconds <= 0:
+        raise ValueError("causal inventory reservation is required")
+    reserved_until: dict[tuple[str, ...], datetime] = {}
+    reserving_signal: dict[tuple[str, ...], str] = {}
+    for signal in sorted(
+        signals,
+        key=lambda row: (parse_utc(row["generated_at_utc"]), str(row.get("signal_id") or "")),
+    ):
+        signal_id = str(signal.get("signal_id") or "")
+        if not signal_id or signal_id not in result:
+            continue
+        generated = parse_utc(signal["generated_at_utc"])
+        lane = tuple(str(signal.get(field) or "") for field in lane_fields)
+        if any(not value for value in lane):
+            raise ValueError(f"lane identity is incomplete for {signal_id}")
+        until = reserved_until.get(lane)
+        blocked = until is not None and generated < until
+        result[signal_id].update(
+            {
+                "lane_identity": list(lane),
+                "lane_cooldown_veto": blocked,
+                "lane_reserved_by_signal_id": reserving_signal.get(lane) if blocked else None,
+                "lane_reservation_until_utc": until.isoformat() if blocked and until else None,
+            }
+        )
+        if not blocked:
+            reserved_until[lane] = generated + timedelta(seconds=reservation_seconds)
+            reserving_signal[lane] = signal_id
     return result
 
 
@@ -326,11 +358,13 @@ def arm_specs(
             break
     shock = bool(features.get("vol_shock"))
     worst = _worst_lane(signal, config)
+    lane_blocked = bool(features.get("lane_cooldown_veto"))
     return [
         {"arm_id": "BASELINE", "vetoed": False, "veto_reason": None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
         {"arm_id": "VOL_SHOCK_VETO", "vetoed": shock, "veto_reason": "VOL_SHOCK" if shock else None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
         {"arm_id": "ATR_NORMALIZED_GEOMETRY", "vetoed": False, "veto_reason": None, "stop_loss_pips": round(atr_sl, 6), "take_profit_pips": round(atr_tp, 6), "unit_weight": 1.0},
         {"arm_id": "COMBINED", "vetoed": shock or worst, "veto_reason": "VOL_SHOCK" if shock else "WORST_LANE" if worst else None, "stop_loss_pips": round(atr_sl, 6), "take_profit_pips": round(atr_tp, 6), "unit_weight": weight},
+        {"arm_id": "LANE_COOLDOWN", "vetoed": lane_blocked, "veto_reason": "LANE_RESERVED" if lane_blocked else None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
         {"arm_id": "EURUSD_RANGE_ROTATION_EXCLUDE", "vetoed": _eurusd_range(signal), "veto_reason": "EURUSD_RANGE_ROTATION" if _eurusd_range(signal) else None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
     ]
 
@@ -536,7 +570,7 @@ def build_scorecard(
         "positive_claim_allowed": False,
         "adoption_allowed": False,
         "automatic_parameter_change_allowed": False,
-        "inventory_controller_evaluated": False,
+        "inventory_controller_evaluated": True,
         "external_order_attempts": 0,
         "external_orders": 0,
         "broker_mutation": False,
@@ -547,7 +581,7 @@ def build_scorecard(
             "SMALL_SINGLE_MARKET_WINDOW_BEST_SO_FAR_IS_NOT_PROFITABILITY_PROOF",
             "SHOCK_THRESHOLDS_ARE_FROZEN_POST_ATTRIBUTION_CHALLENGERS_NOT_LIVE_PARAMETERS",
             "S5_EXTREMA_CANNOT_ORDER_INTRABAR_MFE_MAE",
-            "INVENTORY_CONTROL_IS_OUT_OF_SCOPE",
+            "LANE_COOLDOWN_IS_CAUSAL_PROSPECTIVE_SHADOW_ONLY",
         ],
     }
     return seal(body)

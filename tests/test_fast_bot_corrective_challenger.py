@@ -30,6 +30,7 @@ def _signal(signal_id: str = "signal-1", *, at: str = "2026-08-28T12:00:00+00:00
         "pair": "EUR_USD",
         "side": "LONG",
         "method": "RANGE_ROTATION",
+        "horizon_lane": "M1_EXECUTION_15M_HOLD",
         "entry": 1.0,
         "stop_loss_pips": 3.2,
         "take_profit_pips": 2.4,
@@ -85,10 +86,33 @@ def test_causal_shock_uses_strictly_prior_unique_timestamps() -> None:
     assert features["signal-5"]["prior_atr_observations"] == 3
 
 
+def test_lane_cooldown_reserves_only_first_signal_in_horizon() -> None:
+    config, _ = load_config(CONFIG_PATH)
+    signals = [
+        _signal("signal-1", at="2026-08-28T12:00:00+00:00"),
+        _signal("signal-2", at="2026-08-28T12:01:00+00:00"),
+        _signal("signal-3", at="2026-08-28T12:16:29+00:00"),
+        _signal("signal-4", at="2026-08-28T12:16:30+00:00"),
+    ]
+    features = causal_features(signals, config)
+    assert features["signal-1"]["lane_cooldown_veto"] is False
+    assert features["signal-2"]["lane_cooldown_veto"] is True
+    assert features["signal-2"]["lane_reserved_by_signal_id"] == "signal-1"
+    assert features["signal-3"]["lane_cooldown_veto"] is True
+    assert features["signal-4"]["lane_cooldown_veto"] is False
+
+
 def test_arms_are_separate_rr_one_and_veto_worst_lane() -> None:
     config, _ = load_config(CONFIG_PATH)
     signal = _signal(atr=4.0)
-    specs = {row["arm_id"]: row for row in arm_specs(signal, {"vol_shock": False}, config)}
+    specs = {
+        row["arm_id"]: row
+        for row in arm_specs(
+            signal,
+            {"vol_shock": False, "lane_cooldown_veto": True},
+            config,
+        )
+    }
     assert tuple(specs) == ARM_ORDER
     atr = specs["ATR_NORMALIZED_GEOMETRY"]
     assert atr["stop_loss_pips"] == 3.0
@@ -96,6 +120,8 @@ def test_arms_are_separate_rr_one_and_veto_worst_lane() -> None:
     assert atr["take_profit_pips"] / atr["stop_loss_pips"] >= 1.0
     assert specs["COMBINED"]["vetoed"] is True
     assert specs["COMBINED"]["veto_reason"] == "WORST_LANE"
+    assert specs["LANE_COOLDOWN"]["vetoed"] is True
+    assert specs["LANE_COOLDOWN"]["veto_reason"] == "LANE_RESERVED"
     assert specs["EURUSD_RANGE_ROTATION_EXCLUDE"]["vetoed"] is True
 
 
