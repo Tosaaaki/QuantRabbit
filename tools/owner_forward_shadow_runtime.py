@@ -30,6 +30,7 @@ DEFAULT_STATE_ROOT = Path.home() / ".codex" / "state" / "quantrabbit" / "owner-f
 DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit" / "eurusd-outcome-learning-v1" / "current.json"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
+PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v2.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -73,6 +74,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/fast_bot_shock_follow_v1.json"),
     Path("config/fast_bot_shock_guard_v1.json"),
     Path("config/fast_bot_profit_holdout_v1.json"),
+    PROFIT_HOLDOUT_POLICY_PATH,
     Path("config/eurusd_learned_policy_v1.json"),
 )
 
@@ -495,7 +497,7 @@ def run_cycle(
                     "select",
                     "--shadow", str(paths["shadow"]),
                     "--raw-signal-ledger", str(paths["shadow_ledger"]),
-                    "--policy", str(REPO_ROOT / "config/fast_bot_profit_holdout_v1.json"),
+                    "--policy", str(REPO_ROOT / PROFIT_HOLDOUT_POLICY_PATH),
                     "--selected-ledger", str(paths["profit_holdout_selected_ledger"]),
                     "--decision-ledger", str(paths["profit_holdout_decision_ledger"]),
                     "--output", str(paths["profit_holdout_selection"]),
@@ -532,7 +534,7 @@ def run_cycle(
                 py,
                 str(REPO_ROOT / "tools/run_fast_bot_profit_holdout.py"),
                 "evaluate",
-                "--policy", str(REPO_ROOT / "config/fast_bot_profit_holdout_v1.json"),
+                "--policy", str(REPO_ROOT / PROFIT_HOLDOUT_POLICY_PATH),
                 "--raw-signal-ledger", str(paths["shadow_ledger"]),
                 "--selected-ledger", str(paths["profit_holdout_selected_ledger"]),
                 "--decision-ledger", str(paths["profit_holdout_decision_ledger"]),

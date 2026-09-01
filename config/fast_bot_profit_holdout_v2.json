@@ -1,0 +1,126 @@
+{
+  "acceptance_thresholds": {
+    "maximum_daily_sample_share": 0.7,
+    "minimum_active_days": 10,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "minimum_profit_factor": 1.25,
+    "minimum_samples": 100
+  },
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "external_order_attempts": 0,
+    "external_orders": 0,
+    "live_permission": false,
+    "manual_tagless_policy": "NO_TOUCH",
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V2",
+  "holdout": {
+    "cohort_policy": "STRICTLY_AFTER_ELIGIBLE_AFTER_UTC",
+    "eligible_after_utc": "2026-09-01T10:18:30+00:00",
+    "frozen_at_utc": "2026-09-01T10:18:27+00:00",
+    "retroactive_signal_admission_allowed": false
+  },
+  "policy_id": "usdjpy-short-range-rotation-m5-atr-gte-5-prospective-v2",
+  "schema_version": 2,
+  "selection": {
+    "allowed_lanes": [
+      {
+        "candidate_status": "UNPROVEN_PROSPECTIVE_CANDIDATE",
+        "horizon_lane": "M1_EXECUTION_15M_HOLD",
+        "method": "RANGE_ROTATION",
+        "pair": "USD_JPY",
+        "priority": 100,
+        "side": "SHORT"
+      }
+    ],
+    "equal_priority_policy": "REJECT_ALL_TIED_TOP_PRIORITY",
+    "maximum_concurrent_per_pair_horizon": 1,
+    "maximum_selected_per_cycle": 1,
+    "maximum_selection_delay_seconds": 45,
+    "opposite_side_policy": "REJECT_CYCLE_ON_SAME_PAIR_HORIZON_OPPOSITE_GO",
+    "post_outcome_reranking_allowed": false,
+    "reservation_seconds": 990,
+    "selection_policy": "ONE_PRECOMMITTED_NONOVERLAPPING_LANE_PER_CYCLE",
+    "signal_filter": {
+      "entry_reference": "PASSIVE_NEAR_SIDE",
+      "filter_policy": "PASSIVE_NEAR_SIDE_M5_ATR_FLOOR_V1",
+      "historical_rows_admitted": false,
+      "m5_atr_pips_minimum": 5.0,
+      "m5_atr_pips_operator": "GREATER_THAN_OR_EQUAL",
+      "missing_or_invalid_policy": "REJECT",
+      "threshold_role": "POST_HOC_HYPOTHESIS_ONLY",
+      "units": "PIPS"
+    },
+    "unknown_lane_policy": "REJECT"
+  },
+  "supersession": {
+    "post_cutoff_diagnostic_lane_filled_signals": 23,
+    "post_cutoff_diagnostic_lane_losses": 19,
+    "post_cutoff_diagnostic_lane_net_pips": -51.4,
+    "post_cutoff_diagnostic_lane_profit_factor": 0.157377,
+    "post_cutoff_diagnostic_lane_wins": 4,
+    "post_cutoff_diagnostic_rows_admitted": false,
+    "prior_policy_decisions_screened": 43,
+    "prior_policy_last_decision_sha256": "419e9e1070368f49f87837091c63198ab4d485c4be2ded2a2424317739d81d31",
+    "prior_policy_observed_at_utc": "2026-09-01T10:27:38+00:00",
+    "prior_policy_resolved_signals": 0,
+    "prior_policy_source_bundle_sha256": "5e21a4c694a0650abee60799b2ed0f3dba57227383a8e99f95da1c2d8de43d02",
+    "prior_policy_source_commit": "e638f77a21776bb4e93dcd0e3fedaa7502f1a106",
+    "prior_policy_selected_signals": 0,
+    "prior_policy_status": "RETIRED_ZERO_ELIGIBLE_SELECTIONS",
+    "prior_rows_admitted": false,
+    "replacement_reason": "ZERO_ELIGIBLE_SELECTIONS_AND_NEGATIVE_POST_CUTOFF_DIAGNOSTIC_LANE",
+    "reward_risk_changed": false,
+    "single_factor_changed": "M5_ATR_PIPS_MINIMUM",
+    "supersedes_policy_id": "usdjpy-short-range-rotation-prospective-v1"
+  },
+  "training_evidence": {
+    "active_days": 1,
+    "candidate_lane_filled_signals": 3,
+    "candidate_lane_losses": 1,
+    "candidate_lane_mean_pips": 0.733333,
+    "candidate_lane_net_pips": 2.2,
+    "candidate_lane_profit_factor": 1.478261,
+    "candidate_lane_wins": 2,
+    "exploratory_exact_lane_thresholds": [
+      {
+        "filled_signals": 5,
+        "m5_atr_pips_minimum": 4.0,
+        "net_pips": 1.2,
+        "profit_factor": 1.15
+      },
+      {
+        "filled_signals": 3,
+        "m5_atr_pips_minimum": 5.0,
+        "net_pips": 2.2,
+        "profit_factor": 1.478261
+      },
+      {
+        "filled_signals": 0,
+        "m5_atr_pips_minimum": 6.0,
+        "net_pips": 0.0,
+        "profit_factor": null
+      }
+    ],
+    "exploratory_range_rotation_atr_gte_5_filled_signals": 13,
+    "exploratory_range_rotation_atr_gte_5_net_pips": -3.2,
+    "exploratory_range_rotation_atr_gte_5_profit_factor": 0.878327,
+    "forward_evidence_passed": false,
+    "generated_at_utc": "2026-09-01T10:18:27+00:00",
+    "overall_filled_signals": 118,
+    "overall_net_pips": -229.7,
+    "overall_profit_factor": 0.239404,
+    "profitability_claim": "UNPROVEN",
+    "selection_use": "POST_HOC_HYPOTHESIS_ONLY_FUTURE_ROWS_REQUIRED",
+    "source_cohort_commit": "af0f03e13ab42887a1fe7d80fbbc2a6eff481677",
+    "source_scorecard_contract_sha256": "a48e6377528a8a44af3a9ed80519711258e4aa12b22c2ff52a0e6ede04ac4fac",
+    "source_scorecard_file_sha256": "138b203ed3ec63c67cd53fa63e6e32089ead6afc4cc4ee88f1dabba87f980af5"
+  }
+}

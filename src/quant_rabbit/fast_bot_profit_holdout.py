@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import math
 import os
 import statistics
 from collections import defaultdict
@@ -33,10 +34,23 @@ from quant_rabbit.fast_bot_truth import (
 )
 
 
-POLICY_CONTRACT = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V1"
-DECISION_CONTRACT = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V1"
-SCORECARD_CONTRACT = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V1"
+POLICY_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V1"
+POLICY_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V2"
+DECISION_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V1"
+DECISION_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V2"
+SCORECARD_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V1"
+SCORECARD_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V2"
+
+# Backward-compatible public aliases.  V1 remains readable as immutable history;
+# the active resident explicitly selects the separately sealed V2 policy.
+POLICY_CONTRACT = POLICY_CONTRACT_V1
+DECISION_CONTRACT = DECISION_CONTRACT_V1
+SCORECARD_CONTRACT = SCORECARD_CONTRACT_V1
 SELECTION_POLICY = "ONE_PRECOMMITTED_NONOVERLAPPING_LANE_PER_CYCLE"
+SIGNAL_FILTER_POLICY_V2 = "PASSIVE_NEAR_SIDE_M5_ATR_FLOOR_V1"
+# This is a frozen, post-hoc research hypothesis threshold, not a risk limit or
+# profitability proof.  It may change only in another versioned future cohort.
+V2_MINIMUM_M5_ATR_PIPS = 5.0
 MAX_SOURCE_SIGNALS = 128
 MAX_PENDING_CYCLES_PER_RUN = 64
 LANE_FIELDS = ("pair", "side", "method", "horizon_lane")
@@ -73,7 +87,12 @@ def load_policy(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def validate_policy(policy: Mapping[str, Any]) -> None:
-    if policy.get("contract") != POLICY_CONTRACT or policy.get("schema_version") != 1:
+    contract = policy.get("contract")
+    schema_version = policy.get("schema_version")
+    if isinstance(schema_version, bool) or (contract, schema_version) not in {
+        (POLICY_CONTRACT_V1, 1),
+        (POLICY_CONTRACT_V2, 2),
+    }:
         raise ValueError("profit holdout policy contract mismatch")
     authority = policy.get("authority")
     if not isinstance(authority, Mapping) or (
@@ -124,6 +143,58 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
         ):
             raise ValueError("profit holdout lane identity or priority mismatch")
         lane_ids.add(lane)
+    if contract == POLICY_CONTRACT_V1:
+        if "signal_filter" in selection or "supersession" in policy:
+            raise ValueError("V1 profit holdout cannot contain V2 fields")
+    else:
+        _validate_v2_signal_filter(selection.get("signal_filter"))
+        supersession = policy.get("supersession")
+        if not isinstance(supersession, Mapping) or (
+            supersession.get("supersedes_policy_id")
+            != "usdjpy-short-range-rotation-prospective-v1"
+            or supersession.get("prior_policy_status")
+            != "RETIRED_ZERO_ELIGIBLE_SELECTIONS"
+            or supersession.get("prior_rows_admitted") is not False
+            or supersession.get("replacement_reason")
+            != "ZERO_ELIGIBLE_SELECTIONS_AND_NEGATIVE_POST_CUTOFF_DIAGNOSTIC_LANE"
+            or supersession.get("single_factor_changed")
+            != "M5_ATR_PIPS_MINIMUM"
+            or supersession.get("reward_risk_changed") is not False
+        ):
+            raise ValueError("V2 profit holdout supersession contract mismatch")
+        screened = supersession.get("prior_policy_decisions_screened")
+        diagnostic_fills = supersession.get(
+            "post_cutoff_diagnostic_lane_filled_signals"
+        )
+        if (
+            isinstance(screened, bool)
+            or not isinstance(screened, int)
+            or screened <= 0
+            or supersession.get("prior_policy_selected_signals") != 0
+            or supersession.get("prior_policy_resolved_signals") != 0
+            or not _valid_sha(
+                str(supersession.get("prior_policy_last_decision_sha256") or "")
+            )
+            or not _valid_sha(
+                str(supersession.get("prior_policy_source_bundle_sha256") or "")
+            )
+            or not _valid_commit(
+                str(supersession.get("prior_policy_source_commit") or "")
+            )
+            or not isinstance(diagnostic_fills, int)
+            or isinstance(diagnostic_fills, bool)
+            or diagnostic_fills <= 0
+            or supersession.get("post_cutoff_diagnostic_rows_admitted") is not False
+            or float(supersession.get("post_cutoff_diagnostic_lane_net_pips") or 0.0)
+            >= 0.0
+            or float(
+                supersession.get("post_cutoff_diagnostic_lane_profit_factor")
+                or 0.0
+            )
+            >= 1.0
+        ):
+            raise ValueError("V2 profit holdout retirement evidence mismatch")
+        _parse_utc(supersession.get("prior_policy_observed_at_utc"))
     holdout = policy.get("holdout")
     training = policy.get("training_evidence")
     if not isinstance(holdout, Mapping) or not isinstance(training, Mapping):
@@ -148,6 +219,71 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
         raise ValueError("profit holdout acceptance thresholds mismatch")
 
 
+def _validate_v2_signal_filter(value: Any) -> None:
+    if not isinstance(value, Mapping) or (
+        value.get("filter_policy") != SIGNAL_FILTER_POLICY_V2
+        or value.get("entry_reference") != "PASSIVE_NEAR_SIDE"
+        or value.get("m5_atr_pips_operator") != "GREATER_THAN_OR_EQUAL"
+        or value.get("m5_atr_pips_minimum") != V2_MINIMUM_M5_ATR_PIPS
+        or value.get("units") != "PIPS"
+        or value.get("missing_or_invalid_policy") != "REJECT"
+        or value.get("threshold_role") != "POST_HOC_HYPOTHESIS_ONLY"
+        or value.get("historical_rows_admitted") is not False
+    ):
+        raise ValueError("V2 profit holdout signal filter mismatch")
+
+
+def _policy_contracts(policy: Mapping[str, Any]) -> tuple[str, str, int]:
+    if policy.get("contract") == POLICY_CONTRACT_V1:
+        return DECISION_CONTRACT_V1, SCORECARD_CONTRACT_V1, 1
+    if policy.get("contract") == POLICY_CONTRACT_V2:
+        return DECISION_CONTRACT_V2, SCORECARD_CONTRACT_V2, 2
+    raise ValueError("unknown profit holdout policy contract")
+
+
+def _decision_contract_valid(
+    decision: Mapping[str, Any],
+    *,
+    expected_contract: str | None = None,
+) -> bool:
+    contract = str(decision.get("contract") or "")
+    if contract not in {DECISION_CONTRACT_V1, DECISION_CONTRACT_V2}:
+        return False
+    expected_schema = 1 if contract == DECISION_CONTRACT_V1 else 2
+    if decision.get("schema_version") != expected_schema:
+        return False
+    return (expected_contract is None or contract == expected_contract) and sealed_valid(
+        decision,
+        contract,
+    )
+
+
+def _signal_filter_reasons(
+    signal: Mapping[str, Any],
+    policy: Mapping[str, Any],
+) -> list[str]:
+    if policy.get("contract") == POLICY_CONTRACT_V1:
+        return []
+    signal_filter = policy["selection"]["signal_filter"]
+    reasons: list[str] = []
+    if signal.get("entry_reference") != signal_filter["entry_reference"]:
+        reasons.append("ENTRY_REFERENCE_NOT_PRECOMMITTED")
+    raw_atr = signal.get("m5_atr_pips")
+    if isinstance(raw_atr, bool):
+        reasons.append("M5_ATR_INVALID_FOR_PRECOMMITTED_FILTER")
+        return reasons
+    try:
+        atr = float(raw_atr)
+    except (TypeError, ValueError, OverflowError):
+        reasons.append("M5_ATR_INVALID_FOR_PRECOMMITTED_FILTER")
+        return reasons
+    if not math.isfinite(atr) or atr <= 0.0:
+        reasons.append("M5_ATR_INVALID_FOR_PRECOMMITTED_FILTER")
+    elif atr < float(signal_filter["m5_atr_pips_minimum"]):
+        reasons.append("M5_ATR_BELOW_PRECOMMITTED_MINIMUM")
+    return reasons
+
+
 def build_holdout_decision(
     raw_shadow: Mapping[str, Any],
     *,
@@ -161,6 +297,7 @@ def build_holdout_decision(
     validate_policy(policy)
     if policy_sha256 != canonical_sha(policy):
         raise ValueError("profit holdout policy SHA-256 mismatch")
+    decision_contract, _, schema_version = _policy_contracts(policy)
     now = _aware_utc(now_utc or datetime.now(timezone.utc))
     cutoff = _parse_utc(policy["holdout"]["eligible_after_utc"])
     source_errors = _source_shadow_errors(raw_shadow)
@@ -218,6 +355,7 @@ def build_holdout_decision(
                 reasons.append("SIGNAL_SELECTION_WINDOW_EXPIRED")
         if priority is None:
             reasons.append("LANE_NOT_PRECOMMITTED")
+        reasons.extend(_signal_filter_reasons(signal, policy))
         if (
             lane in opposite_conflicts
             or any(
@@ -283,8 +421,8 @@ def build_holdout_decision(
     )
     decision_identity = canonical_sha([policy_sha256, source_cycle_sha])
     body = {
-        "contract": DECISION_CONTRACT,
-        "schema_version": 1,
+        "contract": decision_contract,
+        "schema_version": schema_version,
         "generated_at_utc": now.isoformat(),
         "status": status,
         "selection_policy": SELECTION_POLICY,
@@ -315,6 +453,8 @@ def build_holdout_decision(
         "gateway_invocations": 0,
         "manual_tagless_policy": "NO_TOUCH",
     }
+    if policy.get("contract") == POLICY_CONTRACT_V2:
+        body["signal_filter"] = dict(policy["selection"]["signal_filter"])
     return seal(body)
 
 
@@ -334,6 +474,7 @@ def build_holdout_scorecard(
     validate_policy(policy)
     if policy_sha256 != canonical_sha(policy):
         raise ValueError("profit holdout policy SHA-256 mismatch")
+    decision_contract, scorecard_contract, schema_version = _policy_contracts(policy)
     now = _aware_utc(now_utc or datetime.now(timezone.utc))
     cutoff = _parse_utc(policy["holdout"]["eligible_after_utc"])
     allowed = {_lane(row) for row in policy["selection"]["allowed_lanes"]}
@@ -376,6 +517,10 @@ def build_holdout_scorecard(
             invalid.append("FUTURE_SIGNAL_IN_HOLDOUT_LEDGER")
         if _lane(signal) not in allowed:
             invalid.append("UNPRECOMMITTED_LANE_IN_HOLDOUT_LEDGER")
+        invalid.extend(
+            f"SELECTED_SIGNAL_{reason}"
+            for reason in _signal_filter_reasons(signal, policy)
+        )
         signal_by_sha[signal_sha] = signal
 
     selected_by_decision: defaultdict[str, int] = defaultdict(int)
@@ -386,7 +531,11 @@ def build_holdout_scorecard(
     for decision in decisions:
         if (
             not isinstance(decision, Mapping)
-            or not sealed_valid(decision, DECISION_CONTRACT)
+            or not _decision_contract_valid(
+                decision,
+                expected_contract=decision_contract,
+            )
+            or decision.get("schema_version") != schema_version
             or decision.get("policy_sha256") != policy_sha256
             or not _valid_sha(str(decision.get("source_cycle_sha256") or ""))
             or decision.get("decision_identity_sha256")
@@ -411,6 +560,11 @@ def build_holdout_scorecard(
             or decision.get("gateway_invocations") != 0
             or decision.get("manual_tagless_policy") != "NO_TOUCH"
             or decision.get("profitability_claim") != "UNPROVEN"
+            or (
+                policy.get("contract") == POLICY_CONTRACT_V2
+                and decision.get("signal_filter")
+                != policy["selection"]["signal_filter"]
+            )
         ):
             invalid.append("DECISION_LEDGER_INTEGRITY_FAILURE")
             continue
@@ -453,6 +607,7 @@ def build_holdout_scorecard(
                 or not isinstance(signal, Mapping)
                 or signal.get("signal_sha256") != signal_sha
                 or not _fast_bot_signal_valid(signal)
+                or _signal_filter_reasons(signal, policy)
             ):
                 invalid.append("DECISION_SELECTED_SIGNAL_INVALID")
                 continue
@@ -576,7 +731,7 @@ def build_holdout_scorecard(
         )
         lane = policy["selection"]["allowed_lanes"][0]
         evidence = build_profitability_evidence(
-            lane_id=":".join(str(lane[field]) for field in LANE_FIELDS),
+            lane_id=_profitability_lane_id(policy),
             pair=str(lane["pair"]),
             side=str(lane["side"]),
             method=str(lane["method"]),
@@ -606,8 +761,8 @@ def build_holdout_scorecard(
         blockers = list(gate.get("blockers") or [])
 
     body = {
-        "contract": SCORECARD_CONTRACT,
-        "schema_version": 1,
+        "contract": scorecard_contract,
+        "schema_version": schema_version,
         "generated_at_utc": now.isoformat(),
         "status": status,
         "policy_id": policy.get("policy_id"),
@@ -653,6 +808,8 @@ def build_holdout_scorecard(
         "gateway_invocations": 0,
         "manual_tagless_policy": "NO_TOUCH",
     }
+    if policy.get("contract") == POLICY_CONTRACT_V2:
+        body["signal_filter"] = dict(policy["selection"]["signal_filter"])
     return seal(body)
 
 
@@ -668,6 +825,7 @@ def run_selection(
     now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     policy, policy_sha = load_policy(policy_path)
+    decision_contract, _, _ = _policy_contracts(policy)
     shadow = _read_object(raw_shadow_path)
     now = _aware_utc(now_utc or datetime.now(timezone.utc))
     raw_signals = load_jsonl(raw_signal_ledger_path)
@@ -687,7 +845,10 @@ def run_selection(
     signals_appended = 0
     for existing in existing_decisions:
         if (
-            not sealed_valid(existing, DECISION_CONTRACT)
+            not _decision_contract_valid(
+                existing,
+                expected_contract=decision_contract,
+            )
             or existing.get("policy_sha256") != policy_sha
             or existing.get("decision_identity_sha256")
             != canonical_sha([policy_sha, existing.get("source_cycle_sha256")])
@@ -770,8 +931,11 @@ def run_selection(
     _write_text_atomic(report_path, render_selection_report(latest_decision))
     return {
         "status": latest_decision["status"],
+        "policy_contract": policy["contract"],
+        "policy_id": policy["policy_id"],
         "decision_sha256": latest_decision["contract_sha256"],
         "policy_sha256": policy_sha,
+        "signal_filter": policy["selection"].get("signal_filter"),
         "selected_signal_count": latest_decision["selected_signal_count"],
         "selected_signals_appended": signals_appended,
         "decision_appended": decision_appended,
@@ -815,7 +979,11 @@ def run_evaluation(
     _write_text_atomic(report_path, render_scorecard_report(scorecard))
     return {
         "status": scorecard["status"],
+        "policy_contract": policy["contract"],
+        "policy_id": policy["policy_id"],
         "scorecard_sha256": scorecard["contract_sha256"],
+        "policy_sha256": policy_sha,
+        "signal_filter": policy["selection"].get("signal_filter"),
         "cohort_integrity_passed": scorecard["cohort_integrity_passed"],
         "selected_signal_count": scorecard["selected_signal_count"],
         "filled_signals": scorecard["truth_metrics"].get("filled_signals"),
@@ -846,18 +1014,22 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def append_decision_once(path: Path, decision: Mapping[str, Any]) -> int:
-    if not sealed_valid(decision, DECISION_CONTRACT):
+    if not _decision_contract_valid(decision):
         raise ValueError("invalid profit holdout decision")
+    decision_contract = str(decision["contract"])
     return _append_jsonl_once(
         path,
         decision,
         identity_field="decision_identity_sha256",
-        validator=lambda row: sealed_valid(row, DECISION_CONTRACT),
+        validator=lambda row: _decision_contract_valid(
+            row,
+            expected_contract=decision_contract,
+        ),
     )
 
 
 def append_selected_signals_once(path: Path, decision: Mapping[str, Any]) -> int:
-    if not sealed_valid(decision, DECISION_CONTRACT):
+    if not _decision_contract_valid(decision):
         raise ValueError("invalid profit holdout decision")
     selected = decision.get("selected_signals")
     if not isinstance(selected, list) or len(selected) > 1:
@@ -907,6 +1079,12 @@ def render_selection_report(decision: Mapping[str, Any]) -> str:
         )
         or "none"
     )
+    signal_filter = decision.get("signal_filter")
+    filter_label = (
+        f"PASSIVE_NEAR_SIDE and M5 ATR >= {signal_filter.get('m5_atr_pips_minimum')} pips"
+        if isinstance(signal_filter, Mapping)
+        else "lane only (V1 historical contract)"
+    )
     return "\n".join(
         [
             "# Fast Bot Profit Holdout Selection",
@@ -915,6 +1093,7 @@ def render_selection_report(decision: Mapping[str, Any]) -> str:
             f"- Status: `{decision.get('status')}`",
             f"- Policy: `{decision.get('policy_id')}` / `{decision.get('policy_sha256')}`",
             f"- Strictly prospective after: `{decision.get('eligible_after_utc')}`",
+            f"- Precommitted filter: `{filter_label}`",
             f"- Selected: {selected_label}",
             "- Profitability claim: `UNPROVEN`",
             "- Execution authority: `NONE`",
@@ -928,6 +1107,12 @@ def render_selection_report(decision: Mapping[str, Any]) -> str:
 def render_scorecard_report(scorecard: Mapping[str, Any]) -> str:
     metrics = scorecard.get("truth_metrics") or {}
     blockers = scorecard.get("blockers") or []
+    signal_filter = scorecard.get("signal_filter")
+    filter_label = (
+        f"PASSIVE_NEAR_SIDE and M5 ATR >= {signal_filter.get('m5_atr_pips_minimum')} pips"
+        if isinstance(signal_filter, Mapping)
+        else "lane only (V1 historical contract)"
+    )
     return "\n".join(
         [
             "# Fast Bot Profit Holdout Scorecard",
@@ -935,6 +1120,7 @@ def render_scorecard_report(scorecard: Mapping[str, Any]) -> str:
             f"- Generated: `{scorecard.get('generated_at_utc')}`",
             f"- Status: `{scorecard.get('status')}`",
             f"- Cohort integrity: `{scorecard.get('cohort_integrity_passed')}`",
+            f"- Precommitted filter: `{filter_label}`",
             f"- Selected / filled / days: {scorecard.get('selected_signal_count')} / {metrics.get('filled_signals')} / {metrics.get('active_days')}",
             f"- Net pips / PF: {metrics.get('net_pips')} / {metrics.get('profit_factor')}",
             f"- Blockers: {', '.join(str(item) for item in blockers) or 'none'}",
@@ -1095,6 +1281,7 @@ def _decision_selection_semantics(
         "history_integrity_errors": decision.get("history_integrity_errors"),
         "candidate_status": decision.get("candidate_status"),
         "profitability_claim": decision.get("profitability_claim"),
+        "signal_filter": decision.get("signal_filter"),
     }
 
 
@@ -1136,6 +1323,15 @@ def _profitability_metrics(
         "max_daily_sample_share": round(maximum_daily_share, 12),
         "spread_included": True,
     }
+
+
+def _profitability_lane_id(policy: Mapping[str, Any]) -> str:
+    lane = policy["selection"]["allowed_lanes"][0]
+    base = ":".join(str(lane[field]) for field in LANE_FIELDS)
+    if policy.get("contract") == POLICY_CONTRACT_V1:
+        return base
+    minimum = policy["selection"]["signal_filter"]["m5_atr_pips_minimum"]
+    return f"{base}:PASSIVE_NEAR_SIDE:M5_ATR_GTE_{minimum:g}"
 
 
 def _append_jsonl_once(
@@ -1293,3 +1489,7 @@ def _aware_utc(value: datetime) -> datetime:
 
 def _valid_sha(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _valid_commit(value: str) -> bool:
+    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)

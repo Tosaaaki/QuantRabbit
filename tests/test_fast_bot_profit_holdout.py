@@ -11,7 +11,10 @@ from pathlib import Path
 from quant_rabbit.fast_bot import HORIZON_LANE, SHADOW_CONTRACT, SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_profit_holdout import (
     POLICY_CONTRACT,
+    POLICY_CONTRACT_V2,
     SELECTION_POLICY,
+    SIGNAL_FILTER_POLICY_V2,
+    V2_MINIMUM_M5_ATR_PIPS,
     append_decision_once,
     build_holdout_decision,
     build_holdout_scorecard,
@@ -88,12 +91,52 @@ def _policy() -> tuple[dict, str]:
     return policy, canonical_sha(policy)
 
 
+def _v2_policy() -> tuple[dict, str]:
+    policy, _ = _policy()
+    policy.update(
+        contract=POLICY_CONTRACT_V2,
+        schema_version=2,
+        policy_id="test-prospective-lane-v2",
+        supersession={
+            "supersedes_policy_id": "usdjpy-short-range-rotation-prospective-v1",
+            "prior_policy_status": "RETIRED_ZERO_ELIGIBLE_SELECTIONS",
+            "prior_rows_admitted": False,
+            "replacement_reason": "ZERO_ELIGIBLE_SELECTIONS_AND_NEGATIVE_POST_CUTOFF_DIAGNOSTIC_LANE",
+            "single_factor_changed": "M5_ATR_PIPS_MINIMUM",
+            "reward_risk_changed": False,
+            "prior_policy_decisions_screened": 1,
+            "prior_policy_selected_signals": 0,
+            "prior_policy_resolved_signals": 0,
+            "prior_policy_last_decision_sha256": "d" * 64,
+            "prior_policy_observed_at_utc": CUTOFF.isoformat(),
+            "prior_policy_source_bundle_sha256": "e" * 64,
+            "prior_policy_source_commit": "f" * 40,
+            "post_cutoff_diagnostic_lane_filled_signals": 1,
+            "post_cutoff_diagnostic_lane_net_pips": -1.0,
+            "post_cutoff_diagnostic_lane_profit_factor": 0.5,
+            "post_cutoff_diagnostic_rows_admitted": False,
+        },
+    )
+    policy["selection"]["signal_filter"] = {
+        "filter_policy": SIGNAL_FILTER_POLICY_V2,
+        "entry_reference": "PASSIVE_NEAR_SIDE",
+        "m5_atr_pips_operator": "GREATER_THAN_OR_EQUAL",
+        "m5_atr_pips_minimum": V2_MINIMUM_M5_ATR_PIPS,
+        "units": "PIPS",
+        "missing_or_invalid_policy": "REJECT",
+        "threshold_role": "POST_HOC_HYPOTHESIS_ONLY",
+        "historical_rows_admitted": False,
+    }
+    return policy, canonical_sha(policy)
+
+
 def _signal(
     name: str,
     *,
     generated: datetime,
     side: str = "LONG",
     method: str = "RANGE_ROTATION",
+    m5_atr_pips: float | None = None,
 ) -> dict:
     if side == "LONG":
         entry, target, stop = 1.1000, 1.1003, 1.0997
@@ -127,6 +170,8 @@ def _signal(
         "live_permission": False,
         "broker_mutation_allowed": False,
     }
+    if m5_atr_pips is not None:
+        body["m5_atr_pips"] = m5_atr_pips
     return {**body, "signal_sha256": canonical_sha(body)}
 
 
@@ -207,6 +252,89 @@ class FastBotProfitHoldoutTest(unittest.TestCase):
         self.assertFalse(policy["training_evidence"]["forward_evidence_passed"])
         self.assertEqual(policy["authority"]["execution_authority"], "NONE")
         self.assertFalse(policy["authority"]["live_permission"])
+
+    def test_repository_v2_policy_retires_v1_and_starts_unproven(self) -> None:
+        policy, policy_sha = load_policy(
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "fast_bot_profit_holdout_v2.json"
+        )
+
+        self.assertEqual(len(policy_sha), 64)
+        self.assertEqual(policy["contract"], POLICY_CONTRACT_V2)
+        self.assertEqual(
+            policy["supersession"]["prior_policy_status"],
+            "RETIRED_ZERO_ELIGIBLE_SELECTIONS",
+        )
+        self.assertFalse(policy["supersession"]["prior_rows_admitted"])
+        self.assertEqual(policy["supersession"]["prior_policy_selected_signals"], 0)
+        self.assertEqual(
+            policy["supersession"]["post_cutoff_diagnostic_lane_net_pips"],
+            -51.4,
+        )
+        self.assertEqual(
+            policy["selection"]["signal_filter"]["m5_atr_pips_minimum"],
+            5.0,
+        )
+        self.assertEqual(
+            policy["training_evidence"]["selection_use"],
+            "POST_HOC_HYPOTHESIS_ONLY_FUTURE_ROWS_REQUIRED",
+        )
+        self.assertFalse(policy["training_evidence"]["forward_evidence_passed"])
+
+    def test_v2_selects_only_at_or_above_precommitted_atr_floor(self) -> None:
+        policy, policy_sha = _v2_policy()
+        generated = CUTOFF + timedelta(days=1)
+        below = build_holdout_decision(
+            _shadow(_signal("below", generated=generated, m5_atr_pips=4.999999)),
+            policy=policy,
+            policy_sha256=policy_sha,
+            now_utc=generated + timedelta(seconds=1),
+        )
+        at_floor = build_holdout_decision(
+            _shadow(_signal("at-floor", generated=generated, m5_atr_pips=5.0)),
+            policy=policy,
+            policy_sha256=policy_sha,
+            now_utc=generated + timedelta(seconds=1),
+        )
+
+        self.assertEqual(below["selected_signal_count"], 0)
+        self.assertIn(
+            "M5_ATR_BELOW_PRECOMMITTED_MINIMUM",
+            below["selection_rows"][0]["reasons"],
+        )
+        self.assertEqual(at_floor["status"], "SELECTED_PROSPECTIVE_HOLDOUT")
+        self.assertEqual(at_floor["contract"], "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V2")
+        self.assertEqual(
+            at_floor["signal_filter"],
+            policy["selection"]["signal_filter"],
+        )
+
+    def test_v2_rejects_missing_atr_while_v1_remains_readable(self) -> None:
+        generated = CUTOFF + timedelta(days=1)
+        signal = _signal("missing-atr", generated=generated)
+        v1, v1_sha = _policy()
+        v2, v2_sha = _v2_policy()
+
+        v1_decision = build_holdout_decision(
+            _shadow(signal),
+            policy=v1,
+            policy_sha256=v1_sha,
+            now_utc=generated + timedelta(seconds=1),
+        )
+        v2_decision = build_holdout_decision(
+            _shadow(signal),
+            policy=v2,
+            policy_sha256=v2_sha,
+            now_utc=generated + timedelta(seconds=1),
+        )
+
+        self.assertEqual(v1_decision["status"], "SELECTED_PROSPECTIVE_HOLDOUT")
+        self.assertEqual(v2_decision["selected_signal_count"], 0)
+        self.assertIn(
+            "M5_ATR_INVALID_FOR_PRECOMMITTED_FILTER",
+            v2_decision["selection_rows"][0]["reasons"],
+        )
 
     def test_selects_only_precommitted_future_lane_without_mutating_raw_shadow(self) -> None:
         policy, policy_sha = _policy()
@@ -643,6 +771,34 @@ class FastBotProfitHoldoutTest(unittest.TestCase):
         self.assertIn("SELECTED_SIGNAL_INVALID", scorecard["cohort_integrity_errors"])
         self.assertIsNone(scorecard["profitability_gate"])
         self.assertFalse(scorecard["live_permission"])
+
+    def test_v2_scorecard_rejects_a_below_floor_selected_ledger_row(self) -> None:
+        policy, policy_sha = _v2_policy()
+        generated = CUTOFF + timedelta(days=1)
+        below = _signal("below-ledger-floor", generated=generated, m5_atr_pips=4.9)
+        truth = build_fast_bot_scorecard([below], [], as_of_utc=NOW)
+
+        scorecard = build_holdout_scorecard(
+            policy=policy,
+            policy_sha256=policy_sha,
+            decisions=[],
+            raw_signals=[below],
+            selected_signals=[below],
+            outcomes=[],
+            truth_scorecard=truth,
+            now_utc=NOW,
+        )
+
+        self.assertEqual(scorecard["status"], "REJECT_INVALID_HOLDOUT_COHORT")
+        self.assertIn(
+            "SELECTED_SIGNAL_M5_ATR_BELOW_PRECOMMITTED_MINIMUM",
+            scorecard["cohort_integrity_errors"],
+        )
+        self.assertIsNone(scorecard["profitability_evidence"])
+        self.assertEqual(
+            scorecard["contract"],
+            "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V2",
+        )
 
     def test_unscreened_raw_cycle_invalidates_holdout_completeness(self) -> None:
         policy, policy_sha = _policy()
