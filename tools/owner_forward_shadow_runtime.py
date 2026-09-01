@@ -72,6 +72,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot_profit_candidate_audit.py"),
     Path("src/quant_rabbit/fast_bot_profitability_gate.py"),
     Path("src/quant_rabbit/fast_bot_normalized_passive_forward.py"),
+    Path("src/quant_rabbit/fast_bot_normalized_passive_family_forward.py"),
     Path("src/quant_rabbit/contextual_technical_forward.py"),
     Path("src/quant_rabbit/analysis/chart_reader.py"),
     Path("src/quant_rabbit/eurusd_outcome_learning.py"),
@@ -86,6 +87,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/fast_bot_profit_holdout_v2.json"),
     PROFIT_HOLDOUT_POLICY_PATH,
     Path("config/fast_bot_normalized_passive_forward_v1.json"),
+    Path("config/fast_bot_normalized_passive_forward_v2.json"),
     Path("config/eurusd_learned_policy_v1.json"),
 )
 

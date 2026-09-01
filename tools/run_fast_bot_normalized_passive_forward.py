@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run the frozen EUR/USD normalized-passive prospective observer.
+"""Run the frozen two-candidate normalized-passive prospective observer.
 
 The resident is a separate, content-attested GET-only collector so the narrow
 post-M1 observation window is not delayed by the slower multi-timeframe owner
-cycle.  It writes only local shadow ledgers and scorecards.
+cycle.  It evaluates one rejected historical anchor and one distinct-pair
+exploratory candidate under a corrected fixed family contract, and writes only
+local shadow ledgers and scorecards.
 """
 
 from __future__ import annotations
@@ -37,14 +39,14 @@ from owner_forward_shadow_runtime import (  # noqa: E402
     verify_release,
 )
 from quant_rabbit.broker.oanda import OandaReadOnlyClient  # noqa: E402
-from quant_rabbit.fast_bot_normalized_passive_forward import (  # noqa: E402
+from quant_rabbit.fast_bot_normalized_passive_family_forward import (  # noqa: E402
     observe_from_oanda,
     resolve_due_outcomes_from_oanda,
 )
 
 
 LABEL = "com.quantrabbit.normalized-passive-forward"
-POLICY_PATH = Path("config/fast_bot_normalized_passive_forward_v1.json")
+POLICY_PATH = Path("config/fast_bot_normalized_passive_forward_v2.json")
 STOP = False
 
 
@@ -79,6 +81,7 @@ def run_cycle(
         policy_path=ROOT / POLICY_PATH,
         latest_decision_path=paths["latest_decision"],
         decision_ledger_path=paths["decision_ledger"],
+        outcome_ledger_path=paths["outcome_ledger"],
         client_factory=client_factory,
         clock=clock,
     )
@@ -116,8 +119,8 @@ def _base_status(
     paths = lane_paths(root)
     return _zero_authority(
         {
-            "contract": "QR_FAST_BOT_NORMALIZED_PASSIVE_FORWARD_RESIDENT_V1",
-            "schema_version": 1,
+            "contract": "QR_FAST_BOT_NORMALIZED_PASSIVE_FORWARD_RESIDENT_V2",
+            "schema_version": 2,
             "pid": os.getpid(),
             "started_at_utc": started_at_utc,
             "heartbeat_at_utc": utc_now(),
@@ -319,6 +322,8 @@ def _bounded_result(value: Mapping[str, Any]) -> dict[str, Any]:
         "scorecard_status",
         "prospective_gate_passed",
         "errors",
+        "candidate_results",
+        "terminal_candidate_ids",
         "execution_authority",
         "external_order_attempts",
         "external_orders",

@@ -32,6 +32,9 @@ def test_resident_plist_is_independent_get_only_observer(tmp_path: Path) -> None
     assert "--send" not in joined
     assert "--confirm-live" not in joined
     assert "position-execution" not in joined
+    assert resident.POLICY_PATH == Path(
+        "config/fast_bot_normalized_passive_forward_v2.json"
+    )
 
 
 def test_resident_status_hard_codes_zero_authority(tmp_path: Path) -> None:
@@ -46,6 +49,8 @@ def test_resident_status_hard_codes_zero_authority(tmp_path: Path) -> None:
         cycle_count=0,
         cycle_failures=0,
     )
+    assert status["contract"] == "QR_FAST_BOT_NORMALIZED_PASSIVE_FORWARD_RESIDENT_V2"
+    assert status["schema_version"] == 2
     assert status["execution_authority"] == "NONE"
     assert status["broker_http_methods_allowed"] == ["GET"]
     assert status["broker_mutation_allowed"] is False

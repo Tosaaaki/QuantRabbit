@@ -95,7 +95,15 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
             runtime.SOURCE_BUNDLE_PATHS,
         )
         self.assertIn(
+            Path("src/quant_rabbit/fast_bot_normalized_passive_family_forward.py"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
             Path("config/fast_bot_normalized_passive_forward_v1.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("config/fast_bot_normalized_passive_forward_v2.json"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
 

@@ -1,0 +1,184 @@
+{
+  "contract": "QR_FAST_BOT_NORMALIZED_PASSIVE_FORWARD_POLICY_V2",
+  "schema_version": 2,
+  "family_id": "NORMALIZED_PASSIVE_TWO_CANDIDATE_FAMILY_V2",
+  "frozen_at_utc": "2026-09-01T12:58:00+00:00",
+  "forward_evaluation_not_before_utc": "2026-09-01T14:00:00+00:00",
+  "shadow_enabled": true,
+  "research_observation_allowed": true,
+  "primary_trading_candidate_allowed": false,
+  "automatic_adoption_allowed": false,
+  "automatic_replacement_allowed": false,
+  "promotion_allowed": false,
+  "live_order_enabled": false,
+  "execution_authority": "NONE",
+  "broker_http_methods_allowed": [
+    "GET"
+  ],
+  "broker_mutation_allowed": false,
+  "external_order_attempts": 0,
+  "external_orders": 0,
+  "manual_tagless_policy": "NO_TOUCH",
+  "selection_disclosure": {
+    "historical_research_only": true,
+    "historical_search_candidate_count": 3456,
+    "historical_search_multiple_testing_corrected": false,
+    "v2_selection_used_holdout": false,
+    "source_artifact_path": "/Users/tossaki/.codex/state/quantrabbit/owner-forward-shadow-resident-v1/audits/fast_bot_normalized_passive_confirmed_walk_forward_20260901T1216Z.json",
+    "source_artifact_sha256": "f6b5bc1b38ecba12510979a9a4ceb05baa9fb773b76204c52ddaecf5054ec9a5",
+    "source_contract_sha256": "c3add078aaac2063be0fc9171af61720a4a433ec5755a2c6604d8dda49848e7d",
+    "strict_pre_holdout_qualified_count": 1,
+    "exploratory_candidate_selection": {
+      "pair_must_differ_from_anchor": true,
+      "minimum_train_samples": 40,
+      "minimum_validation_samples": 25,
+      "minimum_train_profit_factor": 1.0,
+      "minimum_validation_profit_factor": 1.0,
+      "minimum_train_positive_year_rate": 0.75,
+      "minimum_validation_positive_year_rate": 1.0,
+      "positive_train_and_validation_net_required": true,
+      "ranking": [
+        "MAXIMIZE_MIN_TRAIN_VALIDATION_PROFIT_FACTOR",
+        "MAXIMIZE_VALIDATION_NET_PIPS",
+        "MAXIMIZE_TRAIN_NET_PIPS",
+        "LEXICOGRAPHIC_CANDIDATE_ID"
+      ],
+      "holdout_inspection_forbidden": true
+    }
+  },
+  "candidates": [
+    {
+      "candidate_id": "EUR_USD:LONG:REVERSAL:LB_15M:CLB_240M:Z_1.25:F_0.25:TTL_5M:HOLD_240M",
+      "candidate_role": "REJECTED_HISTORICAL_ANCHOR_PROSPECTIVE_MONITOR",
+      "historical_holdout_inspected": true,
+      "historical_status": "HOLDOUT_REJECT",
+      "strict_pre_holdout_qualified": true,
+      "historical_train": {
+        "trades": 265,
+        "net_pips": 185.7,
+        "profit_factor": 1.074855,
+        "pessimistic_expectancy_pips": -1.621882,
+        "positive_year_rate": 0.75
+      },
+      "historical_validation": {
+        "trades": 66,
+        "net_pips": 176.4,
+        "profit_factor": 1.453121,
+        "pessimistic_expectancy_pips": -0.837994,
+        "positive_year_rate": 1.0
+      },
+      "historical_holdout": {
+        "trades": 10,
+        "net_pips": 22.7,
+        "profit_factor": 1.35085,
+        "pessimistic_expectancy_pips": -5.295138,
+        "positive_month_rate": 0.5
+      },
+      "selector": {
+        "pair": "EUR_USD",
+        "candidate_side": "LONG",
+        "orientation": "REVERSAL",
+        "decision_interval_minutes": 60,
+        "decision_candle_minute_utc": 0,
+        "lookback_minutes": 15,
+        "confirmation_lookback_minutes": 240,
+        "normalized_threshold": 1.25,
+        "confirmation_policy": "SAME_SIGN_COMPLETED_M1_RETURN",
+        "maximum_decision_spread_pips": 1.5,
+        "collection_lateness_max_seconds_after_activation": 90
+      },
+      "vehicle": {
+        "entry_vehicle": "PASSIVE_LIMIT_TIME_CLOSE",
+        "entry_spread_fraction": 0.25,
+        "entry_ttl_minutes": 5,
+        "holding_minutes": 240,
+        "price_tick": 0.00001,
+        "gap_through_fill_policy": "CONSERVATIVE_LIMIT_PRICE_NO_IMPROVEMENT",
+        "take_profit_pips": null,
+        "stop_loss_pips": null
+      }
+    },
+    {
+      "candidate_id": "USD_JPY:LONG:MOMENTUM:LB_60M:CLB_240M:Z_2.0:F_0.5:TTL_5M:HOLD_240M",
+      "candidate_role": "DISTINCT_PAIR_EXPLORATORY_BELOW_STRICT_SAMPLE_FLOOR",
+      "historical_holdout_inspected": false,
+      "historical_status": "PRE_HOLDOUT_EXPLORATORY_ONLY",
+      "strict_pre_holdout_qualified": false,
+      "historical_train": {
+        "trades": 41,
+        "net_pips": 171.4,
+        "profit_factor": 1.538824,
+        "pessimistic_expectancy_pips": -2.129565,
+        "positive_year_rate": 0.75
+      },
+      "historical_validation": {
+        "trades": 25,
+        "net_pips": 226.2,
+        "profit_factor": 2.321262,
+        "pessimistic_expectancy_pips": 0.727077,
+        "positive_year_rate": 1.0
+      },
+      "historical_holdout": null,
+      "selector": {
+        "pair": "USD_JPY",
+        "candidate_side": "LONG",
+        "orientation": "MOMENTUM",
+        "decision_interval_minutes": 60,
+        "decision_candle_minute_utc": 0,
+        "lookback_minutes": 60,
+        "confirmation_lookback_minutes": 240,
+        "normalized_threshold": 2.0,
+        "confirmation_policy": "SAME_SIGN_COMPLETED_M1_RETURN",
+        "maximum_decision_spread_pips": 1.5,
+        "collection_lateness_max_seconds_after_activation": 90
+      },
+      "vehicle": {
+        "entry_vehicle": "PASSIVE_LIMIT_TIME_CLOSE",
+        "entry_spread_fraction": 0.5,
+        "entry_ttl_minutes": 5,
+        "holding_minutes": 240,
+        "price_tick": 0.001,
+        "gap_through_fill_policy": "CONSERVATIVE_LIMIT_PRICE_NO_IMPROVEMENT",
+        "take_profit_pips": null,
+        "stop_loss_pips": null
+      }
+    }
+  ],
+  "resolver": {
+    "truth_granularity": "S5",
+    "chunk_candle_limit": 5000,
+    "truth_close_grace_seconds": 30,
+    "max_due_signals_per_run": 4
+  },
+  "family_evaluation": {
+    "candidate_count": 2,
+    "familywise_alpha": 0.05,
+    "multiple_testing_correction": "BONFERRONI",
+    "per_candidate_final_alpha": 0.025,
+    "fixed_final_sample_prefix": 100,
+    "interim_futility_looks": [
+      30,
+      60
+    ],
+    "interim_test_count": 4,
+    "per_interim_test_alpha": 0.0125,
+    "futility_rule": "STOP_IF_BONFERRONI_WILSON_OPTIMISTIC_EXPECTANCY_NOT_POSITIVE",
+    "winner_revival_after_fixed_prefix": false,
+    "replacement_policy": "NEW_VERSION_AND_UNTOUCHED_FUTURE_CUTOFF_REQUIRED"
+  },
+  "forward_evaluation": {
+    "minimum_samples": 100,
+    "minimum_active_days": 10,
+    "minimum_profit_factor": 1.25,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "maximum_daily_sample_share": 0.7
+  },
+  "promotion_blockers": [
+    "HISTORICAL_ANCHOR_HOLDOUT_REJECTED",
+    "EXPLORATORY_CANDIDATE_BELOW_STRICT_SAMPLE_FLOOR",
+    "HISTORICAL_SEARCH_MULTIPLE_TESTING_UNCORRECTED",
+    "FAMILYWISE_PROSPECTIVE_EVIDENCE_REQUIRED",
+    "SEPARATE_LIVE_PROMOTION_CONTRACT_REQUIRED"
+  ]
+}
