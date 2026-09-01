@@ -262,11 +262,19 @@ def _price_geometry(
     take_profit_pips: float,
 ) -> tuple[float, float]:
     entry = float(signal["entry"])
+    pair = str(signal["pair"])
     factor = float(instrument_pip_factor(str(signal["pair"])))
+    precision = 3 if pair.endswith("_JPY") else 5
     if signal["side"] == "LONG":
-        return entry - stop_loss_pips / factor, entry + take_profit_pips / factor
+        return (
+            round(entry - stop_loss_pips / factor, precision),
+            round(entry + take_profit_pips / factor, precision),
+        )
     if signal["side"] == "SHORT":
-        return entry + stop_loss_pips / factor, entry - take_profit_pips / factor
+        return (
+            round(entry + stop_loss_pips / factor, precision),
+            round(entry - take_profit_pips / factor, precision),
+        )
     raise ValueError("side must be LONG or SHORT")
 
 

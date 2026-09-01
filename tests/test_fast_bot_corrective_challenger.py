@@ -167,6 +167,56 @@ def test_build_rows_replays_baseline_and_aggregate_requested_metrics() -> None:
     assert summary["leftover_inventory"] == 0
 
 
+def test_build_rows_rounds_short_stop_to_executable_price_tick() -> None:
+    config, config_sha = load_config(CONFIG_PATH)
+    signal = _signal(at="2026-08-31T15:35:32.625774+00:00")
+    signal.update(
+        {
+            "side": "SHORT",
+            "entry": 1.16182,
+            "stop_loss_pips": 3.2,
+            "take_profit_pips": 2.4,
+        }
+    )
+    outcome = {
+        **_outcome(signal),
+        "truth_request_from_utc": "2026-08-31T15:35:35+00:00",
+        "truth_request_to_utc": "2026-08-31T15:52:00+00:00",
+    }
+    candles = [
+        _candle(
+            "2026-08-31T15:35:45Z",
+            bid_o=1.16170,
+            bid_h=1.16182,
+            bid_l=1.16168,
+            bid_c=1.16180,
+        ),
+        _candle(
+            "2026-08-31T15:48:40Z",
+            bid_o=1.16199,
+            bid_h=1.16206,
+            bid_l=1.16198,
+            bid_c=1.16204,
+        ),
+    ]
+
+    rows = build_rows(
+        signal,
+        outcome,
+        candles,
+        ["c" * 64],
+        {"vol_shock": False, "rapid_time_bucket_utc": "NON_SHOCK"},
+        config,
+        config_sha,
+        evaluated_at_utc=datetime(2026, 8, 31, tzinfo=timezone.utc),
+    )
+
+    baseline = next(row for row in rows if row["arm_id"] == "BASELINE")
+    assert baseline["exit_reason"] == "STOP_LOSS"
+    assert baseline["exit_at_utc"] == "2026-08-31T15:48:40+00:00"
+    assert baseline["realized_pips"] == -3.2
+
+
 def test_incremental_ledger_is_content_addressed_and_idempotent(tmp_path: Path) -> None:
     signal = _signal()
     outcome = _outcome(signal)
