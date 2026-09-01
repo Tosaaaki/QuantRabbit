@@ -86,6 +86,18 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
             Path("tools/audit_fast_bot_resident_profit_candidates.py"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
+        self.assertIn(
+            Path("tools/run_fast_bot_normalized_passive_forward.py"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("src/quant_rabbit/fast_bot_normalized_passive_forward.py"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("config/fast_bot_normalized_passive_forward_v1.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
 
     def test_pair_chart_fetches_latency_sensitive_m1_last(self) -> None:
         self.assertEqual(runtime.SLOW_TIMEFRAMES.split(",")[-1], "M1")
@@ -315,6 +327,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["last_knowledge_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
         self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
+        self.assertEqual(state["last_normalized_passive_forward_result"], {})
 
     def test_status_hard_codes_zero_external_orders(self) -> None:
         manifest = {
@@ -340,6 +353,11 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(status["last_profit_holdout_selection_result"], {})
         self.assertEqual(status["last_profit_holdout_outcome_result"], {})
         self.assertEqual(status["last_profit_holdout_scorecard_result"], {})
+        self.assertEqual(status["last_normalized_passive_forward_result"], {})
+        self.assertEqual(
+            status["normalized_passive_forward_label"],
+            "com.quantrabbit.normalized-passive-forward",
+        )
 
 
 if __name__ == "__main__":

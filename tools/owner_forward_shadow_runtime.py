@@ -53,6 +53,11 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_fast_bot_profit_holdout.py"),
     Path("tools/audit_fast_bot_resident_profit_candidates.py"),
+    Path("tools/audit_fast_bot_direction_time_close.py"),
+    Path("tools/analyze_fast_bot_session_clock_profitability.py"),
+    Path("tools/analyze_fast_bot_normalized_return_profitability.py"),
+    Path("tools/analyze_fast_bot_normalized_passive_profitability.py"),
+    Path("tools/run_fast_bot_normalized_passive_forward.py"),
     Path("tools/run_eurusd_outcome_learning.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
@@ -66,6 +71,8 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot_profit_holdout.py"),
     Path("src/quant_rabbit/fast_bot_profit_candidate_audit.py"),
     Path("src/quant_rabbit/fast_bot_profitability_gate.py"),
+    Path("src/quant_rabbit/fast_bot_normalized_passive_forward.py"),
+    Path("src/quant_rabbit/contextual_technical_forward.py"),
     Path("src/quant_rabbit/analysis/chart_reader.py"),
     Path("src/quant_rabbit/eurusd_outcome_learning.py"),
     Path("src/quant_rabbit/fast_bot_truth.py"),
@@ -78,6 +85,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/fast_bot_profit_holdout_v1.json"),
     Path("config/fast_bot_profit_holdout_v2.json"),
     PROFIT_HOLDOUT_POLICY_PATH,
+    Path("config/fast_bot_normalized_passive_forward_v1.json"),
     Path("config/eurusd_learned_policy_v1.json"),
 )
 
@@ -377,6 +385,12 @@ def _base_status(
         "last_profit_holdout_selection_result": {},
         "last_profit_holdout_outcome_result": {},
         "last_profit_holdout_scorecard_result": {},
+        "normalized_passive_forward_label": "com.quantrabbit.normalized-passive-forward",
+        "normalized_passive_forward_status_path": str(root / "state" / "fast_bot_normalized_passive_forward_status.json"),
+        "normalized_passive_forward_decision_ledger_path": str(root / "ledgers" / "fast_bot_normalized_passive_forward_decision_ledger.jsonl"),
+        "normalized_passive_forward_outcome_ledger_path": str(root / "ledgers" / "fast_bot_normalized_passive_forward_outcome_ledger.jsonl"),
+        "normalized_passive_forward_scorecard_path": str(root / "scorecard" / "fast_bot_normalized_passive_forward_scorecard.json"),
+        "last_normalized_passive_forward_result": {},
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
         "learning_episode_ledger_path": str(root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl"),
@@ -437,6 +451,7 @@ def run_cycle(
         "eurusd_decision_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
         "eurusd_outcome_ledger": root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
         "eurusd_scorecard": root / "scorecard" / "eurusd_learned_policy_prospective_scorecard.json",
+        "normalized_passive_status": root / "state" / "fast_bot_normalized_passive_forward_status.json",
         "report": root / "reports" / "fast_bot_shadow_report.md",
         "profit_holdout_selection_report": root / "reports" / "fast_bot_profit_holdout_selection_report.md",
         "profit_holdout_scorecard_report": root / "reports" / "fast_bot_profit_holdout_scorecard_report.md",
@@ -648,6 +663,7 @@ def run_cycle(
     state["last_shock_guard_result"] = shock_guard_result
     state["last_pair_chart_result"] = pair_chart_result
     state["last_eurusd_learning_result"] = eurusd_learning_result
+    state["last_normalized_passive_forward_result"] = read_object(paths["normalized_passive_status"])
     state["last_snapshot_result"] = _json_stdout(snapshot_result)
     return state
 
@@ -676,6 +692,8 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_shock_guard_decision_ledger.jsonl",
         root / "ledgers" / "eurusd_learned_policy_prospective_decision_ledger.jsonl",
         root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
+        root / "ledgers" / "fast_bot_normalized_passive_forward_decision_ledger.jsonl",
+        root / "ledgers" / "fast_bot_normalized_passive_forward_outcome_ledger.jsonl",
     ):
         ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         ledger.touch(exist_ok=True, mode=0o600)
@@ -722,6 +740,9 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
             "BREAKOUT_FAILURE",
             "SHOCK_BREAKOUT_FOLLOW",
             "SHOCK_PULLBACK_CONTINUATION",
+        ],
+        "research_observation_lanes": [
+            "EUR_USD_NORMALIZED_PASSIVE_REVERSAL_LONG_ZERO_AUTHORITY"
         ],
     }
     manifest_body["manifest_sha256"] = canonical_sha(
@@ -779,6 +800,9 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 last_shock_guard_result=state.get("last_shock_guard_result"),
                 last_pair_chart_result=state.get("last_pair_chart_result"),
                 last_eurusd_learning_result=state.get("last_eurusd_learning_result"),
+                last_normalized_passive_forward_result=state.get(
+                    "last_normalized_passive_forward_result"
+                ),
                 counters={
                     "event_count": int(state.get("event_count", 0)),
                     "proposal_count": int(state.get("proposal_count", 0)),

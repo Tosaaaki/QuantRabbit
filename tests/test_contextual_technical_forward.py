@@ -15,6 +15,7 @@ from quant_rabbit.contextual_technical_forward import (
     _feature_rows,
     _pair_selector_rows,
     _seal,
+    _utc,
     build_forward_scorecard,
     decision_window,
     load_jsonl,
@@ -24,6 +25,11 @@ from quant_rabbit.contextual_technical_forward import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATE_PATH = ROOT / "config" / "contextual_technical_240m_forward_candidate_v1.json"
+
+
+def test_oanda_nanosecond_timestamp_parses_on_production_python() -> None:
+    parsed = _utc("2026-09-01T12:02:00.000000000Z", name="candle")
+    assert parsed == datetime(2026, 9, 1, 12, 2, tzinfo=timezone.utc)
 
 
 def _candles(count: int = 2400) -> list[BidAskCandle]:

@@ -598,9 +598,9 @@ def fetch_bidask_candles(
     time_to: datetime,
     chunk_candle_limit: int,
 ) -> tuple[list[BidAskCandle], list[str]]:
-    seconds = {"S5": 5, "M5": 300}.get(str(granularity))
+    seconds = {"S5": 5, "M1": 60, "M5": 300}.get(str(granularity))
     if seconds is None:
-        raise ValueError("only S5 and M5 bid/ask truth are supported")
+        raise ValueError("only S5, M1, and M5 bid/ask truth are supported")
     start = _aware_utc(time_from)
     end = _aware_utc(time_to)
     if end <= start:
@@ -1203,7 +1203,21 @@ def _mapping(value: Any, name: str) -> Mapping[str, Any]:
 
 
 def _utc(value: Any, *, name: str) -> datetime:
-    text = str(value or "").strip().replace("Z", "+00:00")
+    text = str(value or "").strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    # OANDA candle timestamps use RFC3339 nanoseconds.  The production
+    # Python 3.10 runtime accepts at most microseconds, so truncate (never
+    # round into the next candle) before parsing.  Candle-grid timestamps are
+    # expected to have a zero subsecond component and are checked downstream.
+    if "." in text:
+        head, tail = text.split(".", 1)
+        offset_at = next(
+            (index for index, char in enumerate(tail) if char in "+-"),
+            len(tail),
+        )
+        fraction, offset = tail[:offset_at], tail[offset_at:]
+        text = f"{head}.{fraction[:6].ljust(6, '0')}{offset}"
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError as exc:

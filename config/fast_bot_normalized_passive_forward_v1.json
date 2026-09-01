@@ -1,0 +1,105 @@
+{
+  "contract": "QR_FAST_BOT_NORMALIZED_PASSIVE_FORWARD_POLICY_V1",
+  "schema_version": 1,
+  "candidate_id": "EUR_USD:LONG:REVERSAL:LB_15M:CLB_240M:Z_1.25:F_0.25:TTL_5M:HOLD_240M",
+  "frozen_at_utc": "2026-09-01T11:57:49+00:00",
+  "forward_evaluation_not_before_utc": "2026-09-01T12:00:00+00:00",
+  "shadow_enabled": true,
+  "research_observation_allowed": true,
+  "primary_trading_candidate_allowed": false,
+  "automatic_adoption_allowed": false,
+  "promotion_allowed": false,
+  "live_order_enabled": false,
+  "execution_authority": "NONE",
+  "broker_http_methods_allowed": [
+    "GET"
+  ],
+  "broker_mutation_allowed": false,
+  "external_order_attempts": 0,
+  "external_orders": 0,
+  "manual_tagless_policy": "NO_TOUCH",
+  "selection_disclosure": {
+    "historical_research_only": true,
+    "historical_holdout_inspected": true,
+    "selection_used_holdout": false,
+    "multiple_testing_corrected": false,
+    "selection_status": "HOLDOUT_REJECT",
+    "shadow_candidate_admitted": false,
+    "source_artifact_path": "/Users/tossaki/.codex/state/quantrabbit/owner-forward-shadow-resident-v1/audits/fast_bot_normalized_passive_confirmed_walk_forward_20260901T1216Z.json",
+    "source_artifact_sha256": "f6b5bc1b38ecba12510979a9a4ceb05baa9fb773b76204c52ddaecf5054ec9a5",
+    "source_contract_sha256": "c3add078aaac2063be0fc9171af61720a4a433ec5755a2c6604d8dda49848e7d",
+    "pre_holdout_qualified_count": 1,
+    "train": {
+      "period": "2020-2023",
+      "fills": 265,
+      "net_pips": 185.7,
+      "profit_factor": 1.074855,
+      "pessimistic_expectancy_pips": -1.621882,
+      "positive_year_rate": 0.75
+    },
+    "validation": {
+      "period": "2024-2025",
+      "fills": 66,
+      "net_pips": 176.4,
+      "profit_factor": 1.453121,
+      "pessimistic_expectancy_pips": -0.837994,
+      "positive_year_rate": 1.0
+    },
+    "holdout": {
+      "period": "2026",
+      "fills": 10,
+      "net_pips": 22.7,
+      "profit_factor": 1.35085,
+      "pessimistic_expectancy_pips": -5.295138,
+      "positive_month_rate": 0.5,
+      "extra_cost_stress_pips": 0.2,
+      "stressed_net_pips": 20.7,
+      "stressed_profit_factor": 1.314112
+    }
+  },
+  "selector": {
+    "pair": "EUR_USD",
+    "candidate_side": "LONG",
+    "orientation": "REVERSAL",
+    "decision_interval_minutes": 60,
+    "decision_candle_minute_utc": 0,
+    "lookback_minutes": 15,
+    "confirmation_lookback_minutes": 240,
+    "normalized_threshold": 1.25,
+    "confirmation_policy": "SAME_SIGN_COMPLETED_M1_RETURN",
+    "maximum_decision_spread_pips": 1.5,
+    "collection_lateness_max_seconds_after_activation": 90
+  },
+  "vehicle": {
+    "entry_vehicle": "PASSIVE_LIMIT_TIME_CLOSE",
+    "entry_spread_fraction": 0.25,
+    "entry_ttl_minutes": 5,
+    "holding_minutes": 240,
+    "price_tick": 0.00001,
+    "gap_through_fill_policy": "CONSERVATIVE_LIMIT_PRICE_NO_IMPROVEMENT",
+    "take_profit_pips": null,
+    "stop_loss_pips": null
+  },
+  "resolver": {
+    "truth_granularity": "S5",
+    "chunk_candle_limit": 5000,
+    "truth_close_grace_seconds": 30,
+    "max_due_signals_per_run": 2
+  },
+  "forward_evaluation": {
+    "minimum_samples": 100,
+    "minimum_active_days": 10,
+    "minimum_profit_factor": 1.25,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "maximum_daily_sample_share": 0.7
+  },
+  "promotion_blockers": [
+    "HISTORICAL_HOLDOUT_TOO_SMALL",
+    "PESSIMISTIC_EXPECTANCY_NOT_POSITIVE",
+    "POSITIVE_MONTH_RATE_BELOW_FLOOR",
+    "MULTIPLE_TESTING_UNCORRECTED",
+    "FRESH_PROSPECTIVE_EVIDENCE_REQUIRED",
+    "SEPARATE_LIVE_PROMOTION_CONTRACT_REQUIRED"
+  ]
+}
