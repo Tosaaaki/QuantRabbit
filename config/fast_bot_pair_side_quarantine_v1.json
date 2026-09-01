@@ -1,0 +1,57 @@
+{
+  "contract": "QR_FAST_BOT_PAIR_SIDE_QUARANTINE_POLICY_V1",
+  "schema_version": 1,
+  "policy_id": "exclude-eurusd-short-prospective-v1",
+  "frozen_at_utc": "2026-09-01T15:12:41+00:00",
+  "forward_evaluation_not_before_utc": "2026-09-01T15:20:00+00:00",
+  "selection": {
+    "blocked_pair_sides": [
+      {
+        "pair": "EUR_USD",
+        "side": "SHORT",
+        "reason": "ALL_OBSERVED_BASELINE_LOSS_PIPS_ATTRIBUTED_TO_THIS_PAIR_SIDE"
+      }
+    ],
+    "maximum_selection_delay_seconds": 45,
+    "historical_rows_admitted": false,
+    "unknown_pair_side_policy": "ADMIT_TO_SEPARATE_SHADOW_COHORT"
+  },
+  "training_evidence": {
+    "observed_at_utc": "2026-09-01T15:11:27.796670+00:00",
+    "source_commit": "1993c5675ee21a1ccf0f4e0139e79874016333cd",
+    "source_scorecard_file_sha256": "d38f96c20b4965aff2ab937e10fc392aa927b9d63ddd4ca536cf63980af8d1e5",
+    "baseline_filled_signals": 7,
+    "baseline_wins": 2,
+    "baseline_losses": 5,
+    "baseline_net_pips": -10.8,
+    "baseline_profit_factor": 0.325,
+    "blocked_pair_side_filled_signals": 5,
+    "blocked_pair_side_losses": 5,
+    "blocked_pair_side_net_pips": -16.0,
+    "blocked_pair_side_share_of_loss_pips": 1.0,
+    "counterfactual_remaining_filled_signals": 2,
+    "counterfactual_remaining_net_pips": 5.2,
+    "profitability_claim": "UNPROVEN_POST_HOC_HYPOTHESIS_ONLY"
+  },
+  "forward_evaluation": {
+    "minimum_samples": 100,
+    "minimum_active_days": 10,
+    "minimum_profit_factor": 1.25,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "maximum_daily_sample_share": 0.7
+  },
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "promotion_allowed": false,
+    "live_permission": false,
+    "execution_authority": "NONE",
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "external_order_attempts": 0,
+    "external_orders": 0,
+    "manual_tagless_policy": "NO_TOUCH"
+  }
+}

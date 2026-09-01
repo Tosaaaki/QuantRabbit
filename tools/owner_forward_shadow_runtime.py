@@ -31,6 +31,7 @@ DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v3.json")
+PAIR_SIDE_QUARANTINE_POLICY_PATH = Path("config/fast_bot_pair_side_quarantine_v1.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -52,6 +53,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/run_fast_bot_shock_follow.py"),
     Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_fast_bot_profit_holdout.py"),
+    Path("tools/run_fast_bot_pair_side_quarantine.py"),
     Path("tools/audit_fast_bot_resident_profit_candidates.py"),
     Path("tools/audit_fast_bot_direction_time_close.py"),
     Path("tools/analyze_fast_bot_session_clock_profitability.py"),
@@ -69,6 +71,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
     Path("src/quant_rabbit/fast_bot_shock_guard.py"),
     Path("src/quant_rabbit/fast_bot_profit_holdout.py"),
+    Path("src/quant_rabbit/fast_bot_pair_side_quarantine.py"),
     Path("src/quant_rabbit/fast_bot_profit_candidate_audit.py"),
     Path("src/quant_rabbit/fast_bot_profitability_gate.py"),
     Path("src/quant_rabbit/fast_bot_normalized_passive_forward.py"),
@@ -86,6 +89,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/fast_bot_profit_holdout_v1.json"),
     Path("config/fast_bot_profit_holdout_v2.json"),
     PROFIT_HOLDOUT_POLICY_PATH,
+    PAIR_SIDE_QUARANTINE_POLICY_PATH,
     Path("config/fast_bot_normalized_passive_forward_v1.json"),
     Path("config/fast_bot_normalized_passive_forward_v2.json"),
     Path("config/eurusd_learned_policy_v1.json"),
@@ -387,6 +391,11 @@ def _base_status(
         "last_profit_holdout_selection_result": {},
         "last_profit_holdout_outcome_result": {},
         "last_profit_holdout_scorecard_result": {},
+        "pair_side_quarantine_selected_ledger_path": str(root / "ledgers" / "fast_bot_pair_side_quarantine_signal_ledger.jsonl"),
+        "pair_side_quarantine_outcome_ledger_path": str(root / "ledgers" / "fast_bot_pair_side_quarantine_outcome_ledger.jsonl"),
+        "pair_side_quarantine_scorecard_path": str(root / "scorecard" / "fast_bot_pair_side_quarantine_scorecard.json"),
+        "last_pair_side_quarantine_selection_result": {},
+        "last_pair_side_quarantine_outcome_result": {},
         "normalized_passive_forward_label": "com.quantrabbit.normalized-passive-forward",
         "normalized_passive_forward_status_path": str(root / "state" / "fast_bot_normalized_passive_forward_status.json"),
         "normalized_passive_forward_decision_ledger_path": str(root / "ledgers" / "fast_bot_normalized_passive_forward_decision_ledger.jsonl"),
@@ -438,6 +447,11 @@ def run_cycle(
         "profit_holdout_outcome_ledger": root / "ledgers" / "fast_bot_profit_holdout_outcome_ledger.jsonl",
         "profit_holdout_truth_scorecard": root / "scorecard" / "fast_bot_profit_holdout_truth_scorecard.json",
         "profit_holdout_scorecard": root / "scorecard" / "fast_bot_profit_holdout_scorecard.json",
+        "pair_side_quarantine_selection": root / "state" / "fast_bot_pair_side_quarantine_selection.json",
+        "pair_side_quarantine_selected_ledger": root / "ledgers" / "fast_bot_pair_side_quarantine_signal_ledger.jsonl",
+        "pair_side_quarantine_decision_ledger": root / "ledgers" / "fast_bot_pair_side_quarantine_decision_ledger.jsonl",
+        "pair_side_quarantine_outcome_ledger": root / "ledgers" / "fast_bot_pair_side_quarantine_outcome_ledger.jsonl",
+        "pair_side_quarantine_scorecard": root / "scorecard" / "fast_bot_pair_side_quarantine_scorecard.json",
         "challenger_ledger": root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         "challenger_scorecard": root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json",
         "learning_episode_ledger": root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl",
@@ -526,9 +540,24 @@ def run_cycle(
                 env=env,
             )
         )
+        pair_side_quarantine_selection_result = _json_stdout(
+            command_runner(
+                [
+                    py,
+                    str(REPO_ROOT / "tools/run_fast_bot_pair_side_quarantine.py"),
+                    "--raw-signal-ledger", str(paths["shadow_ledger"]),
+                    "--policy", str(REPO_ROOT / PAIR_SIDE_QUARANTINE_POLICY_PATH),
+                    "--selected-ledger", str(paths["pair_side_quarantine_selected_ledger"]),
+                    "--decision-ledger", str(paths["pair_side_quarantine_decision_ledger"]),
+                    "--output", str(paths["pair_side_quarantine_selection"]),
+                ],
+                env=env,
+            )
+        )
     else:
         shock_guard_result = state.get("last_shock_guard_result") or {}
         profit_holdout_selection_result = state.get("last_profit_holdout_selection_result") or {}
+        pair_side_quarantine_selection_result = state.get("last_pair_side_quarantine_selection_result") or {}
 
     outcome_result = _json_stdout(
         command_runner(
@@ -544,6 +573,18 @@ def run_cycle(
                 "--shadow-ledger", str(paths["profit_holdout_selected_ledger"]),
                 "--outcome-ledger", str(paths["profit_holdout_outcome_ledger"]),
                 "--scorecard", str(paths["profit_holdout_truth_scorecard"]),
+            ],
+            env=env,
+        )
+    )
+    pair_side_quarantine_outcome_result = _json_stdout(
+        command_runner(
+            [
+                py,
+                str(REPO_ROOT / "scripts/resolve-fast-bot-shadow-outcomes.py"),
+                "--shadow-ledger", str(paths["pair_side_quarantine_selected_ledger"]),
+                "--outcome-ledger", str(paths["pair_side_quarantine_outcome_ledger"]),
+                "--scorecard", str(paths["pair_side_quarantine_scorecard"]),
             ],
             env=env,
         )
@@ -659,6 +700,8 @@ def run_cycle(
     state["last_profit_holdout_selection_result"] = profit_holdout_selection_result
     state["last_profit_holdout_outcome_result"] = profit_holdout_outcome_result
     state["last_profit_holdout_scorecard_result"] = profit_holdout_scorecard_result
+    state["last_pair_side_quarantine_selection_result"] = pair_side_quarantine_selection_result
+    state["last_pair_side_quarantine_outcome_result"] = pair_side_quarantine_outcome_result
     state["last_corrective_challenger_result"] = challenger_result
     state["last_knowledge_result"] = knowledge_result
     state["last_shock_follow_result"] = shock_follow_result
@@ -686,6 +729,9 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "fast_bot_profit_holdout_signal_ledger.jsonl",
         root / "ledgers" / "fast_bot_profit_holdout_decision_ledger.jsonl",
         root / "ledgers" / "fast_bot_profit_holdout_outcome_ledger.jsonl",
+        root / "ledgers" / "fast_bot_pair_side_quarantine_signal_ledger.jsonl",
+        root / "ledgers" / "fast_bot_pair_side_quarantine_decision_ledger.jsonl",
+        root / "ledgers" / "fast_bot_pair_side_quarantine_outcome_ledger.jsonl",
         root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl",
         root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl",
         root / "ledgers" / "fast_bot_knowledge_ledger.jsonl",

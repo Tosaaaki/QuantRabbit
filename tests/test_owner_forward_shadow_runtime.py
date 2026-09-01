@@ -212,6 +212,27 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                     "returncode": 0,
                     "wall_seconds": 0.0,
                 }
+            if "run_fast_bot_pair_side_quarantine.py" in " ".join(argv):
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "status": "WAITING_FOR_FORWARD_SIGNALS",
+                            "execution_authority": "NONE",
+                            "broker_mutation_allowed": False,
+                            "live_permission": False,
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                        }
+                    )
+                )
+                return {
+                    "stdout_tail": output.read_text(),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             if "run_fast_bot_corrective_challenger.py" in " ".join(argv):
                 scorecard = Path(argv[argv.index("--scorecard") + 1])
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
@@ -305,6 +326,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertIn("resolve-fast-bot-shadow-outcomes.py", joined)
         self.assertIn("run_fast_bot_profit_holdout.py select", joined)
         self.assertIn("run_fast_bot_profit_holdout.py evaluate", joined)
+        self.assertIn("run_fast_bot_pair_side_quarantine.py", joined)
         holdout_calls = [
             " ".join(row)
             for row in calls
@@ -332,6 +354,8 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["virtual_fill_count"], 0)
         self.assertEqual(state["last_corrective_challenger_result"]["external_orders"], 0)
         self.assertEqual(state["last_profit_holdout_scorecard_result"]["external_orders"], 0)
+        self.assertEqual(state["last_pair_side_quarantine_selection_result"]["external_orders"], 0)
+        self.assertEqual(state["last_pair_side_quarantine_outcome_result"]["status"], "NO_DUE_SIGNALS")
         self.assertEqual(state["last_knowledge_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
         self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
