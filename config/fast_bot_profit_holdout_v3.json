@@ -1,0 +1,111 @@
+{
+  "acceptance_thresholds": {
+    "maximum_daily_sample_share": 0.7,
+    "minimum_active_days": 10,
+    "minimum_pessimistic_expectancy_pips": 0.0,
+    "minimum_positive_day_rate": 0.6666666666666666,
+    "minimum_profit_factor": 1.25,
+    "minimum_samples": 100
+  },
+  "authority": {
+    "automatic_adoption_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "external_order_attempts": 0,
+    "external_orders": 0,
+    "live_permission": false,
+    "manual_tagless_policy": "NO_TOUCH",
+    "promotion_allowed": false
+  },
+  "candidate_admission": {
+    "audit_contract": "QR_FAST_BOT_RESIDENT_PROFIT_CANDIDATE_AUDIT_V1",
+    "audit_contract_sha256": "969d75ca6cca8735ef81430342772f23f69e4b78e32d728a6b047f09c5cb7c13",
+    "audit_file_sha256": "c056d8a413baf425f74b1ca8209d712bb33c70dcdb06866079198470995e6f49",
+    "audit_status": "NO_ADMISSIBLE_CANDIDATE",
+    "automatic_candidate_activation_allowed": false,
+    "candidate_count": 288,
+    "historical_rows_admitted": false,
+    "research_lead_count": 0,
+    "signal_id_collision_count": 1,
+    "source_artifact": "/Users/tossaki/.codex/state/quantrabbit/owner-forward-shadow-resident-v1/audits/fast_bot_profit_candidate_audit_20260901T110143Z.json",
+    "source_bundle_sha256": "4945480744928683ce2d3ed4307caeee11d972d4e6c155b1a600fb82e4d08ac2",
+    "source_integrity_passed": true,
+    "source_root_count": 7,
+    "thresholds": {
+      "maximum_daily_sample_share": 0.7,
+      "minimum_active_days": 3,
+      "minimum_pessimistic_expectancy_pips": 0.0,
+      "minimum_positive_day_rate": 0.6666666666666666,
+      "minimum_profit_factor": 1.25,
+      "minimum_samples": 30
+    },
+    "unique_sealed_signals": 873,
+    "unique_valid_outcomes": 856,
+    "v2_candidate_reassessment": {
+      "active_days": 1,
+      "admission_passed": false,
+      "filled_signals": 3,
+      "maximum_daily_sample_share": 1.0,
+      "net_pips": 2.2,
+      "pessimistic_expectancy_pips": -2.93876,
+      "profit_factor": 1.478261,
+      "resolved_signals": 10,
+      "wins": 2,
+      "losses": 1
+    }
+  },
+  "contract": "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V3",
+  "holdout": {
+    "cohort_policy": "STRICTLY_AFTER_ELIGIBLE_AFTER_UTC",
+    "eligible_after_utc": "2026-09-01T11:04:01+00:00",
+    "frozen_at_utc": "2026-09-01T11:04:00+00:00",
+    "retroactive_signal_admission_allowed": false
+  },
+  "policy_id": "no-admissible-fast-bot-profit-candidate-v3",
+  "schema_version": 3,
+  "selection": {
+    "allowed_lanes": [],
+    "candidate_admission_status": "NO_ADMISSIBLE_CANDIDATE",
+    "equal_priority_policy": "REJECT_ALL_TIED_TOP_PRIORITY",
+    "maximum_concurrent_per_pair_horizon": 0,
+    "maximum_selected_per_cycle": 0,
+    "maximum_selection_delay_seconds": 45,
+    "new_candidate_requires_new_policy": true,
+    "opposite_side_policy": "REJECT_CYCLE_ON_SAME_PAIR_HORIZON_OPPOSITE_GO",
+    "post_outcome_reranking_allowed": false,
+    "reservation_seconds": 0,
+    "selection_policy": "NO_ACTIVE_CANDIDATE_FAIL_CLOSED",
+    "unknown_lane_policy": "REJECT"
+  },
+  "supersession": {
+    "automatic_replacement_candidate_allowed": false,
+    "prior_policy_observed_at_utc": "2026-09-01T11:03:40.434616+00:00",
+    "prior_policy_resolved_signals": 0,
+    "prior_policy_selected_signals": 0,
+    "prior_policy_sha256": "12daa1d2842150c622bda42887baaa33cc6a184824c2233774ba1f485b824063",
+    "prior_policy_status": "RETIRED_INADMISSIBLE_POST_HOC_SLICE",
+    "prior_rows_admitted": false,
+    "prior_scorecard_sha256": "6c22fd427e8f93165c4f527cb6f828fc5a27d571377d93479db38005a3bb937e",
+    "replacement_reason": "CROSS_RESIDENT_AUDIT_FOUND_NO_ADMISSIBLE_CANDIDATE",
+    "supersedes_policy_id": "usdjpy-short-range-rotation-m5-atr-gte-5-prospective-v2"
+  },
+  "training_evidence": {
+    "active_days": 3,
+    "forward_evidence_passed": false,
+    "generated_at_utc": "2026-09-01T11:01:49.746459+00:00",
+    "near_side_filled_signals": 247,
+    "near_side_losses": 195,
+    "near_side_net_pips": -587.1,
+    "near_side_pessimistic_expectancy_pips": -2.697862,
+    "near_side_positive_day_rate": 0.0,
+    "near_side_profit_factor": 0.215736,
+    "near_side_wins": 52,
+    "profitability_claim": "NO_ADMISSIBLE_CANDIDATE",
+    "selection_use": "REJECT_ACTIVE_CANDIDATE_AND_REQUIRE_NEW_PRECOMMITTED_POLICY",
+    "source_scorecard_contract_sha256": "969d75ca6cca8735ef81430342772f23f69e4b78e32d728a6b047f09c5cb7c13",
+    "source_scorecard_file_sha256": "c056d8a413baf425f74b1ca8209d712bb33c70dcdb06866079198470995e6f49"
+  }
+}

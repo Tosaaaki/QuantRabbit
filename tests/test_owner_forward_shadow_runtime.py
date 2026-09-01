@@ -65,17 +65,25 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
     def test_shadow_universe_is_initial_two_pairs(self) -> None:
         self.assertEqual(runtime.SHADOW_PAIRS, ("EUR_USD", "USD_JPY"))
 
-    def test_source_bundle_preserves_v1_and_activates_v2_holdout_policy(self) -> None:
+    def test_source_bundle_preserves_history_and_activates_v3_holdout_policy(self) -> None:
         self.assertIn(
             Path("config/fast_bot_profit_holdout_v1.json"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
+        self.assertIn(
+            Path("config/fast_bot_profit_holdout_v2.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
         self.assertEqual(
             runtime.PROFIT_HOLDOUT_POLICY_PATH,
-            Path("config/fast_bot_profit_holdout_v2.json"),
+            Path("config/fast_bot_profit_holdout_v3.json"),
         )
         self.assertIn(
             runtime.PROFIT_HOLDOUT_POLICY_PATH,
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("tools/audit_fast_bot_resident_profit_candidates.py"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
 
@@ -284,10 +292,13 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         ]
         self.assertEqual(len(holdout_calls), 2)
         self.assertTrue(
-            all("config/fast_bot_profit_holdout_v2.json" in row for row in holdout_calls)
+            all("config/fast_bot_profit_holdout_v3.json" in row for row in holdout_calls)
         )
         self.assertTrue(
             all("config/fast_bot_profit_holdout_v1.json" not in row for row in holdout_calls)
+        )
+        self.assertTrue(
+            all("config/fast_bot_profit_holdout_v2.json" not in row for row in holdout_calls)
         )
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertIn("run_fast_bot_knowledge.py", joined)

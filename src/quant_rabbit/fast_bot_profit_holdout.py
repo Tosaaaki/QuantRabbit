@@ -36,10 +36,13 @@ from quant_rabbit.fast_bot_truth import (
 
 POLICY_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V1"
 POLICY_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V2"
+POLICY_CONTRACT_V3 = "QR_FAST_BOT_PROFIT_HOLDOUT_POLICY_V3"
 DECISION_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V1"
 DECISION_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V2"
+DECISION_CONTRACT_V3 = "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V3"
 SCORECARD_CONTRACT_V1 = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V1"
 SCORECARD_CONTRACT_V2 = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V2"
+SCORECARD_CONTRACT_V3 = "QR_FAST_BOT_PROFIT_HOLDOUT_SCORECARD_V3"
 
 # Backward-compatible public aliases.  V1 remains readable as immutable history;
 # the active resident explicitly selects the separately sealed V2 policy.
@@ -47,6 +50,7 @@ POLICY_CONTRACT = POLICY_CONTRACT_V1
 DECISION_CONTRACT = DECISION_CONTRACT_V1
 SCORECARD_CONTRACT = SCORECARD_CONTRACT_V1
 SELECTION_POLICY = "ONE_PRECOMMITTED_NONOVERLAPPING_LANE_PER_CYCLE"
+NO_ACTIVE_CANDIDATE_SELECTION_POLICY = "NO_ACTIVE_CANDIDATE_FAIL_CLOSED"
 SIGNAL_FILTER_POLICY_V2 = "PASSIVE_NEAR_SIDE_M5_ATR_FLOOR_V1"
 # This is a frozen, post-hoc research hypothesis threshold, not a risk limit or
 # profitability proof.  It may change only in another versioned future cohort.
@@ -83,6 +87,8 @@ def load_policy(path: Path) -> tuple[dict[str, Any], str]:
     if not isinstance(value, dict):
         raise ValueError("profit holdout policy must be a JSON object")
     validate_policy(value)
+    if value.get("contract") == POLICY_CONTRACT_V3:
+        _validate_v3_audit_artifact(value)
     return value, canonical_sha(value)
 
 
@@ -92,6 +98,7 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
     if isinstance(schema_version, bool) or (contract, schema_version) not in {
         (POLICY_CONTRACT_V1, 1),
         (POLICY_CONTRACT_V2, 2),
+        (POLICY_CONTRACT_V3, 3),
     }:
         raise ValueError("profit holdout policy contract mismatch")
     authority = policy.get("authority")
@@ -108,7 +115,27 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
     ):
         raise ValueError("profit holdout authority boundary mismatch")
     selection = policy.get("selection")
-    if not isinstance(selection, Mapping) or (
+    if not isinstance(selection, Mapping):
+        raise ValueError("profit holdout selection contract mismatch")
+    if contract == POLICY_CONTRACT_V3:
+        if (
+            selection.get("selection_policy")
+            != NO_ACTIVE_CANDIDATE_SELECTION_POLICY
+            or selection.get("maximum_selected_per_cycle") != 0
+            or selection.get("maximum_concurrent_per_pair_horizon") != 0
+            or selection.get("reservation_seconds") != 0
+            or selection.get("maximum_selection_delay_seconds") != 45
+            or selection.get("unknown_lane_policy") != "REJECT"
+            or selection.get("equal_priority_policy") != "REJECT_ALL_TIED_TOP_PRIORITY"
+            or selection.get("opposite_side_policy")
+            != "REJECT_CYCLE_ON_SAME_PAIR_HORIZON_OPPOSITE_GO"
+            or selection.get("post_outcome_reranking_allowed") is not False
+            or selection.get("candidate_admission_status")
+            != "NO_ADMISSIBLE_CANDIDATE"
+            or selection.get("new_candidate_requires_new_policy") is not True
+        ):
+            raise ValueError("V3 no-candidate selection contract mismatch")
+    elif (
         selection.get("selection_policy") != SELECTION_POLICY
         or selection.get("maximum_selected_per_cycle") != 1
         or selection.get("maximum_concurrent_per_pair_horizon") != 1
@@ -122,11 +149,13 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
     ):
         raise ValueError("profit holdout selection contract mismatch")
     lanes = selection.get("allowed_lanes")
-    if (
-        not isinstance(lanes, list)
-        or len(lanes) != 1
-    ):
-        raise ValueError("profit holdout requires exactly one precommitted lane")
+    expected_lane_count = 0 if contract == POLICY_CONTRACT_V3 else 1
+    if not isinstance(lanes, list) or len(lanes) != expected_lane_count:
+        raise ValueError(
+            "V3 profit holdout requires no active lane"
+            if contract == POLICY_CONTRACT_V3
+            else "profit holdout requires exactly one precommitted lane"
+        )
     lane_ids: set[tuple[str, str, str, str]] = set()
     for row in lanes:
         if not isinstance(row, Mapping):
@@ -146,7 +175,7 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
     if contract == POLICY_CONTRACT_V1:
         if "signal_filter" in selection or "supersession" in policy:
             raise ValueError("V1 profit holdout cannot contain V2 fields")
-    else:
+    elif contract == POLICY_CONTRACT_V2:
         _validate_v2_signal_filter(selection.get("signal_filter"))
         supersession = policy.get("supersession")
         if not isinstance(supersession, Mapping) or (
@@ -195,6 +224,8 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
         ):
             raise ValueError("V2 profit holdout retirement evidence mismatch")
         _parse_utc(supersession.get("prior_policy_observed_at_utc"))
+    else:
+        _validate_v3_no_candidate_policy(policy)
     holdout = policy.get("holdout")
     training = policy.get("training_evidence")
     if not isinstance(holdout, Mapping) or not isinstance(training, Mapping):
@@ -202,6 +233,11 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
     frozen_at = _parse_utc(holdout.get("frozen_at_utc"))
     eligible_after = _parse_utc(holdout.get("eligible_after_utc"))
     training_at = _parse_utc(training.get("generated_at_utc"))
+    expected_claim = (
+        "NO_ADMISSIBLE_CANDIDATE"
+        if contract == POLICY_CONTRACT_V3
+        else "UNPROVEN"
+    )
     if (
         holdout.get("cohort_policy") != "STRICTLY_AFTER_ELIGIBLE_AFTER_UTC"
         or holdout.get("retroactive_signal_admission_allowed") is not False
@@ -209,7 +245,7 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
         or not _valid_sha(str(training.get("source_scorecard_contract_sha256") or ""))
         or not _valid_sha(str(training.get("source_scorecard_file_sha256") or ""))
         or training.get("forward_evidence_passed") is not False
-        or training.get("profitability_claim") != "UNPROVEN"
+        or training.get("profitability_claim") != expected_claim
     ):
         raise ValueError("profit holdout evidence boundary mismatch")
     thresholds = policy.get("acceptance_thresholds")
@@ -217,6 +253,141 @@ def validate_policy(policy: Mapping[str, Any]) -> None:
         thresholds.get(key) != value for key, value in DEFAULT_THRESHOLDS.items()
     ):
         raise ValueError("profit holdout acceptance thresholds mismatch")
+
+
+def _validate_v3_no_candidate_policy(policy: Mapping[str, Any]) -> None:
+    supersession = policy.get("supersession")
+    admission = policy.get("candidate_admission")
+    if not isinstance(supersession, Mapping) or (
+        supersession.get("supersedes_policy_id")
+        != "usdjpy-short-range-rotation-m5-atr-gte-5-prospective-v2"
+        or supersession.get("prior_policy_status")
+        != "RETIRED_INADMISSIBLE_POST_HOC_SLICE"
+        or supersession.get("prior_rows_admitted") is not False
+        or supersession.get("replacement_reason")
+        != "CROSS_RESIDENT_AUDIT_FOUND_NO_ADMISSIBLE_CANDIDATE"
+        or supersession.get("prior_policy_selected_signals") != 0
+        or supersession.get("prior_policy_resolved_signals") != 0
+        or supersession.get("automatic_replacement_candidate_allowed") is not False
+        or not _valid_sha(str(supersession.get("prior_policy_sha256") or ""))
+        or not _valid_sha(str(supersession.get("prior_scorecard_sha256") or ""))
+    ):
+        raise ValueError("V3 profit holdout supersession contract mismatch")
+    _parse_utc(supersession.get("prior_policy_observed_at_utc"))
+    if not isinstance(admission, Mapping) or (
+        admission.get("audit_contract")
+        != "QR_FAST_BOT_RESIDENT_PROFIT_CANDIDATE_AUDIT_V1"
+        or admission.get("audit_status") != "NO_ADMISSIBLE_CANDIDATE"
+        or admission.get("source_integrity_passed") is not True
+        or admission.get("research_lead_count") != 0
+        or admission.get("automatic_candidate_activation_allowed") is not False
+        or admission.get("historical_rows_admitted") is not False
+        or not _valid_sha(str(admission.get("audit_contract_sha256") or ""))
+        or not _valid_sha(str(admission.get("audit_file_sha256") or ""))
+        or not _valid_sha(str(admission.get("source_bundle_sha256") or ""))
+        or not Path(str(admission.get("source_artifact") or "")).is_absolute()
+    ):
+        raise ValueError("V3 candidate admission audit mismatch")
+    candidate_count = admission.get("candidate_count")
+    unique_signals = admission.get("unique_sealed_signals")
+    valid_outcomes = admission.get("unique_valid_outcomes")
+    if (
+        isinstance(candidate_count, bool)
+        or not isinstance(candidate_count, int)
+        or candidate_count <= 0
+        or isinstance(unique_signals, bool)
+        or not isinstance(unique_signals, int)
+        or unique_signals <= 0
+        or isinstance(valid_outcomes, bool)
+        or not isinstance(valid_outcomes, int)
+        or not 0 < valid_outcomes <= unique_signals
+    ):
+        raise ValueError("V3 candidate admission counts mismatch")
+    v2 = admission.get("v2_candidate_reassessment")
+    if not isinstance(v2, Mapping) or (
+        v2.get("filled_signals") != 3
+        or v2.get("active_days") != 1
+        or float(v2.get("net_pips") or 0.0) != 2.2
+        or float(v2.get("maximum_daily_sample_share") or 0.0) != 1.0
+        or float(v2.get("pessimistic_expectancy_pips") or 0.0) >= 0.0
+        or v2.get("admission_passed") is not False
+    ):
+        raise ValueError("V3 prior candidate reassessment mismatch")
+
+
+def _validate_v3_audit_artifact(policy: Mapping[str, Any]) -> None:
+    admission = policy["candidate_admission"]
+    path = Path(str(admission["source_artifact"]))
+    try:
+        data = path.read_bytes()
+        audit = json.loads(data)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("V3 candidate audit artifact is unavailable") from exc
+    audit_v2 = audit.get("v2_candidate_reassessment") if isinstance(audit, Mapping) else None
+    audit_v2_metrics = (
+        audit_v2.get("metrics") if isinstance(audit_v2, Mapping) else None
+    )
+    configured_v2 = admission["v2_candidate_reassessment"]
+    near = (
+        (audit.get("aggregate_entry_arms") or {}).get("PASSIVE_NEAR_SIDE")
+        if isinstance(audit, Mapping)
+        else None
+    )
+    training = policy["training_evidence"]
+    if not isinstance(audit, Mapping) or (
+        hashlib.sha256(data).hexdigest() != admission["audit_file_sha256"]
+        or not sealed_valid(
+            audit,
+            "QR_FAST_BOT_RESIDENT_PROFIT_CANDIDATE_AUDIT_V1",
+        )
+        or audit.get("contract_sha256") != admission["audit_contract_sha256"]
+        or audit.get("source_bundle_sha256") != admission["source_bundle_sha256"]
+        or audit.get("status") != admission["audit_status"]
+        or audit.get("source_integrity_passed")
+        != admission["source_integrity_passed"]
+        or audit.get("research_lead_count") != admission["research_lead_count"]
+        or audit.get("unique_sealed_signals")
+        != admission["unique_sealed_signals"]
+        or audit.get("unique_valid_outcomes")
+        != admission["unique_valid_outcomes"]
+        or (audit.get("candidate_universe") or {}).get("candidate_count")
+        != admission["candidate_count"]
+        or audit.get("automatic_candidate_activation_allowed") is not False
+        or audit.get("execution_authority") != "NONE"
+        or audit.get("broker_mutation_allowed") is not False
+        or audit.get("live_permission") is not False
+        or audit.get("external_order_attempts") != 0
+        or audit.get("external_orders") != 0
+        or not isinstance(audit_v2, Mapping)
+        or not isinstance(audit_v2_metrics, Mapping)
+        or audit_v2.get("admission_passed")
+        != configured_v2["admission_passed"]
+        or any(
+            audit_v2_metrics.get(key) != configured_v2[key]
+            for key in (
+                "filled_signals",
+                "active_days",
+                "resolved_signals",
+                "wins",
+                "losses",
+                "net_pips",
+                "profit_factor",
+                "pessimistic_expectancy_pips",
+                "maximum_daily_sample_share",
+            )
+        )
+        or not isinstance(near, Mapping)
+        or near.get("filled_signals") != training["near_side_filled_signals"]
+        or near.get("wins") != training["near_side_wins"]
+        or near.get("losses") != training["near_side_losses"]
+        or near.get("net_pips") != training["near_side_net_pips"]
+        or near.get("profit_factor") != training["near_side_profit_factor"]
+        or near.get("pessimistic_expectancy_pips")
+        != training["near_side_pessimistic_expectancy_pips"]
+        or near.get("positive_day_rate")
+        != training["near_side_positive_day_rate"]
+    ):
+        raise ValueError("V3 candidate audit artifact binding mismatch")
 
 
 def _validate_v2_signal_filter(value: Any) -> None:
@@ -238,6 +409,8 @@ def _policy_contracts(policy: Mapping[str, Any]) -> tuple[str, str, int]:
         return DECISION_CONTRACT_V1, SCORECARD_CONTRACT_V1, 1
     if policy.get("contract") == POLICY_CONTRACT_V2:
         return DECISION_CONTRACT_V2, SCORECARD_CONTRACT_V2, 2
+    if policy.get("contract") == POLICY_CONTRACT_V3:
+        return DECISION_CONTRACT_V3, SCORECARD_CONTRACT_V3, 3
     raise ValueError("unknown profit holdout policy contract")
 
 
@@ -247,9 +420,17 @@ def _decision_contract_valid(
     expected_contract: str | None = None,
 ) -> bool:
     contract = str(decision.get("contract") or "")
-    if contract not in {DECISION_CONTRACT_V1, DECISION_CONTRACT_V2}:
+    if contract not in {
+        DECISION_CONTRACT_V1,
+        DECISION_CONTRACT_V2,
+        DECISION_CONTRACT_V3,
+    }:
         return False
-    expected_schema = 1 if contract == DECISION_CONTRACT_V1 else 2
+    expected_schema = {
+        DECISION_CONTRACT_V1: 1,
+        DECISION_CONTRACT_V2: 2,
+        DECISION_CONTRACT_V3: 3,
+    }[contract]
     if decision.get("schema_version") != expected_schema:
         return False
     return (expected_contract is None or contract == expected_contract) and sealed_valid(
@@ -264,6 +445,8 @@ def _signal_filter_reasons(
 ) -> list[str]:
     if policy.get("contract") == POLICY_CONTRACT_V1:
         return []
+    if policy.get("contract") == POLICY_CONTRACT_V3:
+        return ["NO_ADMISSIBLE_CANDIDATE"]
     signal_filter = policy["selection"]["signal_filter"]
     reasons: list[str] = []
     if signal.get("entry_reference") != signal_filter["entry_reference"]:
@@ -425,7 +608,7 @@ def build_holdout_decision(
         "schema_version": schema_version,
         "generated_at_utc": now.isoformat(),
         "status": status,
-        "selection_policy": SELECTION_POLICY,
+        "selection_policy": policy["selection"]["selection_policy"],
         "policy_id": policy.get("policy_id"),
         "policy_sha256": policy_sha256,
         "decision_identity_sha256": decision_identity,
@@ -439,8 +622,8 @@ def build_holdout_decision(
         "selection_rows": rows,
         "source_integrity_errors": sorted(set(source_errors)),
         "history_integrity_errors": sorted(set(history_errors)),
-        "candidate_status": "UNPROVEN_PROSPECTIVE_CANDIDATE",
-        "profitability_claim": "UNPROVEN",
+        "candidate_status": _candidate_status(policy),
+        "profitability_claim": _profitability_claim(policy),
         "execution_authority": "NONE",
         "broker_http_methods_allowed": ["GET"],
         "broker_mutation_allowed": False,
@@ -455,6 +638,8 @@ def build_holdout_decision(
     }
     if policy.get("contract") == POLICY_CONTRACT_V2:
         body["signal_filter"] = dict(policy["selection"]["signal_filter"])
+    if policy.get("contract") == POLICY_CONTRACT_V3:
+        body["candidate_admission"] = dict(policy["candidate_admission"])
     return seal(body)
 
 
@@ -541,7 +726,8 @@ def build_holdout_scorecard(
             or decision.get("decision_identity_sha256")
             != canonical_sha([policy_sha256, decision.get("source_cycle_sha256")])
             or decision.get("policy_id") != policy.get("policy_id")
-            or decision.get("selection_policy") != SELECTION_POLICY
+            or decision.get("selection_policy")
+            != policy["selection"]["selection_policy"]
             or decision.get("eligible_after_utc") != cutoff.isoformat()
             or (
                 decision.get("source_shadow_contract_sha256") is not None
@@ -559,11 +745,17 @@ def build_holdout_scorecard(
             or decision.get("external_orders") != 0
             or decision.get("gateway_invocations") != 0
             or decision.get("manual_tagless_policy") != "NO_TOUCH"
-            or decision.get("profitability_claim") != "UNPROVEN"
+            or decision.get("candidate_status") != _candidate_status(policy)
+            or decision.get("profitability_claim") != _profitability_claim(policy)
             or (
                 policy.get("contract") == POLICY_CONTRACT_V2
                 and decision.get("signal_filter")
                 != policy["selection"]["signal_filter"]
+            )
+            or (
+                policy.get("contract") == POLICY_CONTRACT_V3
+                and decision.get("candidate_admission")
+                != policy["candidate_admission"]
             )
         ):
             invalid.append("DECISION_LEDGER_INTEGRITY_FAILURE")
@@ -716,7 +908,7 @@ def build_holdout_scorecard(
     invalid = sorted(set(invalid))
     evidence: dict[str, Any] | None = None
     gate: dict[str, Any] | None = None
-    if not invalid:
+    if not invalid and policy.get("contract") != POLICY_CONTRACT_V3:
         metrics = _profitability_metrics(
             list(signal_by_sha.values()),
             valid_outcomes,
@@ -750,6 +942,12 @@ def build_holdout_scorecard(
     if invalid:
         status = "REJECT_INVALID_HOLDOUT_COHORT"
         blockers = invalid
+    elif policy.get("contract") == POLICY_CONTRACT_V3:
+        status = "NO_ADMISSIBLE_PROFIT_CANDIDATE"
+        blockers = [
+            "NO_ADMISSIBLE_PROFIT_CANDIDATE",
+            "NEW_CANDIDATE_REQUIRES_SEPARATE_PRECOMMITTED_POLICY",
+        ]
     elif gate is None:
         status = "REJECT_INVALID_HOLDOUT_COHORT"
         blockers = ["PROFITABILITY_GATE_NOT_BUILT"]
@@ -790,11 +988,11 @@ def build_holdout_scorecard(
         "profitability_evidence": evidence,
         "profitability_gate": gate,
         "blockers": sorted(set(blockers)),
-        "candidate_status": "UNPROVEN_PROSPECTIVE_CANDIDATE",
+        "candidate_status": _candidate_status(policy),
         "profitability_claim": (
             "PROSPECTIVE_SHADOW_EVIDENCE_PASSED"
             if status == "SHADOW_PROFITABILITY_EVIDENCE_PASSED"
-            else "UNPROVEN"
+            else _profitability_claim(policy)
         ),
         "execution_authority": "NONE",
         "broker_http_methods_allowed": ["GET"],
@@ -810,6 +1008,8 @@ def build_holdout_scorecard(
     }
     if policy.get("contract") == POLICY_CONTRACT_V2:
         body["signal_filter"] = dict(policy["selection"]["signal_filter"])
+    if policy.get("contract") == POLICY_CONTRACT_V3:
+        body["candidate_admission"] = dict(policy["candidate_admission"])
     return seal(body)
 
 
@@ -1083,7 +1283,11 @@ def render_selection_report(decision: Mapping[str, Any]) -> str:
     filter_label = (
         f"PASSIVE_NEAR_SIDE and M5 ATR >= {signal_filter.get('m5_atr_pips_minimum')} pips"
         if isinstance(signal_filter, Mapping)
-        else "lane only (V1 historical contract)"
+        else (
+            "none; no candidate admitted"
+            if decision.get("candidate_status") == "NO_ADMISSIBLE_CANDIDATE"
+            else "lane only (V1 historical contract)"
+        )
     )
     return "\n".join(
         [
@@ -1095,7 +1299,7 @@ def render_selection_report(decision: Mapping[str, Any]) -> str:
             f"- Strictly prospective after: `{decision.get('eligible_after_utc')}`",
             f"- Precommitted filter: `{filter_label}`",
             f"- Selected: {selected_label}",
-            "- Profitability claim: `UNPROVEN`",
+            f"- Profitability claim: `{decision.get('profitability_claim')}`",
             "- Execution authority: `NONE`",
             "- Broker mutation: `false`",
             "- Live permission: `false`",
@@ -1111,7 +1315,11 @@ def render_scorecard_report(scorecard: Mapping[str, Any]) -> str:
     filter_label = (
         f"PASSIVE_NEAR_SIDE and M5 ATR >= {signal_filter.get('m5_atr_pips_minimum')} pips"
         if isinstance(signal_filter, Mapping)
-        else "lane only (V1 historical contract)"
+        else (
+            "none; no candidate admitted"
+            if scorecard.get("candidate_status") == "NO_ADMISSIBLE_CANDIDATE"
+            else "lane only (V1 historical contract)"
+        )
     )
     return "\n".join(
         [
@@ -1234,6 +1442,8 @@ def _decision_status(
     }
     if "AMBIGUOUS_TOP_PRIORITY" in reasons:
         return "BLOCKED_AMBIGUOUS_TOP_PRIORITY"
+    if "NO_ADMISSIBLE_CANDIDATE" in reasons:
+        return "NO_ACTIVE_PROFIT_CANDIDATE"
     if "OPPOSITE_SIDE_GO_AMBIGUITY" in reasons:
         return "BLOCKED_OPPOSITE_SIDE_AMBIGUITY"
     if reasons & {"PAIR_HORIZON_RESERVED_BY_PRIOR_SELECTION", "ALREADY_SELECTED"}:
@@ -1332,6 +1542,22 @@ def _profitability_lane_id(policy: Mapping[str, Any]) -> str:
         return base
     minimum = policy["selection"]["signal_filter"]["m5_atr_pips_minimum"]
     return f"{base}:PASSIVE_NEAR_SIDE:M5_ATR_GTE_{minimum:g}"
+
+
+def _candidate_status(policy: Mapping[str, Any]) -> str:
+    return (
+        "NO_ADMISSIBLE_CANDIDATE"
+        if policy.get("contract") == POLICY_CONTRACT_V3
+        else "UNPROVEN_PROSPECTIVE_CANDIDATE"
+    )
+
+
+def _profitability_claim(policy: Mapping[str, Any]) -> str:
+    return (
+        "NO_ADMISSIBLE_CANDIDATE"
+        if policy.get("contract") == POLICY_CONTRACT_V3
+        else "UNPROVEN"
+    )
 
 
 def _append_jsonl_once(

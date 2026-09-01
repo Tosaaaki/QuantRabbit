@@ -30,7 +30,7 @@ DEFAULT_STATE_ROOT = Path.home() / ".codex" / "state" / "quantrabbit" / "owner-f
 DEFAULT_EURUSD_POLICY_POINTER = Path.home() / ".codex" / "state" / "quantrabbit" / "eurusd-outcome-learning-v1" / "current.json"
 DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
-PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v2.json")
+PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v3.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -52,6 +52,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/run_fast_bot_shock_follow.py"),
     Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_fast_bot_profit_holdout.py"),
+    Path("tools/audit_fast_bot_resident_profit_candidates.py"),
     Path("tools/run_eurusd_outcome_learning.py"),
     Path("scripts/run-fast-bot-shadow.py"),
     Path("scripts/resolve-fast-bot-shadow-outcomes.py"),
@@ -63,6 +64,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
     Path("src/quant_rabbit/fast_bot_shock_guard.py"),
     Path("src/quant_rabbit/fast_bot_profit_holdout.py"),
+    Path("src/quant_rabbit/fast_bot_profit_candidate_audit.py"),
     Path("src/quant_rabbit/fast_bot_profitability_gate.py"),
     Path("src/quant_rabbit/analysis/chart_reader.py"),
     Path("src/quant_rabbit/eurusd_outcome_learning.py"),
@@ -74,6 +76,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/fast_bot_shock_follow_v1.json"),
     Path("config/fast_bot_shock_guard_v1.json"),
     Path("config/fast_bot_profit_holdout_v1.json"),
+    Path("config/fast_bot_profit_holdout_v2.json"),
     PROFIT_HOLDOUT_POLICY_PATH,
     Path("config/eurusd_learned_policy_v1.json"),
 )

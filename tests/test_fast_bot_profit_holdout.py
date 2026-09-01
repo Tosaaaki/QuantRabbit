@@ -12,6 +12,7 @@ from quant_rabbit.fast_bot import HORIZON_LANE, SHADOW_CONTRACT, SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_profit_holdout import (
     POLICY_CONTRACT,
     POLICY_CONTRACT_V2,
+    POLICY_CONTRACT_V3,
     SELECTION_POLICY,
     SIGNAL_FILTER_POLICY_V2,
     V2_MINIMUM_M5_ATR_PIPS,
@@ -281,6 +282,85 @@ class FastBotProfitHoldoutTest(unittest.TestCase):
             "POST_HOC_HYPOTHESIS_ONLY_FUTURE_ROWS_REQUIRED",
         )
         self.assertFalse(policy["training_evidence"]["forward_evidence_passed"])
+
+    def test_repository_v3_policy_retires_v2_without_inventing_a_candidate(self) -> None:
+        policy, policy_sha = load_policy(
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "fast_bot_profit_holdout_v3.json"
+        )
+
+        self.assertEqual(len(policy_sha), 64)
+        self.assertEqual(policy["contract"], POLICY_CONTRACT_V3)
+        self.assertEqual(policy["selection"]["allowed_lanes"], [])
+        self.assertEqual(policy["selection"]["maximum_selected_per_cycle"], 0)
+        self.assertEqual(policy["candidate_admission"]["research_lead_count"], 0)
+        self.assertEqual(
+            policy["candidate_admission"]["v2_candidate_reassessment"][
+                "filled_signals"
+            ],
+            3,
+        )
+        self.assertFalse(
+            policy["candidate_admission"]["v2_candidate_reassessment"][
+                "admission_passed"
+            ]
+        )
+        self.assertEqual(
+            policy["training_evidence"]["profitability_claim"],
+            "NO_ADMISSIBLE_CANDIDATE",
+        )
+        self.assertEqual(policy["authority"]["execution_authority"], "NONE")
+
+    def test_v3_rejects_every_row_and_scorecard_states_no_candidate(self) -> None:
+        policy, policy_sha = load_policy(
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "fast_bot_profit_holdout_v3.json"
+        )
+        cutoff = datetime.fromisoformat(policy["holdout"]["eligible_after_utc"])
+        generated = cutoff + timedelta(days=1)
+        signal = _signal("v3-no-candidate", generated=generated)
+        decision = build_holdout_decision(
+            _shadow(signal),
+            policy=policy,
+            policy_sha256=policy_sha,
+            now_utc=generated + timedelta(seconds=1),
+        )
+        truth = build_fast_bot_scorecard(
+            [],
+            [],
+            as_of_utc=generated + timedelta(seconds=1),
+        )
+
+        scorecard = build_holdout_scorecard(
+            policy=policy,
+            policy_sha256=policy_sha,
+            decisions=[decision],
+            raw_signals=[signal],
+            selected_signals=[],
+            outcomes=[],
+            truth_scorecard=truth,
+            now_utc=generated + timedelta(seconds=1),
+        )
+
+        self.assertEqual(decision["status"], "NO_ACTIVE_PROFIT_CANDIDATE")
+        self.assertEqual(decision["selected_signal_count"], 0)
+        self.assertIn(
+            "NO_ADMISSIBLE_CANDIDATE",
+            decision["selection_rows"][0]["reasons"],
+        )
+        self.assertEqual(
+            decision["contract"],
+            "QR_FAST_BOT_PROFIT_HOLDOUT_DECISION_V3",
+        )
+        self.assertTrue(scorecard["cohort_integrity_passed"])
+        self.assertEqual(scorecard["status"], "NO_ADMISSIBLE_PROFIT_CANDIDATE")
+        self.assertEqual(scorecard["candidate_status"], "NO_ADMISSIBLE_CANDIDATE")
+        self.assertIsNone(scorecard["profitability_evidence"])
+        self.assertIsNone(scorecard["profitability_gate"])
+        self.assertEqual(scorecard["execution_authority"], "NONE")
+        self.assertFalse(scorecard["live_permission"])
 
     def test_v2_selects_only_at_or_above_precommitted_atr_floor(self) -> None:
         policy, policy_sha = _v2_policy()
