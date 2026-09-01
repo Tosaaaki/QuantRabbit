@@ -790,7 +790,8 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
             "SHOCK_PULLBACK_CONTINUATION",
         ],
         "research_observation_lanes": [
-            "EUR_USD_NORMALIZED_PASSIVE_REVERSAL_LONG_ZERO_AUTHORITY"
+            "EUR_USD_NORMALIZED_PASSIVE_REVERSAL_LONG_ZERO_AUTHORITY",
+            "FAST_BOT_PAIR_SIDE_QUARANTINE_ZERO_AUTHORITY",
         ],
     }
     manifest_body["manifest_sha256"] = canonical_sha(
@@ -841,6 +842,12 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 ),
                 last_profit_holdout_scorecard_result=state.get(
                     "last_profit_holdout_scorecard_result"
+                ),
+                last_pair_side_quarantine_selection_result=state.get(
+                    "last_pair_side_quarantine_selection_result"
+                ),
+                last_pair_side_quarantine_outcome_result=state.get(
+                    "last_pair_side_quarantine_outcome_result"
                 ),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 last_knowledge_result=state.get("last_knowledge_result"),
