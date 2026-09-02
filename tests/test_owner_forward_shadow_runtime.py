@@ -275,6 +275,27 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
                     "returncode": 0,
                     "wall_seconds": 0.0,
                 }
+            if "run_autonomous_shadow_nervous_system.py" in " ".join(argv):
+                output = Path(argv[argv.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "status": "NO_SIGNALS",
+                            "execution_authority": "NONE",
+                            "broker_mutation_allowed": False,
+                            "external_order_attempts": 0,
+                            "external_orders": 0,
+                            "human_approval_required": False,
+                        }
+                    )
+                )
+                return {
+                    "stdout_tail": output.read_text(),
+                    "stderr_tail": "",
+                    "returncode": 0,
+                    "wall_seconds": 0.0,
+                }
             if "run_fast_bot_shock_follow.py" in " ".join(argv):
                 scorecard = Path(argv[argv.index("--scorecard") + 1])
                 scorecard.parent.mkdir(parents=True, exist_ok=True)
@@ -344,6 +365,19 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         )
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertIn("run_fast_bot_knowledge.py", joined)
+        self.assertIn("run_autonomous_shadow_nervous_system.py", joined)
+        command_lines = [" ".join(row) for row in calls]
+        nervous_index = next(
+            index
+            for index, line in enumerate(command_lines)
+            if "run_autonomous_shadow_nervous_system.py" in line
+        )
+        knowledge_index = next(
+            index
+            for index, line in enumerate(command_lines)
+            if "run_fast_bot_knowledge.py" in line
+        )
+        self.assertLess(nervous_index, knowledge_index)
         self.assertIn("run_fast_bot_shock_follow.py", joined)
         self.assertIn("run_eurusd_outcome_learning.py", joined)
         self.assertNotIn("--send", joined)
@@ -357,6 +391,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(state["last_pair_side_quarantine_selection_result"]["external_orders"], 0)
         self.assertEqual(state["last_pair_side_quarantine_outcome_result"]["status"], "NO_DUE_SIGNALS")
         self.assertEqual(state["last_knowledge_result"]["external_orders"], 0)
+        self.assertEqual(state["last_autonomous_shadow_result"]["external_orders"], 0)
         self.assertEqual(state["last_shock_follow_result"]["external_orders"], 0)
         self.assertEqual(state["last_eurusd_learning_result"]["external_orders"], 0)
         self.assertEqual(state["last_normalized_passive_forward_result"], {})
@@ -386,6 +421,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(status["last_profit_holdout_outcome_result"], {})
         self.assertEqual(status["last_profit_holdout_scorecard_result"], {})
         self.assertEqual(status["last_normalized_passive_forward_result"], {})
+        self.assertEqual(status["last_autonomous_shadow_result"], {})
         self.assertEqual(
             status["normalized_passive_forward_label"],
             "com.quantrabbit.normalized-passive-forward",

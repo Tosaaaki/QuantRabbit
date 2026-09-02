@@ -50,6 +50,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("tools/owner_forward_shadow_runtime.py"),
     Path("tools/run_fast_bot_corrective_challenger.py"),
     Path("tools/run_fast_bot_knowledge.py"),
+    Path("tools/run_autonomous_shadow_nervous_system.py"),
     Path("tools/run_fast_bot_shock_follow.py"),
     Path("tools/run_fast_bot_shock_guard.py"),
     Path("tools/run_fast_bot_profit_holdout.py"),
@@ -66,6 +67,8 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/cli.py"),
     Path("src/quant_rabbit/guardian_observation.py"),
     Path("src/quant_rabbit/fast_bot.py"),
+    Path("src/quant_rabbit/autonomous_shadow_integration.py"),
+    Path("src/quant_rabbit/autonomous_shadow_nervous_system.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
     Path("src/quant_rabbit/fast_bot_knowledge.py"),
     Path("src/quant_rabbit/fast_bot_shock_follow.py"),
@@ -402,6 +405,9 @@ def _base_status(
         "normalized_passive_forward_outcome_ledger_path": str(root / "ledgers" / "fast_bot_normalized_passive_forward_outcome_ledger.jsonl"),
         "normalized_passive_forward_scorecard_path": str(root / "scorecard" / "fast_bot_normalized_passive_forward_scorecard.json"),
         "last_normalized_passive_forward_result": {},
+        "autonomous_shadow_state_path": str(root / "state" / "autonomous_shadow_nervous_system.json"),
+        "autonomous_shadow_report_path": str(root / "reports" / "autonomous_shadow_nervous_system.md"),
+        "last_autonomous_shadow_result": {},
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
         "learning_episode_ledger_path": str(root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl"),
@@ -457,6 +463,9 @@ def run_cycle(
         "learning_episode_ledger": root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl",
         "knowledge_ledger": root / "ledgers" / "fast_bot_knowledge_ledger.jsonl",
         "learning_scorecard": root / "scorecard" / "fast_bot_learning_scorecard.json",
+        "autonomous_shadow_root": root / "autonomous_shadow_nervous_system",
+        "autonomous_shadow_state": root / "state" / "autonomous_shadow_nervous_system.json",
+        "autonomous_shadow_report": root / "reports" / "autonomous_shadow_nervous_system.md",
         "shock_signal_ledger": root / "ledgers" / "fast_bot_shock_follow_signal_ledger.jsonl",
         "shock_outcome_ledger": root / "ledgers" / "fast_bot_shock_follow_outcome_ledger.jsonl",
         "shock_scorecard": root / "scorecard" / "fast_bot_shock_follow_scorecard.json",
@@ -589,6 +598,26 @@ def run_cycle(
             env=env,
         )
     )
+    # Advance the evidence state machine before costlier evaluators. Learning
+    # rows created later in this pass are consumed on the next pass; a slow
+    # knowledge aggregation therefore cannot starve perception through exit.
+    autonomous_shadow_result = _json_stdout(
+        command_runner(
+            [
+                py,
+                str(REPO_ROOT / "tools/run_autonomous_shadow_nervous_system.py"),
+                "--shadow-ledger", str(paths["shadow_ledger"]),
+                "--shock-guard-decision-ledger", str(paths["shock_guard_decisions"]),
+                "--outcome-ledger", str(paths["outcome_ledger"]),
+                "--learning-episode-ledger", str(paths["learning_episode_ledger"]),
+                "--state-root", str(paths["autonomous_shadow_root"]),
+                "--output", str(paths["autonomous_shadow_state"]),
+                "--report", str(paths["autonomous_shadow_report"]),
+                "--max-signals", "128",
+            ],
+            env=env,
+        )
+    )
     profit_holdout_scorecard_result = _json_stdout(
         command_runner(
             [
@@ -704,6 +733,7 @@ def run_cycle(
     state["last_pair_side_quarantine_outcome_result"] = pair_side_quarantine_outcome_result
     state["last_corrective_challenger_result"] = challenger_result
     state["last_knowledge_result"] = knowledge_result
+    state["last_autonomous_shadow_result"] = autonomous_shadow_result
     state["last_shock_follow_result"] = shock_follow_result
     state["last_shock_guard_result"] = shock_guard_result
     state["last_pair_chart_result"] = pair_chart_result
@@ -851,6 +881,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
                 ),
                 last_corrective_challenger_result=state.get("last_corrective_challenger_result"),
                 last_knowledge_result=state.get("last_knowledge_result"),
+                last_autonomous_shadow_result=state.get("last_autonomous_shadow_result"),
                 last_shock_follow_result=state.get("last_shock_follow_result"),
                 last_shock_guard_result=state.get("last_shock_guard_result"),
                 last_pair_chart_result=state.get("last_pair_chart_result"),

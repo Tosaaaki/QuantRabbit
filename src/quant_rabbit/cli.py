@@ -199,6 +199,10 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR,
     DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT,
+    DEFAULT_AUTONOMOUS_SHADOW_INPUT,
+    DEFAULT_AUTONOMOUS_SHADOW_LEDGER,
+    DEFAULT_AUTONOMOUS_SHADOW_STATE,
+    DEFAULT_AUTONOMOUS_SHADOW_REPORT,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
     DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_SUPPORT_BOT,
@@ -5033,6 +5037,16 @@ def main(argv: list[str] | None = None) -> int:
     p_goal_loop.add_argument("--output", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR)
     p_goal_loop.add_argument("--report", type=Path, default=DEFAULT_TRADER_GOAL_LOOP_ORCHESTRATOR_REPORT)
 
+    p_autonomous_shadow = sub.add_parser(
+        "autonomous-shadow-cycle",
+        help="Advance the no-approval, append-only shadow nervous system by one cycle.",
+    )
+    p_autonomous_shadow.add_argument("--input", type=Path, default=DEFAULT_AUTONOMOUS_SHADOW_INPUT)
+    p_autonomous_shadow.add_argument("--ledger", type=Path, default=DEFAULT_AUTONOMOUS_SHADOW_LEDGER)
+    p_autonomous_shadow.add_argument("--output", type=Path, default=DEFAULT_AUTONOMOUS_SHADOW_STATE)
+    p_autonomous_shadow.add_argument("--report", type=Path, default=DEFAULT_AUTONOMOUS_SHADOW_REPORT)
+    p_autonomous_shadow.add_argument("--min-net-confidence", type=float, default=0.60)
+
     p_active_contract = sub.add_parser(
         "active-trader-contract",
         help="Write the read-only 4x Active Trader Contract and active-path/no-action gate.",
@@ -8527,6 +8541,44 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "autonomous-shadow-cycle":
+        try:
+            from quant_rabbit.autonomous_shadow_nervous_system import (
+                AutonomousShadowNervousSystem,
+            )
+
+            packet = json.loads(args.input.read_text(encoding="utf-8"))
+            if not isinstance(packet, dict):
+                raise ValueError("autonomous shadow input must be a JSON object")
+            summary = AutonomousShadowNervousSystem(
+                ledger_path=args.ledger,
+                output_path=args.output,
+                report_path=args.report,
+                min_net_confidence=args.min_net_confidence,
+            ).run(packet)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "state": summary.state,
+                    "cycle_id": summary.cycle_id,
+                    "expected_worker": summary.expected_worker,
+                    "events_appended": summary.events_appended,
+                    "ledger_path": str(summary.ledger_path),
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "human_approval_required": summary.human_approval_required,
+                    "live_permission_allowed": summary.live_permission_allowed,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2 if summary.status == "BLOCKED" else 0
     if args.command == "active-trader-contract":
         try:
             from quant_rabbit.active_trader_contract import ActiveTraderContract
