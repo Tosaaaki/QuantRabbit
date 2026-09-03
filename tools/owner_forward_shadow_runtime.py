@@ -128,6 +128,15 @@ def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def append_jsonl(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(path, 0o600)
+
+
 def read_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text())
@@ -364,7 +373,7 @@ def _base_status(
 ) -> dict[str, Any]:
     return {
         "contract": "QR_OWNER_FORWARD_SHADOW_RESIDENT_V1",
-        "schema_version": 1,
+        "schema_version": 2,
         "pid": os.getpid(),
         "started_at_utc": started_at,
         "heartbeat_at_utc": utc_now(),
@@ -405,8 +414,20 @@ def _base_status(
         "normalized_passive_forward_outcome_ledger_path": str(root / "ledgers" / "fast_bot_normalized_passive_forward_outcome_ledger.jsonl"),
         "normalized_passive_forward_scorecard_path": str(root / "scorecard" / "fast_bot_normalized_passive_forward_scorecard.json"),
         "last_normalized_passive_forward_result": {},
+        "autonomous_shadow_nervous_system_root_path": str(root / "autonomous_shadow_nervous_system"),
+        "autonomous_shadow_nervous_system_state_path": str(root / "state" / "autonomous_shadow_nervous_system.json"),
+        "autonomous_shadow_nervous_system_report_path": str(root / "reports" / "autonomous_shadow_nervous_system.md"),
+        # Backward-compatible aliases for status readers deployed before V2.
         "autonomous_shadow_state_path": str(root / "state" / "autonomous_shadow_nervous_system.json"),
         "autonomous_shadow_report_path": str(root / "reports" / "autonomous_shadow_nervous_system.md"),
+        "cycle_failure_history_path": str(root / "ledgers" / "owner_forward_shadow_cycle_failures.jsonl"),
+        "last_cycle_started_at_utc": None,
+        "last_cycle_completed_at_utc": None,
+        "last_success_at_utc": None,
+        "last_failure_at_utc": None,
+        "last_failure_error": None,
+        "last_failure_record_sha256": None,
+        "consecutive_cycle_failures": 0,
         "last_autonomous_shadow_result": {},
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
@@ -772,6 +793,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         root / "ledgers" / "eurusd_learned_policy_prospective_outcome_ledger.jsonl",
         root / "ledgers" / "fast_bot_normalized_passive_forward_decision_ledger.jsonl",
         root / "ledgers" / "fast_bot_normalized_passive_forward_outcome_ledger.jsonl",
+        root / "ledgers" / "owner_forward_shadow_cycle_failures.jsonl",
     ):
         ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         ledger.touch(exist_ok=True, mode=0o600)
@@ -798,6 +820,17 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         counters=counters,
         restart_count=restart_count,
     )
+    for key in (
+        "last_cycle_started_at_utc",
+        "last_cycle_completed_at_utc",
+        "last_success_at_utc",
+        "last_failure_at_utc",
+        "last_failure_error",
+        "last_failure_record_sha256",
+        "consecutive_cycle_failures",
+    ):
+        if key in prior:
+            status[key] = prior[key]
     manifest_body = {
         "contract": "QR_OWNER_FORWARD_SHADOW_RELEASE_V1",
         "sealed_at_utc": utc_now(),
@@ -848,16 +881,27 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
     signal.signal(signal.SIGTERM, stop)
     while not STOP:
         cycle_started = time.monotonic()
+        cycle_started_at_utc = utc_now()
+        status.update(
+            heartbeat_at_utc=cycle_started_at_utc,
+            last_cycle_started_at_utc=cycle_started_at_utc,
+        )
+        atomic_json(root / "state" / "status.json", status)
         try:
             verify_release(
                 expected_commit=args.expected_commit,
                 expected_source_sha256=args.expected_source_sha256,
             )
             state = run_cycle(root=root, env=env, state=state)
+            cycle_completed_at_utc = utc_now()
             status.update(
                 run_state="RUNNING",
-                heartbeat_at_utc=utc_now(),
+                heartbeat_at_utc=cycle_completed_at_utc,
                 last_error=None,
+                last_cycle_completed_at_utc=cycle_completed_at_utc,
+                last_success_at_utc=cycle_completed_at_utc,
+                consecutive_cycle_failures=0,
+                failure_history_write_error=None,
                 last_event_timestamp_utc=state.get("last_event_timestamp_utc"),
                 latest_quote_timestamp_utc=state.get("latest_quote_timestamp_utc"),
                 latest_bar_timestamp_utc=state.get("latest_bar_timestamp_utc"),
@@ -898,10 +942,53 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
             )
         except Exception as exc:
             state["cycle_failures"] = int(state.get("cycle_failures", 0)) + 1
+            failure_at_utc = utc_now()
+            failure_error = f"{type(exc).__name__}: {exc}"[:600]
+            consecutive_failures = int(status.get("consecutive_cycle_failures") or 0) + 1
+            failure_record = {
+                "contract": "QR_OWNER_FORWARD_SHADOW_CYCLE_FAILURE_V1",
+                "schema_version": 1,
+                "recorded_at_utc": failure_at_utc,
+                "cycle_started_at_utc": cycle_started_at_utc,
+                "cycle_failure_count": int(state.get("cycle_failures", 0)),
+                "consecutive_cycle_failures": consecutive_failures,
+                "error_type": type(exc).__name__,
+                "error": failure_error,
+                "source_commit": manifest["commit"],
+                "source_bundle_sha256": manifest["source_bundle_sha256"],
+                "execution_authority": "NONE",
+                "broker_mutation_allowed": False,
+                "external_order_attempts": 0,
+                "external_orders": 0,
+                "previous_record_sha256": status.get("last_failure_record_sha256"),
+            }
+            failure_record["record_sha256"] = canonical_sha(failure_record)
+            history_error = None
+            try:
+                append_jsonl(
+                    root / "ledgers" / "owner_forward_shadow_cycle_failures.jsonl",
+                    failure_record,
+                )
+            except Exception as history_exc:
+                history_error = f"{type(history_exc).__name__}: {history_exc}"[:600]
             status.update(
-                run_state="DEGRADED_RETRYING",
-                heartbeat_at_utc=utc_now(),
-                last_error=f"{type(exc).__name__}: {exc}"[:600],
+                run_state=(
+                    "DEGRADED_OBSERVABILITY_BLOCKED"
+                    if history_error
+                    else "DEGRADED_RETRYING"
+                ),
+                heartbeat_at_utc=failure_at_utc,
+                last_error=failure_error,
+                last_cycle_completed_at_utc=failure_at_utc,
+                last_failure_at_utc=failure_at_utc,
+                last_failure_error=failure_error,
+                last_failure_record_sha256=(
+                    status.get("last_failure_record_sha256")
+                    if history_error
+                    else failure_record["record_sha256"]
+                ),
+                consecutive_cycle_failures=consecutive_failures,
+                failure_history_write_error=history_error,
                 counters={
                     "event_count": int(state.get("event_count", 0)),
                     "proposal_count": int(state.get("proposal_count", 0)),

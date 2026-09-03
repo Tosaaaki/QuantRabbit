@@ -422,10 +422,82 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(status["last_profit_holdout_scorecard_result"], {})
         self.assertEqual(status["last_normalized_passive_forward_result"], {})
         self.assertEqual(status["last_autonomous_shadow_result"], {})
+        self.assertEqual(status["schema_version"], 2)
+        self.assertEqual(
+            status["autonomous_shadow_nervous_system_root_path"],
+            "/state/cohort/autonomous_shadow_nervous_system",
+        )
+        self.assertEqual(
+            status["autonomous_shadow_nervous_system_state_path"],
+            status["autonomous_shadow_state_path"],
+        )
+        self.assertEqual(
+            status["autonomous_shadow_nervous_system_report_path"],
+            status["autonomous_shadow_report_path"],
+        )
+        self.assertEqual(
+            status["cycle_failure_history_path"],
+            "/state/cohort/ledgers/owner_forward_shadow_cycle_failures.jsonl",
+        )
+        self.assertIsNone(status["last_failure_error"])
+        self.assertEqual(status["consecutive_cycle_failures"], 0)
         self.assertEqual(
             status["normalized_passive_forward_label"],
             "com.quantrabbit.normalized-passive-forward",
         )
+
+    def test_failure_history_survives_a_later_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            args = SimpleNamespace(
+                expected_commit="b" * 40,
+                expected_source_sha256="c" * 64,
+                state_root=Path(temp),
+                oanda_env_file=Path("/approved/.env.local"),
+                interval_seconds=30.0,
+            )
+            manifest = {
+                "repo_root": str(ROOT),
+                "branch": "test",
+                "commit": args.expected_commit,
+                "git_tree": "d" * 40,
+                "source_bundle_sha256": args.expected_source_sha256,
+                "source_files": {},
+                "python_executable": "/python",
+                "python_executable_sha256": "e" * 64,
+                "calibration_sha256": None,
+                "calibration_source_evidence_sha256": None,
+            }
+            with patch.object(runtime, "verify_release", return_value=manifest), patch.object(
+                runtime, "run_cycle", side_effect=runtime.RuntimeBlocked("TEST_FAILURE")
+            ), patch.object(runtime.fcntl, "flock"):
+                self.assertEqual(runtime.run_resident(args, once=True), 2)
+
+            cohort = runtime.cohort_root(
+                args.state_root,
+                args.expected_commit,
+                args.expected_source_sha256,
+            )
+            history_path = cohort / "ledgers" / "owner_forward_shadow_cycle_failures.jsonl"
+            rows = [json.loads(line) for line in history_path.read_text().splitlines()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["error"], "RuntimeBlocked: TEST_FAILURE")
+            self.assertEqual(rows[0]["execution_authority"], "NONE")
+            self.assertEqual(rows[0]["external_orders"], 0)
+
+            def succeed(*, state, **_kwargs):
+                return state
+
+            with patch.object(runtime, "verify_release", return_value=manifest), patch.object(
+                runtime, "run_cycle", side_effect=succeed
+            ), patch.object(runtime.fcntl, "flock"):
+                self.assertEqual(runtime.run_resident(args, once=True), 0)
+
+            status = json.loads((cohort / "state" / "status.json").read_text())
+            self.assertIsNone(status["last_error"])
+            self.assertEqual(status["last_failure_error"], "RuntimeBlocked: TEST_FAILURE")
+            self.assertEqual(status["consecutive_cycle_failures"], 0)
+            self.assertIsNotNone(status["last_success_at_utc"])
+            self.assertEqual(len(history_path.read_text().splitlines()), 1)
 
 
 if __name__ == "__main__":
