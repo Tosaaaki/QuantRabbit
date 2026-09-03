@@ -374,6 +374,12 @@ def _base_status(
     counters: Mapping[str, int],
     restart_count: int,
 ) -> dict[str, Any]:
+    corrective_policy = read_object(REPO_ROOT / CORRECTIVE_CHALLENGER_POLICY_PATH)
+    corrective_preregistration = (
+        corrective_policy.get("preregistration")
+        if isinstance(corrective_policy.get("preregistration"), Mapping)
+        else {}
+    )
     return {
         "contract": "QR_OWNER_FORWARD_SHADOW_RESIDENT_V1",
         "schema_version": 2,
@@ -435,9 +441,13 @@ def _base_status(
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
         "corrective_challenger_policy_path": str(REPO_ROOT / CORRECTIVE_CHALLENGER_POLICY_PATH),
-        "corrective_challenger_policy_contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V2",
-        "corrective_challenger_target_arm_id": "ATR_NORMALIZED_GEOMETRY",
-        "corrective_challenger_eligibility_cutoff_utc": "2026-09-03T09:30:00Z",
+        "corrective_challenger_policy_contract": corrective_policy.get("contract"),
+        "corrective_challenger_target_arm_id": corrective_preregistration.get(
+            "target_arm_id"
+        ),
+        "corrective_challenger_eligibility_cutoff_utc": (
+            corrective_preregistration.get("eligibility_cutoff_utc")
+        ),
         "learning_episode_ledger_path": str(root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl"),
         "knowledge_ledger_path": str(root / "ledgers" / "fast_bot_knowledge_ledger.jsonl"),
         "learning_scorecard_path": str(root / "scorecard" / "fast_bot_learning_scorecard.json"),
