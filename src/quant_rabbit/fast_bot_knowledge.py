@@ -23,6 +23,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from quant_rabbit.fast_bot import SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
+    ARM_ORDER_V3,
+    CONFIG_CONTRACT_V3,
     ROW_CONTRACT,
     canonical_sha,
     load_config,
@@ -51,6 +53,7 @@ def run_fast_bot_knowledge(
     """Derive immutable learning artifacts without changing source ledgers."""
 
     config, config_sha = load_config(config_path)
+    arm_order = ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
     signals = load_jsonl(shadow_ledger_path)
     outcomes = load_jsonl(outcome_ledger_path)
     challenger_rows = load_jsonl(challenger_ledger_path)
@@ -59,6 +62,7 @@ def run_fast_bot_knowledge(
         outcomes=outcomes,
         challenger_rows=challenger_rows,
         config_sha256=config_sha,
+        arm_order=arm_order,
     )
     appended_episodes = _append_once(
         episode_ledger_path,
@@ -116,6 +120,7 @@ def build_learning_episodes(
     outcomes: Sequence[Mapping[str, Any]],
     challenger_rows: Sequence[Mapping[str, Any]],
     config_sha256: str,
+    arm_order: Sequence[str] = ARM_ORDER,
 ) -> tuple[list[dict[str, Any]], int]:
     signal_by_id: dict[str, Mapping[str, Any]] = {}
     for signal in signals:
@@ -148,7 +153,13 @@ def build_learning_episodes(
         rows = rows_by_signal.get(signal_id, [])
         if outcome is None or not _outcome_matches_signal(outcome, signal):
             continue
-        if tuple(str(row.get("arm_id")) for row in sorted(rows, key=_arm_index)) != ARM_ORDER:
+        if (
+            tuple(
+                str(row.get("arm_id"))
+                for row in sorted(rows, key=lambda item: _arm_index(item, arm_order))
+            )
+            != tuple(arm_order)
+        ):
             missing += 1
             continue
         episodes.append(
@@ -157,6 +168,7 @@ def build_learning_episodes(
                 outcome=outcome,
                 challenger_rows=rows,
                 config_sha256=config_sha256,
+                arm_order=arm_order,
             )
         )
     return episodes, missing
@@ -168,8 +180,12 @@ def build_learning_episode(
     outcome: Mapping[str, Any],
     challenger_rows: Sequence[Mapping[str, Any]],
     config_sha256: str,
+    arm_order: Sequence[str] = ARM_ORDER,
 ) -> dict[str, Any]:
-    ordered = sorted(challenger_rows, key=_arm_index)
+    ordered = sorted(
+        challenger_rows,
+        key=lambda item: _arm_index(item, arm_order),
+    )
     baseline = next(row for row in ordered if row["arm_id"] == "BASELINE")
     realized = float(baseline["after_cost_net_pips"])
     filled = baseline.get("filled") is True and baseline.get("vetoed") is not True
@@ -298,7 +314,8 @@ def build_learning_scorecard(
                     "regime_bucket": episode["entry_context"]["regime_bucket"],
                 }
             )
-    metrics = {arm: _metrics(arm_rows.get(arm, [])) for arm in ARM_ORDER}
+    arm_order = ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
+    metrics = {arm: _metrics(arm_rows.get(arm, [])) for arm in arm_order}
     baseline = metrics["BASELINE"]
     target = metrics[target_arm]
     paired_delta = _paired_delta(
@@ -613,10 +630,18 @@ def _adverse_conditions(
         "early_futility_minimum_target_fills": early_floor or None,
         "early_futility_floor_met": early_floor_met,
     }
+    stop_condition_keys = (
+        "loss_streak_worse_than_baseline",
+        "mean_mae_worse_after_minimum_fill_floor",
+        "net_pips_not_above_baseline_after_minimum_fill_floor",
+        "dual_metric_futility_after_early_floor",
+    )
     return {
         **observed,
+        # early_futility_floor_met is an informational prerequisite, not an
+        # adverse observation by itself.
         "stop_condition_observed": any(
-            value for key, value in observed.items() if isinstance(value, bool)
+            bool(observed[key]) for key in stop_condition_keys
         ),
     }
 
@@ -659,11 +684,13 @@ def _effective_pips(row: Mapping[str, Any]) -> float:
     )
 
 
-def _arm_index(row: Mapping[str, Any]) -> int:
+def _arm_index(
+    row: Mapping[str, Any], arm_order: Sequence[str] = ARM_ORDER
+) -> int:
     try:
-        return ARM_ORDER.index(str(row.get("arm_id") or ""))
+        return tuple(arm_order).index(str(row.get("arm_id") or ""))
     except ValueError:
-        return len(ARM_ORDER)
+        return len(arm_order)
 
 
 def _one_sided_95_lower(values: Sequence[float]) -> float | None:

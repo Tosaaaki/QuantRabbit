@@ -108,10 +108,14 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             runtime.CORRECTIVE_CHALLENGER_POLICY_PATH,
-            Path("config/fast_bot_corrective_challenger_v2.json"),
+            Path("config/fast_bot_corrective_challenger_v3.json"),
         )
         self.assertIn(
             Path("config/fast_bot_corrective_challenger_v1.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("config/fast_bot_corrective_challenger_v2.json"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
         self.assertIn(
@@ -384,7 +388,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
             or "run_fast_bot_knowledge.py" in " ".join(row)
         ]
         self.assertTrue(
-            all("config/fast_bot_corrective_challenger_v2.json" in row for row in corrective_calls)
+            all("config/fast_bot_corrective_challenger_v3.json" in row for row in corrective_calls)
         )
         self.assertIn("run_autonomous_shadow_nervous_system.py", joined)
         command_lines = [" ".join(row) for row in calls]

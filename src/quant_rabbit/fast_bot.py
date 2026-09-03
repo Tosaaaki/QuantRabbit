@@ -384,6 +384,30 @@ def build_fast_bot_shadow(
         sl = float(primary["stop_loss"])
         actual_tp_pips = float(primary["take_profit_pips"])
         actual_sl_pips = float(primary["stop_loss_pips"])
+        timeframe_votes = (
+            row.get("timeframe_votes")
+            if isinstance(row.get("timeframe_votes"), Mapping)
+            else {}
+        )
+        m1_vote = (
+            timeframe_votes.get("M1")
+            if isinstance(timeframe_votes.get("M1"), Mapping)
+            else {}
+        )
+        m5_vote = (
+            timeframe_votes.get("M5")
+            if isinstance(timeframe_votes.get("M5"), Mapping)
+            else {}
+        )
+        m1_readiness = str(m1_vote.get("readiness") or "UNKNOWN").upper()
+        m5_readiness = str(m5_vote.get("readiness") or "UNKNOWN").upper()
+        entry_confirmation = {
+            "contract": "QR_FAST_BOT_ENTRY_CONFIRMATION_V1",
+            "policy": "EXECUTION_M1_MUST_BE_TRIGGERED",
+            "m1_readiness": m1_readiness,
+            "m5_readiness": m5_readiness,
+            "m1_triggered": m1_readiness == "TRIGGERED",
+        }
         identity = {
             "identity_contract": "QR_FAST_BOT_SHADOW_IDENTITY_V3",
             "pair": pair,
@@ -450,6 +474,10 @@ def build_fast_bot_shadow(
                 }
             ),
             "regime_score": row.get("score"),
+            # Forward-only evidence for entry-timing challengers.  Historical
+            # signals deliberately remain unknown rather than being backfilled
+            # from mutable chart state.
+            "entry_confirmation": entry_confirmation,
             "shadow_only": True,
             "live_permission": False,
             "broker_mutation_allowed": False,

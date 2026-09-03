@@ -32,7 +32,7 @@ DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v3.json")
 PAIR_SIDE_QUARANTINE_POLICY_PATH = Path("config/fast_bot_pair_side_quarantine_v1.json")
-CORRECTIVE_CHALLENGER_POLICY_PATH = Path("config/fast_bot_corrective_challenger_v2.json")
+CORRECTIVE_CHALLENGER_POLICY_PATH = Path("config/fast_bot_corrective_challenger_v3.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -88,6 +88,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
+    Path("config/fast_bot_corrective_challenger_v2.json"),
     CORRECTIVE_CHALLENGER_POLICY_PATH,
     Path("config/fast_bot_shock_follow_v1.json"),
     Path("config/fast_bot_shock_guard_v1.json"),

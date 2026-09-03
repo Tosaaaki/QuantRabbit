@@ -8,6 +8,7 @@ import pytest
 
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
+    ARM_ORDER_V3,
     aggregate,
     arm_specs,
     build_rows,
@@ -21,6 +22,7 @@ from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v1.json"
 CONFIG_V2_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v2.json"
+CONFIG_V3_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v3.json"
 
 
 def _signal(signal_id: str = "signal-1", *, at: str = "2026-08-28T12:00:00+00:00", atr: float = 4.0) -> dict:
@@ -92,6 +94,42 @@ def test_v2_is_a_future_only_single_factor_geometry_cohort() -> None:
     assert preregistration["single_factor_change"] == "GEOMETRY_ONLY_ATR_RR1_BOUNDED"
     assert preregistration["eligibility_cutoff_utc"] == "2026-09-03T09:30:00Z"
     assert preregistration["selection_evidence"]["profitability_claim_allowed"] is False
+
+
+def test_v3_is_a_future_only_single_factor_entry_confirmation_cohort() -> None:
+    config, _ = load_config(CONFIG_V3_PATH)
+    preregistration = config["preregistration"]
+    assert config["contract"] == "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V3"
+    assert preregistration["target_arm_id"] == "M1_TRIGGERED_ONLY"
+    assert preregistration["single_factor_change"] == "ENTRY_CONFIRMATION_ONLY_M1_TRIGGERED"
+    assert preregistration["eligibility_cutoff_utc"] == "2026-09-03T14:15:00Z"
+    assert preregistration["selection_evidence"]["profitability_claim_allowed"] is False
+
+
+def test_v3_strict_entry_arm_requires_sealed_m1_trigger_at_emission() -> None:
+    config, _ = load_config(CONFIG_V3_PATH)
+    signal = _signal(at="2026-09-03T14:16:00+00:00")
+    unconfirmed = {
+        row["arm_id"]: row
+        for row in arm_specs(signal, {"vol_shock": False}, config)
+    }
+    signal["entry_confirmation"] = {
+        "contract": "QR_FAST_BOT_ENTRY_CONFIRMATION_V1",
+        "policy": "EXECUTION_M1_MUST_BE_TRIGGERED",
+        "m1_readiness": "TRIGGERED",
+        "m5_readiness": "ARMED",
+        "m1_triggered": True,
+    }
+    confirmed = {
+        row["arm_id"]: row
+        for row in arm_specs(signal, {"vol_shock": False}, config)
+    }
+
+    assert tuple(unconfirmed) == ARM_ORDER_V3
+    assert unconfirmed["M1_TRIGGERED_ONLY"]["vetoed"] is True
+    assert unconfirmed["M1_TRIGGERED_ONLY"]["veto_reason"] == "M1_NOT_TRIGGERED_AT_EMISSION"
+    assert confirmed["M1_TRIGGERED_ONLY"]["vetoed"] is False
+    assert confirmed["M1_TRIGGERED_ONLY"]["veto_reason"] is None
 
 
 def test_causal_shock_uses_strictly_prior_unique_timestamps() -> None:

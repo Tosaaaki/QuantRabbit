@@ -2445,6 +2445,16 @@ class FastBotTest(unittest.TestCase):
         self.assertFalse(shadow["broker_mutation_allowed"])
         self.assertFalse(shadow["ai_per_trade_approval_required"])
         signal = shadow["signals"][0]
+        self.assertEqual(
+            signal["entry_confirmation"],
+            {
+                "contract": "QR_FAST_BOT_ENTRY_CONFIRMATION_V1",
+                "policy": "EXECUTION_M1_MUST_BE_TRIGGERED",
+                "m1_readiness": "TRIGGERED",
+                "m5_readiness": "TRIGGERED",
+                "m1_triggered": True,
+            },
+        )
         arms = signal["entry_experiment_arms"]
         self.assertEqual(signal["schema_version"], 3)
         self.assertEqual(signal["horizon_lane"], HORIZON_LANE)
@@ -2466,6 +2476,26 @@ class FastBotTest(unittest.TestCase):
         self.assertEqual(len(signal["signal_sha256"]), 64)
         self.assertFalse(signal["broker_mutation_allowed"])
         self.assertGreater(shadow["signals"][0]["take_profit"], shadow["signals"][0]["entry"])
+
+    def test_shadow_seals_armed_m1_as_not_strictly_triggered(self) -> None:
+        fast, slow, snapshot = _inputs()
+        fast["charts"][0]["views"][0]["market_state"]["readiness"] = "ARMED"
+        regime = build_hierarchical_regime_contract(
+            fast_pair_charts=fast,
+            slow_pair_charts=slow,
+            broker_snapshot=snapshot,
+            guardian_events={"events": []},
+            ai_supervision={},
+            now_utc=NOW,
+        )
+
+        shadow = build_fast_bot_shadow(regime, broker_snapshot=snapshot, now_utc=NOW)
+
+        self.assertEqual(len(shadow["signals"]), 1)
+        confirmation = shadow["signals"][0]["entry_confirmation"]
+        self.assertEqual(confirmation["m1_readiness"], "ARMED")
+        self.assertEqual(confirmation["m5_readiness"], "TRIGGERED")
+        self.assertFalse(confirmation["m1_triggered"])
 
     def test_shadow_preserves_every_go_side_method_pair_and_horizon_identity(self) -> None:
         rows = [
