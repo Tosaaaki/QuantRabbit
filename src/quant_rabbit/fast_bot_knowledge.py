@@ -88,6 +88,7 @@ def run_fast_bot_knowledge(
     return {
         "contract": "QR_FAST_BOT_SHADOW_KNOWLEDGE_RUN_V1",
         "status": str(scorecard["assessment_status"]),
+        "collection_action": str(scorecard["collection_action"]),
         "config_sha256": config_sha,
         "resolved_episode_count": len(all_episodes),
         "new_episode_count": appended_episodes,
@@ -305,7 +306,7 @@ def build_learning_scorecard(
         target_rows=arm_rows.get(target_arm, []),
     )
     criteria = _criteria(prereg["success_criteria"], baseline, target, paired_delta)
-    adverse = _adverse_conditions(baseline, target)
+    adverse = _adverse_conditions(baseline, target, preregistration=prereg)
     status = (
         "STOP_REVIEW_REQUIRED"
         if adverse["stop_condition_observed"]
@@ -334,6 +335,9 @@ def build_learning_scorecard(
         "success_criteria_results": criteria,
         "adverse_condition_results": adverse,
         "assessment_status": status,
+        "collection_action": (
+            "HALT_TARGET_COHORT" if status == "STOP_REVIEW_REQUIRED" else "CONTINUE_TARGET_COHORT"
+        ),
         "same_scorecard_metrics": [
             "profit_factor",
             "net_pips",
@@ -388,6 +392,7 @@ def build_knowledge_record(
             "trade_ids": list(scorecard["trade_ids"]),
         },
         "assessment_status": scorecard["assessment_status"],
+        "collection_action": scorecard["collection_action"],
         "success_criteria_results": dict(scorecard["success_criteria_results"]),
         "adverse_condition_results": dict(scorecard["adverse_condition_results"]),
         "adoption_state": "NOT_ADOPTED_OWNER_REVIEW_REQUIRED",
@@ -569,9 +574,26 @@ def _criteria(
 
 
 def _adverse_conditions(
-    baseline: Mapping[str, Any], target: Mapping[str, Any]
+    baseline: Mapping[str, Any],
+    target: Mapping[str, Any],
+    *,
+    preregistration: Mapping[str, Any],
 ) -> dict[str, Any]:
     sample_floor_met = int(target["filled_count"]) >= 100
+    early_stop = preregistration.get("early_futility_stop")
+    early_floor = (
+        int(early_stop.get("minimum_target_fills") or 0)
+        if isinstance(early_stop, Mapping)
+        else 0
+    )
+    early_floor_met = early_floor > 0 and int(target["filled_count"]) >= early_floor
+    baseline_pf = _profit_factor_value(baseline.get("profit_factor"))
+    target_pf = _profit_factor_value(target.get("profit_factor"))
+    dual_metric_futility = bool(
+        early_floor_met
+        and float(target["net_pips"]) <= float(baseline["net_pips"])
+        and target_pf <= baseline_pf
+    )
     target_mae = target.get("mean_mae_pips")
     baseline_mae = baseline.get("mean_mae_pips")
     observed = {
@@ -587,8 +609,24 @@ def _adverse_conditions(
             sample_floor_met
             and float(target["net_pips"]) <= float(baseline["net_pips"])
         ),
+        "dual_metric_futility_after_early_floor": dual_metric_futility,
+        "early_futility_minimum_target_fills": early_floor or None,
+        "early_futility_floor_met": early_floor_met,
     }
-    return {**observed, "stop_condition_observed": any(observed.values())}
+    return {
+        **observed,
+        "stop_condition_observed": any(
+            value for key, value in observed.items() if isinstance(value, bool)
+        ),
+    }
+
+
+def _profit_factor_value(value: Any) -> float:
+    if value == "INF":
+        return math.inf
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return -math.inf
 
 
 def _signal_valid(value: Mapping[str, Any]) -> bool:

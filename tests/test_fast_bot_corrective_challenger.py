@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,7 @@ from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v1.json"
+CONFIG_V2_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v2.json"
 
 
 def _signal(signal_id: str = "signal-1", *, at: str = "2026-08-28T12:00:00+00:00", atr: float = 4.0) -> dict:
@@ -81,6 +82,16 @@ def test_lane_reservation_contract_is_immutable(tmp_path: Path) -> None:
         match="corrective challenger lane reservation contract mismatch",
     ):
         load_config(tampered)
+
+
+def test_v2_is_a_future_only_single_factor_geometry_cohort() -> None:
+    config, _ = load_config(CONFIG_V2_PATH)
+    preregistration = config["preregistration"]
+    assert config["contract"] == "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V2"
+    assert preregistration["target_arm_id"] == "ATR_NORMALIZED_GEOMETRY"
+    assert preregistration["single_factor_change"] == "GEOMETRY_ONLY_ATR_RR1_BOUNDED"
+    assert preregistration["eligibility_cutoff_utc"] == "2026-09-03T09:30:00Z"
+    assert preregistration["selection_evidence"]["profitability_claim_allowed"] is False
 
 
 def test_causal_shock_uses_strictly_prior_unique_timestamps() -> None:
@@ -256,3 +267,88 @@ def test_incremental_ledger_is_content_addressed_and_idempotent(tmp_path: Path) 
     assert card["config_sha256"] == first["config_sha256"]
     assert card["external_order_attempts"] == 0
     assert card["external_orders"] == 0
+
+
+def test_v2_excludes_pre_cutoff_rows_without_broker_read(tmp_path: Path) -> None:
+    signal = _signal(at="2026-09-03T09:30:00+00:00")
+    shadow = tmp_path / "shadow.jsonl"
+    outcomes = tmp_path / "outcomes.jsonl"
+    ledger = tmp_path / "challenger.jsonl"
+    scorecard = tmp_path / "scorecard.json"
+    shadow.write_text(json.dumps(signal) + "\n")
+    outcomes.write_text(json.dumps(_outcome(signal)) + "\n")
+
+    def forbidden_fetch(*_args: object) -> object:
+        raise AssertionError("pre-cutoff row attempted a broker read")
+
+    result = run_incremental(
+        shadow_ledger_path=shadow,
+        outcome_ledger_path=outcomes,
+        challenger_ledger_path=ledger,
+        scorecard_path=scorecard,
+        config_path=CONFIG_V2_PATH,
+        client=object(),
+        truth_fetcher=forbidden_fetch,
+    )
+    assert result["pre_cutoff_signal_count"] == 1
+    assert result["due_signal_count"] == 0
+    assert result["processed_signal_count"] == 0
+    assert result["best_so_far"] is None
+    assert result["external_order_attempts"] == 0
+
+
+def test_v2_halts_future_reads_after_dual_metric_futility(tmp_path: Path) -> None:
+    signals = []
+    outcomes = []
+    for index in range(10):
+        at = f"2026-09-03T09:{31 + index:02d}:00+00:00"
+        signal = _signal(f"signal-{index}", at=at, atr=10.0)
+        signals.append(signal)
+        outcomes.append(_outcome(signal))
+    shadow = tmp_path / "shadow.jsonl"
+    outcome_path = tmp_path / "outcomes.jsonl"
+    ledger = tmp_path / "challenger.jsonl"
+    scorecard = tmp_path / "scorecard.json"
+    shadow.write_text("".join(json.dumps(row) + "\n" for row in signals))
+    outcome_path.write_text("".join(json.dumps(row) + "\n" for row in outcomes))
+    fetch_calls = 0
+
+    def fetch(_client: object, signal: dict, _outcome: dict) -> tuple[list[S5BidAskCandle], list[str]]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        generated = datetime.fromisoformat(signal["generated_at_utc"])
+        first = generated.replace(tzinfo=timezone.utc) if generated.tzinfo is None else generated
+        return (
+            [
+                _candle((first.replace(microsecond=0)).isoformat(), bid_o=0.99994, bid_h=1.00010, bid_l=0.99991, bid_c=1.00005),
+                _candle((first.replace(microsecond=0) + timedelta(seconds=5)).isoformat(), bid_o=1.00005, bid_h=1.00020, bid_l=0.99968, bid_c=0.99990),
+            ],
+            ["c" * 64],
+        )
+
+    first = run_incremental(
+        shadow_ledger_path=shadow,
+        outcome_ledger_path=outcome_path,
+        challenger_ledger_path=ledger,
+        scorecard_path=scorecard,
+        config_path=CONFIG_V2_PATH,
+        max_due=12,
+        client=object(),
+        truth_fetcher=fetch,
+    )
+    assert fetch_calls == 10
+    assert first["status"] == "HALTED_DUAL_METRIC_FUTILITY"
+    assert first["collection_control"]["target_filled_count"] == 10
+
+    second = run_incremental(
+        shadow_ledger_path=shadow,
+        outcome_ledger_path=outcome_path,
+        challenger_ledger_path=ledger,
+        scorecard_path=scorecard,
+        config_path=CONFIG_V2_PATH,
+        client=object(),
+        truth_fetcher=fetch,
+    )
+    assert fetch_calls == 10
+    assert second["status"] == "HALTED_DUAL_METRIC_FUTILITY"
+    assert second["broker_http_methods_used"] == []

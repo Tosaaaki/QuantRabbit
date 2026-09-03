@@ -24,6 +24,8 @@ from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
 
 
 CONFIG_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V1"
+CONFIG_CONTRACT_V2 = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V2"
+CONFIG_CONTRACTS = {CONFIG_CONTRACT, CONFIG_CONTRACT_V2}
 ROW_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_ROW_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_SCORECARD_V1"
 PREREGISTRATION_CONTRACT = "QR_FAST_BOT_SHADOW_CHANGE_PREREGISTRATION_V1"
@@ -79,7 +81,7 @@ def parse_utc(value: Any) -> datetime:
 
 def load_config(path: Path) -> tuple[dict[str, Any], str]:
     config = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(config, dict) or config.get("contract") != CONFIG_CONTRACT:
+    if not isinstance(config, dict) or config.get("contract") not in CONFIG_CONTRACTS:
         raise ValueError("corrective challenger config contract mismatch")
     if tuple(str(row.get("arm_id")) for row in config.get("arms", [])) != ARM_ORDER:
         raise ValueError("corrective challenger arm set or order mismatch")
@@ -115,12 +117,8 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
     # forward-admission contract. Changing them after observing this cohort
     # would invalidate the preregistration; a later experiment needs a new
     # hypothesis version and configuration identity.
-    if (
+    common_preregistration_invalid = (
         preregistration.get("contract") != PREREGISTRATION_CONTRACT
-        or preregistration.get("hypothesis_id")
-        != "same-lane-cooldown-loss-compression"
-        or preregistration.get("hypothesis_version") != 1
-        or preregistration.get("target_arm_id") != "LANE_COOLDOWN"
         or preregistration.get("change_scope")
         != "RESIDENT_SHADOW_CHALLENGER_ONLY"
         or preregistration.get("automatic_adoption_allowed") is not False
@@ -136,9 +134,68 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
         or not preregistration.get("effective_conditions")
         or not preregistration.get("adverse_conditions")
         or not preregistration.get("stop_conditions")
-    ):
+    )
+    if common_preregistration_invalid:
         raise ValueError("corrective challenger preregistration mismatch")
+    if config.get("contract") == CONFIG_CONTRACT:
+        if (
+            preregistration.get("hypothesis_id")
+            != "same-lane-cooldown-loss-compression"
+            or preregistration.get("hypothesis_version") != 1
+            or preregistration.get("target_arm_id") != "LANE_COOLDOWN"
+        ):
+            raise ValueError("corrective challenger V1 preregistration mismatch")
+    else:
+        early_stop = preregistration.get("early_futility_stop") or {}
+        selection = preregistration.get("selection_evidence") or {}
+        cutoff = parse_utc(preregistration.get("eligibility_cutoff_utc"))
+        if (
+            config.get("schema_version") != 2
+            or preregistration.get("hypothesis_id")
+            != "atr-normalized-geometry-loss-compression"
+            or preregistration.get("hypothesis_version") != 2
+            or preregistration.get("target_arm_id") != "ATR_NORMALIZED_GEOMETRY"
+            or preregistration.get("single_factor_change")
+            != "GEOMETRY_ONLY_ATR_RR1_BOUNDED"
+            or cutoff.second != 0
+            or cutoff.microsecond != 0
+            or int(early_stop.get("minimum_target_fills") or 0) != 10
+            or early_stop.get("requires_all")
+            != [
+                "TARGET_NET_PIPS_NOT_ABOVE_BASELINE",
+                "TARGET_PROFIT_FACTOR_NOT_ABOVE_BASELINE",
+            ]
+            or selection.get("selection_basis")
+            != "LOSS_COMPRESSION_HYPOTHESIS_ONLY"
+            or selection.get("profitability_claim_allowed") is not False
+            or not sealed_hash_fields_valid(
+                selection,
+                (
+                    "observed_config_sha256",
+                    "observed_scorecard_sha256",
+                ),
+            )
+            or not git_commit_valid(selection.get("observed_release_commit"))
+        ):
+            raise ValueError("corrective challenger V2 preregistration mismatch")
     return config, canonical_sha(config)
+
+
+def sealed_hash_fields_valid(value: Mapping[str, Any], fields: Sequence[str]) -> bool:
+    return all(
+        isinstance(value.get(field), str)
+        and len(str(value[field])) == 64
+        and all(character in "0123456789abcdef" for character in str(value[field]))
+        for field in fields
+    )
+
+
+def git_commit_valid(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -583,6 +640,7 @@ def _group(rows: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> list[dict[
 def build_scorecard(
     rows: Sequence[Mapping[str, Any]],
     *,
+    config: Mapping[str, Any],
     config_sha256: str,
     generated_at_utc: datetime,
 ) -> dict[str, Any]:
@@ -595,6 +653,21 @@ def build_scorecard(
         {"arm_id": arm, **aggregate([row for row in matching if row.get("arm_id") == arm])}
         for arm in ARM_ORDER
     ]
+    evidence_bearing = [row for row in comparison if int(row["filled_count"]) > 0]
+    best_by_profit_factor = (
+        max(
+            evidence_bearing,
+            key=lambda row: (_profit_factor_value(row["profit_factor"]), float(row["after_cost_net_pips"])),
+        )["arm_id"]
+        if evidence_bearing
+        else None
+    )
+    best_by_net = (
+        max(evidence_bearing, key=lambda row: float(row["after_cost_net_pips"]))["arm_id"]
+        if evidence_bearing
+        else None
+    )
+    collection_control = _collection_control(config, comparison)
     body = {
         "contract": SCORECARD_CONTRACT,
         "schema_version": 1,
@@ -608,15 +681,10 @@ def build_scorecard(
                 for key in ("pair", "strategy", "atr_bucket", "spread_bucket", "regime_bucket", "side", "vol_shock", "rapid_time_bucket_utc")
             },
         },
-        "best_so_far": max(
-            comparison,
-            key=lambda row: (
-                float(row["profit_factor"] if isinstance(row["profit_factor"], (int, float)) else 999999.0),
-                float(row["after_cost_net_pips"]),
-            ),
-        )["arm_id"] if comparison else None,
+        "best_so_far": best_by_profit_factor,
         "best_so_far_selection_metric": "PROFIT_FACTOR_THEN_AFTER_COST_NET_PIPS",
-        "best_after_cost_net_pips_arm": max(comparison, key=lambda row: float(row["after_cost_net_pips"]))["arm_id"] if comparison else None,
+        "best_after_cost_net_pips_arm": best_by_net,
+        "collection_control": collection_control,
         "positive_claim_allowed": False,
         "adoption_allowed": False,
         "automatic_parameter_change_allowed": False,
@@ -635,6 +703,49 @@ def build_scorecard(
         ],
     }
     return seal(body)
+
+
+def _profit_factor_value(value: Any) -> float:
+    if value == "INF":
+        return math.inf
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return -math.inf
+
+
+def _collection_control(
+    config: Mapping[str, Any], comparison: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    preregistration = config.get("preregistration") or {}
+    early_stop = preregistration.get("early_futility_stop")
+    if not isinstance(early_stop, Mapping):
+        return {
+            "status": "ACTIVE_NO_EARLY_FUTILITY_STOP",
+            "halted": False,
+            "new_signal_collection_allowed": True,
+        }
+    by_arm = {str(row.get("arm_id")): row for row in comparison}
+    baseline = by_arm.get("BASELINE") or {}
+    target = by_arm.get(str(preregistration.get("target_arm_id") or "")) or {}
+    minimum = int(early_stop["minimum_target_fills"])
+    floor_met = int(target.get("filled_count") or 0) >= minimum
+    net_not_above = float(target.get("after_cost_net_pips") or 0.0) <= float(
+        baseline.get("after_cost_net_pips") or 0.0
+    )
+    pf_not_above = _profit_factor_value(target.get("profit_factor")) <= _profit_factor_value(
+        baseline.get("profit_factor")
+    )
+    halted = floor_met and net_not_above and pf_not_above
+    return {
+        "status": "HALTED_DUAL_METRIC_FUTILITY" if halted else "COLLECTING_FORWARD_EVIDENCE",
+        "halted": halted,
+        "new_signal_collection_allowed": not halted,
+        "minimum_target_fills": minimum,
+        "target_filled_count": int(target.get("filled_count") or 0),
+        "target_net_pips_not_above_baseline": net_not_above,
+        "target_profit_factor_not_above_baseline": pf_not_above,
+        "requires_all": list(early_stop["requires_all"]),
+    }
 
 
 def append_rows_once(path: Path, rows: Sequence[Mapping[str, Any]]) -> int:
@@ -696,9 +807,53 @@ def run_incremental(
     if not 1 <= max_due <= 1000:
         raise ValueError("max_due must be inside 1..1000")
     config, config_sha = load_config(config_path)
-    signals = load_jsonl(shadow_ledger_path)
+    run_contract = (
+        "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V2"
+        if config["contract"] == CONFIG_CONTRACT_V2
+        else "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V1"
+    )
+    all_signals = load_jsonl(shadow_ledger_path)
+    cutoff_raw = (config.get("preregistration") or {}).get("eligibility_cutoff_utc")
+    cutoff = parse_utc(cutoff_raw) if cutoff_raw else None
+    signals = [
+        signal
+        for signal in all_signals
+        if cutoff is None or parse_utc(signal.get("generated_at_utc")) > cutoff
+    ]
+    pre_cutoff_signal_count = len(all_signals) - len(signals)
     outcomes = load_jsonl(outcome_ledger_path)
     existing = load_jsonl(challenger_ledger_path)
+    evaluated = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    current_scorecard = build_scorecard(
+        existing,
+        config=config,
+        config_sha256=config_sha,
+        generated_at_utc=evaluated,
+    )
+    if current_scorecard["collection_control"]["halted"]:
+        write_json_atomic(scorecard_path, current_scorecard)
+        return {
+            "contract": run_contract,
+            "status": "HALTED_DUAL_METRIC_FUTILITY",
+            "config_contract": config["contract"],
+            "config_sha256": config_sha,
+            "target_arm_id": config["preregistration"]["target_arm_id"],
+            "eligibility_cutoff_utc": cutoff.isoformat() if cutoff else None,
+            "pre_cutoff_signal_count": pre_cutoff_signal_count,
+            "due_signal_count": 0,
+            "processed_signal_count": 0,
+            "appended_row_count": 0,
+            "remaining_in_selected_batch": 0,
+            "challenger_ledger_path": str(challenger_ledger_path),
+            "scorecard_path": str(scorecard_path),
+            "best_so_far": current_scorecard.get("best_so_far"),
+            "collection_control": current_scorecard["collection_control"],
+            "execution_authority": "NONE",
+            "broker_http_methods_used": [],
+            "broker_mutation": False,
+            "external_order_attempts": 0,
+            "external_orders": 0,
+        }
     existing_identity = {str(row.get("row_identity")) for row in existing}
     by_signal = {str(row.get("signal_id")): row for row in signals if row.get("signal_id")}
     features = causal_features(signals, config)
@@ -728,7 +883,6 @@ def run_incremental(
         )
 
     fetch = truth_fetcher or default_fetch
-    evaluated = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     new_rows: list[dict[str, Any]] = []
     for signal, outcome in due:
         candles, hashes = fetch(broker, signal, outcome)
@@ -746,12 +900,22 @@ def run_incremental(
         )
     appended = append_rows_once(challenger_ledger_path, new_rows)
     all_rows = load_jsonl(challenger_ledger_path)
-    scorecard = build_scorecard(all_rows, config_sha256=config_sha, generated_at_utc=evaluated)
+    scorecard = build_scorecard(
+        all_rows,
+        config=config,
+        config_sha256=config_sha,
+        generated_at_utc=evaluated,
+    )
     write_json_atomic(scorecard_path, scorecard)
     remaining = max(0, len(due) - len({row["signal_id"] for row in new_rows if row["arm_id"] == "BASELINE"}))
     return {
-        "contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V1",
+        "contract": run_contract,
+        "status": scorecard["collection_control"]["status"],
+        "config_contract": config["contract"],
         "config_sha256": config_sha,
+        "target_arm_id": config["preregistration"]["target_arm_id"],
+        "eligibility_cutoff_utc": cutoff.isoformat() if cutoff else None,
+        "pre_cutoff_signal_count": pre_cutoff_signal_count,
         "due_signal_count": len(due),
         "processed_signal_count": len({row["signal_id"] for row in new_rows if row["arm_id"] == "BASELINE"}),
         "appended_row_count": appended,
@@ -759,8 +923,9 @@ def run_incremental(
         "challenger_ledger_path": str(challenger_ledger_path),
         "scorecard_path": str(scorecard_path),
         "best_so_far": scorecard.get("best_so_far"),
+        "collection_control": scorecard["collection_control"],
         "execution_authority": "NONE",
-        "broker_http_methods_used": ["GET"],
+        "broker_http_methods_used": ["GET"] if due else [],
         "broker_mutation": False,
         "external_order_attempts": 0,
         "external_orders": 0,

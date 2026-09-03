@@ -32,6 +32,7 @@ DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v3.json")
 PAIR_SIDE_QUARANTINE_POLICY_PATH = Path("config/fast_bot_pair_side_quarantine_v1.json")
+CORRECTIVE_CHALLENGER_POLICY_PATH = Path("config/fast_bot_corrective_challenger_v2.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -87,6 +88,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/oanda_spread_calibration_v1.json"),
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
+    CORRECTIVE_CHALLENGER_POLICY_PATH,
     Path("config/fast_bot_shock_follow_v1.json"),
     Path("config/fast_bot_shock_guard_v1.json"),
     Path("config/fast_bot_profit_holdout_v1.json"),
@@ -431,6 +433,10 @@ def _base_status(
         "last_autonomous_shadow_result": {},
         "corrective_challenger_ledger_path": str(root / "ledgers" / "fast_bot_corrective_challenger_ledger.jsonl"),
         "corrective_challenger_scorecard_path": str(root / "scorecard" / "fast_bot_corrective_challenger_scorecard.json"),
+        "corrective_challenger_policy_path": str(REPO_ROOT / CORRECTIVE_CHALLENGER_POLICY_PATH),
+        "corrective_challenger_policy_contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V2",
+        "corrective_challenger_target_arm_id": "ATR_NORMALIZED_GEOMETRY",
+        "corrective_challenger_eligibility_cutoff_utc": "2026-09-03T09:30:00Z",
         "learning_episode_ledger_path": str(root / "ledgers" / "fast_bot_learning_episode_ledger.jsonl"),
         "knowledge_ledger_path": str(root / "ledgers" / "fast_bot_knowledge_ledger.jsonl"),
         "learning_scorecard_path": str(root / "scorecard" / "fast_bot_learning_scorecard.json"),
@@ -666,7 +672,7 @@ def run_cycle(
                 "--outcome-ledger", str(paths["outcome_ledger"]),
                 "--challenger-ledger", str(paths["challenger_ledger"]),
                 "--scorecard", str(paths["challenger_scorecard"]),
-                "--config", str(REPO_ROOT / "config/fast_bot_corrective_challenger_v1.json"),
+                "--config", str(REPO_ROOT / CORRECTIVE_CHALLENGER_POLICY_PATH),
                 "--max-due", "12",
             ],
             env=env,
@@ -680,7 +686,7 @@ def run_cycle(
                 "--shadow-ledger", str(paths["shadow_ledger"]),
                 "--outcome-ledger", str(paths["outcome_ledger"]),
                 "--challenger-ledger", str(paths["challenger_ledger"]),
-                "--config", str(REPO_ROOT / "config/fast_bot_corrective_challenger_v1.json"),
+                "--config", str(REPO_ROOT / CORRECTIVE_CHALLENGER_POLICY_PATH),
                 "--episode-ledger", str(paths["learning_episode_ledger"]),
                 "--knowledge-ledger", str(paths["knowledge_ledger"]),
                 "--scorecard", str(paths["learning_scorecard"]),
@@ -855,6 +861,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
         "research_observation_lanes": [
             "EUR_USD_NORMALIZED_PASSIVE_REVERSAL_LONG_ZERO_AUTHORITY",
             "FAST_BOT_PAIR_SIDE_QUARANTINE_ZERO_AUTHORITY",
+            "FAST_BOT_ATR_NORMALIZED_GEOMETRY_FORWARD_ZERO_AUTHORITY",
         ],
     }
     manifest_body["manifest_sha256"] = canonical_sha(

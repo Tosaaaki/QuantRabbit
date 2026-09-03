@@ -106,6 +106,18 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
             Path("config/fast_bot_normalized_passive_forward_v2.json"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
+        self.assertEqual(
+            runtime.CORRECTIVE_CHALLENGER_POLICY_PATH,
+            Path("config/fast_bot_corrective_challenger_v2.json"),
+        )
+        self.assertIn(
+            Path("config/fast_bot_corrective_challenger_v1.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            runtime.CORRECTIVE_CHALLENGER_POLICY_PATH,
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
 
     def test_pair_chart_fetches_latency_sensitive_m1_last(self) -> None:
         self.assertEqual(runtime.SLOW_TIMEFRAMES.split(",")[-1], "M1")
@@ -365,6 +377,15 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         )
         self.assertIn("run_fast_bot_corrective_challenger.py", joined)
         self.assertIn("run_fast_bot_knowledge.py", joined)
+        corrective_calls = [
+            " ".join(row)
+            for row in calls
+            if "run_fast_bot_corrective_challenger.py" in " ".join(row)
+            or "run_fast_bot_knowledge.py" in " ".join(row)
+        ]
+        self.assertTrue(
+            all("config/fast_bot_corrective_challenger_v2.json" in row for row in corrective_calls)
+        )
         self.assertIn("run_autonomous_shadow_nervous_system.py", joined)
         command_lines = [" ".join(row) for row in calls]
         nervous_index = next(

@@ -14,6 +14,7 @@ from quant_rabbit.fast_bot_corrective_challenger import (
 from quant_rabbit.fast_bot_knowledge import (
     EPISODE_CONTRACT,
     KNOWLEDGE_CONTRACT,
+    _adverse_conditions,
     run_fast_bot_knowledge,
 )
 from quant_rabbit.fast_bot_truth import OUTCOME_CONTRACT
@@ -21,6 +22,7 @@ from quant_rabbit.fast_bot_truth import OUTCOME_CONTRACT
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "fast_bot_corrective_challenger_v1.json"
+CONFIG_V2 = ROOT / "config" / "fast_bot_corrective_challenger_v2.json"
 
 
 def _signal(signal_id: str = "a" * 24) -> dict:
@@ -180,3 +182,29 @@ def test_run_is_idempotent_and_keeps_adoption_owner_gated(tmp_path: Path) -> Non
     assert card["assessment_status"] == "COLLECTING_FORWARD_EVIDENCE"
     assert card["once_only_activation_ready"] is False
     assert card["positive_profitability_claim_allowed"] is False
+
+
+def test_v2_knowledge_stops_on_predeclared_dual_metric_futility() -> None:
+    config, _ = load_config(CONFIG_V2)
+    baseline = {
+        "filled_count": 10,
+        "net_pips": -10.0,
+        "profit_factor": 0.5,
+        "max_consecutive_losses": 4,
+        "mean_mae_pips": 2.5,
+    }
+    target = {
+        "filled_count": 10,
+        "net_pips": -10.0,
+        "profit_factor": 0.5,
+        "max_consecutive_losses": 4,
+        "mean_mae_pips": 2.5,
+    }
+    result = _adverse_conditions(
+        baseline,
+        target,
+        preregistration=config["preregistration"],
+    )
+    assert result["early_futility_floor_met"] is True
+    assert result["dual_metric_futility_after_early_floor"] is True
+    assert result["stop_condition_observed"] is True
