@@ -108,7 +108,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             runtime.CORRECTIVE_CHALLENGER_POLICY_PATH,
-            Path("config/fast_bot_corrective_challenger_v3.json"),
+            Path("config/fast_bot_corrective_challenger_v4.json"),
         )
         self.assertIn(
             Path("config/fast_bot_corrective_challenger_v1.json"),
@@ -116,6 +116,14 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         )
         self.assertIn(
             Path("config/fast_bot_corrective_challenger_v2.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("config/fast_bot_corrective_challenger_v3.json"),
+            runtime.SOURCE_BUNDLE_PATHS,
+        )
+        self.assertIn(
+            Path("src/quant_rabbit/fast_bot_entry_edge.py"),
             runtime.SOURCE_BUNDLE_PATHS,
         )
         self.assertIn(
@@ -388,7 +396,7 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
             or "run_fast_bot_knowledge.py" in " ".join(row)
         ]
         self.assertTrue(
-            all("config/fast_bot_corrective_challenger_v3.json" in row for row in corrective_calls)
+            all("config/fast_bot_corrective_challenger_v4.json" in row for row in corrective_calls)
         )
         self.assertIn("run_autonomous_shadow_nervous_system.py", joined)
         command_lines = [" ".join(row) for row in calls]
@@ -442,15 +450,15 @@ class OwnerForwardShadowRuntimeTests(unittest.TestCase):
         self.assertEqual(status["gateway_invocations"], 0)
         self.assertEqual(
             status["corrective_challenger_policy_contract"],
-            "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V3",
+            "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V4",
         )
         self.assertEqual(
             status["corrective_challenger_target_arm_id"],
-            "M1_TRIGGERED_ONLY",
+            "CAUSAL_ENTRY_EDGE_ONLY",
         )
         self.assertEqual(
             status["corrective_challenger_eligibility_cutoff_utc"],
-            "2026-09-03T14:15:00Z",
+            "2026-09-03T15:54:00Z",
         )
         self.assertEqual(status["manual_tagless_positions_policy"], "NO_TOUCH")
         self.assertEqual(status["existing_tp_sl_policy"], "NO_TOUCH")

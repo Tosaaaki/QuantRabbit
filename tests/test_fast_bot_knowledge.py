@@ -7,6 +7,7 @@ from quant_rabbit.fast_bot import SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
     ARM_ORDER_V3,
+    ARM_ORDER_V4,
     ROW_CONTRACT,
     canonical_sha,
     load_config,
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "fast_bot_corrective_challenger_v1.json"
 CONFIG_V2 = ROOT / "config" / "fast_bot_corrective_challenger_v2.json"
 CONFIG_V3 = ROOT / "config" / "fast_bot_corrective_challenger_v3.json"
+CONFIG_V4 = ROOT / "config" / "fast_bot_corrective_challenger_v4.json"
 
 
 def _signal(signal_id: str = "a" * 24) -> dict:
@@ -147,6 +149,44 @@ def test_v3_knowledge_consumes_complete_strict_confirmation_arm_set(
     assert result["missing_complete_counterfactual_count"] == 0
     card = json.loads(scorecard.read_text())
     assert "M1_TRIGGERED_ONLY" in card["arm_metrics"]
+
+
+def test_v4_knowledge_consumes_complete_method_aware_entry_arm_set(
+    tmp_path: Path,
+) -> None:
+    _, config_sha = load_config(CONFIG_V4)
+    signal = _signal("d" * 24)
+    signal_body = {
+        key: value for key, value in signal.items() if key != "signal_sha256"
+    }
+    signal = {**signal_body, "signal_sha256": canonical_sha(signal_body)}
+    shadow = tmp_path / "shadow.jsonl"
+    outcome = tmp_path / "outcome.jsonl"
+    challenger = tmp_path / "challenger.jsonl"
+    episodes = tmp_path / "episodes.jsonl"
+    knowledge = tmp_path / "knowledge.jsonl"
+    scorecard = tmp_path / "scorecard.json"
+    _write_jsonl(shadow, [signal])
+    _write_jsonl(outcome, [_outcome(signal)])
+    _write_jsonl(
+        challenger,
+        _challenger_rows(signal, config_sha, arm_order=ARM_ORDER_V4),
+    )
+
+    result = run_fast_bot_knowledge(
+        shadow_ledger_path=shadow,
+        outcome_ledger_path=outcome,
+        challenger_ledger_path=challenger,
+        config_path=CONFIG_V4,
+        episode_ledger_path=episodes,
+        knowledge_ledger_path=knowledge,
+        scorecard_path=scorecard,
+    )
+
+    assert result["resolved_episode_count"] == 1
+    assert result["missing_complete_counterfactual_count"] == 0
+    card = json.loads(scorecard.read_text())
+    assert "CAUSAL_ENTRY_EDGE_ONLY" in card["arm_metrics"]
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

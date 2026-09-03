@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.fast_bot_entry_edge import entry_edge_snapshot_valid
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.technical_forecast_forward_outcome import S5BidAskCandle
 from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
@@ -26,7 +27,13 @@ from quant_rabbit.technical_forecast_forward_truth import fetch_frozen_s5_truth
 CONFIG_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V1"
 CONFIG_CONTRACT_V2 = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V2"
 CONFIG_CONTRACT_V3 = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V3"
-CONFIG_CONTRACTS = {CONFIG_CONTRACT, CONFIG_CONTRACT_V2, CONFIG_CONTRACT_V3}
+CONFIG_CONTRACT_V4 = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V4"
+CONFIG_CONTRACTS = {
+    CONFIG_CONTRACT,
+    CONFIG_CONTRACT_V2,
+    CONFIG_CONTRACT_V3,
+    CONFIG_CONTRACT_V4,
+}
 ROW_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_ROW_V1"
 SCORECARD_CONTRACT = "QR_FAST_BOT_CORRECTIVE_CHALLENGER_SCORECARD_V1"
 PREREGISTRATION_CONTRACT = "QR_FAST_BOT_SHADOW_CHANGE_PREREGISTRATION_V1"
@@ -40,6 +47,7 @@ ARM_ORDER = (
     "EURUSD_RANGE_ROTATION_EXCLUDE",
 )
 ARM_ORDER_V3 = (*ARM_ORDER, "M1_TRIGGERED_ONLY")
+ARM_ORDER_V4 = (*ARM_ORDER_V3, "CAUSAL_ENTRY_EDGE_ONLY")
 STOP_REASONS = {
     "STOP_LOSS",
     "STOP_LOSS_GAP",
@@ -85,9 +93,7 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
     config = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(config, dict) or config.get("contract") not in CONFIG_CONTRACTS:
         raise ValueError("corrective challenger config contract mismatch")
-    expected_arm_order = (
-        ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
-    )
+    expected_arm_order = arm_order_for_config(config)
     if tuple(str(row.get("arm_id")) for row in config.get("arms", [])) != expected_arm_order:
         raise ValueError("corrective challenger arm set or order mismatch")
     authority = config.get("authority") or {}
@@ -183,7 +189,7 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
             or not git_commit_valid(selection.get("observed_release_commit"))
         ):
             raise ValueError("corrective challenger V2 preregistration mismatch")
-    else:
+    elif config.get("contract") == CONFIG_CONTRACT_V3:
         early_stop = preregistration.get("early_futility_stop") or {}
         selection = preregistration.get("selection_evidence") or {}
         cutoff = parse_utc(preregistration.get("eligibility_cutoff_utc"))
@@ -216,7 +222,49 @@ def load_config(path: Path) -> tuple[dict[str, Any], str]:
             or not git_commit_valid(selection.get("observed_release_commit"))
         ):
             raise ValueError("corrective challenger V3 preregistration mismatch")
+    else:
+        early_stop = preregistration.get("early_futility_stop") or {}
+        selection = preregistration.get("selection_evidence") or {}
+        cutoff = parse_utc(preregistration.get("eligibility_cutoff_utc"))
+        if (
+            config.get("schema_version") != 4
+            or preregistration.get("hypothesis_id")
+            != "method-aware-causal-entry-edge"
+            or preregistration.get("hypothesis_version") != 4
+            or preregistration.get("target_arm_id") != "CAUSAL_ENTRY_EDGE_ONLY"
+            or preregistration.get("single_factor_change")
+            != "ENTRY_SELECTION_ONLY_METHOD_AWARE_CAUSAL_EDGE"
+            or cutoff.second != 0
+            or cutoff.microsecond != 0
+            or int(early_stop.get("minimum_target_fills") or 0) != 10
+            or early_stop.get("requires_all")
+            != [
+                "TARGET_NET_PIPS_NOT_ABOVE_BASELINE",
+                "TARGET_PROFIT_FACTOR_NOT_ABOVE_BASELINE",
+            ]
+            or selection.get("selection_basis")
+            != "FORWARD_ROOT_ENTRY_DECISION_REPAIR_ONLY"
+            or selection.get("profitability_claim_allowed") is not False
+            or not sealed_hash_fields_valid(
+                selection,
+                (
+                    "observed_config_sha256",
+                    "observed_scorecard_sha256",
+                ),
+            )
+            or not git_commit_valid(selection.get("observed_release_commit"))
+        ):
+            raise ValueError("corrective challenger V4 preregistration mismatch")
     return config, canonical_sha(config)
+
+
+def arm_order_for_config(config: Mapping[str, Any]) -> tuple[str, ...]:
+    contract = config.get("contract")
+    if contract == CONFIG_CONTRACT_V4:
+        return ARM_ORDER_V4
+    if contract == CONFIG_CONTRACT_V3:
+        return ARM_ORDER_V3
+    return ARM_ORDER
 
 
 def sealed_hash_fields_valid(value: Mapping[str, Any], fields: Sequence[str]) -> bool:
@@ -512,7 +560,7 @@ def arm_specs(
         {"arm_id": "LANE_COOLDOWN", "vetoed": lane_blocked, "veto_reason": "LANE_RESERVED" if lane_blocked else None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
         {"arm_id": "EURUSD_RANGE_ROTATION_EXCLUDE", "vetoed": _eurusd_range(signal), "veto_reason": "EURUSD_RANGE_ROTATION" if _eurusd_range(signal) else None, "stop_loss_pips": emitted_sl, "take_profit_pips": emitted_tp, "unit_weight": 1.0},
     ]
-    if config.get("contract") == CONFIG_CONTRACT_V3:
+    if config.get("contract") in {CONFIG_CONTRACT_V3, CONFIG_CONTRACT_V4}:
         confirmation = signal.get("entry_confirmation")
         confirmed = bool(
             isinstance(confirmation, Mapping)
@@ -526,6 +574,26 @@ def arm_specs(
                 "arm_id": "M1_TRIGGERED_ONLY",
                 "vetoed": not confirmed,
                 "veto_reason": None if confirmed else "M1_NOT_TRIGGERED_AT_EMISSION",
+                "stop_loss_pips": emitted_sl,
+                "take_profit_pips": emitted_tp,
+                "unit_weight": 1.0,
+            }
+        )
+    if config.get("contract") == CONFIG_CONTRACT_V4:
+        snapshot = signal.get("entry_edge_snapshot")
+        accepted = bool(
+            entry_edge_snapshot_valid(snapshot)
+            and snapshot.get("accepted") is True
+            and snapshot.get("lookahead_used") is False
+            and snapshot.get("outcome_fields_used") == []
+            and snapshot.get("execution_authority") == "NONE"
+            and snapshot.get("live_permission") is False
+        )
+        arms.append(
+            {
+                "arm_id": "CAUSAL_ENTRY_EDGE_ONLY",
+                "vetoed": not accepted,
+                "veto_reason": None if accepted else "ENTRY_EDGE_NOT_CONFIRMED_AT_EMISSION",
                 "stop_loss_pips": emitted_sl,
                 "take_profit_pips": emitted_tp,
                 "unit_weight": 1.0,
@@ -707,7 +775,7 @@ def build_scorecard(
         if not sealed_valid(row, ROW_CONTRACT):
             raise ValueError("challenger ledger row seal mismatch")
     baseline = [row for row in matching if row.get("arm_id") == "BASELINE"]
-    arm_order = ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
+    arm_order = arm_order_for_config(config)
     comparison = [
         {"arm_id": arm, **aggregate([row for row in matching if row.get("arm_id") == arm])}
         for arm in arm_order
@@ -870,6 +938,7 @@ def run_incremental(
         CONFIG_CONTRACT: "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V1",
         CONFIG_CONTRACT_V2: "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V2",
         CONFIG_CONTRACT_V3: "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V3",
+        CONFIG_CONTRACT_V4: "QR_FAST_BOT_CORRECTIVE_CHALLENGER_RUN_V4",
     }[config["contract"]]
     all_signals = load_jsonl(shadow_ledger_path)
     cutoff_raw = (config.get("preregistration") or {}).get("eligibility_cutoff_utc")

@@ -9,6 +9,7 @@ import pytest
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
     ARM_ORDER_V3,
+    ARM_ORDER_V4,
     aggregate,
     arm_specs,
     build_rows,
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v1.json"
 CONFIG_V2_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v2.json"
 CONFIG_V3_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v3.json"
+CONFIG_V4_PATH = ROOT / "config" / "fast_bot_corrective_challenger_v4.json"
 
 
 def _signal(signal_id: str = "signal-1", *, at: str = "2026-08-28T12:00:00+00:00", atr: float = 4.0) -> dict:
@@ -130,6 +132,60 @@ def test_v3_strict_entry_arm_requires_sealed_m1_trigger_at_emission() -> None:
     assert unconfirmed["M1_TRIGGERED_ONLY"]["veto_reason"] == "M1_NOT_TRIGGERED_AT_EMISSION"
     assert confirmed["M1_TRIGGERED_ONLY"]["vetoed"] is False
     assert confirmed["M1_TRIGGERED_ONLY"]["veto_reason"] is None
+
+
+def test_v4_is_future_only_and_requires_sealed_causal_entry_edge() -> None:
+    from quant_rabbit.fast_bot_entry_edge import build_entry_edge_snapshot
+
+    config, _ = load_config(CONFIG_V4_PATH)
+    preregistration = config["preregistration"]
+    assert config["contract"] == "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V4"
+    assert preregistration["target_arm_id"] == "CAUSAL_ENTRY_EDGE_ONLY"
+    assert preregistration["eligibility_cutoff_utc"] == "2026-09-03T15:54:00Z"
+    signal = _signal(at="2026-09-03T15:55:00+00:00")
+    signal["entry_confirmation"] = {
+        "contract": "QR_FAST_BOT_ENTRY_CONFIRMATION_V1",
+        "policy": "EXECUTION_M1_MUST_BE_TRIGGERED",
+        "m1_readiness": "TRIGGERED",
+        "m5_readiness": "TRIGGERED",
+        "m1_triggered": True,
+    }
+    rejected = {row["arm_id"]: row for row in arm_specs(signal, {}, config)}
+    assert tuple(rejected) == ARM_ORDER_V4
+    assert rejected["CAUSAL_ENTRY_EDGE_ONLY"]["vetoed"] is True
+
+    vote = {
+        "observed_direction": "UP",
+        "phase": "PRE_TREND",
+        "readiness": "TRIGGERED",
+        "trigger": "BREAKOUT_CLOSE",
+        "structure": "BREAKOUT_ACTIVE",
+        "location": "MIDDLE_THIRD",
+        "value_zone": "FAIR_VALUE",
+        "extension": "BALANCED",
+        "evidence_complete": True,
+    }
+    signal["method"] = "TREND_CONTINUATION"
+    signal["take_profit_pips"] = 4.0
+    signal["entry_edge_snapshot"] = build_entry_edge_snapshot(
+        {
+            "method": signal["method"],
+            "side": signal["side"],
+            "timeframe_votes": {
+                timeframe: dict(vote)
+                for timeframe in ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+            },
+        },
+        reward_risk=1.25,
+        spread_to_m5_atr=0.2,
+    )
+    accepted = {row["arm_id"]: row for row in arm_specs(signal, {}, config)}
+    assert accepted["CAUSAL_ENTRY_EDGE_ONLY"]["vetoed"] is False
+    assert accepted["CAUSAL_ENTRY_EDGE_ONLY"]["veto_reason"] is None
+
+    signal["entry_edge_snapshot"]["accepted"] = False
+    tampered = {row["arm_id"]: row for row in arm_specs(signal, {}, config)}
+    assert tampered["CAUSAL_ENTRY_EDGE_ONLY"]["vetoed"] is True
 
 
 def test_causal_shock_uses_strictly_prior_unique_timestamps() -> None:

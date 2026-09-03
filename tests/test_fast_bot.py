@@ -2455,6 +2455,13 @@ class FastBotTest(unittest.TestCase):
                 "m1_triggered": True,
             },
         )
+        self.assertEqual(
+            signal["entry_edge_snapshot"]["contract"],
+            "QR_FAST_BOT_ENTRY_EDGE_SNAPSHOT_V1",
+        )
+        self.assertFalse(signal["entry_edge_snapshot"]["lookahead_used"])
+        self.assertEqual(signal["entry_edge_snapshot"]["outcome_fields_used"], [])
+        self.assertEqual(len(signal["entry_edge_snapshot"]["contract_sha256"]), 64)
         arms = signal["entry_experiment_arms"]
         self.assertEqual(signal["schema_version"], 3)
         self.assertEqual(signal["horizon_lane"], HORIZON_LANE)

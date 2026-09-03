@@ -33,6 +33,7 @@ from quant_rabbit.fast_bot_learning import (
     LEARNING_SHADOW_CONTRACT,
     build_fast_bot_learning_shadow,
 )
+from quant_rabbit.fast_bot_entry_edge import build_entry_edge_snapshot
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.fast_bot_shock_guard import PROTECTIVE_STOP_CONTRACT, seal as seal_guard_contract
@@ -384,6 +385,7 @@ def build_fast_bot_shadow(
         sl = float(primary["stop_loss"])
         actual_tp_pips = float(primary["take_profit_pips"])
         actual_sl_pips = float(primary["stop_loss_pips"])
+        reward_risk = round(actual_tp_pips / actual_sl_pips, 6)
         timeframe_votes = (
             row.get("timeframe_votes")
             if isinstance(row.get("timeframe_votes"), Mapping)
@@ -445,7 +447,7 @@ def build_fast_bot_shadow(
             "stop_loss": _price(pair, sl),
             "take_profit_pips": actual_tp_pips,
             "stop_loss_pips": actual_sl_pips,
-            "reward_risk": round(actual_tp_pips / actual_sl_pips, 6),
+            "reward_risk": reward_risk,
             "entry_ttl_seconds": ENTRY_TTL_SECONDS,
             "max_hold_seconds": MAX_HOLD_SECONDS,
             "entry_experiment_contract": ENTRY_EXPERIMENT_CONTRACT,
@@ -478,6 +480,14 @@ def build_fast_bot_shadow(
             # signals deliberately remain unknown rather than being backfilled
             # from mutable chart state.
             "entry_confirmation": entry_confirmation,
+            # Preserve the entire method-aware entry decision at emission.
+            # Later challengers validate this seal; they never rebuild it from
+            # mutable charts after the trade outcome is known.
+            "entry_edge_snapshot": build_entry_edge_snapshot(
+                row,
+                reward_risk=reward_risk,
+                spread_to_m5_atr=row.get("spread_to_m5_atr"),
+            ),
             "shadow_only": True,
             "live_permission": False,
             "broker_mutation_allowed": False,

@@ -32,7 +32,7 @@ DEFAULT_ENV_FILE = Path("/Users/tossaki/App/QuantRabbit/.env.local")
 SHADOW_PAIRS = ("EUR_USD", "USD_JPY")
 PROFIT_HOLDOUT_POLICY_PATH = Path("config/fast_bot_profit_holdout_v3.json")
 PAIR_SIDE_QUARANTINE_POLICY_PATH = Path("config/fast_bot_pair_side_quarantine_v1.json")
-CORRECTIVE_CHALLENGER_POLICY_PATH = Path("config/fast_bot_corrective_challenger_v3.json")
+CORRECTIVE_CHALLENGER_POLICY_PATH = Path("config/fast_bot_corrective_challenger_v4.json")
 # Fetch the slowest views first and the latency-sensitive M1 view last.  The
 # pair-chart command processes each pair's requested timeframes in order, so
 # leading with M1 can make an otherwise contiguous candle stale before the
@@ -68,6 +68,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("src/quant_rabbit/cli.py"),
     Path("src/quant_rabbit/guardian_observation.py"),
     Path("src/quant_rabbit/fast_bot.py"),
+    Path("src/quant_rabbit/fast_bot_entry_edge.py"),
     Path("src/quant_rabbit/autonomous_shadow_integration.py"),
     Path("src/quant_rabbit/autonomous_shadow_nervous_system.py"),
     Path("src/quant_rabbit/fast_bot_corrective_challenger.py"),
@@ -89,6 +90,7 @@ SOURCE_BUNDLE_PATHS = (
     Path("config/oanda_spread_calibration_source_v1.json.gz"),
     Path("config/fast_bot_corrective_challenger_v1.json"),
     Path("config/fast_bot_corrective_challenger_v2.json"),
+    Path("config/fast_bot_corrective_challenger_v3.json"),
     CORRECTIVE_CHALLENGER_POLICY_PATH,
     Path("config/fast_bot_shock_follow_v1.json"),
     Path("config/fast_bot_shock_guard_v1.json"),
@@ -873,6 +875,7 @@ def run_resident(args: argparse.Namespace, *, once: bool = False) -> int:
             "EUR_USD_NORMALIZED_PASSIVE_REVERSAL_LONG_ZERO_AUTHORITY",
             "FAST_BOT_PAIR_SIDE_QUARANTINE_ZERO_AUTHORITY",
             "FAST_BOT_ATR_NORMALIZED_GEOMETRY_FORWARD_ZERO_AUTHORITY",
+            "FAST_BOT_METHOD_AWARE_CAUSAL_ENTRY_EDGE_FORWARD_ZERO_AUTHORITY",
         ],
     }
     manifest_body["manifest_sha256"] = canonical_sha(

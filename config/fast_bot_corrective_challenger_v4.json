@@ -1,0 +1,164 @@
+{
+  "arms": [
+    {
+      "arm_id": "BASELINE",
+      "geometry": "EMITTED",
+      "veto": "NONE",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "VOL_SHOCK_VETO",
+      "geometry": "EMITTED",
+      "veto": "VOL_SHOCK",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "ATR_NORMALIZED_GEOMETRY",
+      "geometry": "ATR_RR1_BOUNDED",
+      "veto": "NONE",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "COMBINED",
+      "geometry": "ATR_RR1_BOUNDED",
+      "veto": "VOL_SHOCK_OR_WORST_LANE",
+      "weight": "VOL_THROTTLE"
+    },
+    {
+      "arm_id": "LANE_COOLDOWN",
+      "geometry": "EMITTED",
+      "veto": "SAME_PAIR_SIDE_METHOD_HORIZON_RESERVED",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "EURUSD_RANGE_ROTATION_EXCLUDE",
+      "geometry": "EMITTED",
+      "veto": "EURUSD_RANGE_ROTATION",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "M1_TRIGGERED_ONLY",
+      "geometry": "EMITTED",
+      "veto": "M1_NOT_TRIGGERED_AT_EMISSION",
+      "weight": "FULL"
+    },
+    {
+      "arm_id": "CAUSAL_ENTRY_EDGE_ONLY",
+      "geometry": "EMITTED",
+      "veto": "SEALED_METHOD_AWARE_ENTRY_EDGE_NOT_ACCEPTED",
+      "weight": "FULL"
+    }
+  ],
+  "authority": {
+    "automatic_parameter_change_allowed": false,
+    "broker_http_methods_allowed": [
+      "GET"
+    ],
+    "broker_mutation_allowed": false,
+    "execution_authority": "NONE",
+    "live_permission": false,
+    "promotion_allowed": false
+  },
+  "contract": "QR_FAST_BOT_CORRECTIVE_CHALLENGER_CONFIG_V4",
+  "geometry": {
+    "atr_stop_multiplier": 0.75,
+    "reward_risk_minimum": 1.0,
+    "stop_cap_pips": 3.2,
+    "stop_floor_pips": 2.4
+  },
+  "inventory": {
+    "lane_fields": [
+      "pair",
+      "side",
+      "method",
+      "horizon_lane"
+    ],
+    "reservation_seconds": 990,
+    "reservation_source": "ENTRY_TTL_90_PLUS_MAX_HOLD_900",
+    "selection_policy": "FIRST_ELIGIBLE_SIGNAL_RESERVES_LANE"
+  },
+  "lookahead_policy": "ENTRY_TIME_FEATURES_ONLY",
+  "preregistration": {
+    "adverse_conditions": [
+      "TARGET_ARM_PROFIT_FACTOR_DOES_NOT_EXCEED_BASELINE_AFTER_EARLY_FLOOR",
+      "TARGET_ARM_POST_COST_NET_PIPS_DOES_NOT_EXCEED_BASELINE_AFTER_EARLY_FLOOR",
+      "TARGET_ARM_MEAN_MAE_EXCEEDS_BASELINE",
+      "TARGET_ARM_MAX_CONSECUTIVE_LOSSES_EXCEEDS_BASELINE"
+    ],
+    "automatic_adoption_allowed": false,
+    "change_scope": "RESIDENT_SHADOW_CHALLENGER_ONLY",
+    "contract": "QR_FAST_BOT_SHADOW_CHANGE_PREREGISTRATION_V1",
+    "early_futility_stop": {
+      "minimum_target_fills": 10,
+      "requires_all": [
+        "TARGET_NET_PIPS_NOT_ABOVE_BASELINE",
+        "TARGET_PROFIT_FACTOR_NOT_ABOVE_BASELINE"
+      ]
+    },
+    "effective_conditions": [
+      "SEALED_METHOD_AWARE_ENTRY_EDGE_ACCEPTED_AT_SIGNAL_EMISSION",
+      "FAST_AND_OPERATING_DIRECTION_CONFIRMATION_IS_METHOD_SPECIFIC",
+      "SAME_SIDE_EXHAUSTION_AND_UNECONOMIC_ENTRY_ARE_VETOED",
+      "TARGET_RETAINS_BASELINE_ENTRY_AND_EXIT_GEOMETRY"
+    ],
+    "eligibility_cutoff_utc": "2026-09-03T15:54:00Z",
+    "hypothesis_id": "method-aware-causal-entry-edge",
+    "hypothesis_version": 4,
+    "once_only_activation_identity": "SOURCE_BUNDLE_SHA256_PLUS_CONFIG_SHA256",
+    "selection_evidence": {
+      "baseline_filled_count": 13,
+      "baseline_net_pips": -65.2,
+      "baseline_profit_factor": 0.080395,
+      "candidate_filled_count": 10,
+      "candidate_net_pips": -67.0,
+      "candidate_profit_factor": 0.0,
+      "evidence_through_utc": "2026-09-03T15:53:28Z",
+      "observed_config_sha256": "81d27d4c1f8f0ab420e19c855fd0cff192e275af1c57fd978445d33154a8fd49",
+      "observed_release_commit": "01699699c08385263f007a86f5931cff3c8d1ee6",
+      "observed_scorecard_sha256": "1899d27199f86826f5798fa6bd3b89077079ab3972b8fcc640b81f7d99cc4506",
+      "profitability_claim_allowed": false,
+      "selection_basis": "FORWARD_ROOT_ENTRY_DECISION_REPAIR_ONLY"
+    },
+    "single_factor_change": "ENTRY_SELECTION_ONLY_METHOD_AWARE_CAUSAL_EDGE",
+    "stop_conditions": [
+      "SOURCE_OR_LEDGER_INTEGRITY_FAILURE",
+      "EXTERNAL_ORDER_ATTEMPTS_OR_ORDERS_NONZERO",
+      "TARGET_ARM_MAX_CONSECUTIVE_LOSSES_EXCEEDS_BASELINE",
+      "TARGET_ARM_MEAN_MAE_EXCEEDS_BASELINE_AFTER_MINIMUM_FILL_FLOOR",
+      "TARGET_ARM_DUAL_METRIC_FUTILITY_AFTER_EARLY_FLOOR"
+    ],
+    "success_criteria": {
+      "maximum_loss_streak_delta_vs_baseline": 0,
+      "minimum_active_forward_days": 10,
+      "minimum_daily_delta_lower_pips_exclusive": 0.0,
+      "minimum_net_delta_pips_exclusive": 0.0,
+      "minimum_profit_factor": 1.25,
+      "minimum_resolved_forward_fills": 100
+    },
+    "target_arm_id": "CAUSAL_ENTRY_EDGE_ONLY"
+  },
+  "schema_version": 4,
+  "shock": {
+    "absolute_m5_atr_pips": 5.0,
+    "causal_atr_ratio": 1.25,
+    "minimum_prior_observations": 3,
+    "prior_window_seconds": 1800,
+    "same_timestamp_is_prior": false,
+    "time_bucket_seconds": 900
+  },
+  "volatility_lot_throttle": [
+    {
+      "minimum_m5_atr_pips": 5.0,
+      "unit_weight": 0.25
+    },
+    {
+      "minimum_m5_atr_pips": 4.0,
+      "unit_weight": 0.5
+    }
+  ],
+  "worst_lane": {
+    "method": "RANGE_ROTATION",
+    "pair": "EUR_USD",
+    "side": "LONG"
+  }
+}

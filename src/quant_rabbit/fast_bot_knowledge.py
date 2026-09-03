@@ -23,9 +23,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from quant_rabbit.fast_bot import SIGNAL_CONTRACT
 from quant_rabbit.fast_bot_corrective_challenger import (
     ARM_ORDER,
-    ARM_ORDER_V3,
-    CONFIG_CONTRACT_V3,
     ROW_CONTRACT,
+    arm_order_for_config,
     canonical_sha,
     load_config,
     load_jsonl,
@@ -53,7 +52,7 @@ def run_fast_bot_knowledge(
     """Derive immutable learning artifacts without changing source ledgers."""
 
     config, config_sha = load_config(config_path)
-    arm_order = ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
+    arm_order = arm_order_for_config(config)
     signals = load_jsonl(shadow_ledger_path)
     outcomes = load_jsonl(outcome_ledger_path)
     challenger_rows = load_jsonl(challenger_ledger_path)
@@ -314,7 +313,7 @@ def build_learning_scorecard(
                     "regime_bucket": episode["entry_context"]["regime_bucket"],
                 }
             )
-    arm_order = ARM_ORDER_V3 if config.get("contract") == CONFIG_CONTRACT_V3 else ARM_ORDER
+    arm_order = arm_order_for_config(config)
     metrics = {arm: _metrics(arm_rows.get(arm, [])) for arm in arm_order}
     baseline = metrics["BASELINE"]
     target = metrics[target_arm]
