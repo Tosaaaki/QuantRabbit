@@ -14,7 +14,7 @@
         "market": [
           {"path": "data/pair_charts.json", "required": true, "max_age_seconds": 900},
           {"path": "data/market_context_matrix.json", "required": true, "max_age_seconds": 900},
-          {"path": "data/order_intents.json", "required": true, "max_age_seconds": 900}
+          {"path": "data/order_intents.json", "required": false, "max_age_seconds": 3600}
         ],
         "news": [
           {"path": "data/news_health.json", "required": true, "max_age_seconds": 1800},
