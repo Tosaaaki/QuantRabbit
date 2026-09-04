@@ -569,7 +569,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("QR AI Supervisor automation is not ACTIVE", result.stderr)
+            self.assertIn("QR AI Trader automation is not ACTIVE", result.stderr)
 
     def test_live_only_blocks_supervisor_prompt_with_live_wrapper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -666,7 +666,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 6)
             self.assertIn(
-                "QR AI Supervisor prompt is stale; missing: data/ai_regime_supervision.json",
+                "QR AI Trader prompt is stale; missing: tools/ai_trader_runtime.py accept",
                 result.stderr,
             )
 
@@ -731,7 +731,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("name must be QR AI Supervisor", result.stderr)
+            self.assertIn("name must be QR AI Trader 10m", result.stderr)
 
     def test_live_only_blocks_too_fast_trader_cadence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -758,7 +758,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("cadence must be 360 minutes", result.stderr)
+            self.assertIn("cadence must be 10 minutes", result.stderr)
 
 
 def _sync(
@@ -823,8 +823,8 @@ def _write_automation(
     *,
     status: str,
     prompt: str | None = None,
-    rrule: str = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA",
-    name: str = "QR AI Supervisor",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=10;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+    name: str = "QR AI Trader 10m",
 ) -> None:
     prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(
@@ -837,8 +837,8 @@ def _write_automation(
                 "prompt = '''" + prompt_text + "'''",
                 f'status = "{status}"',
                 f'rrule = "{rrule}"',
-                'model = "gpt-5.5"',
-                'reasoning_effort = "high"',
+                'model = "gpt-5.6-luna"',
+                'reasoning_effort = "max"',
                 'execution_environment = "local"',
                 f'cwds = ["{live}"]',
             ]
@@ -853,13 +853,12 @@ def _current_trader_prompt_sentinel(
 ) -> str:
     lines = [
         "AI_ORDER_AUTHORITY=NONE",
-        "REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY",
-        "Run tools/ai_regime_supervision.py to refresh the bounded supervisor artifact.",
-        "Publish only pair states from GO CAUTION STOP; these states never authorize an order.",
-        "Review pending tuning evidence in data/guardian_tuning_work_order.json.",
+        "Run tools/ai_trader_runtime.py prepare --profile intraday.",
+        "The configured sink is paper_ledger.",
+        "broker_mutation_allowed=false",
     ]
     if include_supervision_output:
-        lines.append("Write data/ai_regime_supervision.json atomically.")
+        lines.append("Run tools/ai_trader_runtime.py accept after writing the complete AI decision.")
     return "\n".join(lines)
 
 

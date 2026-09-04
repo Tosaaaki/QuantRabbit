@@ -71,7 +71,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             _write_decision(root, _dt("2026-07-01T02:59:00+00:00"))
             _write_ai_regime_supervision(
                 root,
-                generated_at=_dt("2026-07-01T02:30:00+00:00"),
+                generated_at=_dt("2026-07-01T02:45:00+00:00"),
                 body_overrides={
                     "pairs": {
                         "EUR_USD": {
@@ -86,10 +86,10 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             payload = run_watchdog(paths=paths, now_utc=now)
 
             self.assertEqual(payload["status"], "OK")
-            self.assertEqual(payload["expected_cadence_minutes"], 360)
+            self.assertEqual(payload["expected_cadence_minutes"], 10)
             self.assertEqual(payload["grace_minutes"], 15)
-            self.assertEqual(payload["threshold_minutes"], 375)
-            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:30:00+00:00")
+            self.assertEqual(payload["threshold_minutes"], 25)
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:45:00+00:00")
             self.assertEqual(
                 payload["last_trader_run_source"],
                 "ai_regime_supervision.generated_at_utc",
@@ -276,12 +276,12 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, automation_dir, paths = _fixture(tmp, now=now)
             _write_automation(automation_dir)
-            _write_decision(root, _dt("2026-07-01T01:00:00+00:00"))
+            _write_decision(root, _dt("2026-07-01T02:40:00+00:00"))
             _write_guardian_receipt(
                 root,
                 action="REDUCE",
-                generated_at=_dt("2026-07-01T01:10:00+00:00"),
-                expires_at=_dt("2026-07-01T02:25:00+00:00"),
+                generated_at=_dt("2026-07-01T02:45:00+00:00"),
+                expires_at=_dt("2026-07-01T02:55:00+00:00"),
                 consumed=False,
             )
 
@@ -301,12 +301,12 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, automation_dir, paths = _fixture(tmp, now=now)
             _write_automation(automation_dir)
-            _write_decision(root, _dt("2026-07-01T02:00:00+00:00"))
+            _write_decision(root, _dt("2026-07-01T02:10:00+00:00"))
             _write_guardian_receipt(
                 root,
                 action="HOLD",
-                generated_at=_dt("2026-07-01T02:10:00+00:00"),
-                expires_at=_dt("2026-07-01T03:05:00+00:00"),
+                generated_at=_dt("2026-07-01T02:25:00+00:00"),
+                expires_at=_dt("2026-07-01T02:34:00+00:00"),
                 consumed=False,
             )
 
@@ -711,7 +711,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             _, automation_dir, paths = _fixture(tmp, now=now)
             _write_automation(automation_dir)
             (automation_dir / "memory.md").write_text(
-                "## 2026-07-09T16:16:30Z\n\n"
+                "## 2026-07-09T16:30:30Z\n\n"
                 "- Ran one deeper hourly QR vNext trader cycle from `/Users/tossaki/App/QuantRabbit-live`.\n"
                 "- Latest guardian receipt expires `2026-07-09T17:02:13.015955+00:00`.\n",
                 encoding="utf-8",
@@ -720,7 +720,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             payload = run_watchdog(paths=paths, now_utc=now)
 
             self.assertEqual(payload["status"], "OK")
-            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T16:16:30+00:00")
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T16:30:30+00:00")
             self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
             memory_rejections = [
                 item
@@ -739,7 +739,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             _, automation_dir, paths = _fixture(tmp, now=now)
             _write_automation(automation_dir)
             (automation_dir / "memory.md").write_text(
-                "## 2026-07-09T20:04:52Z\n\n"
+                "## 2026-07-09T20:05:52Z\n\n"
                 "- Attempted one deeper hourly QR vNext trader cycle from "
                 "`/Users/tossaki/App/QuantRabbit-live`, but stopped before normal routing "
                 "because the live runtime concurrency gate fired.\n",
@@ -750,7 +750,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
 
             self.assertEqual(payload["status"], "OK")
             self.assertFalse(payload["missed_expected_window"])
-            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T20:04:52+00:00")
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-09T20:05:52+00:00")
             self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
 
     def test_automation_memory_timestamp_heading_without_run_marker_is_rejected(self) -> None:
@@ -1017,9 +1017,9 @@ def _write_automation(
     automation_dir: Path,
     *,
     status: str = "ACTIVE",
-    model: str = "gpt-5.5",
-    reasoning_effort: str = "high",
-    rrule: str = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+    model: str = "gpt-5.6-luna",
+    reasoning_effort: str = "max",
+    rrule: str = "FREQ=MINUTELY;INTERVAL=10;BYDAY=SU,MO,TU,WE,TH,FR,SA",
     cwds: list[str] | None = None,
 ) -> None:
     cwds = cwds or ["/Users/tossaki/App/QuantRabbit-live"]

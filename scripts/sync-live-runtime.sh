@@ -310,39 +310,38 @@ verify_automation() {
     exit 6
   fi
   if ! grep -Fq "cwds = [\"$LIVE_ROOT\"]" "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR AI Supervisor automation does not point at $LIVE_ROOT." >&2
+    echo "[sync-live-runtime] QR AI Trader 10m automation does not point at $LIVE_ROOT." >&2
     exit 6
   fi
   if ! grep -Fq 'id = "qr-trader"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR AI Supervisor must retain the qr-trader compatibility id." >&2
+    echo "[sync-live-runtime] QR AI Trader 10m must retain the qr-trader compatibility id." >&2
     exit 6
   fi
-  if ! grep -Fq 'name = "QR AI Supervisor"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] qr-trader compatibility automation name must be QR AI Supervisor." >&2
+  if ! grep -Fq 'name = "QR AI Trader 10m"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] qr-trader compatibility automation name must be QR AI Trader 10m." >&2
     exit 6
   fi
-  if ! grep -Fq 'rrule = "FREQ=MINUTELY;INTERVAL=360;BYDAY=SU,MO,TU,WE,TH,FR,SA"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR AI Supervisor cadence must be 360 minutes; deterministic market monitoring remains continuous outside the AI schedule." >&2
+  if ! grep -Fq 'rrule = "FREQ=MINUTELY;INTERVAL=10;BYDAY=SU,MO,TU,WE,TH,FR,SA"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR AI Trader cadence must be 10 minutes." >&2
     exit 6
   fi
-  if ! grep -Fq 'model = "gpt-5.5"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR AI Supervisor automation model must be gpt-5.5." >&2
+  if ! grep -Fq 'model = "gpt-5.6-luna"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR AI Trader automation model must be gpt-5.6-luna." >&2
     exit 6
   fi
-  if ! grep -Fq 'reasoning_effort = "high"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR AI Supervisor automation reasoning_effort must be high." >&2
+  if ! grep -Fq 'reasoning_effort = "max"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR AI Trader automation reasoning_effort must be max." >&2
     exit 6
   fi
   for required in \
     'AI_ORDER_AUTHORITY=NONE' \
-    'REGIME_REVIEW_AND_PERIODIC_TUNING_ONLY' \
-    'data/ai_regime_supervision.json' \
-    'tools/ai_regime_supervision.py' \
-    'GO CAUTION STOP' \
-    'data/guardian_tuning_work_order.json'
+    'tools/ai_trader_runtime.py prepare --profile intraday' \
+    'tools/ai_trader_runtime.py accept' \
+    'paper_ledger' \
+    'broker_mutation_allowed=false'
   do
     if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
-      echo "[sync-live-runtime] QR AI Supervisor prompt is stale; missing: $required" >&2
+      echo "[sync-live-runtime] QR AI Trader prompt is stale; missing: $required" >&2
       exit 6
     fi
   done
@@ -353,7 +352,7 @@ verify_automation() {
     'QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1'
   do
     if grep -Fq -- "$forbidden" "$AUTOMATION_FILE"; then
-      echo "[sync-live-runtime] QR AI Supervisor prompt contains forbidden live-order token: $forbidden" >&2
+      echo "[sync-live-runtime] QR AI Trader prompt contains forbidden live-order token: $forbidden" >&2
       exit 6
     fi
   done
@@ -361,10 +360,10 @@ verify_automation() {
     return 0
   fi
   if grep -Fq 'status = "PAUSED"' "$AUTOMATION_FILE" && weekend_guard_paused; then
-    echo "[sync-live-runtime] QR AI Supervisor automation is PAUSED by weekend task guard." >&2
+    echo "[sync-live-runtime] QR AI Trader automation is PAUSED by weekend task guard." >&2
     return 0
   fi
-  echo "[sync-live-runtime] QR AI Supervisor automation is not ACTIVE." >&2
+  echo "[sync-live-runtime] QR AI Trader automation is not ACTIVE." >&2
   exit 6
 }
 

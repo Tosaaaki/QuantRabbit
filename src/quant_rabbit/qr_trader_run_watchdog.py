@@ -24,10 +24,10 @@ except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
 
-EXPECTED_MODEL = "gpt-5.5"
-EXPECTED_REASONING_EFFORT = "high"
+EXPECTED_MODEL = "gpt-5.6-luna"
+EXPECTED_REASONING_EFFORT = "max"
 EXPECTED_CWD = "/Users/tossaki/App/QuantRabbit-live"
-EXPECTED_CADENCE_MINUTES = 360
+EXPECTED_CADENCE_MINUTES = 10
 DEFAULT_GRACE_MINUTES = 15
 AI_REGIME_SUPERVISION_CONTRACT = "QR_AI_REGIME_SUPERVISION_V1"
 DEFAULT_LIVE_ROOT = Path(EXPECTED_CWD)
@@ -1782,7 +1782,7 @@ def _suspected_cause(
 ) -> str | None:
     hints = codex_logs.get("cause_hints") if isinstance(codex_logs.get("cause_hints"), list) else []
     if status == "BROKEN":
-        return "qr-trader automation config does not match the active six-hour gpt-5.5 high supervisor policy."
+        return "qr-trader automation config does not match the active ten-minute Luna/max AI trader policy."
     if status == "UNKNOWN":
         return "Run evidence is insufficient; automation config exists but no journal, decision, or memory timestamp was usable."
     if guardian.get("issues"):
@@ -1796,7 +1796,7 @@ def _suspected_cause(
                 "Codex logs show a recent qr-trader/live-root session, but trader artifacts are stale; "
                 "inspect the latest Codex thread for preflight, quota, or early-exit failure."
             )
-        return "No explicit Codex log cause was visible; latest supervisor artifacts missed the expected six-hour window."
+        return "No explicit Codex log cause was visible; latest trader artifacts missed the expected ten-minute window."
     return None
 
 
@@ -1809,7 +1809,7 @@ def _recommended_operator_action(
         return {
             "code": "REPAIR_QR_TRADER_AUTOMATION_CONFIG",
             "requires_explicit_operator_approval": True,
-            "command": "open Codex automation qr-trader settings and restore the ACTIVE gpt-5.5 high six-hour supervisor policy",
+            "command": "open Codex automation qr-trader settings and restore the ACTIVE gpt-5.6-luna max ten-minute AI trader policy",
             "reason": "; ".join(item["code"] for item in config_issues),
         }
     if status == "STALE":
@@ -1817,7 +1817,7 @@ def _recommended_operator_action(
             "code": "INSPECT_CODEX_QR_TRADER_THREAD",
             "requires_explicit_operator_approval": False,
             "command": "review latest QR vNext Trader Codex thread/logs; do not run live trader manually from the watchdog",
-            "reason": "scheduled-run evidence missed the six-hour cadence plus grace",
+            "reason": "scheduled-run evidence missed the ten-minute cadence plus grace",
         }
     if guardian.get("issues"):
         return {

@@ -1,183 +1,112 @@
 # QuantRabbit AI Trader Runtime
 
-`qr-trader` is the stable scheduler id for the AI-primary trader. The AI owns
-the discretionary market decision. Deterministic code owns evidence capture,
-validation, risk limits, duplicate prevention, protection, and any separately
-authorized broker execution.
+This is the executable playbook for the scheduled AI trader. Read
+`docs/AGENT_CONTRACT.md` first.
 
-## Load order
+## Architecture
 
-1. Read `docs/AGENT_CONTRACT.md` in full. It is authoritative.
-2. Read all required artifacts from one current, sealed live-runtime snapshot.
-3. Build the deterministic baseline and market-read evidence packet.
-4. Make one complete AI decision from that evidence.
-5. Apply and independently verify the decision.
-6. Record and score it as shadow evidence. Do not send it to the broker.
+AI owns the discretionary market decision. Deterministic code supplies four
+replaceable services:
 
-The prompts under `docs/trader_prompts/` may be used only through this contract.
-If an older prompt implies direct broker access, live permission, stale-data
-fallback, or weaker ownership/risk rules, this playbook wins.
+1. evidence workers collect broker, market, news, performance, and strategy inputs;
+2. `prepare` seals their exact bytes into a run manifest;
+3. `accept` rejects stale, changed, malformed, or unsafe candidate geometry;
+4. a configured sink stores the accepted result.
 
-## Authority boundary
+Profiles and workers live in `config/ai_trading_runtime.json`. Model selection
+belongs to the Codex automation, not repository code. The candidate records the
+actual model and reasoning effort used, so Luna, Terra, Sol, or a later model
+can use the same runtime without a code change.
 
-- `AI_DECISION_AUTHORITY=SHADOW` is active.
-- `AI_ORDER_AUTHORITY=NONE` remains the independent live-send gate.
-- AI may choose `TRADE`, `WAIT`, or `REQUEST_EVIDENCE`.
-- For `TRADE`, AI may choose pair, side, strategy method, order vehicle, entry,
-  TP, SL, geometry, allocation multiplier, and units.
-- AI may author a `CLOSE` candidate only for an explicitly system-owned position
-  and only under the two-gate close contract in `docs/AGENT_CONTRACT.md`.
-- AI may reject the deterministic baseline and choose another evidenced lane.
-  The overlay must state what changed and bind every changed field to current
-  evidence.
-- Deterministic validation may reject a decision or reduce units to a valid
-  cap. It must not silently invent a different pair, side, method, or geometry.
-- No accepted decision grants live permission in the current stage. Do not call
-  OANDA, `guardian-action-cycle`, `AutoTradeCycle`, `LiveOrderGateway`,
-  `PositionProtectionGateway`, or any low-level broker client.
-- Manual, operator-owned, tagless, external, and ambiguous-owner positions are
-  `NO_TOUCH`.
+The current `intraday` sink is `paper_ledger`. AI may choose `TRADE`, `WAIT`,
+`REQUEST_EVIDENCE`, or an eligible system-owned `CLOSE`. For `TRADE`, AI chooses
+the pair, side, method, vehicle, entry, TP, SL, units, allocation multiplier,
+confidence, and rationale.
+Accepted orders are paper decisions only: `AI_ORDER_AUTHORITY=NONE`,
+`live_permission=false`, `broker_mutation_allowed=false`, and broker API calls
+are forbidden. A future
+live sink must be reviewed separately and must route through `RiskEngine` and
+`LiveOrderGateway`.
 
-## Required current evidence
+Manual, operator-owned, tagless, external, and ambiguous-owner positions are
+`NO_TOUCH`. Do not call OANDA, a broker SDK, `stage-live-order --send`, or any
+low-level gateway from this playbook.
 
-Read the applicable artifacts before every decision:
+## Intraday cycle
 
-- `data/broker_snapshot.json`
-- `data/position_guardian_chart_freshness.json`
-- `data/guardian_events.json`
-- `data/guardian_escalation.json`
-- `data/hierarchical_bot_regime.json`
-- `data/fast_bot_shadow.json`
-- `data/fast_bot_scorecard.json`
-- `data/active_trader_contract.json`
-- `data/active_opportunity_board.json`
-- `data/trader_intent_packet.json`
-- `data/market_read_evidence_packet.json`
-- current position/thesis/protection sidecars required by the selected action
+Run every ten minutes with the automation-selected normal model.
 
-Every selected pair, quote, spread, candle, position, intent, and contract must
-belong to the same bounded snapshot. A container timestamp cannot refresh an old
-candle, quote, intent, receipt, or Guardian observation. Missing, malformed,
-stale, future-dated, unsealed, digest-mismatched, or mutually inconsistent
-evidence requires `WAIT` or `REQUEST_EVIDENCE`; never fill the gap with a guess.
-
-## Decision cycle
-
-### 1. Refresh and freeze evidence
-
-Use the existing read-only producers and prechecks to obtain one consistent
-snapshot. Do not run a command with broker-write capability. If precheck or
-freshness validation fails, preserve the previous artifacts and report the
-exact blocker.
-
-### 2. Build the deterministic proposal
-
-Run the approved baseline builder:
+1. Read the current contract and this playbook completely.
+2. Acquire the shared runtime lock and run the existing read-only
+   `cycle-refresh` path. Do not pass any send or live flags.
+3. Prepare one run:
 
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
-  --snapshot data/broker_snapshot.json \
-  --guardian-action-receipt data/guardian_action_receipt.json \
-  --output data/trader_decision_baseline.json \
-  --market-read-evidence-packet data/market_read_evidence_packet.json
+PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py prepare --profile intraday
 ```
 
-The baseline is a reproducible proposal and counterargument surface. It is not
-the final trader decision.
-
-### 3. Make one complete AI decision
-
-Evaluate the selected lane and meaningful alternatives across market regime,
-multi-timeframe structure, current spread and fillability, post-cost payoff,
-portfolio exposure, margin, correlation, ownership, active risk, and current
-forward evidence. Then choose exactly one action:
-
-- `TRADE`: provide every required order field and a bounded evidence rationale.
-- `WAIT`: name the exact risk, market, timing, or payoff reason.
-- `REQUEST_EVIDENCE`: name the exact missing/stale artifact and acquisition step.
-- `CLOSE`: name one eligible system-owned target and the exact Gate A/Gate B proof.
-
-A `TRADE` must include the selected pair, side, method, vehicle, entry, TP, SL,
-units, allocation multiplier, invalidation, expected post-cost payoff, expiry,
-and why the rejected alternatives are weaker. Do not emit a partial trade for a
-later bot to complete.
-
-Write the candidate only to the ignored temporary path expected by the existing
-overlay workflow, then atomically publish `data/codex_market_read_overlay.json`
-through the approved writer/command. Do not hand-edit generated sealed outputs.
-
-### 4. Apply and verify
-
-Apply the overlay to the exact baseline and packet:
+4. Read the printed manifest. If status is `BLOCKED`, report the exact required
+   worker artifacts and stop without accepting the template.
+5. Read the referenced evidence files and the candidate schema in the manifest.
+   Replace the candidate template at the printed `candidate_path` with one
+   complete AI decision. Keep the exact `run_id`, `profile`, `kind`, and
+   `source_digest`. Use the actual runtime model and reasoning effort.
+6. Cite source references as `<worker>:<path>`. Never infer a missing value.
+7. Accept the decision:
 
 ```bash
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
-  --baseline data/trader_decision_baseline.json \
-  --packet data/market_read_evidence_packet.json \
-  --overlay data/codex_market_read_overlay.json \
-  --output data/codex_trader_decision_response.json
+PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py accept \
+  --manifest <printed_manifest_path> \
+  --candidate <printed_candidate_path>
 ```
 
-Run the approved `gpt-trader-decision` verifier against the same snapshot and
-receipt chain. The verifier must reject stale bindings, unsupported geometry,
-ownership ambiguity, duplicate risk, invalid units, margin/risk failure, or a
-decision that conflicts with stronger current evidence. A rejection ends the
-cycle; the deterministic layer must not substitute a different trade.
+`accept` rehashes every input. `EVIDENCE_CHANGED`, `MANIFEST_STALE`, or any
+candidate rejection ends the run. Do not regenerate a different trade from
+the old manifest. The next schedule creates a fresh run.
 
-### 5. Record shadow outcome
+For `TRADE`, write one or more fully specified orders. LONG geometry requires
+`stop_loss < entry < take_profit`; SHORT requires
+`take_profit < entry < stop_loss`. The AI chooses units in paper mode. Do not
+describe a paper receipt as profitable, live-ready, or broker-executed.
 
-Persist the accepted decision and its later outcome in the existing audit and
-shadow evidence surfaces. The receipt must say:
+For `CLOSE`, name exactly one `trade_id`, set `ownership=SYSTEM`, and state the
+reason. This is still a paper action. Do not target manual or uncertain
+ownership.
 
-- `ai_decision_authority=SHADOW`
-- `ai_order_authority=NONE`
-- `live_permission=false`
-- `broker_mutation_allowed=false`
+Stay quiet for an ordinary unchanged `WAIT`. Report a meaningful new trade
+decision, evidence failure, validation rejection, or required user action.
 
-Do not invoke the verified live wrapper or any send/close/protection gateway.
-The current goal is to compare AI decisions against the deterministic baseline,
-rejected alternatives, and exact forward broker truth before live activation is
-considered separately.
+## Strategic cycle
 
-## Longer-horizon review
+Run every two hours with the automation-selected advanced model. This cycle
+does not create orders.
 
-A slower, higher-capability review may examine regime shifts, portfolio risk,
-model disagreement, performance degradation, architecture, and Guardian tuning.
-It may publish sealed pair supervision and bounded tuning experiments. It must
-not rewrite an already frozen decision retrospectively or reuse evaluated
-outcomes to select the cohort that produced them.
+```bash
+PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py prepare --profile strategic
+PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py accept \
+  --manifest <printed_manifest_path> \
+  --candidate <printed_candidate_path>
+```
 
-Changing model, cadence, or worker layout does not alter authority. The single
-AI owner makes the final decision; bounded workers may gather or critique
-evidence but may not publish a competing receipt or perform external side effects.
+The AI writes a time-bounded regime and risk review containing `regime`,
+`risk_posture`, `valid_until_utc`, `themes`, and `instructions`. The
+`review_overlay` sink appends the review ledger and publishes the current review
+under the AI runtime state root. Intraday treats it as optional evidence. An
+expired or missing review never blocks evidence collection and never creates a
+trade by itself.
 
-## Failure handling
+## Extending the runtime
 
-- No valid opportunity: choose `WAIT`; do not force turnover.
-- Missing or stale evidence: choose `REQUEST_EVIDENCE` or stop with the exact
-  blocker; do not refresh timestamps or invent values.
-- Overlay/apply/verifier conflict: reread once from the same snapshot boundary;
-  if identity changed, defer to the next cycle.
-- Model/runtime/quota failure: preserve inputs and publish no replacement
-  decision.
-- Rejected decision: record the verifier reasons and end the cycle without a
-  bot-authored substitute.
-- Any request to bypass risk, ownership, duplicate, margin, protection, or
-  gateway validation: reject it.
+- Add or remove evidence workers in `config/ai_trading_runtime.json`.
+- Add a new profile by choosing `kind=trade|review` and a registered sink.
+- Put provider-specific model selection in the Codex automation only.
+- Put additional decision fields under `extensions` until a versioned core
+  field is justified.
+- Add a sink by implementing `DecisionSink.persist`; do not add broker calls to
+  the AI decision writer.
 
-## Completion report
-
-Report:
-
-- snapshot and decision timestamps;
-- chosen action and, for `TRADE`, pair/side/method/vehicle/entry/TP/SL/units;
-- evidence supporting the choice and why material alternatives were rejected;
-- apply/verifier result and exact blockers;
-- relevant forward scorecard progress;
-- confirmation that `AI_DECISION_AUTHORITY=SHADOW`,
-  `AI_ORDER_AUTHORITY=NONE`, no broker mutation occurred, and `NO_TOUCH`
-  positions were unchanged.
-
-Do not promise returns. A complete AI decision is a testable hypothesis until
-forward outcomes demonstrate otherwise.
+Any future live sink requires separate review, action-time broker truth,
+ownership checks, risk and margin validation, duplicate prevention, durable
+reservation, gateway readback, rollback, and explicit activation. The paper
+and review sinks must remain usable without it.

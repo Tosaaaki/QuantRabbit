@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-04
+
+- Added a model-neutral scheduled AI trading runtime with configurable evidence workers and sinks. The ten-minute intraday profile lets the scheduled AI author complete paper `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, or system-owned `CLOSE` decisions, including pair, side, vehicle, entry, TP, SL, units, and allocation. The two-hour strategic profile publishes a bounded regime/risk review for later intraday evidence. Prepare/accept binds exact source hashes, rejects changed or stale evidence, validates order geometry and ownership, prevents manifest sink/path substitution, and writes idempotent state-root ledgers without broker calls. Codex model selection now lives in automation configuration rather than the repository runtime; live execution remains separately disabled.
+
 ## 2026-07-15
 
 - Added the exact forward outcome resolver for the locked causal-technical shadow. Mature signals are fetched only from their frozen OANDA S5 bid/ask interval, with no broker read before due time and no broker mutation. Entry cannot use the partial S5 candle that began before the recorded quote/shadow, LONG fills on ask and exits on bid, SHORT fills on bid and exits on ask, same-candle ambiguity and horizon-open fills are charged at full risk, and unfilled LIMITs remain zero. Outcomes are idempotent and hash-chained; the preregistered first complete decision-batch cohort uses fixed signal/fill/day floors, Student-t lower bounds, daily stability, fill rate, and profit factor. Passing remains review-only and cannot create an order intent or live permission.
