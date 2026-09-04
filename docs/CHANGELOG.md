@@ -2,6 +2,7 @@
 
 ## 2026-09-04
 
+- Refreshed the pinned OANDA spread calibration from GET-only M5 bid/ask evidence for the six complete UTC business sessions ending 2026-09-03. The 28-pair artifact and compressed source evidence are hash-bound, remain valid through 2026-10-04T15:00:00Z, and continue to fail closed after expiry; no broker write was performed.
 - Added a model-neutral scheduled AI trading runtime with configurable evidence workers and sinks. The ten-minute intraday profile lets the scheduled AI author complete paper `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, or system-owned `CLOSE` decisions, including pair, side, vehicle, entry, TP, SL, units, and allocation. The two-hour strategic profile publishes a bounded regime/risk review for later intraday evidence. Prepare/accept binds exact source hashes, rejects changed or stale evidence, validates order geometry and ownership, prevents manifest sink/path substitution, and writes idempotent state-root ledgers without broker calls. Codex model selection now lives in automation configuration rather than the repository runtime; live execution remains separately disabled.
 
 ## 2026-07-15

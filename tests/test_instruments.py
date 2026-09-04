@@ -26,36 +26,36 @@ from quant_rabbit.risk import DEFAULT_SPECS, RiskEngine, RiskPolicy
 
 
 EXPECTED_SPREAD_CALIBRATION = {
-    "EUR_USD": (216, 1.6, 1.7, 2.2, 3.1, 0.7),
-    "GBP_USD": (216, 1.8, 2.0, 3.9, 5.1, 0.8),
-    "AUD_USD": (216, 1.4, 1.5, 2.0, 2.7, 0.6),
-    "NZD_USD": (216, 1.5, 1.6, 1.8, 2.1, 0.7),
-    "USD_JPY": (216, 1.6, 1.8, 2.3, 4.3, 0.8),
-    "USD_CAD": (216, 1.8, 2.0, 2.2, 2.6, 0.8),
-    "USD_CHF": (216, 1.5, 1.7, 2.9, 3.2, 0.7),
-    "EUR_GBP": (216, 1.4, 1.5, 2.6, 3.4, 0.6),
-    "EUR_JPY": (216, 2.7, 3.1, 4.6, 7.6, 1.3),
-    "EUR_AUD": (216, 3.5, 4.1, 5.7, 7.1, 1.7),
-    "EUR_CAD": (216, 2.8, 3.2, 4.4, 5.2, 1.3),
-    "EUR_CHF": (216, 1.6, 1.8, 2.9, 4.7, 0.8),
-    "EUR_NZD": (216, 6.3, 7.1, 11.1, 13.2, 2.9),
-    "GBP_JPY": (216, 3.0, 3.8, 8.6, 11.2, 1.6),
-    "GBP_AUD": (216, 5.1, 5.7, 11.1, 15.4, 2.3),
-    "GBP_CAD": (216, 3.4, 4.8, 7.1, 8.5, 2.0),
-    "GBP_CHF": (216, 2.4, 2.8, 6.8, 8.5, 1.2),
-    "GBP_NZD": (216, 8.1, 9.3, 14.6, 17.8, 3.8),
-    "AUD_JPY": (216, 2.3, 2.6, 3.5, 7.1, 1.1),
-    "AUD_CAD": (216, 2.4, 3.1, 3.9, 4.0, 1.3),
-    "AUD_CHF": (216, 1.5, 1.9, 3.6, 5.4, 0.8),
-    "AUD_NZD": (216, 2.6, 2.9, 4.9, 8.8, 1.2),
-    "CAD_JPY": (216, 2.0, 2.5, 3.4, 5.3, 1.0),
-    "CAD_CHF": (216, 1.4, 1.8, 3.0, 4.7, 0.8),
-    "CHF_JPY": (216, 3.8, 4.3, 14.0, 16.4, 1.8),
-    "NZD_JPY": (216, 2.6, 3.0, 5.6, 7.1, 1.2),
-    "NZD_CAD": (216, 2.6, 3.4, 3.9, 5.4, 1.4),
-    "NZD_CHF": (216, 1.5, 2.0, 3.7, 5.2, 0.8),
+    "EUR_USD": (216, 1.6, 1.8, 2.2, 3.1, 0.8),
+    "GBP_USD": (216, 1.8, 2.1, 4.5, 5.2, 0.9),
+    "AUD_USD": (216, 1.4, 1.5, 2.1, 3.2, 0.6),
+    "NZD_USD": (216, 1.5, 1.7, 3.4, 4.1, 0.7),
+    "USD_JPY": (216, 1.6, 2.3, 3.7, 4.5, 1.0),
+    "USD_CAD": (216, 1.8, 2.2, 4.4, 4.5, 0.9),
+    "USD_CHF": (216, 1.5, 2.3, 3.5, 4.3, 1.0),
+    "EUR_GBP": (216, 1.4, 2.0, 3.0, 4.5, 0.8),
+    "EUR_JPY": (216, 2.8, 4.4, 7.1, 11.3, 1.8),
+    "EUR_AUD": (216, 3.6, 4.9, 8.3, 9.3, 2.0),
+    "EUR_CAD": (216, 2.8, 4.7, 6.0, 6.9, 1.9),
+    "EUR_CHF": (216, 1.6, 1.8, 4.1, 7.7, 0.8),
+    "EUR_NZD": (216, 6.4, 11.1, 13.8, 16.5, 4.5),
+    "GBP_JPY": (216, 3.1, 6.5, 9.5, 10.6, 2.6),
+    "GBP_AUD": (216, 5.0, 9.1, 11.8, 18.6, 3.7),
+    "GBP_CAD": (216, 3.6, 5.8, 8.9, 11.2, 2.4),
+    "GBP_CHF": (216, 2.4, 5.6, 8.2, 11.5, 2.3),
+    "GBP_NZD": (216, 8.4, 13.0, 19.4, 21.3, 5.2),
+    "AUD_JPY": (216, 2.3, 3.1, 5.8, 9.1, 1.3),
+    "AUD_CAD": (216, 2.4, 3.8, 5.2, 7.3, 1.6),
+    "AUD_CHF": (216, 1.5, 3.2, 5.2, 5.7, 1.3),
+    "AUD_NZD": (216, 2.6, 4.6, 9.4, 11.0, 1.9),
+    "CAD_JPY": (216, 2.0, 3.8, 5.3, 7.8, 1.6),
+    "CAD_CHF": (216, 1.4, 2.7, 4.5, 6.8, 1.1),
+    "CHF_JPY": (216, 3.8, 9.8, 14.0, 14.3, 4.0),
+    "NZD_JPY": (216, 2.6, 5.1, 8.6, 11.8, 2.1),
+    "NZD_CAD": (216, 2.6, 3.9, 5.7, 7.5, 1.6),
+    "NZD_CHF": (216, 1.5, 3.2, 5.1, 5.2, 1.3),
 }
-CALIBRATION_EVALUATION_TIME = datetime(2026, 8, 28, tzinfo=timezone.utc)
+CALIBRATION_EVALUATION_TIME = datetime(2026, 9, 4, tzinfo=timezone.utc)
 
 
 def _fresh_calibration_payload() -> dict[str, object]:
@@ -121,7 +121,7 @@ class InstrumentUniverseTest(unittest.TestCase):
         self.assertEqual(OANDA_SPREAD_CALIBRATION_V1.max_age_days_after_window, 31)
         self.assertEqual(
             OANDA_SPREAD_CALIBRATION_V1.valid_until_utc,
-            datetime(2026, 9, 27, 15, tzinfo=timezone.utc),
+            datetime(2026, 10, 4, 15, tzinfo=timezone.utc),
         )
         self.assertEqual(len(OANDA_SPREAD_CALIBRATION_V1.business_days_utc), 6)
         for pair, expected in EXPECTED_SPREAD_CALIBRATION.items():
@@ -161,7 +161,7 @@ class InstrumentUniverseTest(unittest.TestCase):
             NORMAL_SPREAD_PIPS["EUR_USD"] = 99.0  # type: ignore[index]
         with self.assertRaises(TypeError):
             DEFAULT_SPECS["EUR_USD"] = DEFAULT_SPECS["GBP_USD"]  # type: ignore[index]
-        self.assertEqual(DEFAULT_SPECS["EUR_USD"].normal_spread_pips, 0.7)
+        self.assertEqual(DEFAULT_SPECS["EUR_USD"].normal_spread_pips, 0.8)
 
     def test_risk_engine_snapshots_explicit_spec_mapping(self) -> None:
         injected_specs = {"EUR_USD": DEFAULT_SPECS["EUR_USD"]}
@@ -170,7 +170,7 @@ class InstrumentUniverseTest(unittest.TestCase):
         injected_specs["EUR_USD"] = DEFAULT_SPECS["GBP_USD"]
 
         self.assertEqual(engine.specs["EUR_USD"].pair, "EUR_USD")
-        self.assertEqual(engine.specs["EUR_USD"].normal_spread_pips, 0.7)
+        self.assertEqual(engine.specs["EUR_USD"].normal_spread_pips, 0.8)
         with self.assertRaises(TypeError):
             engine.specs["EUR_USD"] = DEFAULT_SPECS["GBP_USD"]  # type: ignore[index]
 
@@ -178,12 +178,12 @@ class InstrumentUniverseTest(unittest.TestCase):
         for label, evaluated_at, expected_message in (
             (
                 "before_window_end",
-                datetime(2026, 8, 27, 14, 59, 59, tzinfo=timezone.utc),
+                datetime(2026, 9, 3, 14, 59, 59, tzinfo=timezone.utc),
                 "not yet valid",
             ),
             (
                 "after_expiry",
-                datetime(2026, 9, 27, 15, 0, 1, tzinfo=timezone.utc),
+                datetime(2026, 10, 4, 15, 0, 1, tzinfo=timezone.utc),
                 "expired",
             ),
         ):
@@ -276,7 +276,7 @@ class InstrumentUniverseTest(unittest.TestCase):
                     _load_resealed_payload(payload, Path(temp_dir) / "calibration.json")
 
     def test_strict_loader_rejects_both_under_and_over_derived_baselines(self) -> None:
-        for label, baseline in (("under", 0.6), ("over", 0.8)):
+        for label, baseline in (("under", 0.7), ("over", 0.9)):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
                 payload = _fresh_calibration_payload()
                 payload["pairs"][0]["recommended_baseline_pips"] = baseline
