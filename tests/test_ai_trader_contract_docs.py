@@ -22,16 +22,17 @@ class AITraderContractDocsTests(unittest.TestCase):
             "entry",
             "TP",
             "SL",
-            "allocation multiplier",
             "units",
         )
         authority_section = TRADER_PLAYBOOK.split("## Intraday cycle", 1)[0]
         for field in required_fields:
             self.assertIn(field, authority_section)
 
-        self.assertIn("AI may choose `TRADE`, `WAIT`,", TRADER_PLAYBOOK)
-        self.assertIn("prepare --profile intraday", TRADER_PLAYBOOK)
+        self.assertIn("`ENTER`, `WAIT`, and `REQUEST_EVIDENCE`", TRADER_PLAYBOOK)
+        self.assertIn("ai_trader_hotpath.py", TRADER_PLAYBOOK)
         self.assertIn("ai_trader_runtime.py accept", TRADER_PLAYBOOK)
+        self.assertIn("There is no fixed 1,000-unit", TRADER_PLAYBOOK)
+        self.assertIn("or allocation multiplier", TRADER_PLAYBOOK)
 
     def test_live_execution_uses_a_separate_gateway_authority(self) -> None:
         self.assertIn("QR_AI_ORDER_AUTHORITY=LIVE", AGENT_CONTRACT)

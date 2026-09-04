@@ -848,6 +848,26 @@ class QrDiskMaintenanceTest(unittest.TestCase):
                 payload["bytes_to_operating_floor"],
             )
 
+    def test_atomic_report_failure_preserves_canonical_and_removes_own_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "logs" / "disk_maintenance_report.json"
+            report.parent.mkdir(parents=True)
+            report.write_text('{"status":"last-good"}\n', encoding="utf-8")
+
+            with patch.object(Path, "replace", side_effect=OSError("simulated ENOSPC")):
+                with self.assertRaisesRegex(OSError, "simulated ENOSPC"):
+                    DISK_MAINTENANCE._write_report_atomic(report, {"status": "new"})
+
+            self.assertEqual(
+                report.read_text(encoding="utf-8"),
+                '{"status":"last-good"}\n',
+            )
+            self.assertEqual(
+                list(report.parent.glob(f".{report.name}.*.tmp")),
+                [],
+            )
+
 
 def _history_file(root: Path) -> Path:
     history = root / "logs" / "replay" / "oanda_history" / "run" / "EUR_USD"

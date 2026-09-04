@@ -29,6 +29,7 @@ import shutil
 import stat as stat_module
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1195,16 +1196,25 @@ def _protected_atomic_target(path: Path) -> bool:
 
 def _write_report_atomic(path: Path, report: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f"{path.name}.tmp")
-    if temp.is_symlink() or path.is_symlink():
+    if path.is_symlink():
         raise OSError("unsafe report symlink")
     payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
-    with temp.open("wb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    temp.replace(path)
-    _fsync_directory(path.parent)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        # The unique file is owned by this invocation.  Removing it on ENOSPC,
+        # replace failure, or interruption prevents maintenance itself from
+        # becoming a source of persistent atomic-write debris.
+        temp.unlink(missing_ok=True)
 
 
 def _fsync_directory(path: Path) -> None:
