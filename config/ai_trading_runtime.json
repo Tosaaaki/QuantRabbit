@@ -7,6 +7,7 @@
       "kind": "trade",
       "cadence_minutes": 10,
       "decision_max_age_seconds": 900,
+      "candidate_accept_slo_seconds": 2,
       "sink": "live_gateway",
       "allowed_actions": ["ENTER", "WAIT", "REQUEST_EVIDENCE"],
       "workers": {

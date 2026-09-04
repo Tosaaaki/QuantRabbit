@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Bounded, offline preflight for the ten-minute AI trader hot path.
+"""Bounded preflight and acceptance handoff for the AI trader hot path.
 
-This command intentionally stops before model invocation or broker execution.  It
-validates the locally sealed control-plane policy, checks runtime capacity, and
-creates at most one model-neutral prepared run when its inputs have changed.
+This command stops before model invocation.  For a live profile it starts an
+independent, fail-closed acceptor before returning the model-neutral prepared
+run, so broker acceptance does not depend on the model task reaching a later
+shell step.
 """
 
 from __future__ import annotations
@@ -14,14 +15,22 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-from quant_rabbit.ai_trading_runtime import AIRuntimeError, PreparedRun, prepare_run
+from quant_rabbit.ai_trading_runtime import (
+    AIRuntimeError,
+    PreparedRun,
+    finish_hotpath_lease_if_owned,
+    prepare_run,
+)
 from quant_rabbit.policy_snapshot import (
     PolicyBinding,
     PolicySnapshotError,
@@ -41,7 +50,7 @@ MAX_OUTPUT_BYTES = 16 * 1024
 MAX_BLOCKERS = 32
 MAX_TEXT_CHARS = 512
 HASH_CHUNK_BYTES = 1024 * 1024
-LEASE_TTL_SECONDS = 20 * 60
+ACCEPTOR_HANDSHAKE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,8 @@ class HotPathOptions:
     high_free_bytes: int
     state_quota_pressure_bytes: int
     state_quota_block_bytes: int
+    auto_accept: bool = False
+    acceptor_poll_seconds: float = 0.1
 
 
 def run_hotpath(
@@ -109,6 +120,14 @@ def _run_locked(options: HotPathOptions, *, now: datetime) -> tuple[int, dict[st
         config = _load_json_object(options.config_path, "runtime config")
         state_root = _resolve_state_root(config, options.state_root)
         state_root.mkdir(parents=True, exist_ok=True)
+        profile_config = _profile_runtime_config(config, options.profile)
+        live_profile = str(profile_config.get("sink") or "") == "live_gateway"
+        if live_profile and not options.auto_accept:
+            return 2, {
+                "status": "BLOCKED_ACCEPTOR",
+                "code": "LIVE_AUTO_ACCEPT_REQUIRED",
+                "profile": options.profile,
+            }
         active_lease = _read_active_lease(state_root / "hotpath_lease.json", now=now)
         if active_lease is not None:
             return 75, {
@@ -183,17 +202,44 @@ def _run_locked(options: HotPathOptions, *, now: datetime) -> tuple[int, dict[st
             state_root=state_root,
             now=now,
         )
-        _write_digest(digest_path, input_digest)
         lease = (
             _write_active_lease(
                 state_root / "hotpath_lease.json",
                 run_id=prepared.run_id,
                 input_digest=input_digest,
                 now=now,
+                ttl_seconds=_positive_int(
+                    profile_config.get("decision_max_age_seconds"),
+                    "decision_max_age_seconds",
+                ),
             )
             if prepared.ready
             else None
         )
+        acceptor = None
+        if prepared.ready and live_profile:
+            try:
+                acceptor = _launch_acceptor(
+                    options,
+                    prepared=prepared,
+                    state_root=state_root,
+                )
+            except (AIRuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                finish_hotpath_lease_if_owned(
+                    state_root,
+                    run_id=prepared.run_id,
+                    status="FAILED:ACCEPTOR_START_FAILED",
+                    now=now,
+                )
+                return 2, _compact_payload(
+                    {
+                        "status": "BLOCKED_ACCEPTOR",
+                        "code": "ACCEPTOR_START_FAILED",
+                        "run_id": prepared.run_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        _write_digest(digest_path, input_digest)
     except (AIRuntimeError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return 2, _compact_payload(
             {
@@ -208,6 +254,7 @@ def _run_locked(options: HotPathOptions, *, now: datetime) -> tuple[int, dict[st
         capacity=capacity.status.value,
         input_digest=input_digest,
         lease=lease,
+        acceptor=acceptor,
     )
     return (0 if prepared.ready else 2), _compact_payload(payload)
 
@@ -218,6 +265,7 @@ def _prepared_payload(
     capacity: str,
     input_digest: str,
     lease: Mapping[str, Any] | None,
+    acceptor: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "status": "READY" if prepared.ready else "BLOCKED_INPUTS",
@@ -230,6 +278,7 @@ def _prepared_payload(
         "input_digest": input_digest,
         "capacity": capacity,
         "lease_expires_at_utc": None if lease is None else lease["expires_at_utc"],
+        "acceptor": None if acceptor is None else dict(acceptor),
     }
 
 
@@ -256,6 +305,7 @@ def _write_active_lease(
     run_id: str,
     input_digest: str,
     now: datetime,
+    ttl_seconds: int,
 ) -> dict[str, Any]:
     material = {
         "schema_version": 1,
@@ -263,7 +313,7 @@ def _write_active_lease(
         "run_id": run_id,
         "input_digest": input_digest,
         "issued_at_utc": now.isoformat(),
-        "expires_at_utc": (now + timedelta(seconds=LEASE_TTL_SECONDS)).isoformat(),
+        "expires_at_utc": (now + timedelta(seconds=ttl_seconds)).isoformat(),
     }
     payload = {**material, "lease_sha256": _canonical_digest(material)}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,6 +331,90 @@ def _write_active_lease(
         except FileNotFoundError:
             pass
     return payload
+
+
+def _launch_acceptor(
+    options: HotPathOptions,
+    *,
+    prepared: PreparedRun,
+    state_root: Path,
+) -> dict[str, Any]:
+    manifest = _load_json_object(prepared.manifest_path, "run manifest")
+    initial_sha256 = _required_text(
+        manifest.get("candidate_template_sha256"),
+        "candidate_template_sha256",
+    )
+    status_path = Path(_required_text(manifest.get("acceptor_status_path"), "acceptor_status_path"))
+    expected_status_path = (state_root / "runs" / prepared.run_id / "acceptor_status.json").resolve()
+    if status_path.resolve() != expected_status_path:
+        raise AIRuntimeError("ACCEPTOR_SCOPE_MISMATCH", "acceptor status path is outside its run")
+
+    command = [
+        sys.executable,
+        str(options.repo_root / "tools" / "ai_decision_acceptor.py"),
+        "--config",
+        str(options.config_path),
+        "--manifest",
+        str(prepared.manifest_path),
+        "--candidate",
+        str(prepared.candidate_path),
+        "--repo-root",
+        str(options.repo_root),
+        "--state-root",
+        str(state_root),
+        "--initial-candidate-sha256",
+        initial_sha256,
+        "--poll-interval-seconds",
+        str(options.acceptor_poll_seconds),
+    ]
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHONPATH": str(options.repo_root / "src"),
+            "QR_AI_PROJECT_KEY": options.project_key,
+            "QR_AI_BROKER_ACCOUNT_ID": options.broker_account_id,
+            "QR_AI_ENVIRONMENT": options.environment,
+            "QR_AI_POLICY_REVOCATION_EPOCH": str(options.revocation_epoch),
+            "QR_AI_REQUIRED_POLICY_SOURCE_PAGES": ",".join(options.required_source_pages),
+            "QR_AI_ORDER_AUTHORITY": "LIVE",
+            "QR_LIVE_ENABLED": "1",
+        }
+    )
+    log_path = expected_status_path.with_name("acceptor.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("ab", buffering=0) as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=options.repo_root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    deadline = time.monotonic() + ACCEPTOR_HANDSHAKE_SECONDS
+    while time.monotonic() < deadline:
+        if status_path.is_file() and not status_path.is_symlink():
+            status = _load_json_object(status_path, "acceptor status")
+            if status.get("run_id") == prepared.run_id and status.get("status") == "WAITING_FOR_CANDIDATE":
+                return {
+                    "pid": process.pid,
+                    "status": "WAITING_FOR_CANDIDATE",
+                    "status_path": str(status_path),
+                    "log_path": str(log_path),
+                }
+        return_code = process.poll()
+        if return_code is not None:
+            raise AIRuntimeError(
+                "ACCEPTOR_START_FAILED",
+                f"acceptor exited before handshake with status {return_code}",
+            )
+        time.sleep(0.02)
+
+    process.terminate()
+    raise AIRuntimeError("ACCEPTOR_HANDSHAKE_TIMEOUT", "acceptor did not confirm readiness")
 
 
 def _input_digest(
@@ -484,6 +618,14 @@ def _resolve_state_root(config: Mapping[str, Any], override: Path | None) -> Pat
     return Path(raw).expanduser()
 
 
+def _profile_runtime_config(config: Mapping[str, Any], profile: str) -> dict[str, Any]:
+    profiles = config.get("profiles")
+    value = profiles.get(profile) if isinstance(profiles, Mapping) else None
+    if not isinstance(value, Mapping):
+        raise AIRuntimeError("PROFILE_NOT_FOUND", f"unknown profile: {profile}")
+    return dict(value)
+
+
 def _required_text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty string")
@@ -546,6 +688,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--high-free-bytes", type=int, default=_env_int("QR_AI_HIGH_FREE_BYTES", 5 * 1024**3))
     parser.add_argument("--state-quota-pressure-bytes", type=int, default=_env_int("QR_AI_STATE_PRESSURE_BYTES", 256 * 1024**2))
     parser.add_argument("--state-quota-block-bytes", type=int, default=_env_int("QR_AI_STATE_BLOCK_BYTES", 512 * 1024**2))
+    parser.add_argument(
+        "--auto-accept",
+        action="store_true",
+        help="start and handshake an independent acceptor (required for live profiles)",
+    )
+    parser.add_argument(
+        "--acceptor-poll-seconds",
+        type=float,
+        default=0.1,
+        help="candidate polling interval for the independent acceptor",
+    )
     return parser
 
 
@@ -568,6 +721,8 @@ def main() -> int:
         high_free_bytes=args.high_free_bytes,
         state_quota_pressure_bytes=args.state_quota_pressure_bytes,
         state_quota_block_bytes=args.state_quota_block_bytes,
+        auto_accept=args.auto_accept,
+        acceptor_poll_seconds=args.acceptor_poll_seconds,
     )
     code, payload = run_hotpath(options)
     encoded = _encode_payload(_compact_payload(payload))

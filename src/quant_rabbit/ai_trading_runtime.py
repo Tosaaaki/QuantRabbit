@@ -168,6 +168,10 @@ def prepare_run(
         profile_config.get("decision_max_age_seconds"),
         "decision_max_age_seconds",
     )
+    candidate_accept_slo = _positive_number(
+        profile_config.get("candidate_accept_slo_seconds", 2.0),
+        "candidate_accept_slo_seconds",
+    )
     descriptors: list[dict[str, Any]] = []
     blockers: list[str] = []
 
@@ -196,6 +200,7 @@ def prepare_run(
     manifest_path = run_dir / "manifest.json"
     candidate_path = run_dir / "candidate.json"
     receipt_path = run_dir / "receipt.json"
+    acceptor_status_path = run_dir / "acceptor_status.json"
     kind = str(profile_config.get("kind") or "").strip().lower()
     if kind not in {"trade", "review"}:
         raise AIRuntimeError("PROFILE_INVALID", f"unsupported profile kind: {kind!r}")
@@ -206,6 +211,7 @@ def prepare_run(
         "kind": kind,
         "prepared_at_utc": current.isoformat(),
         "decision_max_age_seconds": decision_max_age,
+        "candidate_accept_slo_seconds": candidate_accept_slo,
         "sink": str(profile_config.get("sink") or ""),
         "ready": not blockers,
         "blockers": blockers,
@@ -213,6 +219,7 @@ def prepare_run(
         "sources": descriptors,
         "candidate_path": str(candidate_path),
         "receipt_path": str(receipt_path),
+        "acceptor_status_path": str(acceptor_status_path),
         "execution": {
             "mode": (
                 "live"
@@ -229,8 +236,10 @@ def prepare_run(
             allowed_actions=_allowed_trade_actions(profile_config, kind=kind),
         ),
     }
+    candidate_template = _candidate_template(manifest)
+    manifest["candidate_template_sha256"] = _sha256_json(candidate_template)
     _atomic_write_json(manifest_path, manifest)
-    _atomic_write_json(candidate_path, _candidate_template(manifest))
+    _atomic_write_json(candidate_path, candidate_template)
     return PreparedRun(
         manifest_path=manifest_path,
         candidate_path=candidate_path,
@@ -250,11 +259,16 @@ def accept_run(
     repo_root: Path,
     state_root: Path | None = None,
     now: datetime | None = None,
+    candidate_payload: Mapping[str, Any] | None = None,
 ) -> AcceptedRun:
     current = _utc_now(now)
     config = _load_object(config_path, "runtime config")
     manifest = _load_object(manifest_path, "run manifest")
-    candidate = _load_object(candidate_path, "AI candidate")
+    candidate = (
+        dict(candidate_payload)
+        if candidate_payload is not None
+        else _load_object(candidate_path, "AI candidate")
+    )
     profile = _required_text(manifest, "profile")
     profile_config = _profile_config(config, profile)
     resolved_state_root = state_root or _state_root(config)
@@ -332,7 +346,7 @@ def accept_run(
         existing = _load_object(receipt_path, "existing receipt")
         if existing.get("candidate_sha256") != candidate_sha256:
             raise AIRuntimeError("RUN_ALREADY_ACCEPTED", "run already has a different accepted candidate")
-        _finish_hotpath_lease_if_owned(
+        finish_hotpath_lease_if_owned(
             resolved_state_root,
             run_id=str(manifest["run_id"]),
             status=str(existing.get("status") or status),
@@ -361,7 +375,7 @@ def accept_run(
             status = "ACCEPTED_LIVE_BLOCKED"
         receipt["status"] = status
     _atomic_write_json(receipt_path, receipt)
-    _finish_hotpath_lease_if_owned(
+    finish_hotpath_lease_if_owned(
         resolved_state_root,
         run_id=str(manifest["run_id"]),
         status=status,
@@ -620,7 +634,7 @@ def _require_active_hotpath_lease(
     return lease
 
 
-def _finish_hotpath_lease_if_owned(
+def finish_hotpath_lease_if_owned(
     state_root: Path,
     *,
     run_id: str,

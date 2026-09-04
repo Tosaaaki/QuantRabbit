@@ -159,6 +159,59 @@ class AITraderHotPathTests(unittest.TestCase):
         self.assertLess(len(_encode_payload(payload)), MAX_OUTPUT_BYTES)
         self.assertNotIn("sources", payload)
 
+    def test_live_profile_requires_independent_auto_acceptor(self) -> None:
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["profiles"]["intraday"]["sink"] = "live_gateway"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+
+        with patch("tools.ai_trader_hotpath.prepare_run") as prepare:
+            code, payload = run_hotpath(self.options(), now=NOW)
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["status"], "BLOCKED_ACCEPTOR")
+        self.assertEqual(payload["code"], "LIVE_AUTO_ACCEPT_REQUIRED")
+        prepare.assert_not_called()
+
+    def test_live_profile_handshakes_acceptor_before_returning_ready(self) -> None:
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["profiles"]["intraday"]["sink"] = "live_gateway"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        options = HotPathOptions(**{**self.options().__dict__, "auto_accept": True})
+        acceptor = {
+            "pid": 42,
+            "status": "WAITING_FOR_CANDIDATE",
+            "status_path": "/tmp/status",
+            "log_path": "/tmp/log",
+        }
+
+        with patch("tools.ai_trader_hotpath._launch_acceptor", return_value=acceptor) as launch:
+            code, payload = run_hotpath(options, now=NOW)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "READY")
+        self.assertEqual(payload["acceptor"], acceptor)
+        launch.assert_called_once()
+        lease = json.loads((self.state_root / "hotpath_lease.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            lease["expires_at_utc"],
+            (NOW + timedelta(seconds=900)).isoformat(),
+        )
+
+    def test_acceptor_start_failure_is_terminal_and_retryable(self) -> None:
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["profiles"]["intraday"]["sink"] = "live_gateway"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        options = HotPathOptions(**{**self.options().__dict__, "auto_accept": True})
+
+        with patch("tools.ai_trader_hotpath._launch_acceptor", side_effect=OSError("spawn failed")):
+            code, payload = run_hotpath(options, now=NOW)
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["status"], "BLOCKED_ACCEPTOR")
+        lease = json.loads((self.state_root / "hotpath_lease.json").read_text(encoding="utf-8"))
+        self.assertEqual(lease["status"], "TERMINAL")
+        self.assertFalse((self.state_root / "hotpath_input.json").exists())
+
 
 def _policy_payload() -> dict[str, object]:
     return {

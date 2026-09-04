@@ -13,9 +13,11 @@ replaceable services:
 1. collectors refresh broker, market, news, performance, and portfolio facts;
 2. the evidence adapter allowlists and seals a compact point-in-time packet;
 3. `prepare` binds exact policy and evidence bytes into a run manifest;
-4. AI emits an Entry decision and, where applicable, an independent Exit decision;
-5. the adjudicator selects no more than one mutation for one broker epoch;
-6. `accept` revalidates freshness, ownership, sizing arithmetic, costs, net edge,
+4. the live hot path starts and handshakes an independent acceptor;
+5. AI emits an Entry decision and, where applicable, an independent Exit decision;
+6. the acceptor detects the first stable candidate and attempts it exactly once;
+7. the adjudicator selects no more than one mutation for one broker epoch;
+8. `accept` revalidates freshness, ownership, sizing arithmetic, costs, net edge,
    geometry, and the configured execution sink.
 
 Profiles and workers live in `config/ai_trading_runtime.json`. Model selection
@@ -73,6 +75,7 @@ PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py build-evidence \
 
 ```bash
 PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_hotpath.py \
+  --auto-accept \
   --repo-root "$QR_REPO_ROOT" \
   --state-root "$QR_AI_STATE_ROOT" \
   --policy-snapshot "$QR_AI_POLICY_SNAPSHOT" \
@@ -82,24 +85,26 @@ PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_hotpath.py \
   --revocation-epoch "$QR_AI_POLICY_REVOCATION_EPOCH"
 ```
 
-5. Read the printed manifest. If status is `BLOCKED`, report the exact required
-   worker artifacts and stop without accepting the template.
+5. Read the printed manifest. `READY` is returned only after the independent
+   acceptor has written `WAITING_FOR_CANDIDATE`. If status is `BLOCKED`, report
+   the exact required worker artifacts and stop without accepting the template.
 6. Read only the referenced policy snapshot, compact evidence packet, optional
    strategic review, and candidate schema in the manifest.
    Replace the candidate template at the printed `candidate_path` with one
    complete AI decision. Keep the exact `run_id`, `profile`, `kind`, and
    `source_digest`. Use the actual runtime model and reasoning effort.
 7. Cite source references as `<worker>:<path>`. Never infer a missing value.
-8. Accept the decision:
-
-```bash
-PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py accept \
-  --manifest <printed_manifest_path> \
-  --candidate <printed_candidate_path>
-```
+8. Atomically replace the candidate template and then read the printed
+   `acceptor.status_path`. Do not invoke a second manual `accept`. The acceptor
+   detects the stable candidate in 0.1-second polling intervals and calls the
+   existing acceptance boundary independently of whether the model task keeps
+   running. It records exactly one terminal state: `ACCEPTED`, `REJECTED`,
+   `EXPIRED_NO_DECISION`, or `FAILED`.
 
 `accept` rehashes every input. `EVIDENCE_CHANGED`, `MANIFEST_STALE`, or any
-candidate rejection ends the run. Do not regenerate a different trade from
+candidate rejection ends the run and is recorded in `acceptor_status.json`.
+An ambiguous live-gateway failure is marked `broker_outcome_unknown=true` and
+must never be retried automatically. Do not regenerate a different trade from
 the old manifest. The next schedule creates a fresh run.
 
 For `ENTER`, write exactly one fully specified order. LONG geometry requires
@@ -111,6 +116,11 @@ allowance, stop loss per unit, calibration, drawdown, correlation and net-edge
 reducers, and post-exposure margin/correlation/broker caps. A decision is
 broker-executed only when its final receipt has `sent=true` and an explicit
 gateway readback.
+
+The live profile is fail-closed without `--auto-accept`; it cannot return a
+candidate path that lacks a running acceptor. The acceptor lease expires at the
+same deadline as the manifest, and candidate-to-accept latency is measured
+against `candidate_accept_slo_seconds` (currently two seconds).
 
 The versioned Exit decision and adjudicator are implemented, but `EXIT` is not
 in the current live profile allowlist. Every live entry must attach broker-side
