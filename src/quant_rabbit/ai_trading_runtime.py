@@ -164,6 +164,10 @@ def prepare_run(
     config = _load_object(config_path, "runtime config")
     profile_config = _profile_config(config, profile)
     resolved_state_root = state_root or _state_root(config)
+    decision_max_age = _positive_int(
+        profile_config.get("decision_max_age_seconds"),
+        "decision_max_age_seconds",
+    )
     descriptors: list[dict[str, Any]] = []
     blockers: list[str] = []
 
@@ -180,6 +184,7 @@ def prepare_run(
                 repo_root=repo_root,
                 state_root=resolved_state_root,
                 now=current,
+                optional_freshness_horizon_seconds=decision_max_age,
             )
             descriptors.append(descriptor)
             if descriptor["required"] and descriptor["status"] != "READY":
@@ -200,10 +205,7 @@ def prepare_run(
         "profile": profile,
         "kind": kind,
         "prepared_at_utc": current.isoformat(),
-        "decision_max_age_seconds": _positive_int(
-            profile_config.get("decision_max_age_seconds"),
-            "decision_max_age_seconds",
-        ),
+        "decision_max_age_seconds": decision_max_age,
         "sink": str(profile_config.get("sink") or ""),
         "ready": not blockers,
         "blockers": blockers,
@@ -421,12 +423,19 @@ def _validate_manifest(
         if not isinstance(worker, str) or not isinstance(configured_sources, list):
             raise AIRuntimeError("PROFILE_INVALID", "profile workers are malformed")
         for source in configured_sources:
+            prior = sources[len(refreshed)] if len(refreshed) < len(sources) else None
+            optional_horizon = (
+                0
+                if isinstance(prior, Mapping) and prior.get("status") == "READY"
+                else max_age
+            )
             refreshed.append(_describe_source(
                 worker=worker,
                 source=source,
                 repo_root=repo_root,
                 state_root=state_root,
                 now=now,
+                optional_freshness_horizon_seconds=optional_horizon,
             ))
     if len(refreshed) != len(sources) or _sha256_json(_source_material(refreshed)) != manifest.get("source_digest"):
         raise AIRuntimeError("EVIDENCE_CHANGED", "input evidence changed after the run was prepared")
@@ -945,6 +954,7 @@ def _describe_source(
     repo_root: Path,
     state_root: Path,
     now: datetime,
+    optional_freshness_horizon_seconds: int = 0,
 ) -> dict[str, Any]:
     if not isinstance(source, Mapping):
         raise AIRuntimeError("PROFILE_INVALID", "worker source must be an object")
@@ -970,6 +980,14 @@ def _describe_source(
         age_seconds = max(0.0, (now - modified).total_seconds())
         sha256 = _sha256_file(path)
         status = "READY" if age_seconds <= max_age else "STALE"
+        if not required and max_age - age_seconds < optional_freshness_horizon_seconds:
+            status = "IGNORED"
+            sha256 = None
+            size = None
+            modified_at = None
+            age_seconds = None
+    elif not required:
+        status = "IGNORED"
     return {
         "worker": worker,
         "path": raw_path,

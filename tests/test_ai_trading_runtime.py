@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -293,6 +294,54 @@ class AITradingRuntimeTests(unittest.TestCase):
                 candidate_path=prepared.candidate_path, repo_root=self.root,
                 now=NOW + timedelta(seconds=1),
             )
+
+    def test_expiring_optional_source_is_ignored_for_entire_decision_window(self) -> None:
+        optional = self.root / "data" / "optional.json"
+        optional.write_text(json.dumps({"review": "near expiry"}))
+        os.utime(optional, (NOW.timestamp() - 95, NOW.timestamp() - 95))
+        config = json.loads(self.config.read_text())
+        config["profiles"]["intraday"]["decision_max_age_seconds"] = 10
+        config["profiles"]["intraday"]["workers"]["strategy"] = [
+            {"path": "data/optional.json", "required": False, "max_age_seconds": 100}
+        ]
+        self.config.write_text(json.dumps(config))
+
+        prepared = prepare_run(
+            config_path=self.config,
+            profile="intraday",
+            repo_root=self.root,
+            now=NOW,
+        )
+        manifest = json.loads(prepared.manifest_path.read_text())
+        optional_source = next(row for row in manifest["sources"] if row["worker"] == "strategy")
+        self.assertEqual(optional_source["status"], "IGNORED")
+        self.assertIsNone(optional_source["sha256"])
+
+        candidate = json.loads(prepared.candidate_path.read_text())
+        candidate.update(
+            {
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": "max",
+                "decided_at_utc": (NOW + timedelta(seconds=1)).isoformat(),
+                "thesis": "The optional review is excluded because it cannot stay fresh.",
+                "evidence_refs": ["evidence:data/evidence.json"],
+                "action": "WAIT",
+                "confidence": 0.6,
+                "orders": [],
+                "position_actions": [],
+                "requested_evidence": [],
+            }
+        )
+        prepared.candidate_path.write_text(json.dumps(candidate))
+
+        result = accept_run(
+            config_path=self.config,
+            manifest_path=prepared.manifest_path,
+            candidate_path=prepared.candidate_path,
+            repo_root=self.root,
+            now=NOW + timedelta(seconds=10),
+        )
+        self.assertEqual(result.status, "ACCEPTED_PAPER")
 
     def test_missing_required_source_blocks_prepare(self) -> None:
         self.evidence.unlink()
