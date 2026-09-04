@@ -1,207 +1,183 @@
-# QuantRabbit AI Supervisor Runtime
+# QuantRabbit AI Trader Runtime
 
-`qr-trader` is retained only as the compatibility automation id. It is not an
-order trader. This playbook defines one AI regime/tuning supervisor for the
-deterministic fast bot.
+`qr-trader` is the stable scheduler id for the AI-primary trader. The AI owns
+the discretionary market decision. Deterministic code owns evidence capture,
+validation, risk limits, duplicate prevention, protection, and any separately
+authorized broker execution.
 
 ## Load order
 
 1. Read `docs/AGENT_CONTRACT.md` in full. It is authoritative.
-2. Read the current artifacts listed below from the same live-runtime snapshot.
-3. Perform either the six-hour periodic review or one material-event review.
-4. Publish only sealed pair supervision and bounded tuning reviews.
+2. Read all required artifacts from one current, sealed live-runtime snapshot.
+3. Build the deterministic baseline and market-read evidence packet.
+4. Make one complete AI decision from that evidence.
+5. Apply and independently verify the decision.
+6. Record and score it as shadow evidence. Do not send it to the broker.
 
-Do not read or execute the legacy branch prompts under `docs/trader_prompts/` as
-scheduled AI instructions. They are compatibility material for retired flows.
+The prompts under `docs/trader_prompts/` may be used only through this contract.
+If an older prompt implies direct broker access, live permission, stale-data
+fallback, or weaker ownership/risk rules, this playbook wins.
 
 ## Authority boundary
 
-- `AI_ORDER_AUTHORITY=NONE` is invariant.
-- Model policy is `gpt-5.5` with `reasoning_effort=high`.
-- Normal cadence is once every six hours.
-- An additional review is allowed only when current Guardian evidence reports a
-  material regime, volatility, spread/cost, technical-state, or measured
-  performance change.
-- The only market-state output is `QR_AI_REGIME_SUPERVISION_V1` with bounded
-  per-pair `GO`, `CAUTION`, or `STOP` rows.
-- The only learning output is an observation-bound Guardian tuning review under
-  the experiment contract in `docs/AGENT_CONTRACT.md` §15.
-- AI must not create or select an order action, cancel, close, add, harvest, or
-  reduce exposure.
-- AI must not choose or alter direction, strategy method, vehicle, entry, TP,
-  SL, geometry, risk, multiplier, allocation, or units.
-- AI must not grant live permission, call OANDA, call `guardian-action-cycle`,
-  invoke `AutoTradeCycle`, `LiveOrderGateway`, or `PositionProtectionGateway`,
-  or set any live/handoff/action flag.
-- AI must not write `data/codex_market_read_overlay.json`, apply a legacy market
-  read, create a GPT decision receipt, stage an order, or run a live wrapper.
-
-Legacy decision, allocation, verifier, receipt, and gateway artifacts may be
-read for audit or counterevidence only. They are never supervisor output or
-execution authority.
+- `AI_DECISION_AUTHORITY=SHADOW` is active.
+- `AI_ORDER_AUTHORITY=NONE` remains the independent live-send gate.
+- AI may choose `TRADE`, `WAIT`, or `REQUEST_EVIDENCE`.
+- For `TRADE`, AI may choose pair, side, strategy method, order vehicle, entry,
+  TP, SL, geometry, allocation multiplier, and units.
+- AI may author a `CLOSE` candidate only for an explicitly system-owned position
+  and only under the two-gate close contract in `docs/AGENT_CONTRACT.md`.
+- AI may reject the deterministic baseline and choose another evidenced lane.
+  The overlay must state what changed and bind every changed field to current
+  evidence.
+- Deterministic validation may reject a decision or reduce units to a valid
+  cap. It must not silently invent a different pair, side, method, or geometry.
+- No accepted decision grants live permission in the current stage. Do not call
+  OANDA, `guardian-action-cycle`, `AutoTradeCycle`, `LiveOrderGateway`,
+  `PositionProtectionGateway`, or any low-level broker client.
+- Manual, operator-owned, tagless, external, and ambiguous-owner positions are
+  `NO_TOUCH`.
 
 ## Required current evidence
 
-Read these before every review:
+Read the applicable artifacts before every decision:
 
+- `data/broker_snapshot.json`
+- `data/position_guardian_chart_freshness.json`
+- `data/guardian_events.json`
+- `data/guardian_escalation.json`
 - `data/hierarchical_bot_regime.json`
 - `data/fast_bot_shadow.json`
 - `data/fast_bot_scorecard.json`
-- `docs/fast_bot_shadow_report.md`
-- `data/guardian_events.json`
-- `data/guardian_escalation.json`
-- `data/guardian_tuning_work_order.json`
-- `data/qr_trader_run_watchdog.json`
-- `data/broker_snapshot.json` for observation context only
+- `data/active_trader_contract.json`
+- `data/active_opportunity_board.json`
+- `data/trader_intent_packet.json`
+- `data/market_read_evidence_packet.json`
+- current position/thesis/protection sidecars required by the selected action
 
-The regime and scorecard must be current, sealed, and internally valid. A
-container timestamp cannot refresh stale candles, quotes, score rows, or an old
-Guardian observation. Missing, malformed, stale, future-dated, unsealed, or
-digest-mismatched evidence fails closed: do not fabricate a pair row or tuning
-conclusion.
+Every selected pair, quote, spread, candle, position, intent, and contract must
+belong to the same bounded snapshot. A container timestamp cannot refresh an old
+candle, quote, intent, receipt, or Guardian observation. Missing, malformed,
+stale, future-dated, unsealed, digest-mismatched, or mutually inconsistent
+evidence requires `WAIT` or `REQUEST_EVIDENCE`; never fill the gap with a guess.
 
-## Fast-bot state
+## Decision cycle
 
-The deterministic fast bot runs in the 30-second Guardian process without a
-per-signal AI call. Its finite hierarchy is:
+### 1. Refresh and freeze evidence
 
-- M1: execution observation
-- M5/M15/M30: operating state
-- H1/H4: structure
-- D: anchor
+Use the existing read-only producers and prechecks to obtain one consistent
+snapshot. Do not run a command with broker-write capability. If precheck or
+freshness validation fails, preserve the previous artifacts and report the
+exact blocker.
 
-The bot remains strictly shadow-only. `shadow_only=true`,
-`live_permission=false`, and `broker_mutation_allowed=false` are invariants.
-AI `GO` does not create a signal and does not approve a trade; it only leaves
-the deterministic shadow gate unblocked. `CAUTION` adds supervisor caution.
-`STOP` blocks new shadow hypotheses for that pair until expiry. Missing or
-expired supervision is `UNSUPERVISED`, never an invented approval.
+### 2. Build the deterministic proposal
 
-For schema-v2 shadow evidence, inspect all four precommitted passive-entry arms
-on the same exact OANDA S5 bid/ask path. Never reconstruct an arm after outcome,
-select a winner from the same cohort, or allow an experiment arm to change the
-primary scorecard. Collapsed same-tick arms are not independent evidence.
-
-Primary promotion evidence requires at least 100 valid fills across at least 10
-filled active days, profit factor at least 1.25, and a strictly positive
-one-sided 95% lower bound from filled-day mean returns. Passing those thresholds
-still grants no live permission. A separate content-addressed deterministic
-live-promotion implementation, risk sizing, ownership/margin/duplicate fences,
-and gateway integration must be reviewed before any broker mutation exists.
-
-## Pair supervision workflow
-
-1. Verify the current regime and scorecard contract hashes.
-2. Identify why the review is due: six-hour periodic review or exact material
-   Guardian observation.
-3. For each pair that genuinely needs supervision, choose only `GO`, `CAUTION`,
-   or `STOP`; write one bounded evidence-based reason and an expiry no later
-   than six hours after `reviewed_at_utc`.
-4. Omit pairs whose evidence is unavailable. Do not fill missing coverage with
-   a guess.
-5. Write an ignored temporary candidate JSON with exactly this shape:
-
-```json
-{
-  "contract": "QR_AI_REGIME_SUPERVISION_CANDIDATE_V1",
-  "schema_version": 1,
-  "reviewed_at_utc": "aware current UTC instant",
-  "review_reason": "bounded periodic or material-event reason",
-  "regime_contract_sha256": "current sealed regime digest",
-  "scorecard_contract_sha256": "current sealed scorecard digest",
-  "pairs": {
-    "EUR_USD": {
-      "mode": "CAUTION",
-      "reason": "bounded evidence-based reason",
-      "expires_at_utc": "aware UTC instant no more than six hours later"
-    }
-  }
-}
-```
-
-6. Seal and publish it only through:
+Run the approved baseline builder:
 
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" tools/ai_regime_supervision.py \
-  --candidate tmp/ai_regime_supervision_candidate.json \
-  --regime data/hierarchical_bot_regime.json \
-  --scorecard data/fast_bot_scorecard.json \
-  --output data/ai_regime_supervision.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
+  --snapshot data/broker_snapshot.json \
+  --guardian-action-receipt data/guardian_action_receipt.json \
+  --output data/trader_decision_baseline.json \
+  --market-read-evidence-packet data/market_read_evidence_packet.json
 ```
 
-The writer rejects unknown fields, forbidden order-authority fields, stale
-bindings, unsupported pairs, invalid clocks, and expiry beyond six hours. Never
-hand-edit `data/ai_regime_supervision.json`; the writer must atomically seal it.
+The baseline is a reproducible proposal and counterargument surface. It is not
+the final trader decision.
 
-## Bounded tuning review
+### 3. Make one complete AI decision
 
-- Normalize the tuning queue before review. One pending
-  `TECHNICAL_STATE_CHANGE` scope represents one configured pair; fingerprints,
-  candle watermarks, quote/spread, direction, and clocks are observations.
-- Bind every review to the exact current `work_order_id` and
-  `latest_observation_id`.
-- Persist only `NO_CHANGE_INSUFFICIENT_EVIDENCE` with one exact non-executing
-  acquisition step, or `TEST_REQUIRED` with one allowlisted non-risk parameter
-  and one falsifiable forward experiment.
-- Use `tools/guardian_tuning_review_enrich.py`; never edit
-  `data/guardian_tuning_work_order.json` directly.
-- For a bounded backlog, prefer one compare-checked manifest so all current
-  reviews commit atomically or none do.
-- Historical replay is hypothesis context only. Tuning proof uses the exact
-  first forward cohort fixed by §15; it cannot reuse the outcomes that selected
-  the candidate.
-- A review never activates a parameter, frees a queue slot, grants live
-  permission, or changes risk, ownership, geometry, allocation, or units.
-- Lifecycle transition and activation remain separate deterministic,
-  content-addressed procedures. The AI supervisor does not call execution
-  gateways during or after tuning.
+Evaluate the selected lane and meaningful alternatives across market regime,
+multi-timeframe structure, current spread and fillability, post-cost payoff,
+portfolio exposure, margin, correlation, ownership, active risk, and current
+forward evidence. Then choose exactly one action:
 
-## Deterministic Guardian and ownership
+- `TRADE`: provide every required order field and a bounded evidence rationale.
+- `WAIT`: name the exact risk, market, timing, or payoff reason.
+- `REQUEST_EVIDENCE`: name the exact missing/stale artifact and acquisition step.
+- `CLOSE`: name one eligible system-owned target and the exact Gate A/Gate B proof.
 
-Guardian market observation, stale-input detection, risk monitoring, and
-eligible system-position protection continue frequently without an AI model.
-The Guardian dispatcher is supervisor-only with
-`QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0`, `QR_GUARDIAN_ACTION_EXECUTE=0`,
-`QR_LIVE_ENABLED=0`, and `AI_ORDER_AUTHORITY=NONE`. Re-enabling old flags does
-not restore AI action-cycle authority.
+A `TRADE` must include the selected pair, side, method, vehicle, entry, TP, SL,
+units, allocation multiplier, invalidation, expected post-cost payoff, expiry,
+and why the rejected alternatives are weaker. Do not emit a partial trade for a
+later bot to complete.
 
-Manual, operator-owned, tagless, external, or ambiguous-owner positions are
-`NO_TOUCH`. The AI supervisor and fast bot may observe them for account context
-but must not close, reduce, add, cancel, replace, or modify TP/SL/protection.
-Deterministic protection may act only on explicitly eligible system-owned
-exposure under its separate gateway and ownership contract.
+Write the candidate only to the ignored temporary path expected by the existing
+overlay workflow, then atomically publish `data/codex_market_read_overlay.json`
+through the approved writer/command. Do not hand-edit generated sealed outputs.
+
+### 4. Apply and verify
+
+Apply the overlay to the exact baseline and packet:
+
+```bash
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-apply-market-read \
+  --baseline data/trader_decision_baseline.json \
+  --packet data/market_read_evidence_packet.json \
+  --overlay data/codex_market_read_overlay.json \
+  --output data/codex_trader_decision_response.json
+```
+
+Run the approved `gpt-trader-decision` verifier against the same snapshot and
+receipt chain. The verifier must reject stale bindings, unsupported geometry,
+ownership ambiguity, duplicate risk, invalid units, margin/risk failure, or a
+decision that conflicts with stronger current evidence. A rejection ends the
+cycle; the deterministic layer must not substitute a different trade.
+
+### 5. Record shadow outcome
+
+Persist the accepted decision and its later outcome in the existing audit and
+shadow evidence surfaces. The receipt must say:
+
+- `ai_decision_authority=SHADOW`
+- `ai_order_authority=NONE`
+- `live_permission=false`
+- `broker_mutation_allowed=false`
+
+Do not invoke the verified live wrapper or any send/close/protection gateway.
+The current goal is to compare AI decisions against the deterministic baseline,
+rejected alternatives, and exact forward broker truth before live activation is
+considered separately.
+
+## Longer-horizon review
+
+A slower, higher-capability review may examine regime shifts, portfolio risk,
+model disagreement, performance degradation, architecture, and Guardian tuning.
+It may publish sealed pair supervision and bounded tuning experiments. It must
+not rewrite an already frozen decision retrospectively or reuse evaluated
+outcomes to select the cohort that produced them.
+
+Changing model, cadence, or worker layout does not alter authority. The single
+AI owner makes the final decision; bounded workers may gather or critique
+evidence but may not publish a competing receipt or perform external side effects.
 
 ## Failure handling
 
-- No material change and six-hour review not due: publish nothing.
-- Current evidence missing or stale: preserve the previous sealed artifact; do
-  not refresh its timestamp or claim a completed review.
-- A previous `STOP` may remain active for the code-fixed 15-minute scheduler
-  handoff grace; publish the replacement promptly and never treat the grace as
-  permission to extend a stale `GO` or `CAUTION`.
-- Candidate validation failure: fix the candidate or record the exact blocker;
-  do not bypass the sealing tool.
-- Queue conflict or stale observation: reread once and defer to the next review
-  if identity changed; never overwrite concurrent state.
-- Model/runtime/quota failure: preserve the exact pending observation and its
-  retry budget. Capacity failure is not evidence and not a schema repair.
-- Any request for order, cancel, close, direction, method, geometry, units, or
-  live permission: reject it as outside AI authority.
+- No valid opportunity: choose `WAIT`; do not force turnover.
+- Missing or stale evidence: choose `REQUEST_EVIDENCE` or stop with the exact
+  blocker; do not refresh timestamps or invent values.
+- Overlay/apply/verifier conflict: reread once from the same snapshot boundary;
+  if identity changed, defer to the next cycle.
+- Model/runtime/quota failure: preserve inputs and publish no replacement
+  decision.
+- Rejected decision: record the verifier reasons and end the cycle without a
+  bot-authored substitute.
+- Any request to bypass risk, ownership, duplicate, margin, protection, or
+  gateway validation: reject it.
 
 ## Completion report
 
-Report only:
+Report:
 
-- review trigger and reviewed timestamp;
-- sealed regime and scorecard digests;
-- supervised pair count and each pair's `GO` / `CAUTION` / `STOP` expiry;
-- tuning queue reviewed/unreviewed counts and exact writer failures;
-- fast-bot shadow progress: emitted signals, valid fills, filled active days,
-  profit factor, filled-day lower bound, and current promotion blockers;
-- confirmation that `AI_ORDER_AUTHORITY=NONE`, broker mutation did not occur,
-  fast bot remains shadow-only, and manual/operator positions remained
-  `NO_TOUCH`.
+- snapshot and decision timestamps;
+- chosen action and, for `TRADE`, pair/side/method/vehicle/entry/TP/SL/units;
+- evidence supporting the choice and why material alternatives were rejected;
+- apply/verifier result and exact blockers;
+- relevant forward scorecard progress;
+- confirmation that `AI_DECISION_AUTHORITY=SHADOW`,
+  `AI_ORDER_AUTHORITY=NONE`, no broker mutation occurred, and `NO_TOUCH`
+  positions were unchanged.
 
-Do not report a market-guaranteed return. Forward evidence may improve the
-system; it cannot guarantee a monthly multiplier.
+Do not promise returns. A complete AI decision is a testable hypothesis until
+forward outcomes demonstrate otherwise.
