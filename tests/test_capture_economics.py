@@ -16,6 +16,7 @@ import quant_rabbit.capture_economics as capture_module
 from quant_rabbit.capture_economics import (
     RealizedOutcome,
     build_capture_economics,
+    evaluate_ai_entry_net_edge,
     evaluate_exact_vehicle_net_edge,
     read_attributed_net_outcomes,
     read_attributed_system_entries,
@@ -147,6 +148,39 @@ def _make_db(path: Path, closes: list[dict]) -> None:
 
 
 class CaptureEconomicsTest(unittest.TestCase):
+    def test_ai_entry_edge_uses_wilson_stress_without_fixed_trade_floor(self) -> None:
+        eligible = evaluate_ai_entry_net_edge(
+            {
+                "trades": 4,
+                "wins": 3,
+                "losses": 1,
+                "net_jpy": 3_516.3864,
+                "expectancy_jpy_per_trade": 879.0966,
+                "avg_win_jpy": 1_181.7544,
+                "avg_loss_jpy": 28.8768,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+        one_sided = evaluate_ai_entry_net_edge(
+            {
+                "trades": 4,
+                "wins": 4,
+                "losses": 0,
+                "net_jpy": 400.0,
+                "expectancy_jpy_per_trade": 100.0,
+                "avg_win_jpy": 100.0,
+                "avg_loss_jpy": 0.0,
+                "unresolved_realized_trades": 0,
+                "unresolved_realized_net_jpy": 0.0,
+            }
+        )
+
+        self.assertTrue(eligible["ai_entry_eligible"])
+        self.assertGreater(eligible["wilson_stressed_expectancy_jpy"], 0.0)
+        self.assertFalse(eligible["fixed_minimum_trade_count_required"])
+        self.assertFalse(one_sided["ai_entry_eligible"])
+
     def test_unresolved_partial_cash_blocks_exact_vehicle_edge_without_increasing_n(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "ledger.db"

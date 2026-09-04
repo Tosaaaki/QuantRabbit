@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,10 +9,70 @@ from pathlib import Path
 from quant_rabbit.capital_flows import (
     DEFAULT_OPERATOR_DEPOSIT_NOTE,
     ensure_operator_deposit_artifact,
+    sync_broker_capital_flows_from_execution_ledger,
 )
 
 
 class CapitalFlowsTest(unittest.TestCase):
+    def test_syncs_broker_withdrawal_idempotently_and_preserves_operator_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flows_path = root / "data" / "capital_flows.json"
+            report_path = root / "docs" / "capital_flow_report.md"
+            ledger_path = root / "data" / "execution_ledger.db"
+            ensure_operator_deposit_artifact(flows_path, report_path)
+            with sqlite3.connect(ledger_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        time_utc TEXT,
+                        raw_json TEXT NOT NULL
+                    )
+                    """
+                )
+                transaction = {
+                    "id": "473459",
+                    "time": "2026-09-04T01:07:23.377685213Z",
+                    "type": "TRANSFER_FUNDS",
+                    "amount": "-200000",
+                    "fundingReason": "CLIENT_FUNDING",
+                }
+                conn.execute(
+                    "INSERT INTO oanda_transactions VALUES (?, ?, ?, ?)",
+                    (
+                        transaction["id"],
+                        transaction["type"],
+                        transaction["time"],
+                        json.dumps(transaction),
+                    ),
+                )
+
+            first = sync_broker_capital_flows_from_execution_ledger(
+                flows_path,
+                report_path,
+                execution_ledger_path=ledger_path,
+            )
+            second = sync_broker_capital_flows_from_execution_ledger(
+                flows_path,
+                report_path,
+                execution_ledger_path=ledger_path,
+            )
+            payload = json.loads(flows_path.read_text())
+            broker = [
+                row
+                for row in payload["capital_flows"]
+                if row.get("broker_transaction_id") == "473459"
+            ]
+
+            self.assertEqual(first.flow_count, 2)
+            self.assertEqual(second.flow_count, 2)
+            self.assertEqual(len(broker), 1)
+            self.assertEqual(broker[0]["type"], "WITHDRAWAL")
+            self.assertEqual(broker[0]["amount_jpy"], 200_000.0)
+            self.assertEqual(broker[0]["broker_signed_amount_jpy"], -200_000.0)
+
     def test_ensure_operator_deposit_artifact_creates_json_and_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

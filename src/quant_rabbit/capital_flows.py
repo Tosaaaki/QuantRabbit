@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,130 @@ class CapitalFlowArtifactResult:
     deposit_timestamp_utc: str
     flow_count: int
     issues: tuple[str, ...] = ()
+
+
+def sync_broker_capital_flows_from_execution_ledger(
+    flows_path: Path,
+    report_path: Path,
+    *,
+    execution_ledger_path: Path,
+    target_state_path: Path | None = None,
+    generated_at_utc: datetime | None = None,
+) -> CapitalFlowArtifactResult:
+    """Append audited OANDA funding transactions to the local flow sidecar.
+
+    OANDA balance deltas alone cannot distinguish trading P/L from deposits or
+    withdrawals. The execution ledger already preserves the raw
+    ``TRANSFER_FUNDS`` transaction, so this function materializes that exact
+    broker identity in the separate capital-flow artifact. Existing operator
+    records are preserved, broker transaction IDs are idempotent, and a
+    conflicting rewrite fails closed.
+    """
+
+    if not execution_ledger_path.exists():
+        raise ValueError(f"execution ledger is missing: {execution_ledger_path}")
+    generated = _normalize_utc(generated_at_utc or datetime.now(timezone.utc))
+    generated_text = _format_utc(generated)
+    created = not flows_path.exists()
+    payload, flows = _read_payload_for_write(flows_path)
+    existing_by_id = {
+        str(flow.get("broker_transaction_id") or "").strip(): (index, flow)
+        for index, flow in enumerate(flows)
+        if str(flow.get("broker_transaction_id") or "").strip()
+    }
+    try:
+        with sqlite3.connect(
+            f"file:{execution_ledger_path.resolve(strict=False)}?mode=ro",
+            uri=True,
+        ) as conn:
+            rows = conn.execute(
+                """
+                SELECT transaction_id, time_utc, raw_json
+                FROM oanda_transactions
+                WHERE type = 'TRANSFER_FUNDS'
+                ORDER BY CAST(transaction_id AS INTEGER), transaction_id
+                """
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise ValueError(f"execution ledger capital-flow read failed: {exc}") from exc
+
+    changed = False
+    for transaction_id_raw, time_utc_raw, raw_json in rows:
+        transaction_id = str(transaction_id_raw or "").strip()
+        if not transaction_id:
+            raise ValueError("OANDA TRANSFER_FUNDS row has no transaction id")
+        try:
+            raw = json.loads(str(raw_json or ""))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"OANDA TRANSFER_FUNDS {transaction_id} raw JSON is invalid"
+            ) from exc
+        if not isinstance(raw, dict) or str(raw.get("id") or "").strip() != transaction_id:
+            raise ValueError(f"OANDA TRANSFER_FUNDS {transaction_id} identity mismatch")
+        timestamp = str(raw.get("time") or time_utc_raw or "").strip()
+        if _parse_timestamp(timestamp) is None:
+            raise ValueError(f"OANDA TRANSFER_FUNDS {transaction_id} timestamp is invalid")
+        try:
+            signed_amount = float(raw.get("amount"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"OANDA TRANSFER_FUNDS {transaction_id} amount is invalid"
+            ) from exc
+        if not math.isfinite(signed_amount) or signed_amount == 0.0:
+            raise ValueError(
+                f"OANDA TRANSFER_FUNDS {transaction_id} amount must be finite and nonzero"
+            )
+        flow_type = "DEPOSIT" if signed_amount > 0.0 else "WITHDRAWAL"
+        canonical = {
+            "amount_jpy": abs(signed_amount),
+            "broker_signed_amount_jpy": signed_amount,
+            "broker_transaction_id": transaction_id,
+            "excluded_from_funding_adjusted_return": True,
+            "included_in_raw_equity": True,
+            "note": str(raw.get("fundingReason") or "OANDA TRANSFER_FUNDS"),
+            "source": "oanda_transaction",
+            "timestamp_utc": timestamp,
+            "type": flow_type,
+        }
+        existing = existing_by_id.get(transaction_id)
+        if existing is not None:
+            index, old = existing
+            if old != canonical:
+                raise ValueError(
+                    f"capital flow conflicts with OANDA transaction {transaction_id}"
+                )
+            continue
+        flows.append(canonical)
+        existing_by_id[transaction_id] = (len(flows) - 1, canonical)
+        changed = True
+
+    next_payload = {
+        "schema_version": int(payload.get("schema_version") or 1),
+        "generated_at_utc": generated_text,
+        "capital_flows": flows,
+    }
+    if created or changed or payload != next_payload:
+        flows_path.parent.mkdir(parents=True, exist_ok=True)
+        flows_path.write_text(
+            json.dumps(next_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        changed = True
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        render_capital_flow_report(
+            next_payload,
+            generated_at_utc=generated_text,
+            target_state_path=target_state_path,
+        )
+    )
+    return CapitalFlowArtifactResult(
+        flows_path=flows_path,
+        report_path=report_path,
+        created=created,
+        updated=changed,
+        deposit_timestamp_utc="",
+        flow_count=len(flows),
+    )
 
 
 def summarize_capital_flows(
@@ -167,7 +293,7 @@ def render_capital_flow_report(
         "",
         f"- Generated at UTC: `{generated_at_utc}`",
         "- Scope: accounting/reporting only; no orders, cancels, closes, execution flags, or broker-state writes.",
-        "- Source basis: operator statement plus local target state when available; no broker transaction fetch was performed for this record.",
+        "- Source basis: preserved operator records plus audited OANDA TRANSFER_FUNDS rows from the execution ledger when available.",
         "",
         "## Recorded Flows",
         "",

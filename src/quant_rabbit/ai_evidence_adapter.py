@@ -762,6 +762,35 @@ def _net_edge_inputs(payloads: Mapping[str, Any], sources: Mapping[str, Mapping[
     capture = payloads.get("capture_economics") if sources["capture_economics"]["status"] == "READY" else None
     if not isinstance(capture, Mapping):
         return {"status": "UNAVAILABLE", "segments": []}
+    ai_exact = capture.get("ai_entry_net_edge")
+    exact_items = (
+        ai_exact.get("items")
+        if isinstance(ai_exact, Mapping) and isinstance(ai_exact.get("items"), list)
+        else []
+    )
+    exact_segments: list[dict[str, Any]] = []
+    for row in exact_items:
+        if not isinstance(row, Mapping) or row.get("ai_entry_eligible") is not True:
+            continue
+        exact_segments.append(
+            _select(
+                row,
+                (
+                    "pair", "side", "method", "vehicle", "trades", "wins", "losses",
+                    "net_jpy", "expectancy_jpy_per_trade", "avg_win_jpy", "avg_loss_jpy",
+                    "unresolved_realized_trades", "unresolved_realized_net_jpy",
+                    "win_rate_wilson95_lower", "wilson_stressed_expectancy_jpy",
+                    "proof_class", "ai_entry_eligible",
+                ),
+            )
+        )
+    if exact_segments:
+        return {
+            "status": "READY",
+            "proof_class": _text(ai_exact.get("proof_class")),
+            "segments": exact_segments[:MAX_EDGE_ROWS],
+        }
+
     raw = capture.get("segment_repair_priorities")
     items = raw.get("items") if isinstance(raw, Mapping) and isinstance(raw.get("items"), list) else []
     segments: list[dict[str, Any]] = []

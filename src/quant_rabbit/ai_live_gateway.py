@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 from quant_rabbit.ai_evidence_adapter import CONTRACT as AI_EVIDENCE_CONTRACT
 from quant_rabbit.capture_economics import (
-    evaluate_exact_vehicle_net_edge,
+    evaluate_ai_entry_net_edge,
     exact_vehicle_metrics_from_surface,
     execution_cost_floor_from_surface,
     read_exact_vehicle_allocation_surface,
@@ -611,7 +611,7 @@ def _validate_net_edge_proof(
     ):
         raise AILiveGatewayError("net-edge proof is not present in the sealed evidence packet")
     metrics = {field: proof.get(field) for field in _NET_EDGE_FIELDS}
-    if evaluate_exact_vehicle_net_edge(metrics).get("proven") is not True:
+    if evaluate_ai_entry_net_edge(metrics).get("ai_entry_eligible") is not True:
         raise AILiveGatewayError("net-edge proof is nonpositive, incomplete, or unreconciled")
     after_cost = proof.get("net_edge_after_cost_jpy")
     if isinstance(after_cost, bool):
@@ -626,7 +626,7 @@ def _validate_net_edge_proof(
     if not isinstance(fresh_rows, Mapping) or not isinstance(fresh_rows.get(exact_key), Mapping):
         raise AILiveGatewayError("current exact-vehicle net-edge row is missing")
     fresh = fresh_rows[exact_key]
-    if evaluate_exact_vehicle_net_edge(fresh).get("proven") is not True:
+    if evaluate_ai_entry_net_edge(fresh).get("ai_entry_eligible") is not True:
         raise AILiveGatewayError("current exact-vehicle net edge is not positive")
     for field in _NET_EDGE_FIELDS:
         expected = metrics.get(field)

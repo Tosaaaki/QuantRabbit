@@ -999,6 +999,53 @@ def evaluate_exact_vehicle_net_edge(
     }
 
 
+def evaluate_ai_entry_net_edge(metrics: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Grade audited exact-vehicle evidence for an AI-selected entry.
+
+    The ordinary allocation proof intentionally waits for a fixed mature
+    sample. Requiring that same fixed count before the AI may make even a
+    bounded evidence-collection entry creates a deadlock: no entry means the
+    exact vehicle can never collect the missing outcomes. The AI entry gate
+    instead uses a data-dependent stopping rule. It requires reconciled
+    positive lifecycle P/L, no unresolved realized cash, at least one win and
+    one loss so both payoff tails are observed, and positive expectancy after
+    replacing the observed hit rate with its 95% Wilson lower bound. Current
+    execution-cost and all ordinary risk/gateway checks remain independent.
+    """
+
+    mature = evaluate_exact_vehicle_net_edge(metrics)
+    evaluated = evaluate_exact_vehicle_net_edge(metrics, min_trades=1)
+    wins = evaluated.get("wins")
+    losses = evaluated.get("losses")
+    stressed = evaluated.get("wilson_stressed_expectancy_jpy")
+    mixed_outcomes = bool(
+        isinstance(wins, int)
+        and not isinstance(wins, bool)
+        and wins > 0
+        and isinstance(losses, int)
+        and not isinstance(losses, bool)
+        and losses > 0
+    )
+    bounded_bootstrap = bool(
+        evaluated.get("positive_consistent") is True
+        and evaluated.get("arithmetic_consistent") is True
+        and mixed_outcomes
+        and isinstance(stressed, (int, float))
+        and not isinstance(stressed, bool)
+        and math.isfinite(float(stressed))
+        and float(stressed) > 0.0
+    )
+    eligible = bool(mature.get("proven") is True or bounded_bootstrap)
+    return {
+        **evaluated,
+        "ai_entry_eligible": eligible,
+        "mixed_outcomes_observed": mixed_outcomes,
+        "mature_fixed_sample_proven": mature.get("proven") is True,
+        "proof_class": "AUDITED_EXACT_VEHICLE_WILSON95_POSITIVE_MIXED_OUTCOMES",
+        "fixed_minimum_trade_count_required": False,
+    }
+
+
 def _nearest_rank_percentile(values: list[float], percentile: float) -> float | None:
     if not values or not 0.0 < percentile <= 1.0:
         return None
@@ -3766,6 +3813,50 @@ def build_capture_economics(
         status = "NEGATIVE_EXPECTANCY"
     repair_summary = _capture_repair_summary(status=status, overall=overall, by_exit=by_exit)
     segment_repair_priorities = _segment_repair_priorities(rows)
+    allocation_surface = read_exact_vehicle_allocation_surface(ledger_path)
+    exact_vehicle_rows: list[dict[str, Any]] = []
+    raw_exact_vehicle = allocation_surface.get("exact_vehicle_net")
+    if isinstance(raw_exact_vehicle, list):
+        for raw in raw_exact_vehicle:
+            if not isinstance(raw, Mapping):
+                continue
+            evidence = evaluate_ai_entry_net_edge(raw)
+            exact_vehicle_rows.append(
+                {
+                    **dict(raw),
+                    "ai_entry_eligible": evidence["ai_entry_eligible"],
+                    "mixed_outcomes_observed": evidence["mixed_outcomes_observed"],
+                    "win_rate_wilson95_lower": evidence["win_rate_wilson95_lower"],
+                    "wilson_stressed_expectancy_jpy": evidence[
+                        "wilson_stressed_expectancy_jpy"
+                    ],
+                    "proof_class": evidence["proof_class"],
+                }
+            )
+    exact_vehicle_rows.sort(
+        key=lambda item: (
+            item.get("ai_entry_eligible") is not True,
+            -float(item.get("wilson_stressed_expectancy_jpy") or 0.0),
+            -int(item.get("trades") or 0),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+            str(item.get("vehicle") or ""),
+        )
+    )
+    ai_entry_net_edge = {
+        "status": (
+            "READY"
+            if allocation_surface.get("parse_status") == "VALID"
+            else "UNAVAILABLE"
+        ),
+        "allocation_surface_sha256": allocation_surface.get(
+            "allocation_surface_sha256"
+        ),
+        "proof_class": "AUDITED_EXACT_VEHICLE_WILSON95_POSITIVE_MIXED_OUTCOMES",
+        "fixed_minimum_trade_count_required": False,
+        "items": exact_vehicle_rows,
+    }
     action_items = _capture_action_items(
         status=status,
         overall=overall,
@@ -3792,6 +3883,7 @@ def build_capture_economics(
         "recent_performance": recent_performance,
         "repair_summary": repair_summary,
         "segment_repair_priorities": segment_repair_priorities,
+        "ai_entry_net_edge": ai_entry_net_edge,
         "action_items": action_items,
         "note": (
             "Advisory audit (AGENT_CONTRACT §8): payoff_ratio must reach "

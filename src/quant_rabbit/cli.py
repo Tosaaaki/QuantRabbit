@@ -48,6 +48,7 @@ from quant_rabbit.capital_flows import (
     DEFAULT_OPERATOR_DEPOSIT_SOURCE,
     DEFAULT_OPERATOR_DEPOSIT_TIMESTAMP_UTC,
     ensure_operator_deposit_artifact,
+    sync_broker_capital_flows_from_execution_ledger,
 )
 from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
@@ -5310,6 +5311,12 @@ def main(argv: list[str] | None = None) -> int:
     p_ledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_ledger.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_ledger.add_argument("--since-transaction-id", default=None)
+    p_ledger.add_argument("--capital-flows", type=Path, default=DEFAULT_CAPITAL_FLOWS)
+    p_ledger.add_argument(
+        "--capital-flow-report",
+        type=Path,
+        default=DEFAULT_CAPITAL_FLOW_REPORT,
+    )
 
     p_scout_proof = sub.add_parser(
         "predictive-scout-proof",
@@ -8167,6 +8174,12 @@ def main(argv: list[str] | None = None) -> int:
                 OandaExecutionClient(),
                 since_transaction_id=args.since_transaction_id,
             )
+            capital_flow_summary = sync_broker_capital_flows_from_execution_ledger(
+                args.capital_flows,
+                args.capital_flow_report,
+                execution_ledger_path=args.db,
+                target_state_path=DEFAULT_DAILY_TARGET_STATE,
+            )
         except (RuntimeError, OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
@@ -8182,6 +8195,7 @@ def main(argv: list[str] | None = None) -> int:
                     "gateway_receipts_inserted": summary.gateway_receipts_inserted,
                     "baseline_transaction_id": summary.baseline_transaction_id,
                     "last_transaction_id": summary.last_transaction_id,
+                    "capital_flows_synced": capital_flow_summary.flow_count,
                 },
                 ensure_ascii=False,
                 indent=2,
