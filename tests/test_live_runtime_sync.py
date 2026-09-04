@@ -606,7 +606,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 result.stderr,
             )
 
-    def test_live_only_blocks_supervisor_prompt_with_send_flag(self) -> None:
+    def test_live_only_allows_gateway_send_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -635,8 +635,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 automation_file=automation_file,
             )
 
-            self.assertEqual(result.returncode, 6)
-            self.assertIn("forbidden live-order token: --send", result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_live_only_blocks_supervisor_prompt_missing_output_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -670,11 +669,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 result.stderr,
             )
 
-    def test_live_only_blocks_supervisor_prompt_with_live_enable_tokens(self) -> None:
-        for forbidden in (
-            "QR_LIVE_ENABLED=1",
-            "QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1",
-        ):
+    def test_live_only_blocks_supervisor_prompt_with_legacy_live_wrapper(self) -> None:
+        for forbidden in ("QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1",):
             with self.subTest(forbidden=forbidden), tempfile.TemporaryDirectory() as tmp:
                 repo = Path(tmp) / "repo"
                 live = Path(tmp) / "live"
@@ -852,10 +848,10 @@ def _current_trader_prompt_sentinel(
     include_supervision_output: bool = True,
 ) -> str:
     lines = [
-        "AI_ORDER_AUTHORITY=NONE",
+        "QR_AI_ORDER_AUTHORITY=LIVE",
         "Run tools/ai_trader_runtime.py prepare --profile intraday.",
-        "The configured sink is paper_ledger.",
-        "broker_mutation_allowed=false",
+        "The configured sink is live_gateway.",
+        "Forward only through LiveOrderGateway.",
     ]
     if include_supervision_output:
         lines.append("Run tools/ai_trader_runtime.py accept after writing the complete AI decision.")

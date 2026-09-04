@@ -33,11 +33,11 @@ class AITraderContractDocsTests(unittest.TestCase):
         self.assertIn("prepare --profile intraday", TRADER_PLAYBOOK)
         self.assertIn("ai_trader_runtime.py accept", TRADER_PLAYBOOK)
 
-    def test_live_execution_remains_a_separate_disabled_authority(self) -> None:
-        self.assertIn("AI_ORDER_AUTHORITY=NONE", AGENT_CONTRACT)
-        self.assertIn("AI_ORDER_AUTHORITY=NONE", TRADER_PLAYBOOK)
-        self.assertIn("live_permission=false", TRADER_PLAYBOOK)
-        self.assertIn("broker_mutation_allowed=false", TRADER_PLAYBOOK)
+    def test_live_execution_uses_a_separate_gateway_authority(self) -> None:
+        self.assertIn("QR_AI_ORDER_AUTHORITY=LIVE", AGENT_CONTRACT)
+        self.assertIn("QR_AI_ORDER_AUTHORITY=LIVE", TRADER_PLAYBOOK)
+        self.assertIn("RiskEngine", TRADER_PLAYBOOK)
+        self.assertIn("LiveOrderGateway", TRADER_PLAYBOOK)
         self.assertIn("Do not call OANDA", TRADER_PLAYBOOK)
         self.assertIn("`NO_TOUCH`", TRADER_PLAYBOOK)
 

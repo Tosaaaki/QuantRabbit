@@ -75,6 +75,8 @@ class AITradingRuntimeTests(unittest.TestCase):
                 "decision_id": "order-1",
                 "pair": "EUR_USD",
                 "side": "LONG",
+                "method": "TREND_CONTINUATION",
+                "vehicle": "LIMIT",
                 "order_type": "LIMIT",
                 "entry": 1.10,
                 "take_profit": 1.12,
@@ -111,6 +113,7 @@ class AITradingRuntimeTests(unittest.TestCase):
             "confidence": 0.5, "position_actions": [], "requested_evidence": [],
             "orders": [{
                 "decision_id": "bad", "pair": "EUR_USD", "side": "LONG",
+                "method": "TREND_CONTINUATION", "vehicle": "MARKET",
                 "order_type": "MARKET", "entry": 1.1, "take_profit": 1.09,
                 "stop_loss": 1.08, "units": 1, "allocation_multiplier": 1.0,
                 "rationale": "bad", "extensions": {},
@@ -123,6 +126,44 @@ class AITradingRuntimeTests(unittest.TestCase):
                 candidate_path=prepared.candidate_path, repo_root=self.root,
                 now=NOW + timedelta(seconds=2),
             )
+
+    def test_live_sink_wait_never_calls_broker_gateway(self) -> None:
+        config = json.loads(self.config.read_text())
+        config["profiles"]["intraday"]["sink"] = "live_gateway"
+        self.config.write_text(json.dumps(config))
+        prepared = prepare_run(
+            config_path=self.config,
+            profile="intraday",
+            repo_root=self.root,
+            now=NOW,
+        )
+        candidate = json.loads(prepared.candidate_path.read_text())
+        candidate.update(
+            {
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": "max",
+                "decided_at_utc": (NOW + timedelta(seconds=1)).isoformat(),
+                "thesis": "No current edge warrants new exposure.",
+                "evidence_refs": ["market:data/market.json"],
+                "action": "WAIT",
+                "confidence": 0.6,
+                "orders": [],
+                "position_actions": [],
+                "requested_evidence": [],
+            }
+        )
+        prepared.candidate_path.write_text(json.dumps(candidate))
+        result = accept_run(
+            config_path=self.config,
+            manifest_path=prepared.manifest_path,
+            candidate_path=prepared.candidate_path,
+            repo_root=self.root,
+            now=NOW + timedelta(seconds=2),
+        )
+        receipt = json.loads(result.receipt_path.read_text())
+        self.assertEqual(result.status, "ACCEPTED_NO_BROKER_ACTION")
+        self.assertEqual(receipt["execution"]["status"], "NO_BROKER_ACTION")
+        self.assertEqual(receipt["execution"]["broker_order_posts"], 0)
 
     def test_evidence_change_rejects_candidate(self) -> None:
         prepared = prepare_run(config_path=self.config, profile="intraday", repo_root=self.root, now=NOW)

@@ -53,7 +53,7 @@ class DecisionSink(Protocol):
         profile: str,
         receipt: Mapping[str, Any],
         repo_root: Path,
-    ) -> None: ...
+    ) -> Mapping[str, Any]: ...
 
 
 class PaperLedgerSink:
@@ -64,9 +64,19 @@ class PaperLedgerSink:
         profile: str,
         receipt: Mapping[str, Any],
         repo_root: Path,
-    ) -> None:
+    ) -> Mapping[str, Any]:
         del profile, repo_root
-        _append_jsonl_once(state_root / "decisions.jsonl", receipt)
+        execution = {
+            "sink": "paper_ledger",
+            "broker_mutation_allowed": False,
+            "broker_order_posts": 0,
+            "sent": False,
+        }
+        _append_jsonl_once(
+            state_root / "decisions.jsonl",
+            {**dict(receipt), "execution": execution},
+        )
+        return execution
 
 
 class ReviewOverlaySink:
@@ -77,16 +87,55 @@ class ReviewOverlaySink:
         profile: str,
         receipt: Mapping[str, Any],
         repo_root: Path,
-    ) -> None:
+    ) -> Mapping[str, Any]:
         del profile
-        _append_jsonl_once(state_root / "reviews.jsonl", receipt)
+        execution = {
+            "sink": "review_overlay",
+            "broker_mutation_allowed": False,
+            "broker_order_posts": 0,
+            "sent": False,
+        }
+        persisted = {**dict(receipt), "execution": execution}
+        _append_jsonl_once(state_root / "reviews.jsonl", persisted)
         target = state_root / "strategic_review.json"
-        _atomic_write_json(target, dict(receipt))
+        _atomic_write_json(target, persisted)
+        return execution
+
+
+class LiveGatewaySink:
+    def persist(
+        self,
+        *,
+        state_root: Path,
+        profile: str,
+        receipt: Mapping[str, Any],
+        repo_root: Path,
+    ) -> Mapping[str, Any]:
+        del profile
+        from quant_rabbit.ai_live_gateway import (
+            AILiveGatewayError,
+            execute_ai_trade_candidate,
+        )
+
+        try:
+            result = execute_ai_trade_candidate(
+                repo_root=repo_root,
+                state_root=state_root,
+                receipt=receipt,
+            )
+        except AILiveGatewayError as exc:
+            raise AIRuntimeError("LIVE_GATEWAY_REJECTED", str(exc)) from exc
+        _append_jsonl_once(
+            state_root / "decisions.jsonl",
+            {**dict(receipt), "execution": dict(result)},
+        )
+        return result
 
 
 SINKS: dict[str, DecisionSink] = {
     "paper_ledger": PaperLedgerSink(),
     "review_overlay": ReviewOverlaySink(),
+    "live_gateway": LiveGatewaySink(),
 }
 
 
@@ -150,9 +199,15 @@ def prepare_run(
         "candidate_path": str(candidate_path),
         "receipt_path": str(receipt_path),
         "execution": {
-            "mode": "paper" if kind == "trade" else "review",
-            "broker_mutation_allowed": False,
-            "broker_api_calls_allowed": False,
+            "mode": (
+                "live"
+                if profile_config.get("sink") == "live_gateway"
+                else "paper"
+                if kind == "trade"
+                else "review"
+            ),
+            "broker_mutation_allowed": profile_config.get("sink") == "live_gateway",
+            "broker_api_calls_allowed": profile_config.get("sink") == "live_gateway",
         },
         "candidate_schema": _candidate_schema(kind),
     }
@@ -201,7 +256,13 @@ def accept_run(
     sink = SINKS.get(sink_name)
     if sink is None:
         raise AIRuntimeError("SINK_UNAVAILABLE", f"unknown decision sink: {sink_name}")
-    status = "ACCEPTED_PAPER" if kind == "trade" else "ACCEPTED_REVIEW"
+    status = (
+        "ACCEPTED_LIVE"
+        if sink_name == "live_gateway"
+        else "ACCEPTED_PAPER"
+        if kind == "trade"
+        else "ACCEPTED_REVIEW"
+    )
     candidate_sha256 = _sha256_json(candidate)
     receipt = {
         "schema_version": SCHEMA_VERSION,
@@ -215,25 +276,36 @@ def accept_run(
         "source_digest": manifest["source_digest"],
         "candidate_sha256": candidate_sha256,
         "decision": candidate,
-        "execution": {
-            "sink": sink_name,
-            "broker_mutation_allowed": False,
-            "broker_api_calls_made": 0,
-        },
+        "execution": {"sink": sink_name},
     }
     receipt_path = Path(_required_text(manifest, "receipt_path"))
     if receipt_path.exists():
         existing = _load_object(receipt_path, "existing receipt")
         if existing.get("candidate_sha256") != candidate_sha256:
             raise AIRuntimeError("RUN_ALREADY_ACCEPTED", "run already has a different accepted candidate")
-        receipt = existing
-    _atomic_write_json(receipt_path, receipt)
-    sink.persist(
+        return AcceptedRun(
+            receipt_path=receipt_path,
+            run_id=str(manifest["run_id"]),
+            profile=profile,
+            kind=kind,
+            status=str(existing.get("status") or status),
+        )
+    execution = sink.persist(
         state_root=resolved_state_root,
         profile=profile,
         receipt=receipt,
         repo_root=repo_root,
     )
+    receipt["execution"] = dict(execution)
+    if sink_name == "live_gateway":
+        if execution.get("sent") is True:
+            status = "ACCEPTED_LIVE_SENT"
+        elif execution.get("status") == "NO_BROKER_ACTION":
+            status = "ACCEPTED_NO_BROKER_ACTION"
+        else:
+            status = "ACCEPTED_LIVE_BLOCKED"
+        receipt["status"] = status
+    _atomic_write_json(receipt_path, receipt)
     return AcceptedRun(
         receipt_path=receipt_path,
         run_id=str(manifest["run_id"]),
@@ -383,7 +455,15 @@ def _validate_trade_candidate(candidate: Mapping[str, Any]) -> None:
 def _validate_order(order: Any) -> None:
     if not isinstance(order, Mapping):
         raise AIRuntimeError("ORDER_INVALID", "order must be an object")
-    for field in ("decision_id", "pair", "side", "order_type", "rationale"):
+    for field in (
+        "decision_id",
+        "pair",
+        "side",
+        "method",
+        "vehicle",
+        "order_type",
+        "rationale",
+    ):
         _required_text(order, field)
     pair = str(order["pair"]).upper()
     if len(pair) != 7 or pair[3] != "_" or not pair.replace("_", "").isalpha():
@@ -394,13 +474,28 @@ def _validate_order(order: Any) -> None:
     order_type = str(order["order_type"]).upper()
     if order_type not in ORDER_TYPES:
         raise AIRuntimeError("ORDER_INVALID", f"invalid order_type: {order_type}")
+    from quant_rabbit.models import TradeMethod
+
+    try:
+        TradeMethod.parse(str(order["method"]))
+    except ValueError as exc:
+        raise AIRuntimeError("ORDER_INVALID", str(exc)) from exc
+    vehicle = str(order["vehicle"]).upper()
+    normalized_vehicle = "STOP" if order_type in {"STOP", "STOP-ENTRY"} else order_type
+    if vehicle != normalized_vehicle:
+        raise AIRuntimeError("ORDER_INVALID", "vehicle must match order_type")
     entry = _positive_number(order.get("entry"), "entry")
     tp = _positive_number(order.get("take_profit"), "take_profit")
     sl = _positive_number(order.get("stop_loss"), "stop_loss")
     units = order.get("units")
     if isinstance(units, bool) or not isinstance(units, int) or units <= 0:
         raise AIRuntimeError("ORDER_INVALID", "units must be a positive integer")
-    _positive_number(order.get("allocation_multiplier"), "allocation_multiplier")
+    multiplier = _positive_number(order.get("allocation_multiplier"), "allocation_multiplier")
+    if multiplier not in {0.5, 0.75, 1.0}:
+        raise AIRuntimeError(
+            "ORDER_INVALID",
+            "allocation_multiplier must be 0.5, 0.75, or 1.0",
+        )
     if side == "LONG" and not sl < entry < tp:
         raise AIRuntimeError("ORDER_GEOMETRY_INVALID", "LONG requires stop_loss < entry < take_profit")
     if side == "SHORT" and not tp < entry < sl:
@@ -432,7 +527,7 @@ def _candidate_schema(kind: str) -> dict[str, Any]:
             "required": common + ["action", "confidence", "orders", "position_actions", "requested_evidence"],
             "actions": sorted(TRADE_ACTIONS),
             "order_fields": [
-                "decision_id", "pair", "side", "order_type", "entry",
+                "decision_id", "pair", "side", "method", "vehicle", "order_type", "entry",
                 "take_profit", "stop_loss", "units", "allocation_multiplier",
                 "rationale", "extensions",
             ],

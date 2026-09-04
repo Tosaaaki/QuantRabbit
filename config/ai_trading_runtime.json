@@ -6,7 +6,7 @@
       "kind": "trade",
       "cadence_minutes": 10,
       "decision_max_age_seconds": 900,
-      "sink": "paper_ledger",
+      "sink": "live_gateway",
       "workers": {
         "broker": [
           {"path": "data/broker_snapshot.json", "required": true, "max_age_seconds": 900}

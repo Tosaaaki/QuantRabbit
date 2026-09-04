@@ -153,7 +153,11 @@ FORECAST_S5_MAX_WINDOW_SECONDS = 15 * 60
 # scoped to explicit AI author identities; deterministic protection uses the
 # separate PositionProtectionGateway and a future FAST_BOT author identity is
 # not rejected by this authority boundary.
-AI_ORDER_AUTHORITY = "NONE"
+AI_ORDER_AUTHORITY = (
+    "LIVE"
+    if os.environ.get("QR_AI_ORDER_AUTHORITY", "NONE").strip().upper() == "LIVE"
+    else "NONE"
+)
 AI_ORDER_AUTHOR_KINDS = frozenset({"AI", "CODEX_MARKET_READ"})
 PRE_ENTRY_FORECAST_CYCLE_RE = re.compile(
     r"^pre-entry-forecast-refresh:"

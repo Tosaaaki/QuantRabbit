@@ -18,19 +18,19 @@ belongs to the Codex automation, not repository code. The candidate records the
 actual model and reasoning effort used, so Luna, Terra, Sol, or a later model
 can use the same runtime without a code change.
 
-The current `intraday` sink is `paper_ledger`. AI may choose `TRADE`, `WAIT`,
+The current `intraday` sink is `live_gateway`. AI may choose `TRADE`, `WAIT`,
 `REQUEST_EVIDENCE`, or an eligible system-owned `CLOSE`. For `TRADE`, AI chooses
 the pair, side, method, vehicle, entry, TP, SL, units, allocation multiplier,
 confidence, and rationale.
-Accepted orders are paper decisions only: `AI_ORDER_AUTHORITY=NONE`,
-`live_permission=false`, `broker_mutation_allowed=false`, and broker API calls
-are forbidden. A future
-live sink must be reviewed separately and must route through `RiskEngine` and
-`LiveOrderGateway`.
+The sink can forward exactly one fresh entry only when
+`QR_AI_ORDER_AUTHORITY=LIVE` and `QR_LIVE_ENABLED=1`. It copies no bot-authored
+direction, price, TP, SL, or units. It binds current audited execution metadata,
+then routes through `RiskEngine` and `LiveOrderGateway`; any failed gate is a
+no-POST receipt.
 
 Manual, operator-owned, tagless, external, and ambiguous-owner positions are
-`NO_TOUCH`. Do not call OANDA, a broker SDK, `stage-live-order --send`, or any
-low-level gateway from this playbook.
+`NO_TOUCH`. Do not call OANDA, a broker SDK, or any low-level gateway directly.
+Only the configured sink may invoke `stage-live-order --send` after acceptance.
 
 ## Intraday cycle
 
@@ -65,14 +65,17 @@ PYTHONPATH=src "$QR_PYTHON" tools/ai_trader_runtime.py accept \
 candidate rejection ends the run. Do not regenerate a different trade from
 the old manifest. The next schedule creates a fresh run.
 
-For `TRADE`, write one or more fully specified orders. LONG geometry requires
+For `TRADE`, write exactly one fully specified order. LONG geometry requires
 `stop_loss < entry < take_profit`; SHORT requires
-`take_profit < entry < stop_loss`. The AI chooses units in paper mode. Do not
-describe a paper receipt as profitable, live-ready, or broker-executed.
+`take_profit < entry < stop_loss`. `allocation_multiplier` must be exactly
+`0.5`, `0.75`, or `1.0`; `vehicle` must match `order_type`. A decision is
+broker-executed only when its final receipt has `sent=true` and an explicit
+gateway readback.
 
 For `CLOSE`, name exactly one `trade_id`, set `ownership=SYSTEM`, and state the
-reason. This is still a paper action. Do not target manual or uncertain
-ownership.
+reason. The current live sink records it without a broker write because closes
+require the separate position-protection adapter. Do not target manual or
+uncertain ownership.
 
 Stay quiet for an ordinary unchanged `WAIT`. Report a meaningful new trade
 decision, evidence failure, validation rejection, or required user action.
@@ -106,7 +109,7 @@ trade by itself.
 - Add a sink by implementing `DecisionSink.persist`; do not add broker calls to
   the AI decision writer.
 
-Any future live sink requires separate review, action-time broker truth,
-ownership checks, risk and margin validation, duplicate prevention, durable
-reservation, gateway readback, rollback, and explicit activation. The paper
-and review sinks must remain usable without it.
+The live sink must retain action-time broker truth, ownership checks, risk and
+margin validation, duplicate prevention, durable reservation, gateway
+readback, and explicit activation. The paper and review sinks remain usable
+without it.

@@ -334,11 +334,11 @@ verify_automation() {
     exit 6
   fi
   for required in \
-    'AI_ORDER_AUTHORITY=NONE' \
+    'QR_AI_ORDER_AUTHORITY=LIVE' \
     'tools/ai_trader_runtime.py prepare --profile intraday' \
     'tools/ai_trader_runtime.py accept' \
-    'paper_ledger' \
-    'broker_mutation_allowed=false'
+    'live_gateway' \
+    'LiveOrderGateway'
   do
     if ! grep -Fq "$required" "$AUTOMATION_FILE"; then
       echo "[sync-live-runtime] QR AI Trader prompt is stale; missing: $required" >&2
@@ -347,8 +347,6 @@ verify_automation() {
   done
   for forbidden in \
     'run-autotrade-live.sh' \
-    '--send' \
-    'QR_LIVE_ENABLED=1' \
     'QR_LIVE_WRAPPER_FINALIZE_CODEX_MARKET_READ=1'
   do
     if grep -Fq -- "$forbidden" "$AUTOMATION_FILE"; then
