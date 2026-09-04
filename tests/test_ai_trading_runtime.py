@@ -185,6 +185,55 @@ class AITradingRuntimeTests(unittest.TestCase):
         self.assertEqual(receipt["execution"]["status"], "NO_BROKER_ACTION")
         self.assertEqual(receipt["execution"]["broker_order_posts"], 0)
 
+    def test_long_ai_thesis_is_bound_by_digest_not_duplicated(self) -> None:
+        prepared = prepare_run(
+            config_path=self.config,
+            profile="intraday",
+            repo_root=self.root,
+            now=NOW,
+        )
+        candidate = json.loads(prepared.candidate_path.read_text())
+        thesis = "Detailed evidence supports waiting. " * 40
+        candidate.update(
+            {
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": "max",
+                "decided_at_utc": (NOW + timedelta(seconds=1)).isoformat(),
+                "thesis": thesis,
+                "evidence_refs": ["evidence:data/evidence.json"],
+                "action": "WAIT",
+                "confidence": 0.6,
+                "orders": [],
+                "position_actions": [],
+                "requested_evidence": [],
+            }
+        )
+        candidate_sha256 = hashlib.sha256(
+            json.dumps(
+                candidate,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        prepared.candidate_path.write_text(json.dumps(candidate))
+
+        result = accept_run(
+            config_path=self.config,
+            manifest_path=prepared.manifest_path,
+            candidate_path=prepared.candidate_path,
+            repo_root=self.root,
+            now=NOW + timedelta(seconds=2),
+        )
+
+        receipt = json.loads(result.receipt_path.read_text())
+        self.assertEqual(receipt["decision"]["thesis"], thesis)
+        self.assertEqual(
+            receipt["entry_decision"]["reasons"],
+            [f"ai_candidate_sha256:{candidate_sha256}"],
+        )
+
     def test_profile_action_allowlist_rejects_exit_before_live_sink(self) -> None:
         config = json.loads(self.config.read_text())
         config["profiles"]["intraday"]["sink"] = "live_gateway"

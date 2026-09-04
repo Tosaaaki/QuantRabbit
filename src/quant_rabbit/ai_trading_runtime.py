@@ -645,6 +645,10 @@ def _build_decision_contracts(
     now: datetime,
 ) -> dict[str, Any]:
     action = str(candidate["action"]).upper()
+    # The receipt retains the full AI thesis.  The typed decision stores a
+    # bounded, content-addressed reference so a detailed thesis cannot exceed
+    # the decision contract's per-reason limit.
+    candidate_reason = f"ai_candidate_sha256:{_sha256_json(candidate)}"
     if action in {"ENTER", "EXIT"} and evidence_packet.get("status") != "READY":
         raise AIRuntimeError("EVIDENCE_NOT_READY", "broker mutation requires a READY evidence packet")
     broker_epoch = evidence_packet.get("broker_epoch")
@@ -676,7 +680,7 @@ def _build_decision_contracts(
             broker_epoch=last_transaction_id,
             evidence_observed_at_utc=observed_at,
             proposal=proposal,
-            reasons=(str(candidate["thesis"]),),
+            reasons=(candidate_reason,),
             ttl_seconds=ttl_seconds,
             created_at_utc=decided_at,
         )
@@ -687,7 +691,7 @@ def _build_decision_contracts(
             broker_epoch=last_transaction_id,
             evidence_observed_at_utc=observed_at,
             requested_evidence=tuple(candidate.get("requested_evidence") or ()),
-            reasons=(str(candidate["thesis"]),),
+            reasons=(candidate_reason,),
             ttl_seconds=ttl_seconds,
             created_at_utc=decided_at,
         )
