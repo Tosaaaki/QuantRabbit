@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -376,6 +377,21 @@ def _parse_timestamp(value: object) -> datetime | None:
     if not value:
         return None
     text = str(value).strip()
+    # OANDA transaction timestamps use RFC3339 nanoseconds.  Python 3.10's
+    # ``datetime.fromisoformat`` accepts at most microseconds, while newer
+    # runtimes accept the same value.  Normalize only the excess fractional
+    # precision so the audited broker text remains portable across the
+    # scheduler's supported Python runtimes.
+    match = re.fullmatch(
+        r"(?P<head>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+        r"\.(?P<fraction>\d+)(?P<zone>Z|[+-]\d{2}:\d{2})",
+        text,
+    )
+    if match is not None and len(match.group("fraction")) > 6:
+        text = (
+            f"{match.group('head')}.{match.group('fraction')[:6]}"
+            f"{match.group('zone')}"
+        )
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     try:
